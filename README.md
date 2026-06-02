@@ -40,6 +40,47 @@ docker compose up -d            # db → init(migrate+seed) → api → web → 
 > ⚠️ Redeploy one service with `docker compose up -d --no-deps --force-recreate <svc>`.
 > A plain `docker compose up <svc>` re-runs the seed and **wipes data**. See `CLAUDE.md`.
 
+## 🪟 Super-simple setup (Windows, no experience needed)
+
+Never used a terminal before? Follow these steps exactly — copy/paste each command.
+
+**1. Install Docker Desktop**
+- Download it: https://www.docker.com/products/docker-desktop/
+- Run the installer, click through with the defaults, then **restart your PC** if it asks.
+- Open **Docker Desktop** from the Start menu and wait until the whale icon (bottom-left) says **Engine running**. Leave it open in the background.
+
+**2. Get Paperboy onto your PC**
+- Easiest way (no extra tools): go to the project page on GitHub, click the green **Code** button → **Download ZIP**, then right-click the downloaded file → **Extract All…**.
+- You now have a folder like `paperboycms`. Remember where it is (e.g. your Downloads folder).
+
+**3. Open a terminal in that folder**
+- Open the `paperboycms` folder in **File Explorer**.
+- Click the address bar at the top, type `powershell`, and press **Enter**. A blue window opens — that's your terminal, already pointed at the right folder.
+
+**4. Start everything (one command)**
+- Copy this line, paste it into the blue window (right-click to paste), and press **Enter**:
+  ```powershell
+  docker compose up -d
+  ```
+- The first run downloads things and takes a few minutes. When it finishes you'll get your prompt back.
+
+**5. Open the admin**
+- In your browser go to **http://localhost:8090**
+- Log in with:
+  - **Email:** `admin@paperboy.test`
+  - **Password:** `Admin!Passw0rd`
+
+That's it — you're running Paperboy. 🎉
+
+**Everyday commands** (run them in the same blue window, inside the `paperboycms` folder):
+- **Stop it:** `docker compose stop`
+- **Start it again later:** `docker compose start`
+- **See it running:** check Docker Desktop, or run `docker compose ps`
+
+> ⚠️ Don't run `docker compose down -v` or re-run the setup once you've added content — it **wipes everything** and resets the login. Use **stop**/**start** instead.
+>
+> 💡 If a page won't load, make sure Docker Desktop is open and says **Engine running**, then try again.
+
 ## Develop locally
 ```bash
 pnpm install
