@@ -99,9 +99,12 @@ pnpm --filter @paperboy/admin test:e2e      # Playwright e2e + axe accessibility
 ## MCP
 ```bash
 # Mint a token in the admin (Settings → MCP), then:
-MCP_TOKEN=mcp_… DATABASE_URL=postgresql://… pnpm --filter @paperboy/mcp start
+MCP_TOKEN=mcp_… DATABASE_URL=postgresql://… pnpm --filter @paperboy/mcp start   # stdio (local clients)
+
+# …or serve it over Streamable HTTP for remote clients (Bearer = MCP_TOKEN):
+MCP_TOKEN=mcp_… docker compose --profile mcp up -d --no-deps mcp                 # → http://<host>:8093/mcp
 ```
-The MCP authenticates as a Paperboy user (token or email+password) and inherits its RBAC.
+The MCP authenticates as a Paperboy user (token or email+password) and inherits its RBAC. The default transport is stdio; set `MCP_HTTP_PORT` (or use the compose `mcp` profile) to expose it over HTTP for remote clients.
 
 ## Seed accounts
 `admin@` Admin · `editor@` Editor · `author@` Author (section-scoped) · `viewer@` Viewer — passwords follow `<Role>!Passw0rd`.
