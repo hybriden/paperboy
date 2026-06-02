@@ -1,0 +1,23 @@
+{
+  "name": "paperboy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Paperboy — an open-source headless CMS. DPX: Don't Pay eXtra.",
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@9.12.0",
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm -r --parallel dev",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm --filter @paperboy/api test",
+    "test:e2e": "pnpm --filter @paperboy/admin test:e2e",
+    "db:migrate": "pnpm --filter @paperboy/db migrate",
+    "db:seed": "pnpm --filter @paperboy/db seed"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}

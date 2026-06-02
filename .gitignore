@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+build/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+.DS_Store
+proof/screenshots/*.tmp
+test-results/
+playwright-report/
+.turbo/

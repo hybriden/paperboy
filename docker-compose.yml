@@ -1,0 +1,110 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: paperboy-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: paperboy
+      POSTGRES_PASSWORD: paperboy
+      POSTGRES_DB: paperboy
+    ports:
+      - "5433:5432"
+    volumes:
+      - paperboy-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U paperboy -d paperboy"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # One-shot: apply migrations + seed demo content, then exit.
+  init:
+    build: { context: ., target: app }
+    image: paperboy/app:latest
+    command: ["pnpm", "--filter", "@paperboy/db", "seed"]
+    environment:
+      DATABASE_URL: postgresql://paperboy:paperboy@db:5432/paperboy
+      SEED_ADMIN_EMAIL: admin@paperboy.test
+      SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-Admin!Passw0rd}
+      PAPERBOY_PUBLIC_KEY: ${PAPERBOY_PUBLIC_KEY:-pk_live_seed_public_key_value}
+      PAPERBOY_PREVIEW_KEY: ${PAPERBOY_PREVIEW_KEY:-prv_seed_preview_key_value}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: { context: ., target: app }
+    image: paperboy/app:latest
+    command: ["pnpm", "--filter", "@paperboy/api", "start"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://paperboy:paperboy@db:5432/paperboy
+      API_PORT: "8091"
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8090}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true} # behind Cloudflare (HTTPS) → Secure __Host- cookie
+      ALLOW_INSECURE_COOKIES: ${ALLOW_INSECURE_COOKIES:-false} # set true only for a non-TLS LAN demo
+      SESSION_SECRET: ${SESSION_SECRET:-prod-session-secret-please-override-32+chars}
+      CSRF_SECRET: ${CSRF_SECRET:-prod-csrf-secret-please-override-32+chars}
+      # Encryption key for TOTP secrets at rest. Pin this when rotating SESSION_SECRET
+      # so existing 2FA enrolments keep decrypting (else fall back to SESSION_SECRET).
+      MFA_SECRET: ${MFA_SECRET:-}
+      MEDIA_PUBLIC_BASE: ${MEDIA_PUBLIC_BASE:-} # empty = relative media URLs (same-origin via each app's proxy; works on any host)
+      UPLOADS_DIR: /app/uploads
+      # AI assistant: passes through from the host if set; falls back to offline heuristics otherwise.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-haiku-4-5-20251001}
+    depends_on:
+      db:
+        condition: service_healthy
+      init:
+        condition: service_completed_successfully
+    ports:
+      - "8091:8091"
+    volumes:
+      - paperboy-uploads:/app/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8091/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  web:
+    build: { context: ., target: app }
+    image: paperboy/app:latest
+    command: ["pnpm", "--filter", "@paperboy/web", "start"]
+    environment:
+      NODE_ENV: production
+      PAPERBOY_API_URL: http://api:8091
+      PAPERBOY_PUBLIC_KEY: ${PAPERBOY_PUBLIC_KEY:-pk_live_seed_public_key_value}
+      PAPERBOY_PREVIEW_KEY: ${PAPERBOY_PREVIEW_KEY:-prv_seed_preview_key_value}
+      PREVIEW_SECRET: ${PREVIEW_SECRET:-dev-preview-secret-change-me}
+      # Admin origins allowed to embed the preview iframe (CSP frame-ancestors). Comma-separated.
+      ADMIN_ORIGINS: ${ADMIN_ORIGINS:-}
+    depends_on:
+      api:
+        condition: service_healthy
+    # Port retired: the public site at :8092 is now a separately-deployed front end.
+    # (apps/web is the reference frontend, internal-only.)
+
+  # (The front end runs separately and reads the public Delivery API —
+  # it is not part of this Compose stack.)
+
+  admin:
+    build:
+      context: .
+      target: admin
+      args:
+        # Public origin of the web frontend; the preview iframe loads pages from here.
+        VITE_WEB_URL: ${VITE_WEB_URL:-}
+        VITE_PREVIEW_SECRET: ${PREVIEW_SECRET:-dev-preview-secret-change-me}
+    image: paperboy/admin:latest
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "8090:8090"
+
+volumes:
+  paperboy-pgdata:
+  paperboy-uploads:
