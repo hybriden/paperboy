@@ -84,11 +84,11 @@ services:
     depends_on:
       api:
         condition: service_healthy
-    # Port retired: the public site at :8092 is now a separately-deployed front end.
-    # (apps/web is the reference frontend, internal-only.)
-
-  # (The front end runs separately and reads the public Delivery API —
-  # it is not part of this Compose stack.)
+    ports:
+      - "8092:8092"
+    # Reference frontend (apps/web), reachable at http://localhost:8092.
+    # In production you'd deploy your own front end that reads the public
+    # Delivery API over HTTP — this one ships so the stack works out of the box.
 
   admin:
     build:
