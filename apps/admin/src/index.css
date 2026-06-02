@@ -1,0 +1,170 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Paperboy design tokens — "The Newsroom".
+ * Colours are stored as raw "R G B" channels so Tailwind can apply alpha
+ * (rgb(var(--x) / <alpha-value>)) — keeps bg-accent/10 etc. working.
+ * Dark theme flips the same variables, so components stay theme-agnostic.
+ */
+:root {
+  --font-ui: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Newsreader Variable", Georgia, "Times New Roman", serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", monospace;
+
+  /* Light — warm newsprint */
+  --c-canvas: 247 245 240;
+  --c-panel: 255 255 255;
+  --c-fg: 26 26 24;
+  --c-muted: 90 99 110;
+  --c-line: 230 226 218;
+
+  --c-chrome: 22 28 36;
+  --c-chrome-light: 32 41 51;
+  --c-chrome-rail: 16 21 28;
+  --c-chrome-border: 44 54 66;
+  --c-chrome-fg: 233 231 224;
+
+  --c-accent: 34 87 214; /* calm ink-blue (primary) */
+  --c-accent-600: 27 74 191;
+  --c-accent-700: 29 78 216; /* accent text on light tints */
+  --c-accent-50: 234 240 254;
+  --c-accent-fg: 255 255 255;
+
+  --c-brand: 200 54 47; /* press-red — masthead mark ONLY */
+  --c-published: 19 122 62;
+  --c-draft: 154 87 0;
+  --c-danger: 185 28 28;
+  --c-ring: 34 87 214;
+
+  --radius: 7px;
+  --radius-lg: 11px;
+  --shadow-panel: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.08);
+  --shadow-pop: 0 10px 30px -10px rgb(16 24 40 / 0.28), 0 2px 8px rgb(16 24 40 / 0.10);
+  --dur: 160ms;
+  --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+}
+
+[data-theme="dark"] {
+  --c-canvas: 17 18 22;
+  --c-panel: 26 27 32;
+  --c-fg: 236 233 225;
+  --c-muted: 150 160 172;
+  --c-line: 41 44 52;
+
+  --c-chrome: 11 12 16;
+  --c-chrome-light: 24 26 32;
+  --c-chrome-rail: 8 9 12;
+  --c-chrome-border: 38 41 49;
+  --c-chrome-fg: 236 233 225;
+
+  --c-accent: 110 152 255;
+  --c-accent-600: 130 168 255;
+  --c-accent-700: 150 182 255; /* light blue text on dark tints */
+  --c-accent-50: 30 41 70;
+  --c-accent-fg: 12 14 20;
+
+  --c-brand: 232 100 92;
+  --c-published: 60 200 130;
+  --c-draft: 216 162 84;
+  --c-danger: 248 120 120;
+  --c-ring: 110 152 255;
+
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.5);
+  --shadow-pop: 0 12px 34px -10px rgb(0 0 0 / 0.6), 0 2px 10px rgb(0 0 0 / 0.4);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font-ui);
+  background: rgb(var(--c-canvas));
+  color: rgb(var(--c-fg));
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv05", "ss01";
+}
+
+/* Visible focus ring everywhere (WCAG 2.4.7). */
+:focus-visible {
+  outline: 2px solid rgb(var(--c-ring));
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Tabular numerals for all data-dense numerics. */
+.tnum {
+  font-feature-settings: "tnum";
+  font-variant-numeric: tabular-nums;
+}
+
+/* Editorial masthead wordmark. */
+.masthead {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-1.5 rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-accent-fg hover:bg-accent-600;
+  }
+  .btn-ghost {
+    @apply btn text-fg hover:bg-line/60;
+  }
+  .btn-subtle {
+    @apply btn border border-line bg-panel text-fg hover:bg-canvas;
+  }
+  .btn-danger {
+    @apply btn bg-danger text-white hover:opacity-90;
+  }
+  .field-label {
+    @apply mb-1 block text-[13px] font-semibold text-fg;
+  }
+  .field-input {
+    @apply w-full rounded-[var(--radius)] border border-line bg-panel px-2.5 py-1.5 text-sm text-fg outline-none transition-colors placeholder:text-muted/70 focus:border-accent;
+  }
+  /* Newspaper column rule between panes. */
+  .col-rule {
+    @apply border-line;
+  }
+}
+
+/* TipTap content */
+.prose-paperboy :where(p) { margin: 0 0 0.6em; }
+.prose-paperboy :where(p):last-child { margin-bottom: 0; }
+.prose-paperboy :where(h2) { font-family: var(--font-display); font-size: 1.35rem; font-weight: 600; margin: 0.4em 0 0.3em; }
+.prose-paperboy :where(h3) { font-family: var(--font-display); font-size: 1.12rem; font-weight: 600; margin: 0.4em 0 0.3em; }
+.prose-paperboy :where(ul) { list-style: disc; padding-left: 1.3em; margin: 0 0 0.6em; }
+.prose-paperboy :where(ol) { list-style: decimal; padding-left: 1.3em; margin: 0 0 0.6em; }
+.prose-paperboy :where(li) { margin: 0.15em 0; }
+.prose-paperboy :where(a) { color: rgb(var(--c-accent-700)); text-decoration: underline; text-underline-offset: 2px; }
+.prose-paperboy :where(blockquote) { border-left: 3px solid rgb(var(--c-brand)); padding-left: 0.9em; margin: 0 0 0.6em; color: rgb(var(--c-muted)); font-family: var(--font-display); font-style: italic; }
+.prose-paperboy :where(strong) { font-weight: 700; }
+.prose-paperboy .ProseMirror:focus { outline: none; }
+.prose-paperboy .ProseMirror p.is-editor-empty:first-child::before { content: "Write the story…"; color: rgb(var(--c-muted) / 0.7); float: left; height: 0; pointer-events: none; }
+
+/* Visual on-page editing: flash a field/block when clicked in the preview. */
+@keyframes pb-flash {
+  0%   { box-shadow: 0 0 0 0 rgb(var(--c-accent) / 0.0), 0 0 0 3px rgb(var(--c-accent) / 0.8); background: rgb(var(--c-accent) / 0.10); }
+  100% { box-shadow: 0 0 0 0 rgb(var(--c-accent) / 0.0); background: transparent; }
+}
+.pb-flash { animation: pb-flash 1.4s ease-out; border-radius: var(--radius); }

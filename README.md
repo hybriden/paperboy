@@ -1,0 +1,75 @@
+# 📰 Paperboy
+
+**An open-source, headless CMS — editor-first, type-safe, batteries included.**
+
+> **Paperboy ONE** — *Open, No Extras.*  ·  **DPX** — *Don't Pay eXtra.*
+> A proper headless CMS without the enterprise "experience platform" invoice. Self-host it, own your content, ship.
+
+A TypeScript monorepo: a Fastify Management + Delivery API, a React admin with visual
+on-page editing, a Next.js reference frontend, and a stdio MCP server — on PostgreSQL.
+
+## Highlights
+- **Data-driven content types** — pages, blocks, and globals defined as data, not code.
+- **Content areas** with inline + shared blocks and per-field "allowed types".
+- **No-leak Delivery API** — one read chokepoint with a `perspective`; public keys see only published content, private fields never serialize, preview keys see drafts.
+- **Visual on-page editing** — click an element in the live preview to focus its field in the editor, and focus a field to highlight it in the preview (both ways).
+- **Multi-language** (document-level i18n + fallback chain), **hierarchical URLs** from the page tree, **version history** + restore, **trash**/restore, **duplicate**.
+- **Secure by default** — Argon2id + opaque server-side sessions + CSRF, **passwordless TOTP 2FA**, deny-by-default **RBAC** with object-level scope checks, append-only **audit log**.
+- **Integrations** — HMAC **publish webhooks**, media uploads, SEO/OpenGraph metadata, an optional **AI editorial assistant**, and a full **MCP server** (drive the CMS from an AI client, with revocable tokens).
+- **Great admin** — React 19 + Vite, light/dark themes, ⌘K command palette, accessible (axe-clean), keyboard-operable drag-drop.
+
+## Layout
+```
+apps/api      Fastify v5 — Management API (auth/RBAC) + Delivery API (read-only, key-scoped)
+apps/admin    React 19 + Vite — the editor (tree, content areas, live preview, on-page editing)
+apps/web      Next.js 15 — reference headless frontend with Draft Mode preview
+apps/mcp      stdio MCP server — operate the whole CMS over the Model Context Protocol
+packages/shared  Zod schemas + shared types (single source of truth)
+packages/db      Drizzle schema, migrations, query layer (object-level authz), seed
+```
+Any frontend (Next, Astro, SvelteKit, …) can be a Paperboy client by reading the Delivery
+API over HTTP — it doesn't import the CMS, only the contract.
+
+## Quickstart (Docker)
+```bash
+docker compose up -d            # db → init(migrate+seed) → api → web → admin
+# Admin   http://localhost:8090   (admin@paperboy.test / Admin!Passw0rd)
+# API     http://localhost:8091   (OpenAPI UI at /docs)
+# Web     http://localhost:8092
+```
+> ⚠️ Redeploy one service with `docker compose up -d --no-deps --force-recreate <svc>`.
+> A plain `docker compose up <svc>` re-runs the seed and **wipes data**. See `CLAUDE.md`.
+
+## Develop locally
+```bash
+pnpm install
+docker compose up -d db
+export DATABASE_URL=postgresql://paperboy:paperboy@localhost:5433/paperboy
+pnpm db:seed
+pnpm dev                        # api :8091, admin :8090, web :8092
+```
+
+## Test
+```bash
+pnpm --filter @paperboy/api test            # integration tests (real Postgres)
+pnpm --filter @paperboy/admin test:e2e      # Playwright e2e + axe accessibility
+```
+
+## MCP
+```bash
+# Mint a token in the admin (Settings → MCP), then:
+MCP_TOKEN=mcp_… DATABASE_URL=postgresql://… pnpm --filter @paperboy/mcp start
+```
+The MCP authenticates as a Paperboy user (token or email+password) and inherits its RBAC.
+
+## Seed accounts
+`admin@` Admin · `editor@` Editor · `author@` Author (section-scoped) · `viewer@` Viewer — passwords follow `<Role>!Passw0rd`.
+
+> Seeded credentials, keys, and secrets are **dev defaults** — rotate them before exposing the CMS (`SESSION_SECRET`, `CSRF_SECRET`, the delivery keys, `PREVIEW_SECRET`, and the admin password).
+
+## Docs
+- **`CLAUDE.md`** — how to develop & deploy safely (and how AI agents should work in the repo).
+- **`STACK.md`** — the stack and the reasoning behind each choice.
+
+## License
+[MIT](./LICENSE) — do what you like. *Don't Pay eXtra.* 📰

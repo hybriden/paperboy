@@ -1,0 +1,117 @@
+/**
+ * AI editorial assistant. Real editorial use-cases the editor needs help with:
+ * SEO title/description generation, summarising, copy improvement, image alt
+ * text, and translation. When ANTHROPIC_API_KEY is configured the API calls
+ * Claude; otherwise a deterministic local fallback keeps every task usable
+ * offline (truncation/cleanup heuristics) so the feature works without a key
+ * and upgrades automatically when one is provided.
+ */
+
+export const AI_TASKS = ["meta_title", "meta_description", "summarize", "improve", "alt_text", "translate"] as const;
+export type AiTask = (typeof AI_TASKS)[number];
+
+export interface AiRequest {
+  task: AiTask;
+  input: string;
+  targetLocale?: string;
+}
+export interface AiResult {
+  result: string;
+  provider: "anthropic" | "fallback";
+}
+
+interface AiConfig {
+  apiKey?: string;
+  model: string;
+}
+
+const SYSTEM =
+  "You are an expert editorial assistant inside a headless CMS. Follow the instruction exactly and return ONLY the requested text — no preamble, no quotes, no markdown.";
+
+function instruction(req: AiRequest): string {
+  switch (req.task) {
+    case "meta_title":
+      return `Write a compelling SEO <title> (max 60 characters) for the following page content.\n\n${req.input}`;
+    case "meta_description":
+      return `Write an SEO meta description (max 155 characters, active voice, no clickbait) summarising the following page content.\n\n${req.input}`;
+    case "summarize":
+      return `Summarise the following content in one or two clear sentences.\n\n${req.input}`;
+    case "improve":
+      return `Improve the clarity, grammar and flow of the following text. Preserve its meaning and keep a similar length.\n\n${req.input}`;
+    case "alt_text":
+      return `Write concise, descriptive alt text (max 120 characters) for an image. The image's filename/description is:\n\n${req.input}`;
+    case "translate":
+      return `Translate the following text into ${req.targetLocale ?? "the target language"}. Preserve meaning and tone.\n\n${req.input}`;
+  }
+}
+
+async function callAnthropic(req: AiRequest, cfg: AiConfig): Promise<string> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 20_000);
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": cfg.apiKey!,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: cfg.model,
+        max_tokens: 1024,
+        system: SYSTEM,
+        messages: [{ role: "user", content: instruction(req) }],
+      }),
+      signal: ac.signal,
+    });
+    if (!res.ok) throw new Error(`Anthropic ${res.status}`);
+    const data = (await res.json()) as { content?: { type: string; text?: string }[] };
+    const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
+    if (!text) throw new Error("Empty AI response");
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Deterministic, offline-safe heuristics — genuinely useful for the SEO tasks. */
+function fallback(req: AiRequest): string {
+  const clean = req.input.replace(/\s+/g, " ").trim();
+  const truncate = (s: string, n: number) => {
+    if (s.length <= n) return s;
+    const cut = s.slice(0, n);
+    const sp = cut.lastIndexOf(" ");
+    return `${(sp > n * 0.6 ? cut.slice(0, sp) : cut).trim()}…`;
+  };
+  switch (req.task) {
+    case "meta_title": {
+      const firstLine = clean.split(/[.!?\n]/)[0]?.trim() || clean;
+      return truncate(firstLine, 60);
+    }
+    case "meta_description":
+      return truncate(clean, 155);
+    case "summarize": {
+      const sentence = clean.match(/^.*?[.!?](\s|$)/)?.[0]?.trim();
+      return sentence || truncate(clean, 160);
+    }
+    case "improve": {
+      const t = clean.charAt(0).toUpperCase() + clean.slice(1);
+      return /[.!?]$/.test(t) ? t : `${t}.`;
+    }
+    case "alt_text":
+      return truncate(clean.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " "), 120) || "Image";
+    case "translate":
+      return clean; // offline: cannot translate — return the source unchanged
+  }
+}
+
+export async function aiAssist(req: AiRequest, cfg: AiConfig): Promise<AiResult> {
+  if (cfg.apiKey) {
+    try {
+      return { result: await callAnthropic(req, cfg), provider: "anthropic" };
+    } catch {
+      // Provider error/timeout → degrade to the deterministic fallback.
+    }
+  }
+  return { result: fallback(req), provider: "fallback" };
+}
