@@ -127,11 +127,22 @@ services:
         condition: service_healthy
     ports:
       - "8093:8093"
+    networks:
+      default: {}
+      # Join the Cloudflare Tunnel network so sibling stacks (e.g. harmonix) can
+      # reach this MCP by name at http://paperboy-mcp:8093/mcp — no public route.
+      cloudflared:
+        aliases: [paperboy-mcp]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8093/health"]
       interval: 5s
       timeout: 5s
       retries: 12
+
+networks:
+  cloudflared:
+    name: cloudflared_default
+    external: true
 
 volumes:
   paperboy-pgdata:
