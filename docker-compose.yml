@@ -105,6 +105,34 @@ services:
     ports:
       - "8090:8090"
 
+  # Paperboy MCP over Streamable HTTP — for remote MCP clients (e.g. harmonix).
+  # Opt-in via the "mcp" profile so the default stack stays unchanged. Requires an
+  # MCP token (Settings → MCP) which doubles as the Bearer credential clients send.
+  #   MCP_TOKEN=mcp_… docker compose --profile mcp up -d --no-deps mcp
+  # In production, front it with TLS (e.g. Caddy → paperboy-mcp.<host> → mcp:8093).
+  mcp:
+    build: { context: ., target: app }
+    image: paperboy/app:latest
+    command: ["pnpm", "--filter", "@paperboy/mcp", "start"]
+    profiles: ["mcp"]
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://paperboy:paperboy@db:5432/paperboy
+      MCP_HTTP_PORT: "8093"
+      MCP_TOKEN: ${MCP_TOKEN:-} # mint one in Settings → MCP; the server refuses to start in HTTP mode without it
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-haiku-4-5-20251001}
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8093:8093"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8093/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
 volumes:
   paperboy-pgdata:
   paperboy-uploads:

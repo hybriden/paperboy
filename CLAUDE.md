@@ -22,6 +22,7 @@ The compose `init` service runs migrate **+ seed**, and `seed` TRUNCATEs and res
 
 ## Ports & env
 - admin **8090**, api **8091**, web **8092**, Postgres **5433** (host) → 5432 (container).
+- MCP **8093** (optional, opt-in): `MCP_TOKEN=mcp_… docker compose --profile mcp up -d --no-deps mcp` serves the MCP over Streamable HTTP at `/mcp` (Bearer = `MCP_TOKEN`). Default is stdio; HTTP mode is only for remote clients.
 - pnpm is at `~/.npm-global/bin` — prefix commands with `export PATH="$HOME/.npm-global/bin:$PATH"`.
 - DB URL (host): `postgresql://paperboy:paperboy@localhost:5433/paperboy`.
 - Secrets in `docker-compose.yml`/`.env.example` are **dev defaults** — rotate before exposing (`SESSION_SECRET`, `CSRF_SECRET`, `PAPERBOY_*_KEY`, `PREVIEW_SECRET`, admin password).

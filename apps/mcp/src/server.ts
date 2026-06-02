@@ -1,5 +1,8 @@
+import { createServer as createHttpServer, type IncomingMessage } from "node:http";
+import { randomUUID, timingSafeEqual } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   type AccessContext,
   adminCreateUser,
@@ -71,6 +74,23 @@ const MCP_EMAIL = process.env.MCP_EMAIL ?? "admin@paperboy.test";
 const MCP_PASSWORD = process.env.MCP_PASSWORD ?? "Admin!Passw0rd";
 const AI_CONFIG = { apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.AI_MODEL ?? "claude-haiku-4-5-20251001" };
 
+// Set MCP_HTTP_PORT to serve over Streamable HTTP (for remote clients like
+// harmonix) instead of stdio. The process still acts as the single MCP_TOKEN
+// user; every HTTP request must present that same token as a Bearer.
+const MCP_HTTP_PORT = process.env.MCP_HTTP_PORT ? Number(process.env.MCP_HTTP_PORT) : undefined;
+const MCP_HTTP_PATH = process.env.MCP_HTTP_PATH ?? "/mcp";
+
+/** Constant-time check that the request carries `Authorization: Bearer <MCP_TOKEN>`. */
+function bearerOk(req: IncomingMessage): boolean {
+  const token = MCP_TOKEN;
+  if (!token) return false;
+  const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "");
+  if (!m?.[1]) return false;
+  const got = Buffer.from(m[1]);
+  const want = Buffer.from(token);
+  return got.length === want.length && timingSafeEqual(got, want);
+}
+
 const { db } = createDb(DATABASE_URL);
 let ctx: AccessContext;
 
@@ -81,7 +101,11 @@ function need(perm: Permission): void {
 }
 const persp = (preview?: boolean): "preview" | "published" => (preview ? "preview" : "published");
 
-const server = new McpServer({ name: "paperboy", version: "0.1.0" });
+// Tool definitions are collected as registrations so a fresh McpServer can be
+// built per stdio process and per stateless HTTP request. A stateless HTTP
+// request needs its own server+transport to carry the MCP init handshake.
+type ToolRegistration = (server: McpServer) => void;
+const registrations: ToolRegistration[] = [];
 
 /** Register a tool whose handler returns any JSON-serialisable value. */
 function tool<S extends z.ZodRawShape>(
@@ -90,17 +114,26 @@ function tool<S extends z.ZodRawShape>(
   shape: S,
   run: (args: z.infer<z.ZodObject<S>>) => Promise<unknown>,
 ): void {
-  const cb = async (args: z.infer<z.ZodObject<S>>) => {
-    try {
-      const result = await run(args);
-      return { content: [{ type: "text" as const, text: JSON.stringify(result ?? { ok: true }, null, 2) }] };
-    } catch (err) {
-      return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true as const };
-    }
-  };
-  // The SDK's tool callback type is heavily generic; the wrapper above keeps each
-  // tool's `run` strongly typed against its Zod shape, so cast only at this boundary.
-  server.tool(name, description, shape, cb as never);
+  registrations.push((server) => {
+    const cb = async (args: z.infer<z.ZodObject<S>>) => {
+      try {
+        const result = await run(args);
+        return { content: [{ type: "text" as const, text: JSON.stringify(result ?? { ok: true }, null, 2) }] };
+      } catch (err) {
+        return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true as const };
+      }
+    };
+    // The SDK's tool callback type is heavily generic; the wrapper above keeps each
+    // tool's `run` strongly typed against its Zod shape, so cast only at this boundary.
+    server.tool(name, description, shape, cb as never);
+  });
+}
+
+/** Build a fresh server instance with every registered tool. */
+function buildServer(): McpServer {
+  const server = new McpServer({ name: "paperboy", version: "0.1.0" });
+  for (const register of registrations) register(server);
+  return server;
 }
 
 const loc = z.string().optional().describe("Locale code (default 'en')");
@@ -222,8 +255,72 @@ async function main(): Promise<void> {
   }
   ctx = await getAccessContext(db, userId);
   console.error(`[paperboy-mcp] authenticated (${userId}) via ${MCP_TOKEN ? "token" : "password"} — ${ctx.permissions.length} permissions`);
-  await server.connect(new StdioServerTransport());
-  console.error("[paperboy-mcp] ready on stdio");
+
+  if (MCP_HTTP_PORT) {
+    // HTTP mode is a remote, multi-request surface — it must be gated. The
+    // process acts as the MCP_TOKEN user, so we require that exact token.
+    if (!MCP_TOKEN) {
+      console.error("[paperboy-mcp] MCP_HTTP_PORT requires MCP_TOKEN (used as the Bearer credential)");
+      process.exit(1);
+    }
+    // One transport+server per MCP session. The client gets a session id on
+    // `initialize` and replays it via the `mcp-session-id` header; that's what
+    // carries the protocol's init state across separate requests.
+    const sessions = new Map<string, StreamableHTTPServerTransport>();
+    const http = createHttpServer(async (req, res) => {
+      const path = (req.url ?? "/").split("?")[0];
+      if (path === "/health") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true }));
+        return;
+      }
+      if (path !== MCP_HTTP_PATH) {
+        res.writeHead(404, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "not found" }));
+        return;
+      }
+      if (!bearerOk(req)) {
+        res.writeHead(401, { "content-type": "application/json", "www-authenticate": "Bearer" });
+        res.end(JSON.stringify({ error: "unauthorized" }));
+        return;
+      }
+      try {
+        const sid = req.headers["mcp-session-id"];
+        const existing = typeof sid === "string" ? sessions.get(sid) : undefined;
+        if (existing) {
+          await existing.handleRequest(req, res);
+          return;
+        }
+        // No known session → start a new one (the request must be `initialize`;
+        // the transport replies with the right JSON-RPC error otherwise). All
+        // sessions act as the single configured user.
+        const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          enableJsonResponse: true,
+          onsessioninitialized: (id) => {
+            sessions.set(id, transport);
+          },
+        });
+        transport.onclose = () => {
+          if (transport.sessionId) sessions.delete(transport.sessionId);
+        };
+        const reqServer = buildServer();
+        await reqServer.connect(transport);
+        await transport.handleRequest(req, res);
+      } catch (err) {
+        console.error("[paperboy-mcp] request error:", err);
+        if (!res.headersSent) {
+          res.writeHead(500, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "internal error" }));
+        }
+      }
+    });
+    http.listen(MCP_HTTP_PORT, () => console.error(`[paperboy-mcp] ready on http :${MCP_HTTP_PORT}${MCP_HTTP_PATH}`));
+  } else {
+    const server = buildServer();
+    await server.connect(new StdioServerTransport());
+    console.error("[paperboy-mcp] ready on stdio");
+  }
 }
 main().catch((err) => {
   console.error("[paperboy-mcp] fatal:", err);
