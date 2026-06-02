@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { Icon } from "../lib/icons.js";
 import { useTheme } from "../lib/theme.js";
+import { useIsMobile } from "../lib/useMediaQuery.js";
 import { useUser } from "../lib/user.js";
 import { CommandPalette } from "./CommandPalette.js";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "./ui/menu.js";
@@ -21,6 +22,7 @@ export function Shell() {
   const [crumb, setCrumb] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const location = useLocation();
+  const isMobile = useIsMobile();
 
   const section =
     location.pathname.startsWith("/dashboard") ? "Dashboard" : location.pathname.startsWith("/settings") ? "Settings" : "Edit";
@@ -38,13 +40,14 @@ export function Shell() {
 
   return (
     <div className="flex h-full flex-col bg-canvas">
-      <TopBar section={section} crumb={crumb} onOpenPalette={() => setPaletteOpen(true)} />
+      <TopBar section={section} crumb={crumb} compact={isMobile} onOpenPalette={() => setPaletteOpen(true)} />
       <div className="flex min-h-0 flex-1">
-        <Rail />
+        {!isMobile && <Rail />}
         <div className="min-w-0 flex-1">
           <Outlet context={{ setCrumb } satisfies ShellOutlet} />
         </div>
       </div>
+      {isMobile && <BottomNav />}
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
   );
@@ -53,10 +56,12 @@ export function Shell() {
 function TopBar({
   section,
   crumb,
+  compact,
   onOpenPalette,
 }: {
   section: string;
   crumb: string | null;
+  compact: boolean;
   onOpenPalette: () => void;
 }) {
   return (
@@ -66,16 +71,20 @@ function TopBar({
         <span className="hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-chrome-fg/75 sm:inline">CMS</span>
       </div>
 
-      <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-chrome-fg/80">
-        <span className="text-chrome-fg/55" aria-hidden>/</span>
-        <span className="font-medium text-chrome-fg">{section}</span>
-        {crumb && (
-          <>
-            <span className="text-chrome-fg/55" aria-hidden>/</span>
-            <span className="max-w-[280px] truncate text-chrome-fg">{crumb}</span>
-          </>
-        )}
-      </nav>
+      {/* On phones the breadcrumb is dropped — the bottom nav shows the section,
+          and the editor surfaces the document name itself. */}
+      {!compact && (
+        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-chrome-fg/80">
+          <span className="text-chrome-fg/55" aria-hidden>/</span>
+          <span className="font-medium text-chrome-fg">{section}</span>
+          {crumb && (
+            <>
+              <span className="text-chrome-fg/55" aria-hidden>/</span>
+              <span className="max-w-[280px] truncate text-chrome-fg">{crumb}</span>
+            </>
+          )}
+        </nav>
+      )}
 
       <div className="ml-auto flex items-center gap-1.5">
         <button
@@ -88,16 +97,18 @@ function TopBar({
           <kbd className="hidden rounded bg-chrome-border/60 px-1.5 py-0.5 font-mono text-[10px] text-chrome-fg/80 md:inline">⌘K</kbd>
         </button>
         <ThemeToggle />
-        <a
-          href="/api/docs"
-          target="_blank"
-          rel="noreferrer"
-          className="grid h-9 w-9 place-items-center rounded-[var(--radius)] text-chrome-fg/70 hover:bg-chrome-light"
-          aria-label="API documentation"
-          title="API docs"
-        >
-          <Icon.Api width={17} height={17} />
-        </a>
+        {!compact && (
+          <a
+            href="/api/docs"
+            target="_blank"
+            rel="noreferrer"
+            className="grid h-9 w-9 place-items-center rounded-[var(--radius)] text-chrome-fg/70 hover:bg-chrome-light"
+            aria-label="API documentation"
+            title="API docs"
+          >
+            <Icon.Api width={17} height={17} />
+          </a>
+        )}
         <UserMenu />
       </div>
     </header>
@@ -174,6 +185,29 @@ function Rail() {
             <it.icon />
           </NavLink>
         </Tooltip>
+      ))}
+    </nav>
+  );
+}
+
+/** Phone navigation: the side rail laid out as a touch-friendly bottom tab bar. */
+function BottomNav() {
+  return (
+    <nav className="flex shrink-0 items-stretch border-t border-chrome-border bg-chrome-rail" aria-label="Main">
+      {RAIL.map((it) => (
+        <NavLink
+          key={it.to}
+          to={it.to}
+          aria-label={it.label}
+          className={({ isActive }) =>
+            `flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium transition-colors ${
+              isActive ? "text-accent" : "text-chrome-fg/55 hover:text-chrome-fg"
+            }`
+          }
+        >
+          <it.icon />
+          {it.label}
+        </NavLink>
       ))}
     </nav>
   );

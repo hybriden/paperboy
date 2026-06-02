@@ -4,6 +4,7 @@ import { Panel, PanelGroup } from "react-resizable-panels";
 import { useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
+import { useIsMobile } from "../../lib/useMediaQuery.js";
 import { useUser } from "../../lib/user.js";
 import { AssetPane } from "../AssetPane.js";
 import { Editor } from "../Editor.js";
@@ -19,6 +20,7 @@ export function EditView() {
   const locale = params.get("lang") ?? "en";
   const navigate = useNavigate();
   const { user } = useUser();
+  const isMobile = useIsMobile();
 
   const locales = useQuery({ queryKey: ["locales"], queryFn: ({ signal }) => api.locales(signal) });
   const types = useQuery({ queryKey: ["content-types"], queryFn: ({ signal }) => api.contentTypes(signal) });
@@ -59,6 +61,38 @@ export function EditView() {
       headerActions={<PinButton pinned={assetsPinned} onToggle={toggleAssets} />}
     />
   );
+
+  // Phones can't fit the resizable multi-pane workspace, so show one thing at a
+  // time: the page list (tree) until a document is picked, then the editor with
+  // a back link. No assets pane / no live preview — simple edit-only flow.
+  if (isMobile) {
+    return documentId ? (
+      <div className="flex h-full flex-col">
+        <button
+          onClick={() => navigate("/edit")}
+          className="flex shrink-0 items-center gap-1.5 border-b border-line bg-panel px-3 py-2.5 text-sm font-medium text-accent-700"
+        >
+          <Icon.ChevronDown width={16} height={16} className="rotate-90" />
+          All pages
+        </button>
+        <div className="min-h-0 flex-1">
+          <Editor
+            key={documentId + locale}
+            documentId={documentId}
+            locale={locale}
+            setLocale={setLocale}
+            locales={locales.data ?? []}
+            types={types.data ?? []}
+            user={user}
+            onName={setCrumb}
+            mobile
+          />
+        </div>
+      </div>
+    ) : (
+      <div className="flex h-full flex-col bg-panel">{tree}</div>
+    );
+  }
 
   return (
     // Resizable workspace — drag the dividers to give the editor/preview more room.
