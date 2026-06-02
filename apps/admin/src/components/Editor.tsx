@@ -33,9 +33,11 @@ interface EditorProps {
   onName?: (name: string | null) => void;
   /** When the assets pane is hidden, bias the freed width to the preview (not the form). */
   widePreview?: boolean;
+  /** Phone layout: single full-width column, no live-preview split. */
+  mobile?: boolean;
 }
 
-export function Editor({ documentId, locale, setLocale, locales, types, user, onName, widePreview = false }: EditorProps) {
+export function Editor({ documentId, locale, setLocale, locales, types, user, onName, widePreview = false, mobile = false }: EditorProps) {
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -341,13 +343,52 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
   const groups = type ? [...new Set(type.fields.map((f) => f.group))] : ["Content"];
   const isPage = form.kind === "page";
+  // Live preview is a desktop-only split pane; never open it on phones.
+  const previewOpen = showPreview && !mobile;
   const setField = (name: string, value: unknown) =>
     patch((prev) => ({ ...prev, data: { ...prev.data, [name]: value } }));
+
+  // Tabs + property fields. Shared between the desktop split pane and the
+  // full-width phone column.
+  const formSection = (
+    <section className="h-full overflow-auto">
+      {/* tabs */}
+      <div className="flex gap-1 overflow-x-auto border-b border-line bg-panel px-4" role="tablist" aria-label="Property groups">
+        {groups.map((g) => (
+          <button key={g} role="tab" aria-selected={tab === g}
+            className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium ${tab === g ? "border-accent text-accent-700" : "border-transparent text-muted hover:text-ink"}`}
+            onClick={() => setTab(g)}>
+            {g}
+          </button>
+        ))}
+      </div>
+
+      <div className="mx-auto max-w-3xl space-y-5 p-4 sm:p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
+        {type?.fields
+          .filter((f) => f.group === tab)
+          .map((f) => (
+            <div key={f.name} data-pb-prop={f.name}>
+              <Field
+                field={f}
+                value={form.data[f.name]}
+                disabled={!canEdit}
+                types={types}
+                sharedBlocks={sharedBlocks.data ?? []}
+                onChange={(v) => setField(f.name, v)}
+              />
+            </div>
+          ))}
+        {type && type.fields.filter((f) => f.group === tab).length === 0 && (
+          <p className="text-sm text-muted">No properties in this group.</p>
+        )}
+      </div>
+    </section>
+  );
 
   return (
     <div className="flex h-full flex-col">
       {/* Workflow toolbar */}
-      <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-panel px-4">
+      <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-panel px-4 py-1.5">
         <div className="flex items-center gap-2">
           <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
             form.status === "published" ? "bg-published/10 text-published" : "bg-draft/10 text-draft"
@@ -374,7 +415,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         </label>
 
         <div className="ml-auto flex items-center gap-2">
-          {showAi && (
+          {showAi && !mobile && (
             <Menu>
               <MenuTrigger className="btn-subtle" aria-label="AI assistant" disabled={ai.isPending}>
                 <span aria-hidden>✨</span> {ai.isPending ? "Thinking…" : "AI"}
@@ -403,9 +444,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               )}
             </MenuContent>
           </Menu>
-          <button className={`btn-subtle ${showPreview ? "ring-2 ring-accent" : ""}`} onClick={() => setShowPreview(!showPreview)}>
-            <Icon.Eye width={16} height={16} /> Preview
-          </button>
+          {!mobile && (
+            <button className={`btn-subtle ${showPreview ? "ring-2 ring-accent" : ""}`} onClick={() => setShowPreview(!showPreview)}>
+              <Icon.Eye width={16} height={16} /> Preview
+            </button>
+          )}
           {canPublish && (
             <div className="flex items-stretch">
               <button
@@ -443,7 +486,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       </div>
 
       {/* Basic-info header */}
-      <div className="grid grid-cols-2 gap-x-6 gap-y-2 border-b border-line bg-canvas px-4 py-3 md:grid-cols-4">
+      <div className="grid grid-cols-1 gap-x-6 gap-y-2 border-b border-line bg-canvas px-4 py-3 sm:grid-cols-2 md:grid-cols-4">
         <Meta label="Name">
           <input className="field-input py-1" value={form.name} disabled={!canEdit}
             onChange={(e) => patch((prev) => ({ ...prev, name: e.target.value }))} aria-label="Name" />
@@ -480,50 +523,24 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         </Meta>
       </div>
 
-      {/* Canvas + (optional) preview — resizable split: drag the divider to give
-          the on-page preview more room. */}
-      <PanelGroup direction="horizontal" autoSaveId={`paperboy-editor-split-${widePreview ? "w" : "n"}`} className="flex min-h-0 flex-1">
-        <Panel id="form" order={1} defaultSize={widePreview ? 32 : 42} minSize={24} className="min-w-0">
-          <section className="h-full overflow-auto">
-            {/* tabs */}
-            <div className="flex gap-1 border-b border-line bg-panel px-4" role="tablist" aria-label="Property groups">
-              {groups.map((g) => (
-                <button key={g} role="tab" aria-selected={tab === g}
-                  className={`border-b-2 px-3 py-2.5 text-sm font-medium ${tab === g ? "border-accent text-accent-700" : "border-transparent text-muted hover:text-ink"}`}
-                  onClick={() => setTab(g)}>
-                  {g}
-                </button>
-              ))}
-            </div>
-
-            <div className="mx-auto max-w-3xl space-y-5 p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
-              {type?.fields
-                .filter((f) => f.group === tab)
-                .map((f) => (
-                  <div key={f.name} data-pb-prop={f.name}>
-                    <Field
-                      field={f}
-                      value={form.data[f.name]}
-                      disabled={!canEdit}
-                      types={types}
-                      sharedBlocks={sharedBlocks.data ?? []}
-                      onChange={(v) => setField(f.name, v)}
-                    />
-                  </div>
-                ))}
-              {type && type.fields.filter((f) => f.group === tab).length === 0 && (
-                <p className="text-sm text-muted">No properties in this group.</p>
-              )}
-            </div>
-          </section>
-        </Panel>
-        {showPreview && <ResizeHandle />}
-        {showPreview && (
-          <Panel id="preview" order={2} defaultSize={widePreview ? 68 : 58} minSize={20} className="min-w-0 border-l border-line bg-panel">
-            <PreviewPane locale={locale} urlPath={form.urlPath} documentId={documentId} refreshSignal={previewRefresh} focusField={propFocus} />
+      {/* Canvas + (optional) preview. On phones it's just the full-width form;
+          on desktop a resizable split — drag the divider to give the on-page
+          preview more room. */}
+      {mobile ? (
+        <div className="min-h-0 flex-1">{formSection}</div>
+      ) : (
+        <PanelGroup direction="horizontal" autoSaveId={`paperboy-editor-split-${widePreview ? "w" : "n"}`} className="flex min-h-0 flex-1">
+          <Panel id="form" order={1} defaultSize={widePreview ? 32 : 42} minSize={24} className="min-w-0">
+            {formSection}
           </Panel>
-        )}
-      </PanelGroup>
+          {previewOpen && <ResizeHandle />}
+          {previewOpen && (
+            <Panel id="preview" order={2} defaultSize={widePreview ? 68 : 58} minSize={20} className="min-w-0 border-l border-line bg-panel">
+              <PreviewPane locale={locale} urlPath={form.urlPath} documentId={documentId} refreshSignal={previewRefresh} focusField={propFocus} />
+            </Panel>
+          )}
+        </PanelGroup>
+      )}
 
       {showVersions && (
         <VersionsDialog
