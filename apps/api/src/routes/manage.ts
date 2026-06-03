@@ -44,11 +44,14 @@ import {
   getContent,
   getContentType,
   getTree,
+  getVersion,
   listContentTypes,
   listLocales,
   listVersions,
   moveContent,
   publishContent,
+  schedulePublish,
+  searchContent,
   unpublishContent,
   updateContent,
   updateContentType,
@@ -259,6 +262,38 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       return r;
     },
   );
+  // Scheduled publish: future go-live (publishAt) and/or expiry (expireAt). A
+  // null publishAt only (re)sets/clears expiry and cancels a pending schedule.
+  app.post(
+    "/content/:documentId/schedule",
+    {
+      preHandler: [requireCsrf, requirePermission("content.publish")],
+      schema: {
+        tags: ["manage"],
+        params: DocParams,
+        querystring: LocaleQuery,
+        body: z.object({ publishAt: z.string().datetime().nullable(), expireAt: z.string().datetime().nullable() }),
+        response: { 200: ContentDetail },
+      },
+    },
+    async (req) => {
+      const locale = req.query.locale ?? "en";
+      const r = await schedulePublish(app.db, req.accessCtx!, req.params.documentId, locale, {
+        publishAt: req.body.publishAt ? new Date(req.body.publishAt) : null,
+        expireAt: req.body.expireAt ? new Date(req.body.expireAt) : null,
+      });
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "content.schedule",
+        documentId: req.params.documentId,
+        locale,
+        ip: req.ip,
+        detail: { publishAt: req.body.publishAt, expireAt: req.body.expireAt },
+      });
+      // If it published immediately, schedulePublish fired the webhook itself.
+      return r;
+    },
+  );
   app.post(
     "/content/:documentId/unpublish",
     { preHandler: [requireCsrf, requirePermission("content.publish")], schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: ContentDetail } } },
@@ -361,14 +396,74 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
+  /* ------------------------------- search ------------------------------- */
+  app.get(
+    "/content/search",
+    {
+      preHandler: [requirePermission("content.read")],
+      schema: {
+        tags: ["manage"],
+        querystring: z.object({ q: z.string(), limit: z.coerce.number().optional() }),
+        response: {
+          200: z.array(
+            z.object({
+              documentId: z.string(),
+              type: z.string(),
+              kind: z.enum(["page", "block", "global"]),
+              name: z.string(),
+              locale: z.string(),
+              urlPath: z.string().nullable(),
+            }),
+          ),
+        },
+      },
+    },
+    async (req) => searchContent(app.db, req.accessCtx!, req.query.q, { limit: req.query.limit }),
+  );
+
   /* ------------------------------ versions ------------------------------ */
   app.get(
     "/content/:documentId/versions",
-    { schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: z.array(z.object({ id: z.number(), versionNumber: z.number(), status: z.string(), isCurrentPublished: z.boolean(), name: z.string(), createdAt: z.string(), createdBy: z.string().nullable() })) } } },
+    { schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: z.array(z.object({ id: z.number(), versionNumber: z.number(), status: z.string(), isCurrentPublished: z.boolean(), name: z.string(), createdAt: z.string(), createdBy: z.string().nullable(), publishAt: z.string().nullable(), expireAt: z.string().nullable() })) } } },
     async (req) => {
       const locale = req.query.locale ?? "en";
       const rows = await listVersions(app.db, req.accessCtx!, req.params.documentId, locale);
-      return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+      return rows.map((r) => ({
+        ...r,
+        createdAt: r.createdAt.toISOString(),
+        publishAt: r.publishAt ? r.publishAt.toISOString() : null,
+        expireAt: r.expireAt ? r.expireAt.toISOString() : null,
+      }));
+    },
+  );
+
+  // Full payload of one version — powers the compare/diff view.
+  app.get(
+    "/content/:documentId/versions/:versionId",
+    {
+      schema: {
+        tags: ["manage"],
+        params: z.object({ documentId: z.string(), versionId: z.coerce.number() }),
+        querystring: LocaleQuery,
+        response: {
+          200: z.object({
+            id: z.number(),
+            versionNumber: z.number(),
+            status: z.enum(["draft", "published"]),
+            isCurrentPublished: z.boolean(),
+            name: z.string(),
+            slug: z.string().nullable(),
+            displayInNav: z.boolean(),
+            data: z.record(z.unknown()),
+            createdAt: z.string(),
+            createdBy: z.string().nullable(),
+          }),
+        },
+      },
+    },
+    async (req) => {
+      const locale = req.query.locale ?? "en";
+      return getVersion(app.db, req.accessCtx!, req.params.documentId, locale, req.params.versionId);
     },
   );
 

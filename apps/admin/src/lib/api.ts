@@ -54,6 +54,28 @@ export interface TrashRow {
   name: string;
   deletedAt: string;
 }
+/** Full payload of one version — for the compare/diff view. */
+export interface VersionDetail {
+  id: number;
+  versionNumber: number;
+  status: "draft" | "published";
+  isCurrentPublished: boolean;
+  name: string;
+  slug: string | null;
+  displayInNav: boolean;
+  data: Record<string, unknown>;
+  createdAt: string;
+  createdBy: string | null;
+}
+/** A content search hit (⌘K). */
+export interface SearchResult {
+  documentId: string;
+  type: string;
+  kind: "page" | "block" | "global";
+  name: string;
+  locale: string;
+  urlPath: string | null;
+}
 
 const BASE = "/api/v1";
 
@@ -159,6 +181,8 @@ export const api = {
   tree: (parentId?: string, signal?: AbortSignal) =>
     request<TreeNode[]>("GET", `/manage/content/tree${parentId ? `?parentId=${parentId}` : ""}`, undefined, signal),
   blocks: (signal?: AbortSignal) => request<BlockSummary[]>("GET", "/manage/blocks", undefined, signal),
+  search: (q: string, signal?: AbortSignal) =>
+    request<SearchResult[]>("GET", `/manage/content/search?q=${encodeURIComponent(q)}`, undefined, signal),
   pages: (signal?: AbortSignal) =>
     request<{ documentId: string; name: string; parentId: string | null }[]>("GET", "/manage/pages", undefined, signal),
 
@@ -189,8 +213,10 @@ export const api = {
     request<ContentDetail>("GET", `/manage/content/${documentId}?locale=${locale}`, undefined, signal),
   versions: (documentId: string, locale: string, signal?: AbortSignal) =>
     request<
-      Array<{ id: number; versionNumber: number; status: string; isCurrentPublished: boolean; name: string; createdAt: string; createdBy: string | null }>
+      Array<{ id: number; versionNumber: number; status: string; isCurrentPublished: boolean; name: string; createdAt: string; createdBy: string | null; publishAt: string | null; expireAt: string | null }>
     >("GET", `/manage/content/${documentId}/versions?locale=${locale}`, undefined, signal),
+  version: (documentId: string, locale: string, versionId: number, signal?: AbortSignal) =>
+    request<VersionDetail>("GET", `/manage/content/${documentId}/versions/${versionId}?locale=${locale}`, undefined, signal),
   create: (body: { type: string; parentId: string | null; locale: string; name: string }) =>
     request<ContentDetail>("POST", "/manage/content", body),
   update: (
@@ -200,6 +226,8 @@ export const api = {
   ) => request<ContentDetail>("PUT", `/manage/content/${documentId}?locale=${locale}`, body),
   publish: (documentId: string, locale: string) =>
     request<ContentDetail>("POST", `/manage/content/${documentId}/publish?locale=${locale}`),
+  schedule: (documentId: string, locale: string, body: { publishAt: string | null; expireAt: string | null }) =>
+    request<ContentDetail>("POST", `/manage/content/${documentId}/schedule?locale=${locale}`, body),
   unpublish: (documentId: string, locale: string) =>
     request<ContentDetail>("POST", `/manage/content/${documentId}/unpublish?locale=${locale}`),
   discardDraft: (documentId: string, locale: string) =>

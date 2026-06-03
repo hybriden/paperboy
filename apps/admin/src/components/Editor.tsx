@@ -10,7 +10,7 @@ import type {
 } from "@paperboy/shared";
 import { Panel, PanelGroup } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
-import { api, ApiError, type AiTask } from "../lib/api.js";
+import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
 import { ContentArea } from "./fields/ContentArea.js";
@@ -42,6 +42,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const toast = useToast();
   const navigate = useNavigate();
   const [showVersions, setShowVersions] = useState(false);
+  const [showSchedule, setShowSchedule] = useState(false);
   const detail = useQuery({
     queryKey: ["content", documentId, locale],
     queryFn: ({ signal }) => api.get(documentId, locale, signal),
@@ -466,17 +467,18 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                   <Icon.ChevronDown width={15} height={15} />
                 </MenuTrigger>
                 <MenuContent>
+                  <MenuItem onSelect={() => setShowSchedule(true)}>Schedule publish…</MenuItem>
                   {form.status === "published" && (
-                    <MenuItem onSelect={() => unpublish.mutate()}>Unpublish</MenuItem>
+                    <>
+                      <MenuSeparator />
+                      <MenuItem onSelect={() => unpublish.mutate()}>Unpublish</MenuItem>
+                    </>
                   )}
                   {form.hasUnpublishedChanges && (
                     <>
-                      {form.status === "published" && <MenuSeparator />}
+                      {form.status !== "published" && <MenuSeparator />}
                       <MenuItem destructive onSelect={() => discard.mutate()}>Discard draft changes</MenuItem>
                     </>
-                  )}
-                  {form.status !== "published" && !form.hasUnpublishedChanges && (
-                    <MenuItem disabled>No actions available</MenuItem>
                   )}
                 </MenuContent>
               </Menu>
@@ -484,6 +486,25 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           )}
         </div>
       </div>
+
+      {/* Scheduled publish / expiry banner */}
+      {(form.publishAt || form.expireAt) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-line bg-accent/5 px-4 py-1.5 text-xs">
+          {form.publishAt && (
+            <span className="inline-flex items-center gap-1.5 font-medium text-accent-700">
+              <Icon.History width={13} height={13} /> Scheduled to publish {new Date(form.publishAt).toLocaleString()}
+            </span>
+          )}
+          {form.expireAt && (
+            <span className="inline-flex items-center gap-1.5 text-muted">
+              Expires {new Date(form.expireAt).toLocaleString()}
+            </span>
+          )}
+          {canPublish && (
+            <button className="ml-auto btn-subtle px-2 py-0.5 text-xs" onClick={() => setShowSchedule(true)}>Edit schedule…</button>
+          )}
+        </div>
+      )}
 
       {/* Basic-info header */}
       <div className="grid grid-cols-1 gap-x-6 gap-y-2 border-b border-line bg-canvas px-4 py-3 sm:grid-cols-2 md:grid-cols-4">
@@ -546,6 +567,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         <VersionsDialog
           documentId={documentId}
           locale={locale}
+          type={type}
           canRestore={canEdit}
           open={showVersions}
           onOpenChange={setShowVersions}
@@ -559,6 +581,25 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           }}
         />
       )}
+
+      {showSchedule && (
+        <ScheduleDialog
+          documentId={documentId}
+          locale={locale}
+          publishAt={form.publishAt}
+          expireAt={form.expireAt}
+          open={showSchedule}
+          onOpenChange={setShowSchedule}
+          onDone={(updated) => {
+            setForm(updated);
+            formRef.current = updated;
+            setSaveState("idle");
+            qc.setQueryData(["content", documentId, locale], updated);
+            qc.invalidateQueries({ queryKey: ["tree", "root"] });
+            qc.invalidateQueries({ queryKey: ["versions", documentId, locale] });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -566,6 +607,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 function VersionsDialog({
   documentId,
   locale,
+  type,
   canRestore,
   open,
   onOpenChange,
@@ -573,6 +615,7 @@ function VersionsDialog({
 }: {
   documentId: string;
   locale: string;
+  type: ContentTypeDef | undefined;
   canRestore: boolean;
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -593,30 +636,238 @@ function VersionsDialog({
     onError: (e) => toast.error("Couldn’t restore", (e as Error).message),
   });
   const rows = versions.data ?? [];
+
+  // A↔B selection for the compare view. Default to the two most recent versions
+  // (rows are sorted newest-first): A = older of the two, B = newest.
+  const [selA, setSelA] = useState<number | null>(null);
+  const [selB, setSelB] = useState<number | null>(null);
+  const [comparing, setComparing] = useState(false);
+  useEffect(() => {
+    if (rows.length >= 2 && selA == null && selB == null) {
+      setSelB(rows[0]!.id);
+      setSelA(rows[1]!.id);
+    }
+  }, [rows, selA, selB]);
+  const canCompare = selA != null && selB != null && selA !== selB;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="Version history" description={`All saved versions for this content in ${locale.toUpperCase()}.`} className="w-[min(620px,94vw)]">
-        {versions.isLoading && <p className="py-6 text-center text-sm text-muted">Loading…</p>}
-        {!versions.isLoading && rows.length === 0 && <p className="py-6 text-center text-sm text-muted">No versions yet.</p>}
-        <ul className="max-h-[60vh] space-y-1 overflow-auto">
-          {rows.map((v) => (
-            <li key={v.id} className="flex items-center gap-3 rounded border border-line px-3 py-2 text-sm">
-              <span className="font-mono text-xs text-muted">v{v.versionNumber}</span>
-              <span className="font-medium text-fg">{v.name}</span>
-              <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${v.isCurrentPublished ? "bg-published/10 text-published" : v.status === "draft" ? "bg-draft/10 text-draft" : "bg-line text-muted"}`}>
-                {v.isCurrentPublished ? "live" : v.status}
-              </span>
-              <span className="ml-auto text-xs text-muted">{new Date(v.createdAt).toLocaleString()}</span>
-              {canRestore && !v.isCurrentPublished && (
-                <button className="btn-subtle px-2 py-0.5 text-xs" disabled={restore.isPending} onClick={() => restore.mutate(v.id)}>
-                  <Icon.History width={13} height={13} /> Restore
+      <DialogContent
+        title={comparing ? "Compare versions" : "Version history"}
+        description={comparing ? `Differences in ${locale.toUpperCase()}.` : `All saved versions for this content in ${locale.toUpperCase()}.`}
+        className="w-[min(820px,96vw)]"
+      >
+        {comparing && canCompare ? (
+          <CompareView
+            documentId={documentId}
+            locale={locale}
+            type={type}
+            aId={selA!}
+            bId={selB!}
+            onBack={() => setComparing(false)}
+          />
+        ) : (
+          <>
+            {versions.isLoading && <p className="py-6 text-center text-sm text-muted">Loading…</p>}
+            {!versions.isLoading && rows.length === 0 && <p className="py-6 text-center text-sm text-muted">No versions yet.</p>}
+            {rows.length >= 2 && (
+              <div className="mb-2 flex items-center justify-between gap-3 text-xs text-muted">
+                <span>Pick two versions (A = older, B = newer) to compare.</span>
+                <button className="btn-primary px-2.5 py-1 text-xs" disabled={!canCompare} onClick={() => setComparing(true)}>
+                  <Icon.History width={13} height={13} /> Compare A ↔ B
                 </button>
-              )}
-            </li>
-          ))}
-        </ul>
+              </div>
+            )}
+            <ul className="max-h-[60vh] space-y-1 overflow-auto">
+              {rows.map((v) => (
+                <li key={v.id} className="flex items-center gap-3 rounded border border-line px-3 py-2 text-sm">
+                  {rows.length >= 2 && (
+                    <span className="flex items-center gap-1.5" aria-label={`Select version ${v.versionNumber} for comparison`}>
+                      <label className="flex items-center gap-0.5 text-[10px] font-semibold text-muted">
+                        <input type="radio" name="cmp-a" checked={selA === v.id} onChange={() => setSelA(v.id)} disabled={selB === v.id} /> A
+                      </label>
+                      <label className="flex items-center gap-0.5 text-[10px] font-semibold text-muted">
+                        <input type="radio" name="cmp-b" checked={selB === v.id} onChange={() => setSelB(v.id)} disabled={selA === v.id} /> B
+                      </label>
+                    </span>
+                  )}
+                  <span className="font-mono text-xs text-muted">v{v.versionNumber}</span>
+                  <span className="font-medium text-fg">{v.name}</span>
+                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${v.isCurrentPublished ? "bg-published/10 text-published" : v.status === "draft" ? "bg-draft/10 text-draft" : "bg-line text-muted"}`}>
+                    {v.isCurrentPublished ? "live" : v.status}
+                  </span>
+                  <span className="ml-auto text-xs text-muted">{new Date(v.createdAt).toLocaleString()}</span>
+                  {canRestore && !v.isCurrentPublished && (
+                    <button className="btn-subtle px-2 py-0.5 text-xs" disabled={restore.isPending} onClick={() => restore.mutate(v.id)}>
+                      <Icon.History width={13} height={13} /> Restore
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** ISO (UTC) ↔ datetime-local input value (local time) conversions. */
+function toLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function fromLocalInput(v: string): string | null {
+  if (!v) return null;
+  return new Date(v).toISOString(); // browser parses datetime-local as local time
+}
+
+function ScheduleDialog({
+  documentId,
+  locale,
+  publishAt,
+  expireAt,
+  open,
+  onOpenChange,
+  onDone,
+}: {
+  documentId: string;
+  locale: string;
+  publishAt: string | null;
+  expireAt: string | null;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onDone: (updated: ContentDetail) => void;
+}) {
+  const toast = useToast();
+  const [pub, setPub] = useState(() => toLocalInput(publishAt));
+  const [exp, setExp] = useState(() => toLocalInput(expireAt));
+
+  const save = useMutation({
+    mutationFn: (body: { publishAt: string | null; expireAt: string | null }) => api.schedule(documentId, locale, body),
+    onSuccess: (updated) => {
+      toast.success(
+        updated.publishAt ? "Publish scheduled" : updated.status === "published" ? "Published" : "Schedule updated",
+        updated.publishAt
+          ? `Goes live ${new Date(updated.publishAt).toLocaleString()}.`
+          : updated.expireAt
+            ? `Expires ${new Date(updated.expireAt).toLocaleString()}.`
+            : "Schedule cleared.",
+      );
+      onDone(updated);
+      onOpenChange(false);
+    },
+    onError: (e) => toast.error("Couldn’t update schedule", (e as Error).message),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent title="Schedule publish" description={`Timed go-live and expiry for ${locale.toUpperCase()}.`} className="w-[min(480px,94vw)]">
+        <div className="space-y-4">
+          <div>
+            <label className="field-label" htmlFor="sched-pub">Publish at</label>
+            <input id="sched-pub" type="datetime-local" className="field-input" value={pub} onChange={(e) => setPub(e.target.value)} />
+            <p className="mt-1 text-xs text-muted">A future time schedules the current draft to go live automatically. Empty/past publishes now.</p>
+          </div>
+          <div>
+            <label className="field-label" htmlFor="sched-exp">Expire (unpublish) at</label>
+            <input id="sched-exp" type="datetime-local" className="field-input" value={exp} onChange={(e) => setExp(e.target.value)} />
+            <p className="mt-1 text-xs text-muted">After this time the content is removed from the public delivery API.</p>
+          </div>
+          <div className="flex items-center justify-between gap-2 pt-1">
+            <button
+              className="btn-subtle text-xs"
+              disabled={save.isPending || (!publishAt && !expireAt && !pub && !exp)}
+              onClick={() => save.mutate({ publishAt: null, expireAt: null })}
+            >
+              Clear schedule
+            </button>
+            <div className="flex gap-2">
+              <button className="btn-subtle" onClick={() => onOpenChange(false)}>Cancel</button>
+              <button
+                className="btn-primary"
+                disabled={save.isPending}
+                onClick={() => save.mutate({ publishAt: fromLocalInput(pub), expireAt: fromLocalInput(exp) })}
+              >
+                {save.isPending ? "Saving…" : "Save schedule"}
+              </button>
+            </div>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Field-by-field diff of two versions. Text-like fields get an inline word-diff. */
+function CompareView({
+  documentId,
+  locale,
+  type,
+  aId,
+  bId,
+  onBack,
+}: {
+  documentId: string;
+  locale: string;
+  type: ContentTypeDef | undefined;
+  aId: number;
+  bId: number;
+  onBack: () => void;
+}) {
+  const [showUnchanged, setShowUnchanged] = useState(false);
+  const a = useQuery({ queryKey: ["version", documentId, locale, aId], queryFn: ({ signal }) => api.version(documentId, locale, aId, signal) });
+  const b = useQuery({ queryKey: ["version", documentId, locale, bId], queryFn: ({ signal }) => api.version(documentId, locale, bId, signal) });
+
+  if (a.isLoading || b.isLoading || !a.data || !b.data) {
+    return <p className="py-6 text-center text-sm text-muted">Loading versions…</p>;
+  }
+  const fields = diffFields(type, a.data, b.data);
+  const changed = fields.filter((f) => f.changed);
+  const shown = showUnchanged ? fields : changed;
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+        <button className="btn-subtle px-2 py-1 text-xs" onClick={onBack}>← Back to list</button>
+        <span className="text-muted">
+          <span className="font-mono text-danger">A v{a.data.versionNumber}</span> →{" "}
+          <span className="font-mono text-published">B v{b.data.versionNumber}</span> · {changed.length} changed field{changed.length === 1 ? "" : "s"}
+        </span>
+        <label className="flex items-center gap-1.5 text-muted">
+          <input type="checkbox" checked={showUnchanged} onChange={(e) => setShowUnchanged(e.target.checked)} /> Show unchanged
+        </label>
+      </div>
+      {shown.length === 0 && <p className="py-6 text-center text-sm text-muted">No differences between these versions.</p>}
+      <div className="max-h-[60vh] space-y-3 overflow-auto pr-1">
+        {shown.map((f) => (
+          <div key={f.key} className={`rounded border px-3 py-2 ${f.changed ? "border-line" : "border-line/50 opacity-70"}`}>
+            <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+              {f.label}
+              {!f.changed && <span className="rounded bg-line px-1 text-[10px] normal-case text-muted">unchanged</span>}
+            </div>
+            {f.changed ? (
+              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg">
+                {wordDiff(f.aText, f.bText).map((s, i) =>
+                  s.t === "eq" ? (
+                    <span key={i}>{s.s}</span>
+                  ) : s.t === "del" ? (
+                    <del key={i} className="bg-danger/15 text-danger line-through decoration-1">{s.s}</del>
+                  ) : (
+                    <ins key={i} className="bg-published/15 text-published no-underline">{s.s}</ins>
+                  ),
+                )}
+                {f.aText === "" && f.bText === "" && <span className="text-muted">(structural change)</span>}
+              </p>
+            ) : (
+              <p className="whitespace-pre-wrap break-words text-sm text-muted">{f.bText || <span className="italic">empty</span>}</p>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -627,6 +878,109 @@ function docToText(doc: unknown): string {
   let s = node.text ?? "";
   for (const c of node.content ?? []) s += ` ${docToText(c)}`;
   return s.replace(/\s+/g, " ").trim();
+}
+
+/* ----------------------------- version diff ------------------------------- */
+
+interface FieldDiff {
+  key: string;
+  label: string;
+  aText: string;
+  bText: string;
+  changed: boolean;
+}
+
+function diffEmpty(x: unknown): boolean {
+  return x == null || x === "";
+}
+function diffDeepEq(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (diffEmpty(a) && diffEmpty(b)) return true;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
+/** Render any field value as comparable plain text (uniform word-diff input). */
+function diffTextOf(fieldType: string, value: unknown): string {
+  if (value == null) return "";
+  switch (fieldType) {
+    case "richtext":
+      return docToText(value);
+    case "boolean":
+      return value ? "Yes" : "No";
+    case "link": {
+      const v = value as { href?: string; text?: string };
+      return [v.text, v.href].filter(Boolean).join(" — ");
+    }
+    case "reference": {
+      const v = value as { documentId?: string; type?: string };
+      return v.documentId ? `${v.type ?? "ref"}:${v.documentId}` : "";
+    }
+    case "contentArea": {
+      if (!Array.isArray(value)) return "";
+      const blocks = value as Array<{ blockType?: string }>;
+      const types = blocks.map((bl) => bl.blockType ?? "block").join(", ");
+      return blocks.length ? `${types} (${blocks.length} block${blocks.length === 1 ? "" : "s"})` : "";
+    }
+    case "select":
+      return Array.isArray(value) ? (value as string[]).join(", ") : String(value);
+    default:
+      return typeof value === "string" ? value : JSON.stringify(value);
+  }
+}
+
+function diffFields(type: ContentTypeDef | undefined, a: VersionDetail, b: VersionDetail): FieldDiff[] {
+  const out: FieldDiff[] = [];
+  const meta: Array<{ key: string; label: string; av: unknown; bv: unknown; ft: string }> = [
+    { key: "__name", label: "Name", av: a.name, bv: b.name, ft: "text" },
+    { key: "__slug", label: "URL segment", av: a.slug ?? "", bv: b.slug ?? "", ft: "text" },
+    { key: "__nav", label: "Show in navigation", av: a.displayInNav, bv: b.displayInNav, ft: "boolean" },
+  ];
+  for (const m of meta) {
+    out.push({ key: m.key, label: m.label, aText: diffTextOf(m.ft, m.av), bText: diffTextOf(m.ft, m.bv), changed: !diffDeepEq(m.av, m.bv) });
+  }
+  for (const f of type?.fields ?? []) {
+    const av = a.data[f.name];
+    const bv = b.data[f.name];
+    out.push({ key: f.name, label: f.displayName, aText: diffTextOf(f.type, av), bText: diffTextOf(f.type, bv), changed: !diffDeepEq(av, bv) });
+  }
+  return out;
+}
+
+/** Word-level LCS diff (whitespace kept as tokens). Field text is small/bounded. */
+function wordDiff(aText: string, bText: string): Array<{ t: "eq" | "del" | "ins"; s: string }> {
+  const a = aText ? aText.split(/(\s+)/) : [];
+  const b = bText ? bText.split(/(\s+)/) : [];
+  const n = a.length;
+  const m = b.length;
+  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  for (let i = n - 1; i >= 0; i--) {
+    for (let j = m - 1; j >= 0; j--) {
+      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
+    }
+  }
+  const out: Array<{ t: "eq" | "del" | "ins"; s: string }> = [];
+  let i = 0;
+  let j = 0;
+  while (i < n && j < m) {
+    if (a[i] === b[j]) {
+      out.push({ t: "eq", s: a[i]! });
+      i++;
+      j++;
+    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
+      out.push({ t: "del", s: a[i]! });
+      i++;
+    } else {
+      out.push({ t: "ins", s: b[j]! });
+      j++;
+    }
+  }
+  while (i < n) out.push({ t: "del", s: a[i++]! });
+  while (j < m) out.push({ t: "ins", s: b[j++]! });
+  return out;
 }
 
 function Meta({ label, children }: { label: string; children: React.ReactNode }) {

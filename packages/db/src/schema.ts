@@ -76,6 +76,9 @@ export const contentVersion = pgTable(
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     comment: text("comment"),
+    // Scheduled publish: timed go-live (publish_at, on a draft) + expiry (expire_at).
+    publishAt: timestamp("publish_at", { withTimezone: true }),
+    expireAt: timestamp("expire_at", { withTimezone: true }),
   },
   (t) => ({
     docLocaleIdx: index("content_version_doc_locale_idx").on(t.documentId, t.locale),

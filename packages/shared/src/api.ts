@@ -51,6 +51,9 @@ export const ContentDetail = z.object({
   urlPath: z.string().nullable(),
   displayInNav: z.boolean(),
   data: z.record(z.unknown()),
+  /** Scheduled go-live (on a pending draft) / expiry — ISO strings, null when unset. */
+  publishAt: z.string().nullable(),
+  expireAt: z.string().nullable(),
   updatedAt: z.string(),
   updatedBy: z.string().nullable(),
 });
