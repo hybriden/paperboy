@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { Panel, PanelGroup } from "react-resizable-panels";
 import { useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api.js";
@@ -24,8 +24,18 @@ export function EditView() {
 
   const locales = useQuery({ queryKey: ["locales"], queryFn: ({ signal }) => api.locales(signal) });
   const types = useQuery({ queryKey: ["content-types"], queryFn: ({ signal }) => api.contentTypes(signal) });
+  const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
   const canCreate = user.permissions.includes("content.create");
   const canDelete = user.permissions.includes("content.delete");
+
+  // Opening Edit with nothing selected defaults to the configured start page ("/")
+  // on desktop, so the editor isn't empty. Mobile keeps its list-first flow.
+  // Falls back to the Welcome screen when no start page is configured.
+  useEffect(() => {
+    if (documentId || isMobile) return;
+    const startId = site.data?.startPageId;
+    if (startId) navigate(`/edit/${startId}${locale !== "en" ? `?lang=${locale}` : ""}`, { replace: true });
+  }, [documentId, isMobile, site.data?.startPageId, locale, navigate]);
 
   const setLocale = useCallback(
     (l: string) => {
@@ -131,6 +141,9 @@ export function EditView() {
               onName={setCrumb}
               widePreview={!assetsPinned}
             />
+          ) : site.isLoading || site.data?.startPageId ? (
+            // Resolving / about to redirect to the start page — no Welcome flash.
+            <div className="grid h-full place-items-center text-muted">Loading…</div>
           ) : (
             <Welcome onClearCrumb={() => setCrumb(null)} />
           )}
