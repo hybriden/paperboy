@@ -291,6 +291,8 @@ export const api = {
   aiStatus: (signal?: AbortSignal) => request<{ enabled: boolean; tasks: string[] }>("GET", "/ai/status", undefined, signal),
   aiAssist: (task: AiTask, input: string, targetLocale?: string) =>
     request<{ result: string; provider: "anthropic" | "fallback" }>("POST", "/ai/assist", { task, input, targetLocale }),
+  aiTranslate: (texts: string[], targetLocale: string) =>
+    request<{ results: string[]; provider: "anthropic" | "fallback" }>("POST", "/ai/translate", { texts, targetLocale }),
 };
 
 export type AiTask = "meta_title" | "meta_description" | "summarize" | "improve" | "alt_text" | "translate";

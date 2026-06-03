@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
-import { AI_TASKS, aiAssist } from "@paperboy/shared";
+import { AI_TASKS, aiAssist, aiTranslateBatch } from "@paperboy/shared";
 import { getStoredAiKey, getStoredAiModel } from "@paperboy/db";
 import { requireAuth, requireCsrf, requirePermission } from "../security.js";
 
@@ -45,5 +45,24 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
       },
     },
     async (req) => aiAssist(req.body, await resolveAiConfig()),
+  );
+
+  // Batch translation — a whole page's text fields in ONE request (instead of one
+  // /assist call per field, which trips the rate limit on large pages).
+  app.post(
+    "/translate",
+    {
+      preHandler: [requireCsrf, requirePermission("content.update")],
+      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+      schema: {
+        tags: ["ai"],
+        body: z.object({
+          texts: z.array(z.string().max(20_000)).max(100),
+          targetLocale: z.string().min(1).max(40),
+        }),
+        response: { 200: z.object({ results: z.array(z.string()), provider: z.enum(["anthropic", "fallback"]) }) },
+      },
+    },
+    async (req) => aiTranslateBatch(req.body.texts, req.body.targetLocale, await resolveAiConfig()),
   );
 }
