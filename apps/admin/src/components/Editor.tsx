@@ -43,6 +43,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const navigate = useNavigate();
   const [showVersions, setShowVersions] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
+  const [hideTranslateOffer, setHideTranslateOffer] = useState(false);
   const detail = useQuery({
     queryKey: ["content", documentId, locale],
     queryFn: ({ signal }) => api.get(documentId, locale, signal),
@@ -126,6 +127,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       setForm(detail.data);
       formRef.current = detail.data;
       setSaveState("idle");
+      setHideTranslateOffer(false);
     }
   }, [detail.data, variantKey]);
 
@@ -136,6 +138,18 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
   const canEdit = user.permissions.includes("content.update");
   const canPublish = user.permissions.includes("content.publish");
+
+  // Untranslated variant: this locale has no saved version yet (the server returns
+  // a blank scaffold with versionNumber 0). If the default locale HAS content, we
+  // offer to seed this translation from it (AI-translating the text fields).
+  const defaultLocale = useMemo(() => locales.find((l) => l.isDefault)?.code ?? "en", [locales]);
+  const untranslated = !!detail.data && detail.data.versionNumber === 0 && locale !== defaultLocale;
+  const source = useQuery({
+    queryKey: ["content", documentId, defaultLocale],
+    queryFn: ({ signal }) => api.get(documentId, defaultLocale, signal),
+    enabled: untranslated,
+  });
+  const canTranslate = untranslated && (source.data?.versionNumber ?? 0) > 0;
 
   const save = useMutation({
     mutationFn: (f: ContentDetail) =>
@@ -291,6 +305,48 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     if (hasField("metaDescription")) await ai.mutateAsync({ task: "meta_description", field: "metaDescription" });
   }
   const showAi = canEdit && (hasField("metaTitle") || hasField("metaDescription"));
+
+  // Seed this locale from the default-locale version, AI-translating the text
+  // fields (text/markdown) + name; other fields (richtext, blocks, references…)
+  // are copied as a starting point. Falls back to copying when AI is offline.
+  const translate = useMutation({
+    mutationFn: async () => {
+      const src = source.data;
+      if (!src) throw new Error("No source content to translate from");
+      let usedFallback = false;
+      const tr = async (text: string): Promise<string> => {
+        const r = await api.aiAssist("translate", text, locale);
+        if (r.provider === "fallback") usedFallback = true;
+        return r.result;
+      };
+      const data: Record<string, unknown> = {};
+      for (const f of type?.fields ?? []) {
+        const v = src.data[f.name];
+        if (v === undefined) continue;
+        data[f.name] = (f.type === "text" || f.type === "markdown") && typeof v === "string" && v.trim() ? await tr(v) : v;
+      }
+      const name = src.name?.trim() ? await tr(src.name) : src.name;
+      return { name, slug: src.slug, data, usedFallback };
+    },
+    onSuccess: (res) => {
+      const base = formRef.current ?? form;
+      if (!base) return;
+      const next = { ...base, name: res.name, slug: res.slug, data: res.data };
+      setForm(next);
+      formRef.current = next;
+      pendingRef.current = null;
+      setSaveState("saving");
+      save.mutate(next);
+      setHideTranslateOffer(true);
+      toast.success(
+        res.usedFallback ? "Draft seeded from source" : "Translated draft created",
+        res.usedFallback
+          ? "AI is offline — text was copied for manual translation. Review and publish."
+          : "Review the AI translation, then publish.",
+      );
+    },
+    onError: (e) => toast.error("Couldn’t translate", (e as Error).message),
+  });
 
   // Visual on-page editing: the preview iframe posts which field/block was
   // clicked → switch to its tab and scroll/focus it here.
@@ -486,6 +542,28 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           )}
         </div>
       </div>
+
+      {/* Untranslated-locale → offer an AI translation seeded from the default locale */}
+      {untranslated && canTranslate && !hideTranslateOffer && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-accent/10 px-4 py-2 text-sm">
+          <span className="text-fg">
+            Not translated to <strong>{locales.find((l) => l.code === locale)?.displayName ?? locale}</strong> yet.
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            {canEdit && (
+              <button className="btn-primary px-3 py-1 text-xs" disabled={translate.isPending} onClick={() => translate.mutate()}>
+                <span aria-hidden>✨</span>{" "}
+                {translate.isPending
+                  ? "Translating…"
+                  : `Translate from ${locales.find((l) => l.code === defaultLocale)?.displayName ?? defaultLocale}`}
+              </button>
+            )}
+            <button className="btn-subtle px-3 py-1 text-xs" onClick={() => setHideTranslateOffer(true)}>
+              Start blank
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Scheduled publish / expiry banner */}
       {(form.publishAt || form.expireAt) && (
