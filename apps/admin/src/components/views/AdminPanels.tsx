@@ -275,6 +275,89 @@ export function SitePanel() {
   );
 }
 
+/* ----------------------------- AI assistant ------------------------------- */
+export function AiPanel() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const cfg = useQuery({ queryKey: ["ai-config"], queryFn: ({ signal }) => api.aiConfig(signal) });
+  const [keyInput, setKeyInput] = useState("");
+  const [model, setModel] = useState<string | null>(null);
+  const status = cfg.data;
+  const modelValue = model ?? status?.model ?? "";
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAiConfig({
+        apiKey: keyInput.trim() ? keyInput.trim() : undefined, // blank = keep current
+        model: model !== null ? model.trim() || null : undefined, // untouched = unchanged
+      }),
+    onSuccess: (s) => {
+      qc.setQueryData(["ai-config"], s);
+      setKeyInput("");
+      setModel(null);
+      toast.success("AI settings saved", s.configured ? "The assistant is enabled." : "No key set — AI runs in basic mode.");
+    },
+    onError: (e) => toast.error("Couldn’t save", (e as Error).message),
+  });
+  const clearKey = useMutation({
+    mutationFn: () => api.setAiConfig({ apiKey: null }),
+    onSuccess: (s) => {
+      qc.setQueryData(["ai-config"], s);
+      toast.success("Key cleared", s.source === "env" ? "Falling back to the environment key." : "AI now runs in basic mode.");
+    },
+    onError: (e) => toast.error("Couldn’t clear", (e as Error).message),
+  });
+  const test = useMutation({
+    mutationFn: () => api.aiStatus(),
+    onSuccess: (s) =>
+      s.enabled
+        ? toast.success("AI is live", "A provider key is configured.")
+        : toast.error("AI is offline", "No key configured — add one above."),
+    onError: (e) => toast.error("Couldn’t check", (e as Error).message),
+  });
+
+  const statusText =
+    status?.source === "db"
+      ? `Key configured in the CMS (ending ••${status.last4})`
+      : status?.source === "env"
+        ? `Using the ANTHROPIC_API_KEY environment value (ending ••${status.last4})`
+        : "No key configured — the assistant runs in basic (offline) mode.";
+
+  return (
+    <PanelShell title="AI assistant" hint="Connect an Anthropic API key so the editor’s ✨ AI features (SEO text, summaries, translation) use Claude. The key is stored encrypted and never shown again; it overrides the server environment value.">
+      <div className="space-y-4 p-4">
+        <div className="flex items-center gap-2 text-sm">
+          <span className={`h-2 w-2 rounded-full ${status?.configured ? "bg-published" : "bg-draft"}`} />
+          <span className="text-muted">{statusText}</span>
+        </div>
+        <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+          <label className="grow text-sm" style={{ minWidth: 320 }}>
+            <span className="field-label">Anthropic API key</span>
+            <input
+              className="field-input"
+              type="password"
+              autoComplete="off"
+              placeholder={status?.configured ? "•••••••• (leave blank to keep)" : "sk-ant-…"}
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+            />
+            <span className="mt-1 block text-xs text-muted">Stored encrypted at rest. Leave blank to keep the current key.</span>
+          </label>
+          <label className="text-sm" style={{ minWidth: 220 }}>
+            <span className="field-label">Model</span>
+            <input className="field-input" placeholder="claude-haiku-4-5-20251001" value={modelValue} onChange={(e) => setModel(e.target.value)} />
+          </label>
+          <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
+          <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>Test</button>
+          {status?.source === "db" && (
+            <button type="button" className="btn-subtle" disabled={clearKey.isPending} onClick={() => clearKey.mutate()}>Clear key</button>
+          )}
+        </form>
+      </div>
+    </PanelShell>
+  );
+}
+
 export function PasswordPanel() {
   const toast = useToast();
   const [oldPassword, setOld] = useState("");

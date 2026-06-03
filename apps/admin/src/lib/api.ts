@@ -67,6 +67,13 @@ export interface VersionDetail {
   createdAt: string;
   createdBy: string | null;
 }
+/** Write-only AI provider config status (the key itself is never returned). */
+export interface AiConfigStatus {
+  configured: boolean;
+  source: "db" | "env" | "none";
+  last4: string | null;
+  model: string | null;
+}
 /** A content search hit (⌘K). */
 export interface SearchResult {
   documentId: string;
@@ -192,6 +199,10 @@ export const api = {
     request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }),
   setPreviewUrl: (url: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/preview-url", { url }),
+  aiConfig: (signal?: AbortSignal) =>
+    request<AiConfigStatus>("GET", "/manage/site/ai", undefined, signal),
+  setAiConfig: (body: { apiKey?: string | null; model?: string | null }) =>
+    request<AiConfigStatus>("POST", "/manage/site/ai", body),
 
   // media
   assets: (signal?: AbortSignal) => request<Asset[]>("GET", "/manage/assets", undefined, signal),
