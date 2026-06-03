@@ -100,6 +100,90 @@ export async function getDefaultLocale(db: Database): Promise<string> {
   return rows[0].code;
 }
 
+/** All locales incl. disabled — powers the Languages management view. */
+export async function listAllLocales(db: Database, ctx: AccessContext) {
+  requirePermission(ctx, "contenttype.manage");
+  return db.select().from(locale).orderBy(asc(locale.sortIndex));
+}
+
+// BCP-47-ish: a primary subtag plus optional region/script/variant subtags (e.g. "en", "nb", "en-US").
+const LOCALE_CODE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+
+async function assertFallback(db: Database, code: string, fallback: string | null): Promise<void> {
+  if (!fallback) return;
+  if (fallback === code) throw Errors.badRequest("A language cannot fall back to itself");
+  const row = await db.select({ code: locale.code }).from(locale).where(eq(locale.code, fallback)).limit(1);
+  if (!row[0]) throw Errors.badRequest(`Fallback language "${fallback}" does not exist`);
+}
+
+export async function createLocale(
+  db: Database,
+  ctx: AccessContext,
+  input: { code: string; displayName: string; fallbackLocaleCode?: string | null },
+): Promise<void> {
+  requirePermission(ctx, "contenttype.manage");
+  const code = input.code.trim();
+  const displayName = input.displayName.trim();
+  if (!LOCALE_CODE.test(code)) throw Errors.badRequest('Invalid language code — use a BCP-47 tag like "en" or "en-US"');
+  if (!displayName) throw Errors.badRequest("Display name is required");
+  const existing = await db.select({ code: locale.code }).from(locale).where(eq(locale.code, code)).limit(1);
+  if (existing[0]) throw Errors.conflict(`Language "${code}" already exists`);
+  const fallback = input.fallbackLocaleCode?.trim() || null;
+  await assertFallback(db, code, fallback);
+  const max = await db.select({ m: sql<number>`coalesce(max(${locale.sortIndex}), -1)` }).from(locale);
+  await db.insert(locale).values({
+    code,
+    displayName,
+    isDefault: false,
+    enabled: true,
+    fallbackLocaleCode: fallback,
+    sortIndex: (max[0]?.m ?? -1) + 1,
+  });
+}
+
+export async function updateLocale(
+  db: Database,
+  ctx: AccessContext,
+  code: string,
+  patch: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean },
+): Promise<void> {
+  requirePermission(ctx, "contenttype.manage");
+  const row = (await db.select().from(locale).where(eq(locale.code, code)).limit(1))[0];
+  if (!row) throw Errors.notFound("Language");
+  const updates: Partial<typeof locale.$inferInsert> = {};
+  if (patch.displayName !== undefined) {
+    const dn = patch.displayName.trim();
+    if (!dn) throw Errors.badRequest("Display name is required");
+    updates.displayName = dn;
+  }
+  if (patch.fallbackLocaleCode !== undefined) {
+    const fallback = patch.fallbackLocaleCode?.trim() || null;
+    await assertFallback(db, code, fallback);
+    updates.fallbackLocaleCode = fallback;
+  }
+  if (patch.enabled !== undefined) {
+    if (!patch.enabled && row.isDefault) throw Errors.conflict("Can’t disable the default language");
+    updates.enabled = patch.enabled;
+  }
+  if (Object.keys(updates).length === 0) return;
+  await db.update(locale).set(updates).where(eq(locale.code, code));
+}
+
+/** Permanently remove a locale. Blocked for the default and for locales that hold content. */
+export async function deleteLocale(db: Database, ctx: AccessContext, code: string): Promise<void> {
+  requirePermission(ctx, "contenttype.manage");
+  const row = (await db.select().from(locale).where(eq(locale.code, code)).limit(1))[0];
+  if (!row) throw Errors.notFound("Language");
+  if (row.isDefault) throw Errors.conflict("Can’t delete the default language");
+  const used = await db.select({ id: contentVersion.id }).from(contentVersion).where(eq(contentVersion.locale, code)).limit(1);
+  if (used[0]) throw Errors.conflict("This language has content — disable it instead of deleting");
+  await db.transaction(async (tx) => {
+    // Drop dangling fallback pointers, then remove the locale itself.
+    await tx.update(locale).set({ fallbackLocaleCode: null }).where(eq(locale.fallbackLocaleCode, code));
+    await tx.delete(locale).where(eq(locale.code, code));
+  });
+}
+
 /* ------------------------------ variant state ----------------------------- */
 
 interface VariantState {
@@ -1127,4 +1211,26 @@ export async function listTrash(
     });
   }
   return out;
+}
+
+/** Permanently delete every trashed item in scope (with its versions + outgoing references). */
+export async function emptyTrash(
+  db: Database,
+  ctx: AccessContext,
+): Promise<{ purged: number }> {
+  requirePermission(ctx, "content.delete");
+  const rows = await db
+    .select({ documentId: contentItem.documentId, sectionId: contentItem.sectionId })
+    .from(contentItem)
+    .where(sql`${contentItem.deletedAt} is not null`);
+  const ids = rows
+    .filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId))
+    .map((i) => i.documentId);
+  if (ids.length === 0) return { purged: 0 };
+  await db.transaction(async (tx) => {
+    await tx.delete(contentReference).where(inArray(contentReference.fromDocumentId, ids));
+    await tx.delete(contentVersion).where(inArray(contentVersion.documentId, ids));
+    await tx.delete(contentItem).where(inArray(contentItem.documentId, ids));
+  });
+  return { purged: ids.length };
 }

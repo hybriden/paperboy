@@ -148,6 +148,12 @@ export const api = {
   updateContentType: (name: string, def: ContentTypeDef) =>
     request<ContentTypeDef>("PUT", `/manage/content-types/${encodeURIComponent(name)}`, def),
   locales: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales", undefined, signal),
+  localesAll: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales/all", undefined, signal),
+  createLocale: (body: { code: string; displayName: string; fallbackLocaleCode?: string | null }) =>
+    request<{ ok: boolean }>("POST", "/manage/locales", body),
+  updateLocale: (code: string, body: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean }) =>
+    request<{ ok: boolean }>("PATCH", `/manage/locales/${encodeURIComponent(code)}`, body),
+  deleteLocale: (code: string) => request<{ ok: boolean }>("DELETE", `/manage/locales/${encodeURIComponent(code)}`),
 
   // content
   tree: (parentId?: string, signal?: AbortSignal) =>
@@ -207,6 +213,7 @@ export const api = {
   restoreContent: (documentId: string) =>
     request<{ ok: boolean; restored: number }>("POST", `/manage/content/${documentId}/restore`),
   listTrash: (signal?: AbortSignal) => request<TrashRow[]>("GET", "/manage/content/trash", undefined, signal),
+  emptyTrash: () => request<{ ok: boolean; purged: number }>("POST", "/manage/content/trash/empty"),
   restoreVersion: (documentId: string, locale: string, versionId: number) =>
     request<ContentDetail>("POST", `/manage/content/${documentId}/versions/${versionId}/restore?locale=${locale}`),
 

@@ -21,6 +21,11 @@ import {
   listAudit,
   listDeliveryKeys,
   listTrash,
+  emptyTrash,
+  listAllLocales,
+  createLocale,
+  updateLocale,
+  deleteLocale,
   listUsers,
   listWebhooks,
   renameDeliveryKey,
@@ -146,6 +151,47 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         enabled: r.enabled,
         fallbackLocaleCode: r.fallbackLocaleCode,
       }));
+    },
+  );
+  app.get(
+    "/locales/all",
+    { preHandler: [requirePermission("contenttype.manage")], schema: { tags: ["manage"], response: { 200: z.array(Locale) } } },
+    async (req) => {
+      const rows = await listAllLocales(app.db, req.accessCtx!);
+      return rows.map((r) => ({
+        code: r.code,
+        displayName: r.displayName,
+        isDefault: r.isDefault,
+        enabled: r.enabled,
+        fallbackLocaleCode: r.fallbackLocaleCode,
+      }));
+    },
+  );
+  app.post(
+    "/locales",
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], body: z.object({ code: z.string().min(2).max(35), displayName: z.string().min(1).max(120), fallbackLocaleCode: z.string().nullable().optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await createLocale(app.db, req.accessCtx!, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "locale.create", ip: req.ip, detail: { code: req.body.code } });
+      return { ok: true };
+    },
+  );
+  app.patch(
+    "/locales/:code",
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ code: z.string() }), body: z.object({ displayName: z.string().min(1).max(120).optional(), fallbackLocaleCode: z.string().nullable().optional(), enabled: z.boolean().optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await updateLocale(app.db, req.accessCtx!, req.params.code, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "locale.update", ip: req.ip, detail: { code: req.params.code, ...req.body } });
+      return { ok: true };
+    },
+  );
+  app.delete(
+    "/locales/:code",
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ code: z.string() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await deleteLocale(app.db, req.accessCtx!, req.params.code);
+      await audit(app.db, { actorUserId: req.user!.id, action: "locale.delete", ip: req.ip, detail: { code: req.params.code } });
+      return { ok: true };
     },
   );
 
@@ -403,6 +449,15 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content/trash",
     { preHandler: [requirePermission("content.read")], schema: { tags: ["manage"], response: { 200: z.array(z.object({ documentId: z.string(), type: z.string(), kind: z.string(), name: z.string(), deletedAt: z.string() })) } } },
     async (req) => listTrash(app.db, req.accessCtx!),
+  );
+  app.post(
+    "/content/trash/empty",
+    { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], response: { 200: z.object({ ok: z.boolean(), purged: z.number() }) } } },
+    async (req) => {
+      const r = await emptyTrash(app.db, req.accessCtx!);
+      await audit(app.db, { actorUserId: req.user!.id, action: "content.trash.empty", ip: req.ip, detail: r });
+      return { ok: true, ...r };
+    },
   );
   app.delete(
     "/content/:documentId",
