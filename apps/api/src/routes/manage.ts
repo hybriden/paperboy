@@ -16,6 +16,9 @@ import {
   deleteWebhook,
   dispatchWebhooks,
   getSiteConfig,
+  getStoredAiKey,
+  getStoredAiModel,
+  setAiConfig,
   setPreviewBaseUrl,
   setStartPage,
   listAudit,
@@ -619,6 +622,59 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       await setPreviewBaseUrl(app.db, req.accessCtx!, req.body.url);
       await audit(app.db, { actorUserId: req.user!.id, action: "site.preview_url", ip: req.ip });
       return { ok: true };
+    },
+  );
+
+  /* ------------------------------- AI key ------------------------------- */
+  // Write-only AI provider config. The key is never returned — only whether one
+  // is set, where it comes from (CMS DB vs env fallback), its last 4 chars, and
+  // the model. Admin-gated (user.manage).
+  const AiConfigStatus = z.object({
+    configured: z.boolean(),
+    source: z.enum(["db", "env", "none"]),
+    last4: z.string().nullable(),
+    model: z.string().nullable(),
+  });
+  async function aiStatus(): Promise<z.infer<typeof AiConfigStatus>> {
+    const dbKey = await getStoredAiKey(app.db);
+    const key = dbKey ?? app.aiConfig.apiKey;
+    const dbModel = await getStoredAiModel(app.db);
+    return {
+      configured: Boolean(key),
+      source: dbKey ? "db" : app.aiConfig.apiKey ? "env" : "none",
+      last4: key ? key.slice(-4) : null,
+      model: dbModel ?? app.aiConfig.model ?? null,
+    };
+  }
+  app.get(
+    "/site/ai",
+    { preHandler: [requirePermission("user.manage")], schema: { tags: ["manage"], response: { 200: AiConfigStatus } } },
+    async () => aiStatus(),
+  );
+  app.post(
+    "/site/ai",
+    {
+      preHandler: [requireCsrf, requirePermission("user.manage")],
+      schema: {
+        tags: ["manage"],
+        body: z.object({ apiKey: z.string().max(400).nullable().optional(), model: z.string().max(120).nullable().optional() }),
+        response: { 200: AiConfigStatus },
+      },
+    },
+    async (req) => {
+      await setAiConfig(app.db, req.accessCtx!, { apiKey: req.body.apiKey, model: req.body.model });
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "site.ai_config",
+        ip: req.ip,
+        // Never log the key itself — only what changed.
+        detail: {
+          keySet: typeof req.body.apiKey === "string" && req.body.apiKey.trim().length > 0,
+          keyCleared: req.body.apiKey === null || req.body.apiKey === "",
+          model: req.body.model ?? undefined,
+        },
+      });
+      return aiStatus();
     },
   );
 

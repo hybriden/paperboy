@@ -3,11 +3,14 @@ import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, loadAuthorized, requirePermission } from "./scope.js";
 import { contentItem, siteSetting } from "./schema.js";
+import { decryptSecret, encryptSecret } from "./totp.js";
 
 /** Site settings. First setting: the START PAGE served at "/". */
 
 const START_PAGE_KEY = "startPage";
 const PREVIEW_URL_KEY = "previewBaseUrl";
+const AI_API_KEY = "aiApiKey";
+const AI_MODEL_KEY = "aiModel";
 
 async function getSetting<T>(db: Database, key: string): Promise<T | null> {
   const rows = await db.select().from(siteSetting).where(eq(siteSetting.key, key)).limit(1);
@@ -62,4 +65,50 @@ export async function getSiteConfig(db: Database, ctx: AccessContext): Promise<{
   if (!id) return { startPageId: null, previewBaseUrl };
   const rows = await db.select({ id: contentItem.id }).from(contentItem).where(eq(contentItem.documentId, id)).limit(1);
   return { startPageId: rows[0] ? id : null, previewBaseUrl };
+}
+
+/* --------------------------------- AI key --------------------------------- */
+
+/**
+ * The AI provider key configured in the CMS, decrypted (or null if unset). AES-GCM
+ * encrypted at rest — same scheme/key as TOTP secrets. Resolved at request time by
+ * the AI route, which prefers this over the `ANTHROPIC_API_KEY` env fallback. A key
+ * that can't be decrypted (e.g. SESSION_SECRET rotated) is treated as unset.
+ */
+export async function getStoredAiKey(db: Database): Promise<string | null> {
+  const v = await getSetting<{ cipher: string }>(db, AI_API_KEY);
+  if (!v?.cipher) return null;
+  try {
+    return decryptSecret(v.cipher);
+  } catch {
+    return null;
+  }
+}
+
+/** The model override configured in the CMS (or null to fall back to env/default). */
+export async function getStoredAiModel(db: Database): Promise<string | null> {
+  const v = await getSetting<{ model: string }>(db, AI_MODEL_KEY);
+  return v?.model ?? null;
+}
+
+/**
+ * Set or clear the AI provider key/model (Admin only). The key is encrypted at
+ * rest. For each field: `undefined` leaves it unchanged; null/"" clears it.
+ */
+export async function setAiConfig(
+  db: Database,
+  ctx: AccessContext,
+  input: { apiKey?: string | null; model?: string | null },
+): Promise<void> {
+  requirePermission(ctx, "user.manage");
+  if (input.apiKey !== undefined) {
+    const key = input.apiKey?.trim();
+    if (key) await putSetting(db, AI_API_KEY, { cipher: encryptSecret(key) });
+    else await db.delete(siteSetting).where(eq(siteSetting.key, AI_API_KEY));
+  }
+  if (input.model !== undefined) {
+    const model = input.model?.trim();
+    if (model) await putSetting(db, AI_MODEL_KEY, { model });
+    else await db.delete(siteSetting).where(eq(siteSetting.key, AI_MODEL_KEY));
+  }
 }
