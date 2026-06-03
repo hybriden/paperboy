@@ -14,6 +14,7 @@ import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
 import { ContentArea } from "./fields/ContentArea.js";
+import { MarkdownEditor } from "./fields/MarkdownEditor.js";
 import { RichText } from "./fields/RichText.js";
 import { ImageField } from "./MediaLibrary.js";
 import { PreviewPane } from "./PreviewPane.js";
@@ -313,20 +314,36 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     mutationFn: async () => {
       const src = source.data;
       if (!src) throw new Error("No source content to translate from");
-      let usedFallback = false;
-      const tr = async (text: string): Promise<string> => {
-        const r = await api.aiAssist("translate", text, locale);
-        if (r.provider === "fallback") usedFallback = true;
-        return r.result;
-      };
+      // Collect all translatable strings (name + text/markdown fields) and send
+      // them in ONE request — one /assist call per field would trip the rate limit
+      // on a large page (e.g. the Frontpage's ~34 fields).
+      const keys: string[] = [];
+      const texts: string[] = [];
+      if (src.name?.trim()) {
+        keys.push("__name");
+        texts.push(src.name);
+      }
+      for (const f of type?.fields ?? []) {
+        const v = src.data[f.name];
+        if ((f.type === "text" || f.type === "markdown") && typeof v === "string" && v.trim()) {
+          keys.push(f.name);
+          texts.push(v);
+        }
+      }
+      const { results, provider } = texts.length
+        ? await api.aiTranslate(texts, locale)
+        : { results: [] as string[], provider: "fallback" as const };
+      const translated = new Map<string, string>();
+      keys.forEach((k, i) => translated.set(k, results[i] ?? texts[i]!));
+      // Translated text fields; every other field copied from the source as a start.
       const data: Record<string, unknown> = {};
       for (const f of type?.fields ?? []) {
         const v = src.data[f.name];
         if (v === undefined) continue;
-        data[f.name] = (f.type === "text" || f.type === "markdown") && typeof v === "string" && v.trim() ? await tr(v) : v;
+        data[f.name] = translated.has(f.name) ? translated.get(f.name)! : v;
       }
-      const name = src.name?.trim() ? await tr(src.name) : src.name;
-      return { name, slug: src.slug, data, usedFallback };
+      const name = translated.get("__name") ?? src.name;
+      return { name, slug: src.slug, data, usedFallback: provider === "fallback" };
     },
     onSuccess: (res) => {
       const base = formRef.current ?? form;
@@ -1136,8 +1153,7 @@ function Field({
         </div>
       )}
       {field.type === "markdown" && (
-        <textarea id={id} className="field-input min-h-[280px] font-mono text-[13px] leading-relaxed" value={(value as string) ?? ""} disabled={disabled}
-          spellCheck={false} onChange={(e) => onChange(e.target.value)} placeholder="# Markdown… (headings, **bold**, lists, `code`, tables)" />
+        <MarkdownEditor id={id} value={(value as string) ?? ""} disabled={disabled} onChange={(v) => onChange(v)} />
       )}
       {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} />}
       {field.type === "boolean" && (
