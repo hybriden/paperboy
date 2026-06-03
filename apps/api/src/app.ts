@@ -92,7 +92,9 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     },
     transform: jsonSchemaTransform,
   });
-  await app.register(swaggerUI, { routePrefix: "/docs" });
+  // Mounted under /api so it's reachable through the admin's nginx `/api/` proxy
+  // (which forwards the full path). The admin's "API docs" link points to /api/docs.
+  await app.register(swaggerUI, { routePrefix: "/api/docs" });
 
   // Per-request session loading (does not enforce auth; routes decide).
   app.decorateRequest("user", null);
