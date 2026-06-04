@@ -78,6 +78,76 @@ describe("update_content ergonomics: helpful errors + merge mode", () => {
     expect(got.data.mainArea[0].blockType).toBe("HeroBlock");
   });
 
+  it("strips empty text nodes from richtext (ProseMirror rejects them → blank editor)", async () => {
+    // Regression: an AI/MCP write stored {type:"text", text:""} inside a doc;
+    // TipTap then refused the WHOLE document and the admin editor rendered empty.
+    const res = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${pageId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: {
+        merge: true,
+        data: {
+          intro: {
+            type: "doc",
+            content: [
+              {
+                type: "paragraph",
+                content: [
+                  { type: "text", text: "Built with " },
+                  { type: "text", text: "MCP", marks: [{ type: "bold" }] },
+                  { type: "text", text: "" }, // ← invalid: PM forbids empty text nodes
+                ],
+              },
+            ],
+          },
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const got = (await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${pageId}?locale=en`, headers: authHeaders(ed) })).json();
+    const para = got.data.intro.content[0];
+    expect(para.content).toHaveLength(2); // empty text node stripped
+    expect(para.content.map((n: { text: string }) => n.text)).toEqual(["Built with ", "MCP"]);
+  });
+
+  it("normalizes richtext outside the editor schema (unknown nodes/marks → blank editor)", async () => {
+    // Regression: an MCP write stored {type:"separator"} — a node type the admin
+    // editor's TipTap schema doesn't know — and the editor blanked the whole doc.
+    const res = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${pageId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: {
+        merge: true,
+        data: {
+          intro: {
+            type: "doc",
+            content: [
+              { type: "separator" }, // alias → horizontalRule
+              {
+                type: "paragraph",
+                content: [
+                  { type: "text", text: "kept ", marks: [{ type: "strong" }] }, // alias → bold
+                  { type: "text", text: "styled", marks: [{ type: "highlight" }] }, // unknown mark → dropped
+                ],
+              },
+              { type: "bullet_list", content: [{ type: "list_item", content: [{ type: "paragraph", content: [{ type: "text", text: "item" }] }] }] }, // snake_case → camelCase
+              { type: "callout", content: [{ type: "text", text: "salvaged" }] }, // unknown node → children hoisted into a paragraph
+            ],
+          },
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const intro = (await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${pageId}?locale=en`, headers: authHeaders(ed) })).json().data.intro;
+    expect(intro.content.map((n: { type: string }) => n.type)).toEqual(["horizontalRule", "paragraph", "bulletList", "paragraph"]);
+    expect(intro.content[1].content[0].marks).toEqual([{ type: "bold" }]);
+    expect(intro.content[1].content[1].marks).toEqual([]); // unknown mark stripped
+    expect(intro.content[2].content[0].type).toBe("listItem");
+    expect(intro.content[3].content[0].text).toBe("salvaged");
+  });
+
   it("merge mode patches one field and leaves the rest intact", async () => {
     const res = await s.app.inject({
       method: "PUT",

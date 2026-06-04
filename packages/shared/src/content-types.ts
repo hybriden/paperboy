@@ -262,6 +262,146 @@ function looksLikeTiptapDoc(v: unknown): boolean {
   const o = v as Record<string, unknown>;
   return o.type === "doc" || Array.isArray(o.content);
 }
+/* ---------------------- richtext (TipTap) sanitization -------------------- */
+// The admin RichTextEditor is StarterKit (heading 2/3) + Link. ProseMirror
+// hard-rejects ANY doc containing a node/mark type outside that schema, an
+// empty text node, or content violating a node's content model — and TipTap
+// then falls back to an EMPTY editor: one bad node blanks the whole document
+// in the admin while delivery still renders it (and the next save from that
+// editor would wipe the field). Agent-written docs reliably contain such nodes
+// ({type:"separator"}, {text:""}, snake_case PM names), so every richtext
+// write is normalized to the editor's schema here. Real incidents: an MCP
+// write with `{"text":""}` and another with `{"type":"separator"}` each
+// blanked the editor for the whole page.
+const RICHTEXT_NODES = new Set([
+  "doc", "paragraph", "text", "heading", "blockquote", "bulletList",
+  "orderedList", "listItem", "codeBlock", "horizontalRule", "hardBreak",
+]);
+const RICHTEXT_MARKS = new Set(["bold", "italic", "strike", "code", "underline", "link"]);
+// Unknown-but-unambiguous spellings agents produce → the canonical type.
+const NODE_ALIASES: Record<string, string> = {
+  separator: "horizontalRule", divider: "horizontalRule", hr: "horizontalRule",
+  horizontal_rule: "horizontalRule", bullet_list: "bulletList", ordered_list: "orderedList",
+  list_item: "listItem", code_block: "codeBlock", hard_break: "hardBreak", break: "hardBreak",
+};
+const MARK_ALIASES: Record<string, string> = {
+  strong: "bold", b: "bold", em: "italic", i: "italic",
+  strikethrough: "strike", s: "strike", u: "underline", a: "link", hyperlink: "link",
+};
+const INLINE_NODES = new Set(["text", "hardBreak"]);
+const VOID_NODES = new Set(["horizontalRule", "hardBreak"]);
+/** Parents whose content model is inline-only / block-only / listItem-only. */
+const INLINE_PARENTS = new Set(["paragraph", "heading"]);
+const BLOCK_PARENTS = new Set(["doc", "blockquote", "listItem"]);
+const LIST_PARENTS = new Set(["bulletList", "orderedList"]);
+
+type RtNode = Record<string, unknown>;
+
+/** Collect the inline (text/hardBreak) descendants of arbitrarily-nested nodes. */
+function inlineDescendants(nodes: RtNode[]): RtNode[] {
+  const out: RtNode[] = [];
+  for (const n of nodes) {
+    if (INLINE_NODES.has(n.type as string)) out.push(n);
+    else if (Array.isArray(n.content)) out.push(...inlineDescendants(n.content as RtNode[]));
+  }
+  return out;
+}
+
+/** Sanitize a node list against the parent's content model. Returns a clean list. */
+function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] {
+  if (!Array.isArray(children)) return [];
+  // Pass 1 — per node: alias types, drop unknown marks, strip empty text nodes,
+  // recurse, and salvage the children of unknown node types (drop the husk;
+  // ONE unknown husk would otherwise blank the entire document in the editor).
+  let nodes: RtNode[] = [];
+  for (const raw of children) {
+    if (!raw || typeof raw !== "object") continue;
+    const node: RtNode = { ...(raw as RtNode) };
+    const rawType = typeof node.type === "string" ? node.type : "";
+    const type = NODE_ALIASES[rawType] ?? rawType;
+    node.type = type;
+    if (Array.isArray(node.marks)) {
+      node.marks = (node.marks as RtNode[])
+        .filter((m) => m && typeof m === "object")
+        .map((m) => ({ ...m, type: MARK_ALIASES[m.type as string] ?? m.type }))
+        .filter((m) => RICHTEXT_MARKS.has(m.type as string));
+    }
+    if (type === "text") {
+      // PM forbids empty text nodes; a text node never has content.
+      if (typeof node.text !== "string" || node.text === "") continue;
+      delete node.content;
+      nodes.push(node);
+      continue;
+    }
+    if (VOID_NODES.has(type)) delete node.content;
+    else node.content = sanitizeRichTextNodes(node.content, type);
+    if (RICHTEXT_NODES.has(type)) {
+      nodes.push(node);
+    } else {
+      // Unknown type: hoist its (already-sanitized) children into this position.
+      const inner = (node.content as RtNode[] | undefined) ?? [];
+      if (typeof node.text === "string" && node.text !== "") {
+        nodes.push({ type: "text", text: node.text, ...(node.marks ? { marks: node.marks } : {}) });
+      } else if (inner.length && inner.every((c) => INLINE_NODES.has(c.type as string))) {
+        nodes.push({ type: "paragraph", content: inner });
+      } else {
+        nodes.push(...inner);
+      }
+    }
+  }
+  // Pass 2 — shape to the parent's content model (a structure violation also
+  // makes PM reject the whole doc, e.g. a paragraph inside a paragraph).
+  if (parentType === "codeBlock") {
+    // code blocks allow text only, without marks
+    return inlineDescendants(nodes)
+      .filter((n) => n.type === "text")
+      .map((n) => ({ type: "text", text: n.text }));
+  }
+  if (INLINE_PARENTS.has(parentType)) {
+    // inline content only: flatten any block child to its inline descendants
+    return nodes.flatMap((n) => (INLINE_NODES.has(n.type as string) ? [n] : inlineDescendants([n])));
+  }
+  if (LIST_PARENTS.has(parentType)) {
+    // listItem children only: wrap loose blocks / inline runs
+    const items: RtNode[] = [];
+    for (const n of nodes) {
+      if (n.type === "listItem") items.push(n);
+      else if (INLINE_NODES.has(n.type as string)) items.push({ type: "listItem", content: [{ type: "paragraph", content: [n] }] });
+      else items.push({ type: "listItem", content: [n] });
+    }
+    return items.filter((i) => (i.content as RtNode[]).length > 0);
+  }
+  if (BLOCK_PARENTS.has(parentType)) {
+    // block content only: group consecutive loose inline nodes into paragraphs,
+    // and drop block containers that ended up empty (PM requires block+).
+    const out: RtNode[] = [];
+    let run: RtNode[] = [];
+    const flush = () => {
+      if (run.length) out.push({ type: "paragraph", content: run });
+      run = [];
+    };
+    for (const n of nodes) {
+      if (INLINE_NODES.has(n.type as string)) run.push(n);
+      else {
+        flush();
+        const isEmptyContainer =
+          (n.type === "blockquote" || n.type === "listItem" || LIST_PARENTS.has(n.type as string)) &&
+          !(n.content as RtNode[]).length;
+        if (!isEmptyContainer) out.push(n);
+      }
+    }
+    flush();
+    return out;
+  }
+  return nodes;
+}
+
+/** Normalize a TipTap doc to the shape the admin editor can actually load. */
+function sanitizeRichTextDoc(doc: unknown): unknown {
+  const o = doc as RtNode;
+  const content = sanitizeRichTextNodes(o.content, "doc");
+  return { ...o, type: "doc", content: content.length ? content : [{ type: "paragraph" }] };
+}
 
 /**
  * Be liberal in what we accept (Postel's law) for the field-shape mistakes an
@@ -271,6 +411,7 @@ function looksLikeTiptapDoc(v: unknown): boolean {
  *  - any field wrapped as { <fieldName>: inner }  → inner  (self-keyed wrap)
  *  - text/markdown given a TipTap doc             → flattened to plain text
  *  - richtext given a plain string                → wrapped into a doc
+ *  - richtext docs outside the editor schema      → normalized (see sanitizeRichTextDoc)
  *  - contentArea given a single block object      → wrapped in an array
  */
 export function coerceFieldValue(f: FieldDef, value: unknown): unknown {
@@ -283,8 +424,10 @@ export function coerceFieldValue(f: FieldDef, value: unknown): unknown {
     case "text":
     case "markdown":
       return looksLikeTiptapDoc(value) ? tiptapToPlainText(value) : value;
-    case "richtext":
-      return typeof value === "string" ? stringToTiptapDoc(value) : value;
+    case "richtext": {
+      const doc = typeof value === "string" ? stringToTiptapDoc(value) : value;
+      return looksLikeTiptapDoc(doc) ? sanitizeRichTextDoc(doc) : doc;
+    }
     case "contentArea":
       return value && typeof value === "object" && !Array.isArray(value) && "blockType" in (value as object) ? [value] : value;
     default:
