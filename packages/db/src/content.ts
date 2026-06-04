@@ -7,7 +7,9 @@ import {
   type CreateContentRequest,
   type TreeNode,
   type UpdateContentRequest,
+  coerceData,
   dataSchemaFor,
+  fieldFormatHint,
 } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
@@ -24,6 +26,56 @@ import { dispatchWebhooks } from "./webhooks.js";
 export async function listContentTypes(db: Database): Promise<ContentTypeDef[]> {
   const rows = await db.select().from(contentType).orderBy(asc(contentType.name));
   return rows.map((r) => r.definition as ContentTypeDef);
+}
+
+/** Per-type usage: standalone items of that type, plus pages/blocks that embed
+ *  it INLINE in a content area. `inlineIn` counts distinct documents (current
+ *  published + working draft only, not historical versions). */
+export interface ContentTypeUsage {
+  items: number;
+  inlineIn: number;
+}
+export async function contentTypeUsage(db: Database): Promise<Record<string, ContentTypeUsage>> {
+  const usage: Record<string, ContentTypeUsage> = {};
+  const bump = (t: string, k: keyof ContentTypeUsage) => {
+    (usage[t] ??= { items: 0, inlineIn: 0 })[k]++;
+  };
+
+  // Standalone instances (pages, shared blocks, globals).
+  const counts = await db
+    .select({ type: contentItem.type, n: sql<number>`count(*)::int` })
+    .from(contentItem)
+    .where(isNull(contentItem.deletedAt))
+    .groupBy(contentItem.type);
+  for (const c of counts) (usage[c.type] ??= { items: 0, inlineIn: 0 }).items = c.n;
+
+  // Inline block usage: scan only CURRENT content — the working draft and the
+  // current-published row (any locale), never historical versions. A document
+  // counts once per block type it embeds in either (union), so usage reflects
+  // what's live or about to be, not stale history.
+  const rows = await db
+    .select({ documentId: contentVersion.documentId, status: contentVersion.status, isPub: contentVersion.isCurrentPublished, data: contentVersion.data })
+    .from(contentVersion);
+  const collectBlockTypes = (node: unknown, into: Set<string>): void => {
+    if (Array.isArray(node)) {
+      for (const n of node) collectBlockTypes(n, into);
+    } else if (node && typeof node === "object") {
+      const o = node as Record<string, unknown>;
+      if (typeof o.blockType === "string") into.add(o.blockType);
+      for (const v of Object.values(o)) collectBlockTypes(v, into);
+    }
+  };
+  const byDoc = new Map<string, Set<string>>(); // documentId -> block types it embeds
+  for (const r of rows) {
+    if (r.status !== "draft" && !r.isPub) continue; // skip history
+    const set = byDoc.get(r.documentId) ?? new Set<string>();
+    collectBlockTypes(r.data, set);
+    byDoc.set(r.documentId, set);
+  }
+  for (const types of byDoc.values()) {
+    for (const t of types) bump(t, "inlineIn");
+  }
+  return usage;
 }
 
 export async function getContentType(db: Database, name: string): Promise<ContentTypeDef> {
@@ -58,6 +110,24 @@ export async function createContentType(
  * field orphans its stored JSONB value and adding a required field will block the
  * next re-publish of existing items (documented; the UI warns).
  */
+/**
+ * Delete a content type — only when NOTHING uses it. Guard is server-side: any
+ * standalone item or inline embedding refuses the delete (409), so a type in use
+ * can never be removed out from under existing content. Forward-only; a reseed
+ * would recreate seed types.
+ */
+export async function deleteContentType(db: Database, ctx: AccessContext, name: string): Promise<void> {
+  requirePermission(ctx, "contenttype.manage");
+  const rows = await db.select().from(contentType).where(eq(contentType.name, name)).limit(1);
+  if (!rows[0]) throw Errors.notFound(`Content type '${name}'`);
+  const usage = (await contentTypeUsage(db))[name];
+  if (usage && (usage.items > 0 || usage.inlineIn > 0)) {
+    const parts = [usage.items ? `${usage.items} item(s)` : null, usage.inlineIn ? `embedded in ${usage.inlineIn} page(s)` : null].filter(Boolean);
+    throw Errors.conflict(`'${name}' is still in use (${parts.join(", ")}). Remove those first.`);
+  }
+  await db.delete(contentType).where(eq(contentType.name, name));
+}
+
 export async function updateContentType(
   db: Database,
   ctx: AccessContext,
@@ -516,6 +586,43 @@ function formatValidation(err: { issues?: Array<{ path: (string | number)[]; mes
 }
 
 /**
+ * Like formatValidation, but appends each failing field's expected JSON shape
+ * and an example — so a caller (notably an MCP agent) can self-correct rather
+ * than guess. e.g. `intro: Expected string, received object — 'intro' is a text
+ * field; send a plain string (example: "Some text")`.
+ */
+function formatDataValidation(
+  err: { issues?: Array<{ path: (string | number)[]; message: string }> },
+  type: ContentTypeDef,
+): string {
+  const issues = err.issues ?? [];
+  if (!issues.length) return "Some fields are invalid";
+  return issues
+    .slice(0, 6)
+    .map((i) => {
+      const path = i.path.filter((p) => typeof p === "string") as string[];
+      const field = path.join(".") || "value";
+      const base = i.message === "Required" ? "is required" : i.message;
+      const def = type.fields.find((f) => f.name === path[0]);
+      if (!def) return `${field}: ${base}`;
+      const { format, example } = fieldFormatHint(def);
+      return `${field}: ${base} — '${def.name}' is a ${def.type} field; send ${format} (example: ${JSON.stringify(example)})`;
+    })
+    .join("; ");
+}
+
+/** The current working data for a variant: the draft's, else the published version's, else {}. */
+async function workingData(db: Database, documentId: string, loc: string): Promise<Record<string, unknown>> {
+  const rows = await db
+    .select()
+    .from(contentVersion)
+    .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)));
+  const draft = rows.find((r) => r.status === "draft");
+  const published = rows.find((r) => r.isCurrentPublished);
+  return ((draft ?? published)?.data as Record<string, unknown> | undefined) ?? {};
+}
+
+/**
  * Enforce per-field placement rules ("allowed types"): a contentArea
  * only accepts blocks whose type is in `allowedBlocks`; a reference only accepts
  * targets whose type is in `allowedTypes`. Empty list = unrestricted. This makes
@@ -601,11 +708,20 @@ export async function updateContent(
   const item = await loadAuthorized(db, ctx, documentId);
   const type = await getContentType(db, item.type);
 
-  // Draft save: relaxed validation (required fields not enforced).
-  const parsed = dataSchemaFor(type, false).safeParse(req.data);
-  if (!parsed.success) throw Errors.validation(formatValidation(parsed.error));
+  // Merge mode: shallow-merge the patch over the current working data so a
+  // caller can change one field without round-tripping the whole map.
+  const merged = req.merge ? { ...(await workingData(db, documentId, loc)), ...req.data } : req.data;
+  // Tolerant coercion: fix the unambiguous field-shape mistakes agents make
+  // (single block → array, doc → text, string → doc) before validating.
+  const data = coerceData(type, merged);
+
+  // Draft save: relaxed validation (required fields not enforced). On failure
+  // the message names each field's expected JSON shape (with an example), so an
+  // agent can self-correct instead of guessing.
+  const parsed = dataSchemaFor(type, false).safeParse(data);
+  if (!parsed.success) throw Errors.validation(formatDataValidation(parsed.error, type));
   // Placement rules ARE enforced even on draft save (allowed blocks / ref types).
-  assertAllowedTypes(type, req.data);
+  assertAllowedTypes(type, data);
 
   // URL segments must be unique among page siblings (per locale) so paths are unambiguous.
   if (item.kind === "page" && req.slug) {
@@ -632,7 +748,7 @@ export async function updateContent(
         name: req.name ?? existing[0].name,
         slug: req.slug !== undefined ? req.slug : existing[0].slug,
         displayInNav: req.displayInNav ?? existing[0].displayInNav,
-        data: req.data,
+        data,
         createdBy: ctx.userId,
         createdAt: new Date(),
       })
@@ -654,12 +770,12 @@ export async function updateContent(
       name: req.name ?? base?.name ?? "Untitled",
       slug: req.slug !== undefined ? req.slug : (base?.slug ?? null),
       displayInNav: req.displayInNav ?? base?.displayInNav ?? true,
-      data: req.data,
+      data,
       createdBy: ctx.userId,
     });
   }
 
-  await rebuildReferences(db, documentId, loc, type, req.data);
+  await rebuildReferences(db, documentId, loc, type, data);
   return getContent(db, ctx, documentId, loc);
 }
 
@@ -1140,7 +1256,7 @@ export async function moveContent(
 export async function listPages(
   db: Database,
   ctx: AccessContext,
-): Promise<{ documentId: string; name: string; parentId: string | null }[]> {
+): Promise<{ documentId: string; name: string; parentId: string | null; type: string }[]> {
   requirePermission(ctx, "content.read");
   const items = await db
     .select()
@@ -1148,10 +1264,10 @@ export async function listPages(
     .where(and(eq(contentItem.kind, "page"), isNull(contentItem.deletedAt)))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
   const visible = items.filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
-  const out: { documentId: string; name: string; parentId: string | null }[] = [];
+  const out: { documentId: string; name: string; parentId: string | null; type: string }[] = [];
   for (const item of visible) {
     const states = await variantStates(db, item.documentId);
-    out.push({ documentId: item.documentId, name: Object.values(states)[0]?.name ?? item.documentId, parentId: item.parentId });
+    out.push({ documentId: item.documentId, name: Object.values(states)[0]?.name ?? item.documentId, parentId: item.parentId, type: item.type });
   }
   return out;
 }

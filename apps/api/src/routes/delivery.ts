@@ -68,14 +68,21 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       schema: {
         tags: ["delivery"],
         querystring: PopulateQuery.extend({
-          type: z.string(),
+          /** Content type filter. Optional when parentId is given (children of any type). */
+          type: z.string().optional(),
           /** Only items that are direct children of this document (e.g. a ListPage's own subtree). */
           parentId: z.string().optional(),
         }),
-        response: { 200: z.object({ items: z.array(DeliveryContent), cv: z.number() }) },
+        response: {
+          200: z.object({ items: z.array(DeliveryContent), cv: z.number() }),
+          400: z.object({ error: z.string() }),
+        },
       },
     },
     async (req, reply) => {
+      if (!req.query.type && !req.query.parentId) {
+        return reply.code(400).send({ error: "Provide a type and/or a parentId." });
+      }
       const perspective = req.perspective!;
       const locale = req.query.locale ?? "en";
       const items = await deliveryList(app.db, perspective, req.query.type, locale, req.query.populate, req.query.parentId);
