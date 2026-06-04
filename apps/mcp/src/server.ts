@@ -54,7 +54,7 @@ import {
   verifyLogin,
   verifyMcpToken,
 } from "@paperboy/db";
-import { AI_TASKS, ContentTypeDef, type Permission, RoleName, aiAssist } from "@paperboy/shared";
+import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, RoleName, aiAssist, fieldFormatHint } from "@paperboy/shared";
 import { z } from "zod";
 
 /**
@@ -147,10 +147,20 @@ tool("get_content", "Get a content item's working version (draft else published)
 tool("create_content", "Create a new content item (page/block/global) as a draft.",
   { type: z.string(), parentId: z.string().nullable().optional(), locale: loc, name: z.string() },
   ({ type, parentId, locale, name }) => createContent(db, ctx, { type, parentId: parentId ?? null, locale: locale ?? "en", name }));
-tool("update_content", "Save the working draft of a content item (data is the field map).",
-  { documentId: docId, locale: loc, name: z.string().optional(), slug: z.string().nullable().optional(), displayInNav: z.boolean().optional(), data: z.record(z.unknown()) },
-  ({ documentId, locale, name, slug, displayInNav, data }) =>
-    updateContent(db, ctx, documentId, locale ?? "en", { name, slug, displayInNav, data }));
+tool(
+  "update_content",
+  [
+    "Save the working draft of a content item. `data` maps field name → value.",
+    "IMPORTANT: each field's value shape depends on its content-type field TYPE —",
+    "call get_content_type first. text/markdown → a plain string; richtext → a TipTap",
+    "doc object {type:'doc',content:[…]}; contentArea → an ARRAY of block instances;",
+    "reference → {documentId,type?}; select → one option-value string; image → an asset id.",
+    "By default `data` REPLACES the whole map (send every field). Pass merge:true to",
+    "patch only the fields you include and keep the rest.",
+  ].join(" "),
+  { documentId: docId, locale: loc, name: z.string().optional(), slug: z.string().nullable().optional(), displayInNav: z.boolean().optional(), data: z.record(z.unknown()), merge: z.boolean().optional().describe("Shallow-merge data over the current draft instead of replacing it") },
+  ({ documentId, locale, name, slug, displayInNav, data, merge }) =>
+    updateContent(db, ctx, documentId, locale ?? "en", { name, slug, displayInNav, data, merge }));
 tool("publish", "Publish the working draft of a content item for a locale.", { documentId: docId, locale: loc },
   ({ documentId, locale }) => publishContent(db, ctx, documentId, locale ?? "en"));
 tool("unpublish", "Unpublish (take down) a content item for a locale.", { documentId: docId, locale: loc },
@@ -175,9 +185,21 @@ tool("list_blocks", "List shared blocks (the assets pane).", {}, () => listBlock
 tool("list_pages", "Flat list of all pages in scope (for move/parent pickers).", {}, () => listPages(db, ctx));
 
 /* ----------------------------- content model --------------------------- */
-tool("list_content_types", "List all content types.", {}, async () => { need("content.read"); return listContentTypes(db); });
-tool("get_content_type", "Get a content type definition by name.", { name: z.string() },
-  async ({ name }) => { need("content.read"); return getContentType(db, name); });
+// Annotate each field with the JSON shape update_content expects for it, so an
+// agent learns the encoding from the type itself (not by trial and error).
+function withFieldFormats<T extends { fields: FieldDef[] }>(def: T): T & { fields: Array<FieldDef & { valueFormat: string; valueExample: unknown }> } {
+  return {
+    ...def,
+    fields: def.fields.map((f) => {
+      const { format, example } = fieldFormatHint(f);
+      return { ...f, valueFormat: format, valueExample: example };
+    }),
+  };
+}
+tool("list_content_types", "List all content types (fields annotated with the value format update_content expects).", {},
+  async () => { need("content.read"); return (await listContentTypes(db)).map(withFieldFormats); });
+tool("get_content_type", "Get a content type definition by name. Each field includes valueFormat + valueExample — the exact JSON shape update_content expects.", { name: z.string() },
+  async ({ name }) => { need("content.read"); const def = await getContentType(db, name); return def ? withFieldFormats(def) : def; });
 tool("create_content_type", "Create a content type from a full ContentTypeDef object.", { definition: z.record(z.unknown()) },
   ({ definition }) => createContentType(db, ctx, ContentTypeDef.parse(definition)));
 tool("update_content_type", "Update a content type (name and kind are immutable).", { name: z.string(), definition: z.record(z.unknown()) },

@@ -84,15 +84,22 @@ class DeliveryCtx {
   }
 
   async itemType(documentId: string): Promise<string | null> {
-    if (this.itemTypes.has(documentId)) return this.itemTypes.get(documentId)!;
+    return (await this.item(documentId))?.type ?? null;
+  }
+
+  // documentId -> item row essentials (type/kind/parentId), cached.
+  items = new Map<string, { type: string; kind: string; parentId: string | null } | null>();
+  async item(documentId: string): Promise<{ type: string; kind: string; parentId: string | null } | null> {
+    if (this.items.has(documentId)) return this.items.get(documentId)!;
     const rows = await this.db
-      .select({ type: contentItem.type })
+      .select({ type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
       .from(contentItem)
       .where(and(eq(contentItem.documentId, documentId), isNull(contentItem.deletedAt)))
       .limit(1);
-    if (!rows[0]) return null;
-    this.itemTypes.set(documentId, rows[0].type);
-    return rows[0].type;
+    const row = rows[0] ?? null;
+    this.items.set(documentId, row);
+    if (row) this.itemTypes.set(documentId, row.type);
+    return row;
   }
 
   async localeChain(code: string): Promise<string[]> {
@@ -224,6 +231,36 @@ async function sanitize(
   return out;
 }
 
+/**
+ * Hierarchical URL path of a PAGE ("/blog/hello"), built by resolving every
+ * ancestor through the SAME perspective. If any ancestor (or the page itself)
+ * isn't visible in this perspective, or lacks a slug, the path is null — a
+ * draft ancestor's slug is never exposed through a published child (no-leak,
+ * mirroring deliveryGetByPath which couldn't reach such a page anyway).
+ */
+async function urlPathOf(
+  ctx: DeliveryCtx,
+  perspective: Perspective,
+  documentId: string,
+  loc: string,
+): Promise<string | null> {
+  const item = await ctx.item(documentId);
+  if (!item || item.kind !== "page") return null;
+  const segments: string[] = [];
+  let cur: string | null = documentId;
+  const guard = new Set<string>();
+  while (cur && !guard.has(cur)) {
+    guard.add(cur);
+    const row = await ctx.item(cur);
+    if (!row) return null;
+    const variant = await variantRow(ctx, perspective, cur, loc);
+    if (!variant?.row.slug) return null;
+    segments.unshift(variant.row.slug);
+    cur = row.parentId;
+  }
+  return `/${segments.join("/")}`;
+}
+
 export async function resolveContent(
   ctx: DeliveryCtx,
   perspective: Perspective,
@@ -249,6 +286,7 @@ export async function resolveContent(
     locale: found.usedLocale,
     name: found.row.name,
     slug: found.row.slug,
+    urlPath: await urlPathOf(ctx, perspective, documentId, loc),
     cv: found.row.cv,
     data: sanitized,
   };
@@ -296,21 +334,23 @@ export async function deliveryGetBySlug(
 export async function deliveryList(
   db: Database,
   perspective: Perspective,
-  typeName: string,
+  typeName: string | undefined,
   loc: string,
   populate?: number,
   parentId?: string,
 ): Promise<DeliveryContent[]> {
+  if (!typeName && !parentId) return []; // unbounded "everything" listing is not a thing
   const ctx = new DeliveryCtx(db);
-  // Optional hierarchy filter (e.g. a ListPage listing its own children).
-  // Visibility still comes from resolveContent below — same chokepoint rules.
-  const where = parentId
-    ? and(eq(contentItem.type, typeName), eq(contentItem.parentId, parentId), isNull(contentItem.deletedAt))
-    : and(eq(contentItem.type, typeName), isNull(contentItem.deletedAt));
+  // Optional hierarchy filter (a ListPage / teaser ListBlock listing a page's
+  // children — with parentId the type may be omitted to list children of any
+  // type). Visibility still comes from resolveContent — same chokepoint rules.
+  const conds = [isNull(contentItem.deletedAt)];
+  if (typeName) conds.push(eq(contentItem.type, typeName));
+  if (parentId) conds.push(eq(contentItem.parentId, parentId));
   const items = await db
     .select({ documentId: contentItem.documentId })
     .from(contentItem)
-    .where(where)
+    .where(and(...conds))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
   await ctx.primeVersions(items.map((i) => i.documentId)); // one query, not N
   const out: DeliveryContent[] = [];

@@ -48,6 +48,8 @@ import {
   getContentType,
   getTree,
   getVersion,
+  contentTypeUsage,
+  deleteContentType,
   listContentTypes,
   listLocales,
   listVersions,
@@ -125,6 +127,16 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { schema: { tags: ["manage"], params: z.object({ name: z.string() }), response: { 200: ContentTypeDef } } },
     async (req) => getContentType(app.db, req.params.name),
   );
+  app.get(
+    "/content-types-usage",
+    {
+      schema: {
+        tags: ["manage"],
+        response: { 200: z.record(z.object({ items: z.number(), inlineIn: z.number() })) },
+      },
+    },
+    async () => contentTypeUsage(app.db),
+  );
   app.post(
     "/content-types",
     { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], body: ContentTypeDef, response: { 200: ContentTypeDef } } },
@@ -141,6 +153,15 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       const { next, prev } = await updateContentType(app.db, req.accessCtx!, req.params.name, req.body);
       await audit(app.db, { actorUserId: req.user!.id, action: "contenttype.update", ip: req.ip, detail: { name: next.name, deliveryDelta: deliveryFlagDelta(prev, next) } });
       return next;
+    },
+  );
+  app.delete(
+    "/content-types/:name",
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ name: z.string() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await deleteContentType(app.db, req.accessCtx!, req.params.name);
+      await audit(app.db, { actorUserId: req.user!.id, action: "contenttype.delete", ip: req.ip, detail: { name: req.params.name } });
+      return { ok: true };
     },
   );
 
@@ -333,7 +354,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   /* --------------------------- pages (move picker) ---------------------- */
   app.get(
     "/pages",
-    { schema: { tags: ["manage"], response: { 200: z.array(z.object({ documentId: z.string(), name: z.string(), parentId: z.string().nullable() })) } } },
+    { schema: { tags: ["manage"], response: { 200: z.array(z.object({ documentId: z.string(), name: z.string(), parentId: z.string().nullable(), type: z.string() })) } } },
     async (req) => listPages(app.db, req.accessCtx!),
   );
 

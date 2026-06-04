@@ -137,6 +137,24 @@ describe("Content-management features", () => {
     expect(none.json().items).toHaveLength(0);
   });
 
+  it("lists a page's children of ANY type (teaser blocks) with their urlPath", async () => {
+    // No type filter — just "the children of this page" (what a ListBlock needs).
+    const res = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/delivery/content?parentId=${s.ids.blogId}&locale=en`,
+      headers: pub,
+    });
+    expect(res.statusCode).toBe(200);
+    const items = res.json().items as Array<{ slug: string | null; urlPath: string | null }>;
+    expect(items).toHaveLength(2);
+    // urlPath is built through the same perspective chokepoint: /<blog>/<post>.
+    const hello = items.find((i) => i.slug === "hello-paperboy");
+    expect(hello?.urlPath).toBe("/blog/hello-paperboy");
+    // Neither type nor parentId → explicit 400, not an unbounded listing.
+    const bare = await s.app.inject({ method: "GET", url: "/api/v1/delivery/content?locale=en", headers: pub });
+    expect(bare.statusCode).toBe(400);
+  });
+
   /* ----------------------------- D4: delivery keys ----------------------------- */
   it("lists delivery keys and revokes one (revoked key → 401)", async () => {
     const create = await s.app.inject({ method: "POST", url: "/api/v1/manage/delivery-keys", headers: authHeaders(admin), payload: { name: "temp", type: "public" } });

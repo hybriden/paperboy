@@ -90,15 +90,61 @@ function IconPicker({ id, value, onChange }: { id?: string; value: string; onCha
   );
 }
 
+/** Delete a content type — only enabled when totally unused; two-step confirm.
+ *  `usage` undefined = counts not loaded yet (don't offer delete, don't claim
+ *  in-use); zero counts = deletable; non-zero = in use. */
+function DeleteTypeButton({ name, usage, onDeleted }: { name: string; usage?: { items: number; inlineIn: number }; onDeleted: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [confirming, setConfirming] = useState(false);
+  const del = useMutation({
+    mutationFn: () => api.deleteContentType(name),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["content-types"] });
+      qc.invalidateQueries({ queryKey: ["content-types-usage"] });
+      toast.success("Content type deleted", name);
+      onDeleted();
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 403) toast.error("Admins only", "You need the content-type permission.");
+      else toast.error("Couldn’t delete", (e as Error).message);
+    },
+  });
+
+  if (!usage) return null; // usage counts still loading
+  const unused = usage.items === 0 && usage.inlineIn === 0;
+  if (!unused) {
+    return (
+      <span className="text-xs text-muted" title="Only content types with no items and no inline usage can be deleted.">
+        In use — can’t delete
+      </span>
+    );
+  }
+  if (!confirming) {
+    return <button className="btn-ghost text-danger hover:bg-danger/10" onClick={() => setConfirming(true)}>Delete type</button>;
+  }
+  return (
+    <span className="flex items-center gap-2 text-xs">
+      <span className="text-danger">Delete “{name}”?</span>
+      <button className="btn-danger px-2 py-1 text-xs" disabled={del.isPending} onClick={() => del.mutate()}>
+        {del.isPending ? "Deleting…" : "Confirm"}
+      </button>
+      <button className="btn-ghost px-2 py-1 text-xs" onClick={() => setConfirming(false)}>Cancel</button>
+    </span>
+  );
+}
+
 interface Props {
   mode: "create" | "edit";
   initial?: ContentTypeDef;
   allTypes: ContentTypeDef[];
+  /** Usage counts for this type, shown in the edit header. */
+  usage?: { items: number; inlineIn: number };
   open: boolean;
   onOpenChange: (o: boolean) => void;
 }
 
-export function ContentTypeEditor({ mode, initial, allTypes, open, onOpenChange }: Props) {
+export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpenChange }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -166,6 +212,23 @@ export function ContentTypeEditor({ mode, initial, allTypes, open, onOpenChange 
         description="Define the fields editors fill in. Fields marked public are exposed by the delivery API."
         className="w-[min(760px,94vw)]"
       >
+        {mode === "edit" && usage && (
+          <div className="mb-3 flex items-center gap-2 rounded-[var(--radius)] border border-line bg-canvas px-3 py-2 text-xs text-fg">
+            <Icon.Content width={14} height={14} className="shrink-0 text-muted" />
+            <span>
+              <strong>Usage:</strong>{" "}
+              {usage.items === 0 && usage.inlineIn === 0 ? (
+                <span className="text-muted">Not used by any content yet.</span>
+              ) : (
+                <>
+                  {usage.items > 0 && <>{usage.items} {kind === "block" ? "shared" : ""} {usage.items === 1 ? "item" : "items"}</>}
+                  {usage.items > 0 && usage.inlineIn > 0 && " · "}
+                  {usage.inlineIn > 0 && <>embedded inline in {usage.inlineIn} {usage.inlineIn === 1 ? "page" : "pages"}</>}
+                </>
+              )}
+            </span>
+          </div>
+        )}
         {mode === "edit" && (
           <div className="mb-3 rounded-[var(--radius)] border border-draft/40 bg-draft/10 px-3 py-2 text-xs text-draft">
             Editing affects existing content: renaming or retyping a field orphans its stored value, and adding a
@@ -267,11 +330,16 @@ export function ContentTypeEditor({ mode, initial, allTypes, open, onOpenChange 
           </ul>
         )}
 
-        <div className="mt-4 flex justify-end gap-2">
-          <button className="btn-ghost" onClick={() => onOpenChange(false)}>Cancel</button>
-          <button className="btn-primary" disabled={save.isPending} onClick={submit}>
-            {save.isPending ? "Saving…" : mode === "create" ? "Create type" : "Save changes"}
-          </button>
+        <div className="mt-4 flex items-center gap-2">
+          {mode === "edit" && (
+            <DeleteTypeButton name={name} usage={usage} onDeleted={() => onOpenChange(false)} />
+          )}
+          <div className="ml-auto flex gap-2">
+            <button className="btn-ghost" onClick={() => onOpenChange(false)}>Cancel</button>
+            <button className="btn-primary" disabled={save.isPending} onClick={submit}>
+              {save.isPending ? "Saving…" : mode === "create" ? "Create type" : "Save changes"}
+            </button>
+          </div>
         </div>
       </DialogContent>
     </Dialog>

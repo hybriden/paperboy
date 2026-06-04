@@ -105,32 +105,88 @@ export function TwoFactorPanel() {
 }
 
 /* ----------------------------- Content model ------------------------------ */
+type KindFilter = "all" | "page" | "block" | "global";
+const KIND_TABS: { key: KindFilter; label: string }[] = [
+  { key: "all", label: "All" },
+  { key: "page", label: "Pages" },
+  { key: "block", label: "Blocks" },
+  { key: "global", label: "Globals" },
+];
+
+/** One-line usage summary: pages/globals → instances; blocks → shared + inline. */
+function usageLabel(kind: string, u: { items: number; inlineIn: number } | undefined): string {
+  if (!u) return "Unused";
+  if (kind === "block") {
+    const parts: string[] = [];
+    if (u.items) parts.push(`${u.items} shared`);
+    if (u.inlineIn) parts.push(`used in ${u.inlineIn} page${u.inlineIn === 1 ? "" : "s"}`);
+    return parts.length ? parts.join(" · ") : "Unused";
+  }
+  return u.items ? `${u.items} ${u.items === 1 ? "item" : "items"}` : "Unused";
+}
+
 export function ContentTypesPanel() {
   const { user } = useUser();
   const canManage = user.permissions.includes("contenttype.manage");
   const types = useQuery({ queryKey: ["content-types"], queryFn: ({ signal }) => api.contentTypes(signal) });
+  const usage = useQuery({ queryKey: ["content-types-usage"], queryFn: ({ signal }) => api.contentTypeUsage(signal) });
   const [editor, setEditor] = useState<{ mode: "create" | "edit"; initial?: ContentTypeDef } | null>(null);
+  const [kind, setKind] = useState<KindFilter>("all");
+
+  const all = types.data ?? [];
+  const counts: Record<KindFilter, number> = {
+    all: all.length,
+    page: all.filter((t) => t.kind === "page").length,
+    block: all.filter((t) => t.kind === "block").length,
+    global: all.filter((t) => t.kind === "global").length,
+  };
+  const shown = kind === "all" ? all : all.filter((t) => t.kind === kind);
+
   return (
     <PanelShell
       title="Content types"
       hint="The data model: pages, blocks and globals editors fill in. Public fields are exposed by the Delivery API."
       action={canManage ? <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setEditor({ mode: "create" })}><Icon.Plus width={14} height={14} /> New content type</button> : undefined}
     >
-      {(types.data ?? []).map((t) => (
+      {/* Kind filter */}
+      <div className="flex gap-1 border-b border-line px-3 py-2" role="tablist" aria-label="Filter by kind">
+        {KIND_TABS.map((t) => (
+          <button key={t.key} role="tab" aria-selected={kind === t.key}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium ${kind === t.key ? "bg-accent/15 text-accent-700" : "text-muted hover:bg-line/60 hover:text-fg"}`}
+            onClick={() => setKind(t.key)}>
+            {t.label} <span className="opacity-60">{counts[t.key]}</span>
+          </button>
+        ))}
+      </div>
+
+      {shown.map((t) => (
         <div key={t.name} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
           <TypeIcon name={t.icon} width={16} height={16} className="shrink-0 text-muted" />
           <span className="font-medium text-fg">{t.displayName}</span>
           <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{t.name}</code>
           <span className="rounded bg-canvas px-1.5 py-0.5 text-[11px] text-muted">{t.kind}</span>
-          <span className="ml-auto text-xs text-muted">{t.fields.length} fields</span>
+          <span className="ml-auto flex items-center gap-3 text-xs text-muted">
+            <span title="How many content items use this type">{usageLabel(t.kind, usage.data?.[t.name])}</span>
+            <span className="text-line">·</span>
+            <span>{t.fields.length} fields</span>
+          </span>
           {canManage && (
             <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setEditor({ mode: "edit", initial: t })}>Edit</button>
           )}
         </div>
       ))}
-      {types.data?.length === 0 && <p className="p-4 text-sm text-muted">No content types.</p>}
+      {shown.length === 0 && <p className="p-4 text-sm text-muted">{all.length === 0 ? "No content types." : "None of this kind."}</p>}
       {editor && (
-        <ContentTypeEditor mode={editor.mode} initial={editor.initial} allTypes={types.data ?? []} open onOpenChange={(o) => !o && setEditor(null)} />
+        <ContentTypeEditor
+          mode={editor.mode}
+          initial={editor.initial}
+          allTypes={all}
+          // Once usage has loaded, a type absent from the map has zero usage
+          // (deletable). undefined only while the query is still loading.
+          usage={editor.initial && usage.isSuccess ? (usage.data[editor.initial.name] ?? { items: 0, inlineIn: 0 }) : undefined}
+          open
+          onOpenChange={(o) => !o && setEditor(null)}
+        />
       )}
     </PanelShell>
   );

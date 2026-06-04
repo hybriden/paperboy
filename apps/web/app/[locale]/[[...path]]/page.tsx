@@ -111,7 +111,7 @@ export default async function ContentPage({
       <div className="langbar">
         Language: <strong>{content.locale}</strong> · URL <strong>/{locale}{urlPath || " (start page)"}</strong> · cv {content.cv}
       </div>
-      <Renderer content={content} posts={posts} locale={locale} basePath={urlPath} />
+      <Renderer content={content} posts={posts} locale={locale} basePath={urlPath} preview={preview} />
       {preview && <PreviewBridge />}
     </>
   );

@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import type { DeliveryContent } from "@paperboy/shared";
 import DOMPurify from "isomorphic-dompurify";
 import { marked } from "marked";
+import { fetchList } from "../lib/delivery";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -78,7 +79,49 @@ interface AreaBlock {
 }
 const blockData = (b: AreaBlock): Record<string, unknown> => (b.shared ? b.content?.data : b.data) ?? {};
 
-function Block({ b, index, locale }: { b: AreaBlock; index: number; locale: string }) {
+/** Newest-first by publishDate (fallback name) — the teaser/list ordering. */
+function newestFirst(items: DeliveryContent[]): DeliveryContent[] {
+  return [...items].sort((a, b) =>
+    String((b.data as Record<string, unknown>).publishDate ?? "").localeCompare(
+      String((a.data as Record<string, unknown>).publishDate ?? ""),
+    ) || a.name.localeCompare(b.name),
+  );
+}
+
+/** ListBlock: a teaser list of a referenced page's newest children (async RSC). */
+async function ListBlockTeasers({ d, locale, preview, edit }: { d: Record<string, unknown>; locale: string; preview: boolean; edit: Record<string, unknown> }) {
+  const source = d.source as { documentId?: string } | null | undefined;
+  const count = typeof d.count === "number" && d.count > 0 ? d.count : 3;
+  const items = source?.documentId
+    ? newestFirst(await fetchList(null, locale, preview, source.documentId)).slice(0, count)
+    : [];
+  return (
+    <section className="block block--narrow" data-block="ListBlock" {...edit}>
+      <h2>{String(d.heading ?? "")}</h2>
+      {items.length === 0 ? (
+        <p className="post-meta">Nothing to list yet.</p>
+      ) : (
+        <ul className="post-list">
+          {items.map((p) => {
+            const pd = p.data as Record<string, unknown>;
+            const date = fmtDate(pd.publishDate);
+            return (
+              <li key={p.documentId} className="card post-card">
+                <a className="post-link" href={p.urlPath ? `/${locale}${p.urlPath}` : "#"}>
+                  <h3>{String(pd.title ?? p.name)}</h3>
+                </a>
+                {date ? <p className="post-meta">{date}</p> : null}
+                {pd.summary ? <p className="post-summary">{String(pd.summary)}</p> : null}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; locale: string; preview: boolean }) {
   const d = blockData(b);
   // data-pb-* markers let the editor's preview map a click back to this block.
   const edit = { "data-pb-block-index": index, "data-pb-block-type": b.blockType, "data-pb-shared": b.shared ? "true" : undefined };
@@ -102,6 +145,9 @@ function Block({ b, index, locale }: { b: AreaBlock; index: number; locale: stri
         <Rich doc={d.body} className="richtext" />
       </div>
     );
+  }
+  if (b.blockType === "ListBlock") {
+    return <ListBlockTeasers d={d} locale={locale} preview={preview} edit={edit} />;
   }
   return <div className="block card" data-block={b.blockType} {...edit}>Unknown block: {b.blockType}</div>;
 }
@@ -132,7 +178,7 @@ function BlogPostView({ content }: { content: DeliveryContent }) {
 
 /** The item list a ListPage renders. Children live under the list page itself. */
 function PostList({ posts, locale, basePath }: { posts: DeliveryContent[]; locale: string; basePath: string }) {
-  const href = (p: DeliveryContent) => `/${locale}${basePath}/${p.slug ?? ""}`;
+  const href = (p: DeliveryContent) => `/${locale}${p.urlPath ?? `${basePath}/${p.slug ?? ""}`}`;
   return (
     <ul className="post-list">
       {posts.map((p) => {
@@ -152,7 +198,7 @@ function PostList({ posts, locale, basePath }: { posts: DeliveryContent[]; local
   );
 }
 
-export function Renderer({ content, posts, locale = "en", basePath = "" }: { content: DeliveryContent; posts?: DeliveryContent[]; locale?: string; basePath?: string }) {
+export function Renderer({ content, posts, locale = "en", basePath = "", preview = false }: { content: DeliveryContent; posts?: DeliveryContent[]; locale?: string; basePath?: string; preview?: boolean }) {
   if (content.type === "BlogPost") return <BlogPostView content={content} />;
 
   const data = content.data as Record<string, unknown>;
@@ -166,7 +212,7 @@ export function Renderer({ content, posts, locale = "en", basePath = "" }: { con
       <h1 className="page-heading" data-pb-field="heading">{String(data.heading ?? content.name)}</h1>
       <div data-pb-field="intro"><Rich doc={data.intro} className="intro richtext" /></div>
       {data.body != null ? <div data-pb-field="body"><Rich doc={data.body} className="richtext" /></div> : null}
-      {area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} />)}
+      {area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} />)}
       {posts && posts.length > 0 ? <PostList posts={posts} locale={locale} basePath={basePath} /> : null}
     </main>
   );
