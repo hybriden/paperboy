@@ -19,7 +19,7 @@ describe("Pages, blocks, content areas + draft/publish lifecycle", () => {
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(ed),
-      payload: { type: "StandardPage", locale: "en", name: "Lifecycle Page" },
+      payload: { type: "ArticlePage", locale: "en", name: "Lifecycle Page" },
     });
     expect(created.statusCode).toBe(200);
     expect(created.json().status).toBe("draft");
@@ -34,7 +34,7 @@ describe("Pages, blocks, content areas + draft/publish lifecycle", () => {
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(ed),
-      payload: { type: "StandardPage", locale: "en", name: "Composed Page" },
+      payload: { type: "ArticlePage", locale: "en", name: "Composed Page" },
     });
     const id = created.json().documentId;
 
@@ -83,7 +83,7 @@ describe("Pages, blocks, content areas + draft/publish lifecycle", () => {
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(ed),
-      payload: { type: "StandardPage", locale: "en", name: "Invalid Page" },
+      payload: { type: "ArticlePage", locale: "en", name: "Invalid Page" },
     });
     const id = created.json().documentId;
     // Save a draft WITHOUT the required `heading` (allowed for drafts).

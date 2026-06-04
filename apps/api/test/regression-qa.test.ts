@@ -27,7 +27,7 @@ describe("QA regressions", () => {
   });
 
   it("unpublish → data-only edit → republish PRESERVES name & slug (no data loss)", async () => {
-    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "StandardPage", locale: "en", name: "Keepme" } });
+    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "ArticlePage", locale: "en", name: "Keepme" } });
     const id = created.json().documentId;
     await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(ed), payload: { name: "Keepme", slug: "keepme", data: { heading: "First" } } });
     await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(ed) });
@@ -45,7 +45,7 @@ describe("QA regressions", () => {
   });
 
   it("unpublished content stays preview-visible (but not public)", async () => {
-    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "StandardPage", locale: "en", name: "TakenDown" } });
+    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "ArticlePage", locale: "en", name: "TakenDown" } });
     const id = created.json().documentId;
     await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(ed), payload: { name: "TakenDown", slug: "takendown", data: { heading: "Down" } } });
     await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(ed) });

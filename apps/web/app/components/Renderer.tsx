@@ -130,9 +130,9 @@ function BlogPostView({ content }: { content: DeliveryContent }) {
   );
 }
 
-/** The post list shown on the blog index page. */
-function PostList({ posts, locale }: { posts: DeliveryContent[]; locale: string }) {
-  const href = (p: DeliveryContent) => `/${locale}/blog/${p.slug ?? ""}`;
+/** The item list a ListPage renders. Children live under the list page itself. */
+function PostList({ posts, locale, basePath }: { posts: DeliveryContent[]; locale: string; basePath: string }) {
+  const href = (p: DeliveryContent) => `/${locale}${basePath}/${p.slug ?? ""}`;
   return (
     <ul className="post-list">
       {posts.map((p) => {
@@ -152,7 +152,7 @@ function PostList({ posts, locale }: { posts: DeliveryContent[]; locale: string 
   );
 }
 
-export function Renderer({ content, posts, locale = "en" }: { content: DeliveryContent; posts?: DeliveryContent[]; locale?: string }) {
+export function Renderer({ content, posts, locale = "en", basePath = "" }: { content: DeliveryContent; posts?: DeliveryContent[]; locale?: string; basePath?: string }) {
   if (content.type === "BlogPost") return <BlogPostView content={content} />;
 
   const data = content.data as Record<string, unknown>;
@@ -167,7 +167,7 @@ export function Renderer({ content, posts, locale = "en" }: { content: DeliveryC
       <div data-pb-field="intro"><Rich doc={data.intro} className="intro richtext" /></div>
       {data.body != null ? <div data-pb-field="body"><Rich doc={data.body} className="richtext" /></div> : null}
       {area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} />)}
-      {posts && posts.length > 0 ? <PostList posts={posts} locale={locale} /> : null}
+      {posts && posts.length > 0 ? <PostList posts={posts} locale={locale} basePath={basePath} /> : null}
     </main>
   );
 }

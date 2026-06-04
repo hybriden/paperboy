@@ -11,7 +11,7 @@ describe("Re-parenting pages (move across the hierarchy)", () => {
   let a1Id: string;
 
   async function makePage(parentId: string | null, name: string, slug: string) {
-    const c = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(admin), payload: { type: "StandardPage", parentId, locale: "en", name } });
+    const c = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(admin), payload: { type: "ArticlePage", parentId, locale: "en", name } });
     const id = c.json().documentId;
     await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(admin), payload: { slug, data: { heading: name } } });
     await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(admin) });

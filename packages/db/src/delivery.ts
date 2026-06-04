@@ -299,12 +299,18 @@ export async function deliveryList(
   typeName: string,
   loc: string,
   populate?: number,
+  parentId?: string,
 ): Promise<DeliveryContent[]> {
   const ctx = new DeliveryCtx(db);
+  // Optional hierarchy filter (e.g. a ListPage listing its own children).
+  // Visibility still comes from resolveContent below — same chokepoint rules.
+  const where = parentId
+    ? and(eq(contentItem.type, typeName), eq(contentItem.parentId, parentId), isNull(contentItem.deletedAt))
+    : and(eq(contentItem.type, typeName), isNull(contentItem.deletedAt));
   const items = await db
     .select({ documentId: contentItem.documentId })
     .from(contentItem)
-    .where(and(eq(contentItem.type, typeName), isNull(contentItem.deletedAt)))
+    .where(where)
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
   await ctx.primeVersions(items.map((i) => i.documentId)); // one query, not N
   const out: DeliveryContent[] = [];

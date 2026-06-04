@@ -67,14 +67,18 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       config: { rateLimit: { max: 600, timeWindow: "1 minute" } },
       schema: {
         tags: ["delivery"],
-        querystring: PopulateQuery.extend({ type: z.string() }),
+        querystring: PopulateQuery.extend({
+          type: z.string(),
+          /** Only items that are direct children of this document (e.g. a ListPage's own subtree). */
+          parentId: z.string().optional(),
+        }),
         response: { 200: z.object({ items: z.array(DeliveryContent), cv: z.number() }) },
       },
     },
     async (req, reply) => {
       const perspective = req.perspective!;
       const locale = req.query.locale ?? "en";
-      const items = await deliveryList(app.db, perspective, req.query.type, locale, req.query.populate);
+      const items = await deliveryList(app.db, perspective, req.query.type, locale, req.query.populate, req.query.parentId);
       const maxCv = items.reduce((m, i) => Math.max(m, i.cv), 0);
       setCacheHeaders(reply, perspective, maxCv);
       return { items, cv: maxCv };

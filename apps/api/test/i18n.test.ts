@@ -38,7 +38,7 @@ describe("Multi-language (document-level i18n, per-locale publish, fallback chai
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(ed),
-      payload: { type: "StandardPage", locale: "en", name: "Per-locale" },
+      payload: { type: "ArticlePage", locale: "en", name: "Per-locale" },
     });
     const id = created.json().documentId;
     await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(ed), payload: { slug: "per-locale-en", data: { heading: "English only" } } });
