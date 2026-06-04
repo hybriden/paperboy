@@ -3,13 +3,14 @@ import { useMemo, useState } from "react";
 import { ContentTypeDef, type ContentKind, type FieldOption, type FieldType, type FieldValidation } from "@paperboy/shared";
 import { api, ApiError } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
+import { TYPE_ICONS, TypeIcon } from "../lib/typeIcons.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
 import { Switch } from "./ui/switch.js";
 import { useToast } from "./ui/toast.js";
 
 const FIELD_TYPES: FieldType[] = ["text", "richtext", "boolean", "number", "datetime", "select", "link", "image", "reference", "contentArea"];
 const KINDS: ContentKind[] = ["page", "block", "global"];
-const ICONS = ["file", "file-text", "image", "square", "settings", "block", "globe"];
 
 interface DraftField {
   _key: string;
@@ -43,6 +44,51 @@ const newField = (): DraftField => ({
   options: [],
   multiple: false,
 });
+
+/** Visual icon picker: trigger shows the current icon; the popover is a searchable grid. */
+function IconPicker({ id, value, onChange }: { id?: string; value: string; onChange: (name: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const shown = q.trim()
+    ? TYPE_ICONS.filter(([name]) => name.includes(q.trim().toLowerCase()))
+    : TYPE_ICONS;
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setQ(""); }}>
+      <PopoverTrigger id={id} className="field-input flex items-center gap-2 text-left" aria-label="Choose icon">
+        <TypeIcon name={value} width={16} height={16} className="shrink-0 text-muted" />
+        <span className="truncate">{value}</span>
+        <Icon.ChevronDown width={14} height={14} className="ml-auto shrink-0 text-muted" />
+      </PopoverTrigger>
+      <PopoverContent className="w-[296px]">
+        <input
+          className="field-input mb-2 py-1 text-sm"
+          placeholder="Search icons…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          aria-label="Search icons"
+        />
+        <div className="grid max-h-56 grid-cols-8 gap-0.5 overflow-y-auto" role="listbox" aria-label="Icons">
+          {shown.map(([name, Cmp]) => (
+            <button
+              key={name}
+              type="button"
+              role="option"
+              aria-selected={name === value}
+              title={name}
+              onClick={() => { onChange(name); setOpen(false); setQ(""); }}
+              className={`grid h-8 w-8 place-items-center rounded ${
+                name === value ? "bg-accent/15 text-accent-700 ring-1 ring-accent" : "text-fg hover:bg-line/60"
+              }`}
+            >
+              <Cmp width={16} height={16} />
+            </button>
+          ))}
+          {shown.length === 0 && <p className="col-span-8 py-3 text-center text-xs text-muted">No icons match.</p>}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 interface Props {
   mode: "create" | "edit";
@@ -146,9 +192,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, open, onOpenChange 
           </div>
           <div>
             <label className="field-label" htmlFor="ct-icon">Icon</label>
-            <select id="ct-icon" className="field-input" value={icon} onChange={(e) => setIcon(e.target.value)}>
-              {ICONS.map((i) => <option key={i} value={i}>{i}</option>)}
-            </select>
+            <IconPicker id="ct-icon" value={icon} onChange={setIcon} />
           </div>
           <div className="col-span-2">
             <label className="field-label" htmlFor="ct-desc">Description</label>

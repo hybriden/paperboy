@@ -36,6 +36,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1",
     "dompurify": "^3.4.8",
+    "lucide-react": "^1.17.0",
     "marked": "^18.0.4",
     "qrcode.react": "^4.2.0",
     "react": "^19.0.0",

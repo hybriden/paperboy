@@ -3,6 +3,7 @@ import { useState } from "react";
 import type { ContentTypeDef } from "@paperboy/shared";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
+import { TypeIcon } from "../lib/typeIcons.js";
 import { MediaTab } from "./MediaLibrary.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 
@@ -72,7 +73,7 @@ export function AssetPane({
                   title={`${b.name} · ${b.type} — open, or drag into a content area`}
                 >
                   <Icon.Grip width={13} height={13} className="shrink-0 text-muted/60" />
-                  <Icon.Block width={15} height={15} className="shrink-0 text-muted" />
+                  <TypeIcon name={blockTypes.find((t) => t.name === b.type)?.icon} fallback="blocks" width={15} height={15} className="shrink-0 text-muted" />
                   <span className="truncate">{b.name}</span>
                   <span className={`ml-auto h-2 w-2 shrink-0 rounded-full ${loc?.status === "published" ? "bg-published" : "bg-draft"}`} />
                 </button>
