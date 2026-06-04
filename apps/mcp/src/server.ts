@@ -155,12 +155,17 @@ tool(
     "call get_content_type first. text/markdown → a plain string; richtext → a TipTap",
     "doc object {type:'doc',content:[…]}; contentArea → an ARRAY of block instances;",
     "reference → {documentId,type?}; select → one option-value string; image → an asset id.",
-    "By default `data` REPLACES the whole map (send every field). Pass merge:true to",
-    "patch only the fields you include and keep the rest.",
+    "By default `data` is MERGED over the current draft — fields you omit are kept.",
+    "Pass merge:false to REPLACE the whole map (then you must send every required field,",
+    "or the next publish will fail validation).",
   ].join(" "),
-  { documentId: docId, locale: loc, name: z.string().optional(), slug: z.string().nullable().optional(), displayInNav: z.boolean().optional(), data: z.record(z.unknown()), merge: z.boolean().optional().describe("Shallow-merge data over the current draft instead of replacing it") },
+  { documentId: docId, locale: loc, name: z.string().optional(), slug: z.string().nullable().optional(), displayInNav: z.boolean().optional(), data: z.record(z.unknown()), merge: z.boolean().optional().describe("Default true: shallow-merge data over the current draft. false = replace the whole field map") },
+  // merge defaults to TRUE here (agent-facing surface): a full replace that
+  // silently drops required fields like `intro` passes the relaxed draft
+  // validation but bricks every subsequent publish — the worst failure mode
+  // an agent can hit. Replace semantics stay available via merge:false.
   ({ documentId, locale, name, slug, displayInNav, data, merge }) =>
-    updateContent(db, ctx, documentId, locale ?? "en", { name, slug, displayInNav, data, merge }));
+    updateContent(db, ctx, documentId, locale ?? "en", { name, slug, displayInNav, data, merge: merge ?? true }));
 tool("publish", "Publish the working draft of a content item for a locale.", { documentId: docId, locale: loc },
   ({ documentId, locale }) => publishContent(db, ctx, documentId, locale ?? "en"));
 tool("unpublish", "Unpublish (take down) a content item for a locale.", { documentId: docId, locale: loc },
