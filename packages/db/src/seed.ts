@@ -43,7 +43,7 @@ const TYPES: ContentTypeDef[] = ([
     fields: [
       { name: "heading", displayName: "Heading", type: "text", localized: true, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
       { name: "intro", displayName: "Intro", type: "richtext", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
-      { name: "mainArea", displayName: "Main content area", type: "contentArea", localized: true, required: false, delivery: "public", allowedBlocks: ["HeroBlock", "CardBlock"], allowedTypes: [], group: "Content" },
+      { name: "mainArea", displayName: "Main content area", type: "contentArea", localized: true, required: false, delivery: "public", allowedBlocks: ["HeroBlock", "CardBlock", "ListBlock"], allowedTypes: [], group: "Content" },
       ...SEO_FIELDS,
     ],
   },
@@ -56,7 +56,7 @@ const TYPES: ContentTypeDef[] = ([
     fields: [
       { name: "heading", displayName: "Heading", type: "text", localized: true, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
       { name: "intro", displayName: "Intro", type: "richtext", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
-      { name: "mainArea", displayName: "Main content area", type: "contentArea", localized: true, required: false, delivery: "public", allowedBlocks: ["HeroBlock", "CardBlock"], allowedTypes: [], group: "Content" },
+      { name: "mainArea", displayName: "Main content area", type: "contentArea", localized: true, required: false, delivery: "public", allowedBlocks: ["HeroBlock", "CardBlock", "ListBlock"], allowedTypes: [], group: "Content" },
       { name: "seoNotes", displayName: "Internal SEO notes", type: "text", localized: true, required: false, delivery: "private", allowedBlocks: [], allowedTypes: [], group: "Settings", helpText: "Never exposed by the public delivery API." },
       ...SEO_FIELDS,
     ],
@@ -112,6 +112,18 @@ const TYPES: ContentTypeDef[] = ([
     fields: [
       { name: "title", displayName: "Title", type: "text", localized: true, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
       { name: "body", displayName: "Body", type: "richtext", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
+    ],
+  },
+  {
+    name: "ListBlock",
+    displayName: "List",
+    kind: "block",
+    description: "A teaser list: shows the newest children of a chosen page (e.g. latest blog posts).",
+    icon: "layout-list",
+    fields: [
+      { name: "heading", displayName: "Heading", type: "text", localized: true, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
+      { name: "source", displayName: "List children of", type: "reference", localized: false, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content", helpText: "The page whose children are listed (newest first)." },
+      { name: "count", displayName: "Max items", type: "number", localized: false, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content", helpText: "Maximum teasers to show (default 3)." },
     ],
   },
   {
@@ -186,10 +198,13 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
 
   // --- Home page (LandingPage) — EN + NB published -----------------------
   const homeId = nanoid(24);
+  const blogId = nanoid(24); // the Blog ListPage (created below) — Home's teaser block points at it
   await db.insert(contentItem).values({ documentId: homeId, type: "LandingPage", kind: "page", parentId: null, sortIndex: 0, sectionId: homeId });
   const homeArea = [
     { key: "h1", blockType: "HeroBlock", display: "full", ref: null, inline: { title: "Deliver content anywhere", subtitle: "Headless. Multi-language. Preview-ready.", ctaUrl: "/docs" } },
     { key: "h2", blockType: "CardBlock", display: "narrow", ref: cardId, inline: null },
+    // Teaser list: the newest children of the Blog page, right on the frontpage.
+    { key: "h3", blockType: "ListBlock", display: "narrow", ref: null, inline: { heading: "Latest from the blog", source: { documentId: blogId, type: "ListPage" }, count: 2 } },
   ];
   await db.insert(contentVersion).values({
     documentId: homeId, locale: "en", status: "published", isCurrentPublished: true, versionNumber: 1,
@@ -205,7 +220,6 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
   });
 
   // --- Blog (ListPage) + two sample posts under it ------------------------
-  const blogId = nanoid(24);
   await db.insert(contentItem).values({ documentId: blogId, type: "ListPage", kind: "page", parentId: null, sortIndex: 1, sectionId: blogId });
   await db.insert(contentVersion).values({
     documentId: blogId, locale: "en", status: "published", isCurrentPublished: true, versionNumber: 1,

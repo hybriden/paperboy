@@ -95,6 +95,9 @@ export const UpdateContentRequest = z.object({
   slug: z.string().nullable().optional(),
   displayInNav: z.boolean().optional(),
   data: z.record(z.unknown()),
+  /** When true, `data` is shallow-merged over the current working draft instead
+   *  of replacing it — so a caller can patch one field without resending all. */
+  merge: z.boolean().optional(),
 });
 export type UpdateContentRequest = z.infer<typeof UpdateContentRequest>;
 
@@ -105,6 +108,9 @@ export const DeliveryContent = z.object({
   locale: z.string(),
   name: z.string(),
   slug: z.string().nullable(),
+  /** Hierarchical URL path (pages only, e.g. "/blog/hello") — null for blocks
+   *  or when an ancestor isn't visible in the current perspective (no-leak). */
+  urlPath: z.string().nullable(),
   /** cache-version: bumped on publish, used for ETag / cache busting. */
   cv: z.number(),
   data: z.record(z.unknown()),
