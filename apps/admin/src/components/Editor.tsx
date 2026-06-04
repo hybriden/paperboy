@@ -441,7 +441,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         ))}
       </div>
 
-      <div className="mx-auto max-w-3xl space-y-5 p-4 sm:p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
+      <div className="max-w-3xl space-y-5 p-4 sm:p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
         {type?.fields
           .filter((f) => f.group === tab)
           .map((f) => (
