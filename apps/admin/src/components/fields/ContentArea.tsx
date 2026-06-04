@@ -15,8 +15,10 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
+import { api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { ImageField } from "../MediaLibrary.js";
 import { MarkdownEditor } from "./MarkdownEditor.js";
@@ -41,6 +43,8 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
   const allowed = field.allowedBlocks.length
     ? types.filter((t) => field.allowedBlocks.includes(t.name))
     : types.filter((t) => t.kind === "block");
+  // Page names for teaser entries (same key/cache as ReferenceField).
+  const pages = useQuery({ queryKey: ["pages"], queryFn: ({ signal }) => api.pages(signal) });
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -54,7 +58,9 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
     onChange([...blocks, { key: newKey(), blockType, display: "automatic", inline: null, ref: documentId }]);
   }
 
-  // Drop a shared block dragged from the Assets pane into this content area.
+  // Drop a shared block (Assets pane) or a page (content tree) into this
+  // content area. A dropped page becomes a teaser — a reference entry that
+  // delivery resolves to {name, urlPath, public data} (Optimizely-style).
   const [dropOver, setDropOver] = useState(false);
   function onDrop(e: React.DragEvent) {
     setDropOver(false);
@@ -63,9 +69,14 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
     e.preventDefault();
     try {
       const p = JSON.parse(raw) as { kind?: string; documentId?: string; blockType?: string };
-      if (p.kind === "block" && p.documentId && p.blockType) {
+      if (!p.documentId || !p.blockType) return;
+      if (p.kind === "block") {
+        // allowedBlocks constrains which BLOCK types may be placed here.
         const ok = !field.allowedBlocks.length || field.allowedBlocks.includes(p.blockType);
         if (ok) addShared(p.documentId, p.blockType);
+      } else if (p.kind === "page") {
+        // Pages are always placeable (rendered as teasers, not as blocks).
+        addShared(p.documentId, p.blockType);
       }
     } catch { /* ignore */ }
   }
@@ -133,7 +144,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
       >
         {blocks.length === 0 ? (
           <p className="px-2 py-6 text-center text-sm text-muted">
-            {dropOver ? "Drop the shared block here" : "Click a block above to add it, or drag a shared block from the Assets pane."}
+            {dropOver ? "Drop it here" : "Click a block above to add it, or drag in a shared block (Assets pane) or a page (content tree — shown as a teaser)."}
           </p>
         ) : (
           <SortableContext items={blocks.map((b) => b.key)} strategy={verticalListSortingStrategy}>
@@ -144,7 +155,10 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
                   index={i}
                   block={b}
                   type={types.find((t) => t.name === b.blockType)}
-                  sharedName={sharedBlocks.find((s) => s.documentId === b.ref)?.name}
+                  sharedName={
+                    sharedBlocks.find((s) => s.documentId === b.ref)?.name ??
+                    pages.data?.find((p) => p.documentId === b.ref)?.name
+                  }
                   onUpdate={(patch) => updateBlock(b.key, patch)}
                   onRemove={() => removeBlock(b.key)}
                   onMove={(d) => move(b.key, d)}
@@ -178,6 +192,8 @@ function SortableBlock({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.key });
   const style = { transform: CSS.Transform.toString(transform), transition };
   const isShared = block.ref !== null;
+  // A referenced PAGE renders as a teaser on the site (not as a block).
+  const isTeaser = isShared && type?.kind === "page";
 
   return (
     <li id={`pb-block-${index}`} ref={setNodeRef} style={style} className={`rounded border border-line bg-panel shadow-sm ${isDragging ? "opacity-60 ring-2 ring-accent" : ""}`}>
@@ -186,7 +202,9 @@ function SortableBlock({
           <Icon.Grip width={16} height={16} />
         </button>
         <span className="text-[13px] font-semibold text-fg">{type?.displayName ?? block.blockType}</span>
-        {isShared ? (
+        {isTeaser ? (
+          <span className="rounded bg-published/15 px-1.5 py-0.5 text-[11px] font-medium text-fg" title="Shown as a teaser linking to this page">teaser{sharedName ? `: ${sharedName}` : ""}</span>
+        ) : isShared ? (
           <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-medium text-fg">shared{sharedName ? `: ${sharedName}` : ""}</span>
         ) : (
           <span className="rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">inline</span>
@@ -213,7 +231,10 @@ function SortableBlock({
           ))}
         </div>
       )}
-      {isShared && (
+      {isTeaser && (
+        <p className="px-2.5 py-2 text-xs text-muted">Rendered as a teaser — a compact card linking to the page. Edit the page itself from the tree.</p>
+      )}
+      {isShared && !isTeaser && (
         <p className="px-2.5 py-2 text-xs text-muted">Edit this shared block from its own page in the tree. Changes apply everywhere it is used.</p>
       )}
     </li>

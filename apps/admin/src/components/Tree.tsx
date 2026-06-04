@@ -393,6 +393,22 @@ function Row(props: LevelProps & { node: TreeNode }) {
             tabIndex={isSelected ? 0 : -1}
             onKeyDown={onRowKey}
             onClick={() => onSelect(node.documentId)}
+            // Pages can be dragged into a content area, where they render as a
+            // teaser (native HTML5 drag — same channel as the Assets pane).
+            // dnd-kit reorder/nest stays on the grip; a native drag starting
+            // there is suppressed so the two can't fight over the gesture.
+            draggable={node.kind === "page"}
+            onDragStart={(e) => {
+              if ((e.target as HTMLElement).closest('[aria-label="Drag to reorder or nest"]')) {
+                e.preventDefault();
+                return;
+              }
+              e.dataTransfer.setData(
+                "application/x-paperboy",
+                JSON.stringify({ kind: "page", documentId: node.documentId, blockType: node.type, name: node.name }),
+              );
+              e.dataTransfer.effectAllowed = "copy";
+            }}
             className={`group flex cursor-pointer items-center gap-1 rounded-[var(--radius)] py-1.5 pr-1.5 text-sm transition-colors ${
               overInside ? "bg-accent/15 ring-2 ring-inset ring-accent" : isSelected ? "bg-accent/15 font-medium text-fg" : "text-fg hover:bg-line/50"
             }`}
