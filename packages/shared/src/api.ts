@@ -105,6 +105,9 @@ export type UpdateContentRequest = z.infer<typeof UpdateContentRequest>;
 export const DeliveryContent = z.object({
   documentId: z.string(),
   type: z.string(),
+  /** page | block | global — lets a frontend render pages in content areas as
+   *  teasers (linking to urlPath) and blocks by their blockType. */
+  kind: z.enum(["page", "block", "global"]),
   locale: z.string(),
   name: z.string(),
   slug: z.string().nullable(),
