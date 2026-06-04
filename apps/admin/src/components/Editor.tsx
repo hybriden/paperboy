@@ -20,6 +20,7 @@ import { ImageField } from "./MediaLibrary.js";
 import { PreviewPane } from "./PreviewPane.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
 import { useToast } from "./ui/toast.js";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
@@ -601,42 +602,45 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         </div>
       )}
 
-      {/* Basic-info header */}
-      <div className="grid grid-cols-1 gap-x-6 gap-y-2 border-b border-line bg-canvas px-4 py-3 sm:grid-cols-2 md:grid-cols-4">
-        <Meta label="Name">
-          <input className="field-input py-1" value={form.name} disabled={!canEdit}
-            onChange={(e) => patch((prev) => ({ ...prev, name: e.target.value }))} aria-label="Name" />
-        </Meta>
+      {/* Basic-info row — one slim line (name + URL chip + type) so the canvas
+          and preview get the vertical space. Slug/nav settings live in the
+          URL chip's popover. */}
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-canvas px-4 py-2">
+        <input className="field-input w-auto min-w-0 max-w-sm flex-1 basis-44 py-1 font-medium" value={form.name} disabled={!canEdit}
+          onChange={(e) => patch((prev) => ({ ...prev, name: e.target.value }))} aria-label="Name" />
         {isPage ? (
-          <>
-            <Meta label="Name in URL (segment)">
-              <input className="field-input py-1" value={form.slug ?? ""} disabled={!canEdit}
-                onChange={(e) => patch((prev) => ({ ...prev, slug: e.target.value }))} aria-label="Slug" />
-            </Meta>
-            <Meta label="Display in navigation">
+          <Popover>
+            <PopoverTrigger className="btn-subtle min-w-0 max-w-[45%] gap-1.5 px-2.5 py-1 text-xs"
+              aria-label="URL settings" title={form.urlPath ?? undefined}>
+              <span className="truncate font-mono">{form.urlPath ?? "—"}</span>
+              <Icon.ChevronDown width={13} height={13} className="shrink-0 text-muted" />
+            </PopoverTrigger>
+            <PopoverContent className="w-80 space-y-3">
+              <div>
+                <label className="field-label" htmlFor="pb-url-slug">Name in URL (segment)</label>
+                <input id="pb-url-slug" className="field-input" value={form.slug ?? ""} disabled={!canEdit}
+                  onChange={(e) => patch((prev) => ({ ...prev, slug: e.target.value }))} aria-label="Slug" />
+              </div>
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={form.displayInNav} disabled={!canEdit}
                   onChange={(e) => patch((prev) => ({ ...prev, displayInNav: e.target.checked }))} />
-                <span className="text-muted">Show in menus</span>
+                <span>Display in navigation (menus)</span>
               </label>
-            </Meta>
-            <Meta label="URL (from page hierarchy)">
-              <code className="block truncate rounded bg-line/60 px-2 py-1 font-mono text-xs text-fg" title={form.urlPath ?? ""}>
-                {form.urlPath ?? "—"}
-              </code>
-            </Meta>
-          </>
+              <div>
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">URL (from page hierarchy)</div>
+                <code className="block truncate rounded bg-line/60 px-2 py-1 font-mono text-xs text-fg" title={form.urlPath ?? ""}>
+                  {form.urlPath ?? "—"}
+                </code>
+              </div>
+            </PopoverContent>
+          </Popover>
         ) : (
-          <Meta label="Asset">
-            <span className="rounded bg-accent/15 px-2 py-1 text-xs font-medium text-fg">Shared block · lives in the asset pane</span>
-          </Meta>
+          <span className="rounded bg-accent/15 px-2 py-1 text-xs font-medium text-fg">Shared block · lives in the asset pane</span>
         )}
-        <Meta label="Type / ID">
-          <div className="text-sm">
-            <span className="font-medium">{type?.displayName ?? form.type}</span>
-            <code className="ml-2 rounded bg-line/70 px-1 text-[11px] text-muted">{form.documentId.slice(0, 10)}…</code>
-          </div>
-        </Meta>
+        <div className="ml-auto flex min-w-0 items-center gap-2 text-sm">
+          <span className="truncate font-medium">{type?.displayName ?? form.type}</span>
+          <code className="rounded bg-line/70 px-1 text-[11px] text-muted" title={form.documentId}>{form.documentId.slice(0, 10)}…</code>
+        </div>
       </div>
 
       {/* Canvas + (optional) preview. On phones it's just the full-width form;
@@ -1076,15 +1080,6 @@ function wordDiff(aText: string, bText: string): Array<{ t: "eq" | "del" | "ins"
   while (i < n) out.push({ t: "del", s: a[i++]! });
   while (j < m) out.push({ t: "ins", s: b[j++]! });
   return out;
-}
-
-function Meta({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</div>
-      {children}
-    </div>
-  );
 }
 
 function SaveIndicator({ state }: { state: SaveState }) {
