@@ -17,6 +17,7 @@ import { TypeIcon } from "../lib/typeIcons.js";
 import { BuildFromBriefDialog } from "./BuildFromBrief.js";
 import { ContentArea } from "./fields/ContentArea.js";
 import { MarkdownEditor } from "./fields/MarkdownEditor.js";
+import { ReferenceField } from "./fields/ReferenceField.js";
 import { RichText } from "./fields/RichText.js";
 import { ImageField } from "./MediaLibrary.js";
 import { PreviewPane } from "./PreviewPane.js";
@@ -1183,6 +1184,7 @@ function Field({
           onChange={(e) => onChange(e.target.value || null)} />
       )}
       {field.type === "select" && <SelectField id={id} field={field} value={value} disabled={disabled} onChange={onChange} />}
+      {field.type === "reference" && <ReferenceField id={id} value={value} disabled={disabled} onChange={onChange} />}
       {field.type === "link" && <LinkField id={id} value={value} disabled={disabled} onChange={onChange} />}
       {field.type === "image" && (
         <ImageField id={id} value={value} disabled={disabled} onChange={onChange} />

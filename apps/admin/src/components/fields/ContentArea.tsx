@@ -20,6 +20,7 @@ import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from
 import { Icon } from "../../lib/icons.js";
 import { ImageField } from "../MediaLibrary.js";
 import { MarkdownEditor } from "./MarkdownEditor.js";
+import { ReferenceField } from "./ReferenceField.js";
 import { RichText } from "./RichText.js";
 
 let keyCounter = 0;
@@ -251,6 +252,7 @@ function BlockField({ field, fieldId, value, onChange }: { field: FieldDef; fiel
           value={((value as { href?: string } | null) ?? {}).href ?? ""}
           onChange={(e) => onChange(e.target.value ? { ...((value as object) ?? {}), href: e.target.value } : null)} />
       )}
+      {field.type === "reference" && <ReferenceField id={id} value={value} onChange={onChange} />}
       {field.type === "image" && <ImageField id={id} value={value} onChange={onChange} />}
     </div>
   );
