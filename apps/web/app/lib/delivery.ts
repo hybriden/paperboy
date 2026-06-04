@@ -39,14 +39,16 @@ export async function fetchStart(locale: string, preview: boolean): Promise<Deli
   );
 }
 
-/** List delivered content of a type — optionally only children of a page (ListPage). */
-export async function fetchList(type: string, locale: string, preview: boolean, parentId?: string): Promise<DeliveryContent[]> {
+/** List delivered content of a type and/or the children of a page (ListPage, teaser blocks). */
+export async function fetchList(type: string | null, locale: string, preview: boolean, parentId?: string): Promise<DeliveryContent[]> {
   const key = preview ? PREVIEW_KEY : PUBLIC_KEY;
-  const parent = parentId ? `&parentId=${encodeURIComponent(parentId)}` : "";
-  const res = await fetch(
-    `${API}/api/v1/delivery/content?type=${encodeURIComponent(type)}&locale=${encodeURIComponent(locale)}&populate=0${parent}`,
-    { headers: { authorization: `Bearer ${key}` }, cache: "no-store" },
-  );
+  const params = new URLSearchParams({ locale, populate: "0" });
+  if (type) params.set("type", type);
+  if (parentId) params.set("parentId", parentId);
+  const res = await fetch(`${API}/api/v1/delivery/content?${params}`, {
+    headers: { authorization: `Bearer ${key}` },
+    cache: "no-store",
+  });
   if (!res.ok) return [];
   const body = (await res.json()) as { items?: DeliveryContent[] } | DeliveryContent[];
   return Array.isArray(body) ? body : (body.items ?? []);
