@@ -95,7 +95,7 @@ export default function RichTextEditor({
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-0.5 rounded-t-[var(--radius)] border border-line bg-canvas px-1.5 py-1">
+      <div className="flex flex-wrap items-center gap-0.5 rounded-t-[var(--radius)] border border-line bg-panel px-1.5 py-1">
         <Btn label="Bold" active={active?.bold} on={() => editor.chain().focus().toggleBold().run()}><Icon.Bold width={14} height={14} /></Btn>
         <Btn label="Italic" active={active?.italic} on={() => editor.chain().focus().toggleItalic().run()}><Icon.Italic width={14} height={14} /></Btn>
         <span className="mx-1 h-4 w-px bg-line" />
