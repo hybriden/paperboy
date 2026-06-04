@@ -13,6 +13,24 @@ function fallbackWebUrl(): string {
   return "http://localhost:8092";
 }
 
+/**
+ * Public (published) URL of a page on the end-user site. Shared by the preview
+ * iframe (which appends the ?pb=<secret> draft param) and the "View on site"
+ * shortcut in the publish menu (which opens it as-is — published perspective).
+ */
+export function publicSiteUrl(
+  site: { startPageId: string | null; previewBaseUrl: string } | undefined,
+  locale: string,
+  urlPath: string | null,
+  documentId?: string,
+): string {
+  const base = (site?.previewBaseUrl || fallbackWebUrl()).replace(/\/+$/, "");
+  // The start page is served at the front-end root ("/"), not at its slug path.
+  const isStart = !!documentId && site?.startPageId === documentId;
+  const path = isStart ? "" : urlPath && urlPath !== "/" ? urlPath : "";
+  return `${base}/${encodeURIComponent(locale)}${path}`;
+}
+
 type Device = "desktop" | "tablet" | "mobile";
 // Real viewport widths the page is rendered at; the stage scales them to fit the
 // pane (scaled) so "desktop" shows the true desktop layout, not a
@@ -47,13 +65,11 @@ export function PreviewPane({ locale, urlPath, documentId, refreshSignal = 0, fo
   // Preview origin is configured in Settings → Site; fall back
   // to the build-time/derived host if it hasn't been set yet.
   const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
-  const base = (site.data?.previewBaseUrl || fallbackWebUrl()).replace(/\/+$/, "");
-  // The start page is served at the front-end root ("/"), not at its slug path.
   const isStart = !!documentId && site.data?.startPageId === documentId;
   const path = isStart ? "" : urlPath && urlPath !== "/" ? urlPath : "";
   // Load the page directly with a ?pb=<secret> preview param (no /api/draft
   // redirect, no Secure cookie) — works over plain HTTP and any host.
-  const src = `${base}/${encodeURIComponent(locale)}${path}?pb=${encodeURIComponent(PREVIEW_SECRET)}&n=${nonce}`;
+  const src = `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pb=${encodeURIComponent(PREVIEW_SECRET)}&n=${nonce}`;
 
   // Fit the device viewport to the pane WIDTH (the dimension that matters for a
   // desktop layout), then make the iframe tall enough to FILL the pane height so
