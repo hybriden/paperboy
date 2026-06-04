@@ -131,10 +131,11 @@ export type BlockInstance = z.infer<typeof BlockInstance>;
 export const ContentArea = z.array(BlockInstance);
 export type ContentArea = z.infer<typeof ContentArea>;
 
-/** A reference field value. */
+/** A reference field value. `type` is a denormalised hint — delivery resolves
+ *  the real type at read time, so it's optional on write. */
 export const ReferenceValue = z.object({
   documentId: z.string(),
-  type: z.string(),
+  type: z.string().optional(),
 });
 export type ReferenceValue = z.infer<typeof ReferenceValue>;
 
@@ -193,6 +194,108 @@ export function dataSchemaFor(type: ContentTypeDef, strict: boolean): z.ZodTypeA
     shape[f.name] = strict && f.required ? s : s.optional().nullable();
   }
   return z.object(shape).passthrough();
+}
+
+/**
+ * Human/agent-readable description of the JSON shape a field's value must take —
+ * the inverse documentation of `dataSchemaFor`. Surfaced in the MCP content-type
+ * output and in validation error messages so an agent (or a person) knows
+ * exactly what to send for each field type, with a copyable example.
+ */
+export function fieldFormatHint(f: FieldDef): { format: string; example: unknown } {
+  switch (f.type) {
+    case "text":
+      return { format: "a plain string", example: "Some text" };
+    case "markdown":
+      return { format: "a plain string containing Markdown", example: "## Heading\n\nA paragraph with **bold** text." };
+    case "richtext":
+      return {
+        format: "a TipTap document (JSON object, not a string)",
+        example: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Hello" }] }] },
+      };
+    case "boolean":
+      return { format: "a boolean", example: true };
+    case "number":
+      return { format: "a number", example: 3 };
+    case "datetime":
+      return { format: "an ISO-8601 datetime string", example: "2026-01-15T09:00:00.000Z" };
+    case "select":
+      return f.multiple
+        ? { format: "an array of option-value strings", example: f.options.slice(0, 1).map((o) => o.value) }
+        : { format: "one option-value string", example: f.options[0]?.value ?? "option-value" };
+    case "link":
+      return { format: "an object { href, text?, target? }", example: { href: "https://example.com", text: "Example" } };
+    case "image":
+    case "media":
+      return { format: "an asset documentId string", example: "asset_documentId" };
+    case "reference":
+      return { format: "an object { documentId, type? }", example: { documentId: "page_documentId", type: "ArticlePage" } };
+    case "contentArea":
+      return {
+        format: "an ARRAY of block instances",
+        example: [{ key: "b1", blockType: "HeroBlock", display: "full", ref: null, inline: { title: "…" } }],
+      };
+  }
+}
+
+/* --------------------- tolerant input coercion (agents) ------------------- */
+// Flatten a TipTap doc (or any nested {text,content}) to plain text.
+function tiptapToPlainText(node: unknown): string {
+  if (node == null) return "";
+  if (typeof node === "string") return node;
+  if (Array.isArray(node)) return node.map(tiptapToPlainText).join("");
+  const o = node as { text?: string; content?: unknown };
+  let s = typeof o.text === "string" ? o.text : "";
+  if (o.content != null) s += tiptapToPlainText(o.content);
+  return s;
+}
+// Wrap a plain (possibly multi-paragraph) string into a TipTap doc.
+function stringToTiptapDoc(s: string): unknown {
+  const paras = s.split(/\n{2,}/).map((para) => ({
+    type: "paragraph",
+    content: para ? [{ type: "text", text: para }] : [],
+  }));
+  return { type: "doc", content: paras.length ? paras : [{ type: "paragraph" }] };
+}
+function looksLikeTiptapDoc(v: unknown): boolean {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return o.type === "doc" || Array.isArray(o.content);
+}
+
+/**
+ * Be liberal in what we accept (Postel's law) for the field-shape mistakes an
+ * LLM agent reliably makes — coerced BEFORE validation. Conservative: only
+ * unambiguous fixes; genuinely broken input still falls through to the helpful
+ * validation error rather than being silently mangled.
+ *  - any field wrapped as { <fieldName>: inner }  → inner  (self-keyed wrap)
+ *  - text/markdown given a TipTap doc             → flattened to plain text
+ *  - richtext given a plain string                → wrapped into a doc
+ *  - contentArea given a single block object      → wrapped in an array
+ */
+export function coerceFieldValue(f: FieldDef, value: unknown): unknown {
+  if (value == null) return value;
+  if (typeof value === "object" && !Array.isArray(value)) {
+    const keys = Object.keys(value as object);
+    if (keys.length === 1 && keys[0] === f.name) value = (value as Record<string, unknown>)[f.name];
+  }
+  switch (f.type) {
+    case "text":
+    case "markdown":
+      return looksLikeTiptapDoc(value) ? tiptapToPlainText(value) : value;
+    case "richtext":
+      return typeof value === "string" ? stringToTiptapDoc(value) : value;
+    case "contentArea":
+      return value && typeof value === "object" && !Array.isArray(value) && "blockType" in (value as object) ? [value] : value;
+    default:
+      return value;
+  }
+}
+
+export function coerceData(type: ContentTypeDef, data: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...data };
+  for (const f of type.fields) if (f.name in out) out[f.name] = coerceFieldValue(f, out[f.name]);
+  return out;
 }
 
 function applyStringValidation(base: z.ZodString, f: FieldDef, strict: boolean): z.ZodTypeAny {

@@ -173,9 +173,13 @@ export const api = {
 
   // schema
   contentTypes: (signal?: AbortSignal) => request<ContentTypeDef[]>("GET", "/manage/content-types", undefined, signal),
+  contentTypeUsage: (signal?: AbortSignal) =>
+    request<Record<string, { items: number; inlineIn: number }>>("GET", "/manage/content-types-usage", undefined, signal),
   createContentType: (def: ContentTypeDef) => request<ContentTypeDef>("POST", "/manage/content-types", def),
   updateContentType: (name: string, def: ContentTypeDef) =>
     request<ContentTypeDef>("PUT", `/manage/content-types/${encodeURIComponent(name)}`, def),
+  deleteContentType: (name: string) =>
+    request<{ ok: boolean }>("DELETE", `/manage/content-types/${encodeURIComponent(name)}`),
   locales: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales", undefined, signal),
   localesAll: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales/all", undefined, signal),
   createLocale: (body: { code: string; displayName: string; fallbackLocaleCode?: string | null }) =>
@@ -191,7 +195,7 @@ export const api = {
   search: (q: string, signal?: AbortSignal) =>
     request<SearchResult[]>("GET", `/manage/content/search?q=${encodeURIComponent(q)}`, undefined, signal),
   pages: (signal?: AbortSignal) =>
-    request<{ documentId: string; name: string; parentId: string | null }[]>("GET", "/manage/pages", undefined, signal),
+    request<{ documentId: string; name: string; parentId: string | null; type: string }[]>("GET", "/manage/pages", undefined, signal),
 
   // site config (start page)
   site: (signal?: AbortSignal) => request<{ startPageId: string | null; previewBaseUrl: string }>("GET", "/manage/site", undefined, signal),
