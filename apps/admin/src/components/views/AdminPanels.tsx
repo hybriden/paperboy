@@ -136,18 +136,102 @@ export function ContentTypesPanel() {
 
 /* ------------------------------- Languages -------------------------------- */
 export function LanguagesPanel() {
-  const locales = useQuery({ queryKey: ["locales"], queryFn: ({ signal }) => api.locales(signal) });
+  const { user } = useUser();
+  const canManage = user.permissions.includes("contenttype.manage");
+  const qc = useQueryClient();
+  const toast = useToast();
+  // Managers see every locale (incl. disabled) so they can re-enable/remove them; others get the live set.
+  const locales = useQuery({
+    queryKey: ["locales", canManage ? "all" : "enabled"],
+    queryFn: ({ signal }) => (canManage ? api.localesAll(signal) : api.locales(signal)),
+  });
+  const list = locales.data ?? [];
+
+  const [code, setCode] = useState("");
+  const [displayName, setDisplayName] = useState("");
+  const [fallback, setFallback] = useState("");
+  const [editing, setEditing] = useState<{ code: string; displayName: string; fallback: string } | null>(null);
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["locales"] });
+  const create = useMutation({
+    mutationFn: () => api.createLocale({ code: code.trim(), displayName: displayName.trim(), fallbackLocaleCode: fallback || null }),
+    onSuccess: () => { setCode(""); setDisplayName(""); setFallback(""); invalidate(); toast.success("Language added"); },
+    onError: (e) => toast.error("Couldn’t add language", (e as Error).message),
+  });
+  const update = useMutation({
+    mutationFn: (v: { code: string; patch: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean } }) =>
+      api.updateLocale(v.code, v.patch),
+    onSuccess: () => { invalidate(); setEditing(null); toast.success("Language updated"); },
+    onError: (e) => toast.error("Couldn’t update", (e as Error).message),
+  });
+  const del = useMutation({
+    mutationFn: (c: string) => api.deleteLocale(c),
+    onSuccess: () => { invalidate(); toast.success("Language deleted"); },
+    onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
+  });
+
   return (
-    <PanelShell title="Languages" hint="Document-level localization with a per-locale fallback chain.">
-      {(locales.data ?? []).map((l) => (
+    <PanelShell
+      title="Languages"
+      hint="Document-level localization with a per-locale fallback chain."
+      action={
+        canManage ? (
+          <form
+            className="flex items-center gap-1.5"
+            onSubmit={(e) => { e.preventDefault(); if (code.trim() && displayName.trim()) create.mutate(); }}
+          >
+            <input className="field-input py-1 text-xs" style={{ width: 64 }} placeholder="code" value={code} onChange={(e) => setCode(e.target.value)} aria-label="Language code" />
+            <input className="field-input py-1 text-xs" placeholder="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} aria-label="Display name" />
+            <select className="field-input py-1 text-xs" value={fallback} onChange={(e) => setFallback(e.target.value)} aria-label="Fallback language">
+              <option value="">no fallback</option>
+              {list.map((l) => <option key={l.code} value={l.code}>↳ {l.code}</option>)}
+            </select>
+            <button className="btn-subtle px-2 py-1 text-xs" disabled={create.isPending || !code.trim() || !displayName.trim()}><Icon.Plus width={14} height={14} /> Add</button>
+          </form>
+        ) : undefined
+      }
+    >
+      {list.map((l) => (
         <div key={l.code} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
-          <span className="font-medium text-fg">{l.displayName}</span>
-          <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{l.code}</code>
-          {l.isDefault && <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-medium text-fg">default</span>}
-          {l.fallbackLocaleCode && <span className="ml-auto text-xs text-muted">falls back → {l.fallbackLocaleCode}</span>}
+          {editing?.code === l.code ? (
+            <form
+              className="flex flex-1 items-center gap-1.5"
+              onSubmit={(e) => { e.preventDefault(); if (editing.displayName.trim()) update.mutate({ code: l.code, patch: { displayName: editing.displayName.trim(), fallbackLocaleCode: editing.fallback || null } }); }}
+            >
+              <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{l.code}</code>
+              <input className="field-input py-0.5 text-xs" value={editing.displayName} autoFocus aria-label="Display name" onChange={(e) => setEditing({ ...editing, displayName: e.target.value })} />
+              <select className="field-input py-0.5 text-xs" value={editing.fallback} aria-label="Fallback language" onChange={(e) => setEditing({ ...editing, fallback: e.target.value })}>
+                <option value="">no fallback</option>
+                {list.filter((o) => o.code !== l.code).map((o) => <option key={o.code} value={o.code}>↳ {o.code}</option>)}
+              </select>
+              <button className="btn-primary px-2 py-0.5 text-xs" disabled={update.isPending || !editing.displayName.trim()}>Save</button>
+              <button type="button" className="btn-ghost px-2 py-0.5 text-xs" onClick={() => setEditing(null)}>Cancel</button>
+            </form>
+          ) : (
+            <>
+              <span className="font-medium text-fg">{l.displayName}</span>
+              <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{l.code}</code>
+              {l.isDefault && <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-medium text-fg">default</span>}
+              {!l.enabled && <span className="rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">disabled</span>}
+              {l.fallbackLocaleCode && <span className="text-xs text-muted">falls back → {l.fallbackLocaleCode}</span>}
+              {canManage && (
+                <div className="ml-auto flex items-center gap-1">
+                  <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setEditing({ code: l.code, displayName: l.displayName, fallback: l.fallbackLocaleCode ?? "" })}>Edit</button>
+                  {!l.isDefault && (
+                    <button className="rounded px-2 py-0.5 text-xs text-muted hover:bg-line/60" disabled={update.isPending} onClick={() => update.mutate({ code: l.code, patch: { enabled: !l.enabled } })}>
+                      {l.enabled ? "Disable" : "Enable"}
+                    </button>
+                  )}
+                  {!l.isDefault && (
+                    <button className="rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => { if (confirm(`Delete language “${l.displayName}” (${l.code})? This can’t be undone.`)) del.mutate(l.code); }}>Delete</button>
+                  )}
+                </div>
+              )}
+            </>
+          )}
         </div>
       ))}
-      {locales.data?.length === 0 && <p className="p-4 text-sm text-muted">No languages.</p>}
+      {list.length === 0 && <p className="p-4 text-sm text-muted">No languages.</p>}
     </PanelShell>
   );
 }
@@ -187,6 +271,89 @@ export function SitePanel() {
         </label>
         <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
       </form>
+    </PanelShell>
+  );
+}
+
+/* ----------------------------- AI assistant ------------------------------- */
+export function AiPanel() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const cfg = useQuery({ queryKey: ["ai-config"], queryFn: ({ signal }) => api.aiConfig(signal) });
+  const [keyInput, setKeyInput] = useState("");
+  const [model, setModel] = useState<string | null>(null);
+  const status = cfg.data;
+  const modelValue = model ?? status?.model ?? "";
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.setAiConfig({
+        apiKey: keyInput.trim() ? keyInput.trim() : undefined, // blank = keep current
+        model: model !== null ? model.trim() || null : undefined, // untouched = unchanged
+      }),
+    onSuccess: (s) => {
+      qc.setQueryData(["ai-config"], s);
+      setKeyInput("");
+      setModel(null);
+      toast.success("AI settings saved", s.configured ? "The assistant is enabled." : "No key set — AI runs in basic mode.");
+    },
+    onError: (e) => toast.error("Couldn’t save", (e as Error).message),
+  });
+  const clearKey = useMutation({
+    mutationFn: () => api.setAiConfig({ apiKey: null }),
+    onSuccess: (s) => {
+      qc.setQueryData(["ai-config"], s);
+      toast.success("Key cleared", s.source === "env" ? "Falling back to the environment key." : "AI now runs in basic mode.");
+    },
+    onError: (e) => toast.error("Couldn’t clear", (e as Error).message),
+  });
+  const test = useMutation({
+    mutationFn: () => api.aiStatus(),
+    onSuccess: (s) =>
+      s.enabled
+        ? toast.success("AI is live", "A provider key is configured.")
+        : toast.error("AI is offline", "No key configured — add one above."),
+    onError: (e) => toast.error("Couldn’t check", (e as Error).message),
+  });
+
+  const statusText =
+    status?.source === "db"
+      ? `Key configured in the CMS (ending ••${status.last4})`
+      : status?.source === "env"
+        ? `Using the ANTHROPIC_API_KEY environment value (ending ••${status.last4})`
+        : "No key configured — the assistant runs in basic (offline) mode.";
+
+  return (
+    <PanelShell title="AI assistant" hint="Connect an Anthropic API key so the editor’s ✨ AI features (SEO text, summaries, translation) use Claude. The key is stored encrypted and never shown again; it overrides the server environment value.">
+      <div className="space-y-4 p-4">
+        <div className="flex items-center gap-2 text-sm">
+          <span className={`h-2 w-2 rounded-full ${status?.configured ? "bg-published" : "bg-draft"}`} />
+          <span className="text-muted">{statusText}</span>
+        </div>
+        <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+          <label className="grow text-sm" style={{ minWidth: 320 }}>
+            <span className="field-label">Anthropic API key</span>
+            <input
+              className="field-input"
+              type="password"
+              autoComplete="off"
+              placeholder={status?.configured ? "•••••••• (leave blank to keep)" : "sk-ant-…"}
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+            />
+            <span className="mt-1 block text-xs text-muted">Stored encrypted at rest. Leave blank to keep the current key.</span>
+          </label>
+          <label className="text-sm" style={{ minWidth: 220 }}>
+            <span className="field-label">Model</span>
+            <input className="field-input" placeholder="claude-haiku-4-5-20251001" value={modelValue} onChange={(e) => setModel(e.target.value)} />
+          </label>
+          <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
+          <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>Test</button>
+          {status?.source === "db" && (
+            <button type="button" className="btn-subtle" disabled={clearKey.isPending} onClick={() => clearKey.mutate()}>Clear key</button>
+          )}
+        </form>
+      </div>
     </PanelShell>
   );
 }
@@ -566,8 +733,31 @@ export function TrashPanel() {
     },
     onError: (e) => toast.error("Couldn’t restore", (e as Error).message),
   });
+  const empty = useMutation({
+    mutationFn: () => api.emptyTrash(),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["trash"] });
+      toast.success("Trash emptied", `Permanently deleted ${r.purged} item${r.purged === 1 ? "" : "s"}.`);
+    },
+    onError: (e) => toast.error("Couldn’t empty trash", (e as Error).message),
+  });
+  const count = trash.data?.length ?? 0;
   return (
-    <PanelShell title="Trash" hint="Deleted content is unpublished and recoverable here.">
+    <PanelShell
+      title="Trash"
+      hint="Deleted content is unpublished and recoverable here."
+      action={
+        count > 0 ? (
+          <button
+            className="rounded px-2 py-1 text-xs text-danger hover:bg-danger/10 disabled:opacity-50"
+            disabled={empty.isPending}
+            onClick={() => { if (confirm(`Permanently delete all ${count} item${count === 1 ? "" : "s"} in the trash? This cannot be undone.`)) empty.mutate(); }}
+          >
+            <Icon.Trash width={13} height={13} /> Empty trash
+          </button>
+        ) : undefined
+      }
+    >
       {(trash.data ?? []).map((t) => (
         <div key={t.documentId} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
           <Icon.Trash width={15} height={15} className="text-muted" />

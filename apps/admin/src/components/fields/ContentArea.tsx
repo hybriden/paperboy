@@ -19,6 +19,7 @@ import { useState } from "react";
 import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
 import { Icon } from "../../lib/icons.js";
 import { ImageField } from "../MediaLibrary.js";
+import { MarkdownEditor } from "./MarkdownEditor.js";
 import { RichText } from "./RichText.js";
 
 let keyCounter = 0;
@@ -227,8 +228,7 @@ function BlockField({ field, fieldId, value, onChange }: { field: FieldDef; fiel
         <input id={id} className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} />
       )}
       {field.type === "markdown" && (
-        <textarea id={id} className="field-input min-h-[160px] font-mono text-[12px]" value={(value as string) ?? ""}
-          spellCheck={false} onChange={(e) => onChange(e.target.value)} />
+        <MarkdownEditor id={id} value={(value as string) ?? ""} onChange={(v) => onChange(v)} minHeight={160} />
       )}
       {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} />}
       {field.type === "boolean" && (

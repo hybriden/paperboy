@@ -6,7 +6,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import swagger from "@fastify/swagger";
 import swaggerUI from "@fastify/swagger-ui";
-import { AppError, createDb, getAccessContext, getSessionUser, readSession } from "@paperboy/db";
+import { AppError, createDb, getAccessContext, getSessionUser, readSession, runScheduledPublish } from "@paperboy/db";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
   type ZodTypeProvider,
@@ -92,7 +92,9 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     },
     transform: jsonSchemaTransform,
   });
-  await app.register(swaggerUI, { routePrefix: "/docs" });
+  // Mounted under /api so it's reachable through the admin's nginx `/api/` proxy
+  // (which forwards the full path). The admin's "API docs" link points to /api/docs.
+  await app.register(swaggerUI, { routePrefix: "/api/docs" });
 
   // Per-request session loading (does not enforce auth; routes decide).
   app.decorateRequest("user", null);
@@ -138,6 +140,18 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   await app.register(registerManageRoutes, { prefix: "/api/v1/manage" });
   await app.register(registerAiRoutes, { prefix: "/api/v1/ai" });
   await app.register(registerDeliveryRoutes, { prefix: "/api/v1/delivery" });
+
+  // Scheduled-publish ticker: promotes due drafts and expires due content. Single
+  // long-lived process (one container); the query uses no cross-request state.
+  // Disabled under test — specs drive runScheduledPublish(db, now) directly.
+  if (env.NODE_ENV !== "test") {
+    void runScheduledPublish(db).catch((err) => app.log.error({ err }, "scheduled publish (boot) failed"));
+    const schedTimer = setInterval(() => {
+      void runScheduledPublish(db).catch((err) => app.log.error({ err }, "scheduled publish failed"));
+    }, 60_000);
+    if (typeof schedTimer.unref === "function") schedTimer.unref();
+    app.addHook("onClose", async () => clearInterval(schedTimer));
+  }
 
   return app;
 }

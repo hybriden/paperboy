@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   type BlockSummary,
@@ -16,7 +16,8 @@ import {
   loadAuthorized,
   requirePermission,
 } from "./scope.js";
-import { contentItem, contentReference, contentType, contentVersion, locale } from "./schema.js";
+import { auditLog, contentItem, contentReference, contentType, contentVersion, locale } from "./schema.js";
+import { dispatchWebhooks } from "./webhooks.js";
 
 /* ----------------------------- content types ----------------------------- */
 
@@ -98,6 +99,90 @@ export async function getDefaultLocale(db: Database): Promise<string> {
   const rows = await db.select().from(locale).where(eq(locale.isDefault, true)).limit(1);
   if (!rows[0]) throw Errors.badRequest("No default locale configured");
   return rows[0].code;
+}
+
+/** All locales incl. disabled — powers the Languages management view. */
+export async function listAllLocales(db: Database, ctx: AccessContext) {
+  requirePermission(ctx, "contenttype.manage");
+  return db.select().from(locale).orderBy(asc(locale.sortIndex));
+}
+
+// BCP-47-ish: a primary subtag plus optional region/script/variant subtags (e.g. "en", "nb", "en-US").
+const LOCALE_CODE = /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/;
+
+async function assertFallback(db: Database, code: string, fallback: string | null): Promise<void> {
+  if (!fallback) return;
+  if (fallback === code) throw Errors.badRequest("A language cannot fall back to itself");
+  const row = await db.select({ code: locale.code }).from(locale).where(eq(locale.code, fallback)).limit(1);
+  if (!row[0]) throw Errors.badRequest(`Fallback language "${fallback}" does not exist`);
+}
+
+export async function createLocale(
+  db: Database,
+  ctx: AccessContext,
+  input: { code: string; displayName: string; fallbackLocaleCode?: string | null },
+): Promise<void> {
+  requirePermission(ctx, "contenttype.manage");
+  const code = input.code.trim();
+  const displayName = input.displayName.trim();
+  if (!LOCALE_CODE.test(code)) throw Errors.badRequest('Invalid language code — use a BCP-47 tag like "en" or "en-US"');
+  if (!displayName) throw Errors.badRequest("Display name is required");
+  const existing = await db.select({ code: locale.code }).from(locale).where(eq(locale.code, code)).limit(1);
+  if (existing[0]) throw Errors.conflict(`Language "${code}" already exists`);
+  const fallback = input.fallbackLocaleCode?.trim() || null;
+  await assertFallback(db, code, fallback);
+  const max = await db.select({ m: sql<number>`coalesce(max(${locale.sortIndex}), -1)` }).from(locale);
+  await db.insert(locale).values({
+    code,
+    displayName,
+    isDefault: false,
+    enabled: true,
+    fallbackLocaleCode: fallback,
+    sortIndex: (max[0]?.m ?? -1) + 1,
+  });
+}
+
+export async function updateLocale(
+  db: Database,
+  ctx: AccessContext,
+  code: string,
+  patch: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean },
+): Promise<void> {
+  requirePermission(ctx, "contenttype.manage");
+  const row = (await db.select().from(locale).where(eq(locale.code, code)).limit(1))[0];
+  if (!row) throw Errors.notFound("Language");
+  const updates: Partial<typeof locale.$inferInsert> = {};
+  if (patch.displayName !== undefined) {
+    const dn = patch.displayName.trim();
+    if (!dn) throw Errors.badRequest("Display name is required");
+    updates.displayName = dn;
+  }
+  if (patch.fallbackLocaleCode !== undefined) {
+    const fallback = patch.fallbackLocaleCode?.trim() || null;
+    await assertFallback(db, code, fallback);
+    updates.fallbackLocaleCode = fallback;
+  }
+  if (patch.enabled !== undefined) {
+    if (!patch.enabled && row.isDefault) throw Errors.conflict("Can’t disable the default language");
+    updates.enabled = patch.enabled;
+  }
+  if (Object.keys(updates).length === 0) return;
+  await db.update(locale).set(updates).where(eq(locale.code, code));
+}
+
+/** Permanently remove a locale. Blocked for the default and for locales that hold content. */
+export async function deleteLocale(db: Database, ctx: AccessContext, code: string): Promise<void> {
+  requirePermission(ctx, "contenttype.manage");
+  const row = (await db.select().from(locale).where(eq(locale.code, code)).limit(1))[0];
+  if (!row) throw Errors.notFound("Language");
+  if (row.isDefault) throw Errors.conflict("Can’t delete the default language");
+  const used = await db.select({ id: contentVersion.id }).from(contentVersion).where(eq(contentVersion.locale, code)).limit(1);
+  if (used[0]) throw Errors.conflict("This language has content — disable it instead of deleting");
+  await db.transaction(async (tx) => {
+    // Drop dangling fallback pointers, then remove the locale itself.
+    await tx.update(locale).set({ fallbackLocaleCode: null }).where(eq(locale.fallbackLocaleCode, code));
+    await tx.delete(locale).where(eq(locale.code, code));
+  });
 }
 
 /* ------------------------------ variant state ----------------------------- */
@@ -384,6 +469,8 @@ export async function getContent(
       urlPath: null,
       displayInNav: true,
       data: {},
+      publishAt: null,
+      expireAt: null,
       updatedAt: new Date().toISOString(),
       updatedBy: null,
     };
@@ -405,6 +492,8 @@ export async function getContent(
     urlPath,
     displayInNav: working.displayInNav,
     data: working.data as Record<string, unknown>,
+    publishAt: working.publishAt ? working.publishAt.toISOString() : null,
+    expireAt: working.expireAt ? working.expireAt.toISOString() : null,
     updatedAt: working.createdAt.toISOString(),
     updatedBy: working.createdBy,
   };
@@ -610,40 +699,37 @@ async function currentPublished(db: Database, documentId: string, loc: string) {
 
 /* -------------------------------- publish --------------------------------- */
 
-export async function publishContent(
+/** Strict pre-publish checks: full validation, placement rules, sibling slug uniqueness. */
+async function assertDraftPublishable(
   db: Database,
-  ctx: AccessContext,
-  documentId: string,
+  item: typeof contentItem.$inferSelect,
   loc: string,
-): Promise<ContentDetail> {
-  requirePermission(ctx, "content.publish");
-  const item = await loadAuthorized(db, ctx, documentId);
+  draft: typeof contentVersion.$inferSelect,
+): Promise<void> {
   const type = await getContentType(db, item.type);
-
-  const draftRows = await db
-    .select()
-    .from(contentVersion)
-    .where(
-      and(
-        eq(contentVersion.documentId, documentId),
-        eq(contentVersion.locale, loc),
-        eq(contentVersion.status, "draft"),
-      ),
-    )
-    .limit(1);
-  const draft = draftRows[0];
-  if (!draft) throw Errors.conflict("Nothing to publish (no draft changes)");
-
-  // Strict validation enforced at publish.
   const parsed = dataSchemaFor(type, true).safeParse(draft.data);
   if (!parsed.success) throw Errors.validation(formatValidation(parsed.error));
   assertAllowedTypes(type, draft.data as Record<string, unknown>);
-
   // Defence-in-depth: sibling URL segments stay unique at publish time too.
   if (item.kind === "page" && draft.slug) {
-    await assertSlugUnique(db, documentId, item.parentId, loc, draft.slug);
+    await assertSlugUnique(db, item.documentId, item.parentId, loc, draft.slug);
   }
+}
 
+/**
+ * Core publish promotion (NO RBAC — callers authorize). Demotes the prior
+ * current-published row and promotes `draftId` to live, allocating a fresh cv
+ * atomically and clearing its scheduled publish_at. Any expire_at already on the
+ * row is preserved (it becomes the live row's expiry). Shared by the manual
+ * publish route AND the scheduled-publish ticker.
+ */
+async function promoteDraft(
+  db: Database,
+  documentId: string,
+  loc: string,
+  draftId: number,
+  actorUserId: string | null,
+): Promise<void> {
   await db.transaction(async (tx) => {
     // Allocate the cache-version atomically with the promotion.
     const cvRow = await tx.execute(sql`SELECT nextval('cv_seq') AS v`);
@@ -662,11 +748,236 @@ export async function publishContent(
     // Promote the draft to the live published version for this variant.
     await tx
       .update(contentVersion)
-      .set({ status: "published", isCurrentPublished: true, cv, createdBy: ctx.userId })
-      .where(eq(contentVersion.id, draft.id));
+      .set({ status: "published", isCurrentPublished: true, cv, createdBy: actorUserId, publishAt: null })
+      .where(eq(contentVersion.id, draftId));
   });
+}
 
+export async function publishContent(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  loc: string,
+): Promise<ContentDetail> {
+  requirePermission(ctx, "content.publish");
+  const item = await loadAuthorized(db, ctx, documentId);
+
+  const draftRows = await db
+    .select()
+    .from(contentVersion)
+    .where(
+      and(
+        eq(contentVersion.documentId, documentId),
+        eq(contentVersion.locale, loc),
+        eq(contentVersion.status, "draft"),
+      ),
+    )
+    .limit(1);
+  const draft = draftRows[0];
+  if (!draft) throw Errors.conflict("Nothing to publish (no draft changes)");
+
+  await assertDraftPublishable(db, item, loc, draft);
+  await promoteDraft(db, documentId, loc, draft.id, ctx.userId);
   return getContent(db, ctx, documentId, loc);
+}
+
+/* ---------------------------- scheduled publish --------------------------- */
+
+/**
+ * Schedule a draft to publish at `publishAt` and/or expire at `expireAt`.
+ * - future `publishAt`: the draft keeps the schedule; the ticker
+ *   (runScheduledPublish) promotes it when due. Validated strictly NOW so a
+ *   scheduled publish can't silently fail later.
+ * - now/past `publishAt`: publishes immediately (carrying `expireAt`).
+ * - null `publishAt`: (re)sets/clears expiry on the draft and/or the live
+ *   published row, and cancels any pending scheduled publish.
+ */
+export async function schedulePublish(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  loc: string,
+  opts: { publishAt: Date | null; expireAt: Date | null },
+): Promise<ContentDetail> {
+  requirePermission(ctx, "content.publish");
+  const item = await loadAuthorized(db, ctx, documentId);
+  const now = new Date();
+
+  if (opts.expireAt && opts.publishAt && opts.expireAt <= opts.publishAt) {
+    throw Errors.badRequest("Expiry must be after the publish time");
+  }
+
+  const draft = (
+    await db
+      .select()
+      .from(contentVersion)
+      .where(
+        and(
+          eq(contentVersion.documentId, documentId),
+          eq(contentVersion.locale, loc),
+          eq(contentVersion.status, "draft"),
+        ),
+      )
+      .limit(1)
+  )[0];
+
+  // Future scheduled publish of the working draft.
+  if (opts.publishAt && opts.publishAt > now) {
+    if (!draft) throw Errors.conflict("Nothing to schedule (no draft changes)");
+    await assertDraftPublishable(db, item, loc, draft);
+    await db
+      .update(contentVersion)
+      .set({ publishAt: opts.publishAt, expireAt: opts.expireAt ?? null })
+      .where(eq(contentVersion.id, draft.id));
+    return getContent(db, ctx, documentId, loc);
+  }
+
+  // Immediate publish (publishAt now/past), carrying the requested expiry.
+  if (opts.publishAt) {
+    if (!draft) throw Errors.conflict("Nothing to publish (no draft changes)");
+    await assertDraftPublishable(db, item, loc, draft);
+    await db
+      .update(contentVersion)
+      .set({ publishAt: null, expireAt: opts.expireAt ?? null })
+      .where(eq(contentVersion.id, draft.id));
+    await promoteDraft(db, documentId, loc, draft.id, ctx.userId);
+    // Manual publish fires its webhook from the route; this query-layer path fires
+    // its own (fire-and-forget, same payload) so integrations see the publish.
+    const urlPath = item.kind === "page" ? await computePath(db, documentId, loc) : null;
+    void dispatchWebhooks(db, {
+      event: "content.published",
+      documentId,
+      type: item.type,
+      kind: item.kind,
+      locale: loc,
+      name: draft.name,
+      urlPath,
+      at: new Date().toISOString(),
+    }).catch(() => undefined);
+    return getContent(db, ctx, documentId, loc);
+  }
+
+  // No publishAt: (re)set/clear expiry, cancel any pending scheduled publish.
+  if (draft) {
+    await db
+      .update(contentVersion)
+      .set({ publishAt: null, expireAt: opts.expireAt ?? null })
+      .where(eq(contentVersion.id, draft.id));
+  }
+  const published = await currentPublished(db, documentId, loc);
+  if (published) {
+    await db
+      .update(contentVersion)
+      .set({ expireAt: opts.expireAt ?? null })
+      .where(eq(contentVersion.id, published.id));
+  }
+  if (!draft && !published) throw Errors.conflict("Nothing to schedule");
+  return getContent(db, ctx, documentId, loc);
+}
+
+/**
+ * Promote due scheduled drafts and expire due published rows. SYSTEM action (no
+ * ctx): the schedule was authorized when set. Idempotent and safe to run on an
+ * interval; fires the same publish/unpublish webhooks as the manual path. `now`
+ * is injectable for tests.
+ */
+export async function runScheduledPublish(
+  db: Database,
+  now: Date = new Date(),
+): Promise<{ published: number; expired: number; failed: number }> {
+  let published = 0;
+  let expired = 0;
+  let failed = 0;
+
+  // --- promote due scheduled drafts ---
+  const due = await db
+    .select()
+    .from(contentVersion)
+    .where(
+      and(
+        eq(contentVersion.status, "draft"),
+        isNotNull(contentVersion.publishAt),
+        lte(contentVersion.publishAt, now),
+      ),
+    );
+  for (const d of due) {
+    try {
+      const item = (
+        await db
+          .select()
+          .from(contentItem)
+          .where(and(eq(contentItem.documentId, d.documentId), isNull(contentItem.deletedAt)))
+          .limit(1)
+      )[0];
+      if (!item) {
+        // Document gone/trashed — drop the stale schedule.
+        await db.update(contentVersion).set({ publishAt: null }).where(eq(contentVersion.id, d.id));
+        continue;
+      }
+      const type = await getContentType(db, item.type);
+      const parsed = dataSchemaFor(type, true).safeParse(d.data);
+      if (!parsed.success) {
+        // Re-validation failed (e.g. the type changed since scheduling). Leave as
+        // a draft, drop the schedule, and record why so the editor can see it.
+        await db.update(contentVersion).set({ publishAt: null }).where(eq(contentVersion.id, d.id));
+        await db.insert(auditLog).values({
+          action: "content.schedule_failed",
+          documentId: d.documentId,
+          locale: d.locale,
+          detail: { reason: formatValidation(parsed.error) },
+        });
+        failed++;
+        continue;
+      }
+      await promoteDraft(db, d.documentId, d.locale, d.id, d.createdBy);
+      const urlPath = item.kind === "page" ? await computePath(db, d.documentId, d.locale) : null;
+      await dispatchWebhooks(db, {
+        event: "content.published",
+        documentId: d.documentId,
+        type: item.type,
+        kind: item.kind,
+        locale: d.locale,
+        name: d.name,
+        urlPath,
+        at: new Date().toISOString(),
+      });
+      published++;
+    } catch {
+      failed++;
+    }
+  }
+
+  // --- expire due published rows ---
+  const stale = await db
+    .select()
+    .from(contentVersion)
+    .where(
+      and(
+        eq(contentVersion.isCurrentPublished, true),
+        isNotNull(contentVersion.expireAt),
+        lte(contentVersion.expireAt, now),
+      ),
+    );
+  for (const s of stale) {
+    await db.update(contentVersion).set({ isCurrentPublished: false }).where(eq(contentVersion.id, s.id));
+    const item = (
+      await db.select().from(contentItem).where(eq(contentItem.documentId, s.documentId)).limit(1)
+    )[0];
+    const urlPath = item && item.kind === "page" ? await computePath(db, s.documentId, s.locale) : null;
+    await dispatchWebhooks(db, {
+      event: "content.unpublished",
+      documentId: s.documentId,
+      type: item?.type ?? "",
+      kind: item?.kind ?? "",
+      locale: s.locale,
+      name: s.name,
+      urlPath,
+      at: new Date().toISOString(),
+    });
+    expired++;
+  }
+
+  return { published, expired, failed };
 }
 
 export async function unpublishContent(
@@ -845,6 +1156,82 @@ export async function listPages(
   return out;
 }
 
+/* -------------------------------- search ---------------------------------- */
+
+export interface SearchHit {
+  documentId: string;
+  type: string;
+  kind: "page" | "block" | "global";
+  name: string;
+  locale: string;
+  urlPath: string | null;
+}
+
+/**
+ * Full-text-ish content search (Phase A): case-insensitive match on the version
+ * name/URL segment across EVERY in-scope document (pages + blocks), not just the
+ * loaded tree. Deny-by-default scope (siteWide or section-scoped); excludes trash.
+ * One hit per document, preferring the published-then-latest matching version.
+ */
+export async function searchContent(
+  db: Database,
+  ctx: AccessContext,
+  query: string,
+  opts: { limit?: number } = {},
+): Promise<SearchHit[]> {
+  requirePermission(ctx, "content.read");
+  const q = query.trim();
+  if (q.length < 1) return [];
+  const limit = Math.min(Math.max(opts.limit ?? 20, 1), 50);
+  // Escape LIKE metacharacters (Postgres default ESCAPE is backslash).
+  const pattern = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
+
+  const rows = await db
+    .select({
+      documentId: contentVersion.documentId,
+      locale: contentVersion.locale,
+      name: contentVersion.name,
+      type: contentItem.type,
+      kind: contentItem.kind,
+      sectionId: contentItem.sectionId,
+    })
+    .from(contentVersion)
+    .innerJoin(contentItem, eq(contentItem.documentId, contentVersion.documentId))
+    .where(
+      and(
+        isNull(contentItem.deletedAt),
+        or(ilike(contentVersion.name, pattern), ilike(contentVersion.slug, pattern)),
+      ),
+    )
+    .orderBy(
+      asc(contentVersion.documentId),
+      desc(contentVersion.isCurrentPublished),
+      desc(contentVersion.versionNumber),
+    );
+
+  const seen = new Set<string>();
+  const hits: SearchHit[] = [];
+  for (const r of rows) {
+    if (seen.has(r.documentId)) continue;
+    if (!(ctx.siteWide || ctx.sections.includes(r.sectionId ?? r.documentId))) continue;
+    seen.add(r.documentId);
+    hits.push({
+      documentId: r.documentId,
+      type: r.type,
+      kind: r.kind as SearchHit["kind"],
+      name: r.name,
+      locale: r.locale,
+      urlPath: null,
+    });
+    if (hits.length >= limit) break;
+  }
+  // Hierarchical URL only for the (bounded) page hits.
+  for (const h of hits) {
+    if (h.kind === "page") h.urlPath = await computePath(db, h.documentId, h.locale);
+  }
+  return hits;
+}
+
 /* -------------------------------- versions -------------------------------- */
 
 export async function listVersions(
@@ -864,10 +1251,52 @@ export async function listVersions(
       name: contentVersion.name,
       createdAt: contentVersion.createdAt,
       createdBy: contentVersion.createdBy,
+      publishAt: contentVersion.publishAt,
+      expireAt: contentVersion.expireAt,
     })
     .from(contentVersion)
     .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)))
     .orderBy(desc(contentVersion.versionNumber));
+}
+
+/**
+ * Full payload of one historical version (for the compare/diff view). Scope-checked
+ * like every read; the version must belong to (documentId, loc).
+ */
+export async function getVersion(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  loc: string,
+  versionId: number,
+) {
+  requirePermission(ctx, "content.read");
+  await loadAuthorized(db, ctx, documentId);
+  const rows = await db
+    .select()
+    .from(contentVersion)
+    .where(
+      and(
+        eq(contentVersion.id, versionId),
+        eq(contentVersion.documentId, documentId),
+        eq(contentVersion.locale, loc),
+      ),
+    )
+    .limit(1);
+  const v = rows[0];
+  if (!v) throw Errors.notFound("Version");
+  return {
+    id: v.id,
+    versionNumber: v.versionNumber,
+    status: v.status as "draft" | "published",
+    isCurrentPublished: v.isCurrentPublished,
+    name: v.name,
+    slug: v.slug,
+    displayInNav: v.displayInNav,
+    data: v.data as Record<string, unknown>,
+    createdAt: v.createdAt.toISOString(),
+    createdBy: v.createdBy,
+  };
 }
 
 /**
@@ -1127,4 +1556,26 @@ export async function listTrash(
     });
   }
   return out;
+}
+
+/** Permanently delete every trashed item in scope (with its versions + outgoing references). */
+export async function emptyTrash(
+  db: Database,
+  ctx: AccessContext,
+): Promise<{ purged: number }> {
+  requirePermission(ctx, "content.delete");
+  const rows = await db
+    .select({ documentId: contentItem.documentId, sectionId: contentItem.sectionId })
+    .from(contentItem)
+    .where(sql`${contentItem.deletedAt} is not null`);
+  const ids = rows
+    .filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId))
+    .map((i) => i.documentId);
+  if (ids.length === 0) return { purged: 0 };
+  await db.transaction(async (tx) => {
+    await tx.delete(contentReference).where(inArray(contentReference.fromDocumentId, ids));
+    await tx.delete(contentVersion).where(inArray(contentVersion.documentId, ids));
+    await tx.delete(contentItem).where(inArray(contentItem.documentId, ids));
+  });
+  return { purged: ids.length };
 }

@@ -54,6 +54,35 @@ export interface TrashRow {
   name: string;
   deletedAt: string;
 }
+/** Full payload of one version — for the compare/diff view. */
+export interface VersionDetail {
+  id: number;
+  versionNumber: number;
+  status: "draft" | "published";
+  isCurrentPublished: boolean;
+  name: string;
+  slug: string | null;
+  displayInNav: boolean;
+  data: Record<string, unknown>;
+  createdAt: string;
+  createdBy: string | null;
+}
+/** Write-only AI provider config status (the key itself is never returned). */
+export interface AiConfigStatus {
+  configured: boolean;
+  source: "db" | "env" | "none";
+  last4: string | null;
+  model: string | null;
+}
+/** A content search hit (⌘K). */
+export interface SearchResult {
+  documentId: string;
+  type: string;
+  kind: "page" | "block" | "global";
+  name: string;
+  locale: string;
+  urlPath: string | null;
+}
 
 const BASE = "/api/v1";
 
@@ -148,11 +177,19 @@ export const api = {
   updateContentType: (name: string, def: ContentTypeDef) =>
     request<ContentTypeDef>("PUT", `/manage/content-types/${encodeURIComponent(name)}`, def),
   locales: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales", undefined, signal),
+  localesAll: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales/all", undefined, signal),
+  createLocale: (body: { code: string; displayName: string; fallbackLocaleCode?: string | null }) =>
+    request<{ ok: boolean }>("POST", "/manage/locales", body),
+  updateLocale: (code: string, body: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean }) =>
+    request<{ ok: boolean }>("PATCH", `/manage/locales/${encodeURIComponent(code)}`, body),
+  deleteLocale: (code: string) => request<{ ok: boolean }>("DELETE", `/manage/locales/${encodeURIComponent(code)}`),
 
   // content
   tree: (parentId?: string, signal?: AbortSignal) =>
     request<TreeNode[]>("GET", `/manage/content/tree${parentId ? `?parentId=${parentId}` : ""}`, undefined, signal),
   blocks: (signal?: AbortSignal) => request<BlockSummary[]>("GET", "/manage/blocks", undefined, signal),
+  search: (q: string, signal?: AbortSignal) =>
+    request<SearchResult[]>("GET", `/manage/content/search?q=${encodeURIComponent(q)}`, undefined, signal),
   pages: (signal?: AbortSignal) =>
     request<{ documentId: string; name: string; parentId: string | null }[]>("GET", "/manage/pages", undefined, signal),
 
@@ -162,6 +199,10 @@ export const api = {
     request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }),
   setPreviewUrl: (url: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/preview-url", { url }),
+  aiConfig: (signal?: AbortSignal) =>
+    request<AiConfigStatus>("GET", "/manage/site/ai", undefined, signal),
+  setAiConfig: (body: { apiKey?: string | null; model?: string | null }) =>
+    request<AiConfigStatus>("POST", "/manage/site/ai", body),
 
   // media
   assets: (signal?: AbortSignal) => request<Asset[]>("GET", "/manage/assets", undefined, signal),
@@ -183,8 +224,10 @@ export const api = {
     request<ContentDetail>("GET", `/manage/content/${documentId}?locale=${locale}`, undefined, signal),
   versions: (documentId: string, locale: string, signal?: AbortSignal) =>
     request<
-      Array<{ id: number; versionNumber: number; status: string; isCurrentPublished: boolean; name: string; createdAt: string; createdBy: string | null }>
+      Array<{ id: number; versionNumber: number; status: string; isCurrentPublished: boolean; name: string; createdAt: string; createdBy: string | null; publishAt: string | null; expireAt: string | null }>
     >("GET", `/manage/content/${documentId}/versions?locale=${locale}`, undefined, signal),
+  version: (documentId: string, locale: string, versionId: number, signal?: AbortSignal) =>
+    request<VersionDetail>("GET", `/manage/content/${documentId}/versions/${versionId}?locale=${locale}`, undefined, signal),
   create: (body: { type: string; parentId: string | null; locale: string; name: string }) =>
     request<ContentDetail>("POST", "/manage/content", body),
   update: (
@@ -194,6 +237,8 @@ export const api = {
   ) => request<ContentDetail>("PUT", `/manage/content/${documentId}?locale=${locale}`, body),
   publish: (documentId: string, locale: string) =>
     request<ContentDetail>("POST", `/manage/content/${documentId}/publish?locale=${locale}`),
+  schedule: (documentId: string, locale: string, body: { publishAt: string | null; expireAt: string | null }) =>
+    request<ContentDetail>("POST", `/manage/content/${documentId}/schedule?locale=${locale}`, body),
   unpublish: (documentId: string, locale: string) =>
     request<ContentDetail>("POST", `/manage/content/${documentId}/unpublish?locale=${locale}`),
   discardDraft: (documentId: string, locale: string) =>
@@ -207,6 +252,7 @@ export const api = {
   restoreContent: (documentId: string) =>
     request<{ ok: boolean; restored: number }>("POST", `/manage/content/${documentId}/restore`),
   listTrash: (signal?: AbortSignal) => request<TrashRow[]>("GET", "/manage/content/trash", undefined, signal),
+  emptyTrash: () => request<{ ok: boolean; purged: number }>("POST", "/manage/content/trash/empty"),
   restoreVersion: (documentId: string, locale: string, versionId: number) =>
     request<ContentDetail>("POST", `/manage/content/${documentId}/versions/${versionId}/restore?locale=${locale}`),
 
@@ -245,6 +291,8 @@ export const api = {
   aiStatus: (signal?: AbortSignal) => request<{ enabled: boolean; tasks: string[] }>("GET", "/ai/status", undefined, signal),
   aiAssist: (task: AiTask, input: string, targetLocale?: string) =>
     request<{ result: string; provider: "anthropic" | "fallback" }>("POST", "/ai/assist", { task, input, targetLocale }),
+  aiTranslate: (texts: string[], targetLocale: string) =>
+    request<{ results: string[]; provider: "anthropic" | "fallback" }>("POST", "/ai/translate", { texts, targetLocale }),
 };
 
 export type AiTask = "meta_title" | "meta_description" | "summarize" | "improve" | "alt_text" | "translate";
