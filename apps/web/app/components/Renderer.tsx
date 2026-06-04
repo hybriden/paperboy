@@ -1,5 +1,9 @@
 import { Fragment, type ReactNode } from "react";
 import type { DeliveryContent } from "@paperboy/shared";
+import DOMPurify from "isomorphic-dompurify";
+import { marked } from "marked";
+
+marked.setOptions({ gfm: true, breaks: false });
 
 /* ---- TipTap doc → React (paragraphs, headings, lists, quote, bold/italic/link) ---- */
 interface Node {
@@ -48,7 +52,17 @@ function renderNode(node: Node, key: number): ReactNode {
   }
 }
 
+/**
+ * Render any text-ish field value: a TipTap doc (richtext fields) renders via
+ * the node walker above; a STRING (markdown / plain-text fields — the delivery
+ * API returns markdown verbatim) is parsed with marked and sanitised.
+ */
 function Rich({ doc, className }: { doc: unknown; className?: string }) {
+  if (typeof doc === "string") {
+    if (!doc.trim()) return null;
+    const html = DOMPurify.sanitize(marked.parse(doc, { async: false }) as string);
+    return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+  }
   const d = doc as Node | null;
   if (!d?.content) return null;
   return <div className={className}>{d.content.map((n, i) => renderNode(n, i))}</div>;
@@ -142,11 +156,16 @@ export function Renderer({ content, posts, locale = "en" }: { content: DeliveryC
   if (content.type === "BlogPost") return <BlogPostView content={content} />;
 
   const data = content.data as Record<string, unknown>;
-  const area = (data.mainArea as AreaBlock[] | undefined) ?? [];
+  // Content types are data, so user-created types name their fields freely:
+  // accept `mainArea` or the first array that looks like a content area.
+  const isArea = (v: unknown): v is AreaBlock[] =>
+    Array.isArray(v) && v.every((b) => b != null && typeof b === "object" && "blockType" in (b as object));
+  const area = [data.mainArea, ...Object.values(data)].filter(isArea).find((a) => a.length > 0) ?? [];
   return (
     <main className="wrap" data-document-id={content.documentId}>
       <h1 className="page-heading" data-pb-field="heading">{String(data.heading ?? content.name)}</h1>
       <div data-pb-field="intro"><Rich doc={data.intro} className="intro richtext" /></div>
+      {data.body != null ? <div data-pb-field="body"><Rich doc={data.body} className="richtext" /></div> : null}
       {area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} />)}
       {posts && posts.length > 0 ? <PostList posts={posts} locale={locale} /> : null}
     </main>
