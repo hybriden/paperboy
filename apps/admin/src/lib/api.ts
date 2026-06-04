@@ -293,6 +293,55 @@ export const api = {
     request<{ result: string; provider: "anthropic" | "fallback" }>("POST", "/ai/assist", { task, input, targetLocale }),
   aiTranslate: (texts: string[], targetLocale: string) =>
     request<{ results: string[]; provider: "anthropic" | "fallback" }>("POST", "/ai/translate", { texts, targetLocale }),
+
+  /** The content agent ("Build from brief") — streams progress events (SSE). */
+  aiAgent: async (
+    body: { brief: string; parentId: string | null; locale: string },
+    onEvent: (ev: AgentEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (csrfToken) headers["x-csrf-token"] = csrfToken;
+    const res = await fetch(`${BASE}/ai/agent`, {
+      method: "POST",
+      headers,
+      credentials: "include",
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!res.ok || !res.body) {
+      if (res.status === 401) onUnauthorized?.();
+      return parseResponse<void>(res); // throws the server's error message
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i: number;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const chunk = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        const line = chunk.split("\n").find((l) => l.startsWith("data: "));
+        if (!line) continue;
+        try {
+          onEvent(JSON.parse(line.slice(6)) as AgentEvent);
+        } catch {
+          /* skip malformed event */
+        }
+      }
+    }
+  },
 };
+
+export interface AgentEvent {
+  type: "status" | "tool" | "tool_done" | "done" | "error";
+  text?: string;
+  name?: string;
+  ok?: boolean;
+  created?: Array<{ documentId: string; name: string; type: string }>;
+}
 
 export type AiTask = "meta_title" | "meta_description" | "summarize" | "improve" | "alt_text" | "translate";

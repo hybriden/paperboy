@@ -24,7 +24,7 @@ describe("RBAC + object-level authorization (IDOR defense)", () => {
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(v),
-      payload: { type: "StandardPage", locale: "en", name: "Nope" },
+      payload: { type: "ArticlePage", locale: "en", name: "Nope" },
     });
     expect(create.statusCode).toBe(403);
   });
@@ -35,7 +35,7 @@ describe("RBAC + object-level authorization (IDOR defense)", () => {
       method: "POST",
       url: "/api/v1/manage/content",
       headers: { cookie: ed.cookie, origin: "http://localhost:8090" }, // no x-csrf-token
-      payload: { type: "StandardPage", locale: "en", name: "x" },
+      payload: { type: "ArticlePage", locale: "en", name: "x" },
     });
     expect(res.statusCode).toBe(403);
     expect(res.json().error).toBe("csrf_failed");
@@ -82,7 +82,7 @@ describe("RBAC + object-level authorization (IDOR defense)", () => {
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(ed),
-      payload: { type: "StandardPage", locale: "en", name: "Editor Page" },
+      payload: { type: "ArticlePage", locale: "en", name: "Editor Page" },
     });
     expect(created.statusCode).toBe(200);
     const id = created.json().documentId;

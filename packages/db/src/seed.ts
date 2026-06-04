@@ -16,30 +16,78 @@ import { sql } from "drizzle-orm";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
+// --- SEO pane: search + social metadata, shared by every page type ---------
+const SEO_FIELDS = [
+  { name: "metaTitle", displayName: "Meta title", type: "text", localized: true, delivery: "public", group: "SEO", validation: { maxLength: 70 }, helpText: "The <title> tag. Aim for ≤ 60 characters." },
+  { name: "metaDescription", displayName: "Meta description", type: "text", localized: true, delivery: "public", group: "SEO", validation: { maxLength: 200 }, helpText: "Search-result snippet. Aim for ≤ 160 characters." },
+  { name: "canonicalUrl", displayName: "Canonical URL", type: "text", localized: false, delivery: "public", group: "SEO", helpText: "Absolute URL of the canonical version (optional)." },
+  { name: "noIndex", displayName: "Hide from search engines (noindex)", type: "boolean", localized: false, delivery: "public", group: "SEO" },
+  { name: "ogTitle", displayName: "Social title (Open Graph)", type: "text", localized: true, delivery: "public", group: "SEO", helpText: "Falls back to the meta title." },
+  { name: "ogDescription", displayName: "Social description (Open Graph)", type: "text", localized: true, delivery: "public", group: "SEO", helpText: "Falls back to the meta description." },
+  { name: "ogImage", displayName: "Social share image", type: "image", localized: false, delivery: "public", group: "SEO", helpText: "Shown when shared. 1200×630 recommended." },
+  { name: "ogType", displayName: "Open Graph type", type: "select", localized: false, delivery: "public", group: "SEO", options: [{ value: "website", label: "Website" }, { value: "article", label: "Article" }] },
+  { name: "twitterCard", displayName: "Twitter card", type: "select", localized: false, delivery: "public", group: "SEO", options: [{ value: "summary", label: "Summary" }, { value: "summary_large_image", label: "Summary, large image" }] },
+] as const;
+
+// The out-of-the-box page model: LandingPage (block canvas), ArticlePage
+// (long-form content), ListPage (children index) and BlogPost (dated item).
 // Authored loosely; parsed through the schema so field defaults (options,
 // multiple, validation, etc.) are populated to the full ContentTypeDef shape.
 const TYPES: ContentTypeDef[] = ([
   {
-    name: "StandardPage",
-    displayName: "Standard Page",
+    name: "LandingPage",
+    displayName: "Landing Page",
     kind: "page",
-    description: "A general content page with a hero, intro and a content area.",
+    description: "A block-composed canvas: hero, cards and other blocks. Start pages, campaigns.",
+    icon: "layout-template",
+    fields: [
+      { name: "heading", displayName: "Heading", type: "text", localized: true, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
+      { name: "intro", displayName: "Intro", type: "richtext", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
+      { name: "mainArea", displayName: "Main content area", type: "contentArea", localized: true, required: false, delivery: "public", allowedBlocks: ["HeroBlock", "CardBlock"], allowedTypes: [], group: "Content" },
+      ...SEO_FIELDS,
+    ],
+  },
+  {
+    name: "ArticlePage",
+    displayName: "Article Page",
+    kind: "page",
+    description: "A general article: heading, intro, body and an optional content area.",
     icon: "file-text",
     fields: [
       { name: "heading", displayName: "Heading", type: "text", localized: true, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
       { name: "intro", displayName: "Intro", type: "richtext", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
       { name: "mainArea", displayName: "Main content area", type: "contentArea", localized: true, required: false, delivery: "public", allowedBlocks: ["HeroBlock", "CardBlock"], allowedTypes: [], group: "Content" },
       { name: "seoNotes", displayName: "Internal SEO notes", type: "text", localized: true, required: false, delivery: "private", allowedBlocks: [], allowedTypes: [], group: "Settings", helpText: "Never exposed by the public delivery API." },
-      // --- SEO pane: search + social metadata (best-practice tags) ---
-      { name: "metaTitle", displayName: "Meta title", type: "text", localized: true, delivery: "public", group: "SEO", validation: { maxLength: 70 }, helpText: "The <title> tag. Aim for ≤ 60 characters." },
-      { name: "metaDescription", displayName: "Meta description", type: "text", localized: true, delivery: "public", group: "SEO", validation: { maxLength: 200 }, helpText: "Search-result snippet. Aim for ≤ 160 characters." },
-      { name: "canonicalUrl", displayName: "Canonical URL", type: "text", localized: false, delivery: "public", group: "SEO", helpText: "Absolute URL of the canonical version (optional)." },
-      { name: "noIndex", displayName: "Hide from search engines (noindex)", type: "boolean", localized: false, delivery: "public", group: "SEO" },
-      { name: "ogTitle", displayName: "Social title (Open Graph)", type: "text", localized: true, delivery: "public", group: "SEO", helpText: "Falls back to the meta title." },
-      { name: "ogDescription", displayName: "Social description (Open Graph)", type: "text", localized: true, delivery: "public", group: "SEO", helpText: "Falls back to the meta description." },
-      { name: "ogImage", displayName: "Social share image", type: "image", localized: false, delivery: "public", group: "SEO", helpText: "Shown when shared. 1200×630 recommended." },
-      { name: "ogType", displayName: "Open Graph type", type: "select", localized: false, delivery: "public", group: "SEO", options: [{ value: "website", label: "Website" }, { value: "article", label: "Article" }] },
-      { name: "twitterCard", displayName: "Twitter card", type: "select", localized: false, delivery: "public", group: "SEO", options: [{ value: "summary", label: "Summary" }, { value: "summary_large_image", label: "Summary, large image" }] },
+      ...SEO_FIELDS,
+    ],
+  },
+  {
+    name: "ListPage",
+    displayName: "List Page",
+    kind: "page",
+    description: "Lists its child pages of a chosen type — a blog index, news archive, etc.",
+    icon: "layout-list",
+    fields: [
+      { name: "heading", displayName: "Heading", type: "text", localized: true, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
+      { name: "intro", displayName: "Intro", type: "richtext", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
+      { name: "listedType", displayName: "Listed content type", type: "select", localized: false, required: true, delivery: "public", group: "Content", options: [{ value: "BlogPost", label: "Blog Post" }, { value: "ArticlePage", label: "Article Page" }], helpText: "Children of this page with this type are listed (newest first)." },
+      { name: "pageSize", displayName: "Max items", type: "number", localized: false, required: false, delivery: "public", group: "Content", helpText: "Maximum number of items to show (default 20)." },
+      ...SEO_FIELDS,
+    ],
+  },
+  {
+    name: "BlogPost",
+    displayName: "Blog Post",
+    kind: "page",
+    description: "A dated blog/news item, listed by its parent List Page.",
+    icon: "newspaper",
+    fields: [
+      { name: "title", displayName: "Title", type: "text", localized: true, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
+      { name: "publishDate", displayName: "Publish date", type: "datetime", localized: false, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
+      { name: "summary", displayName: "Summary", type: "text", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content", validation: { maxLength: 400 }, helpText: "Shown in list pages and as the lead paragraph." },
+      { name: "author", displayName: "Author", type: "text", localized: false, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
+      { name: "body", displayName: "Body", type: "markdown", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
+      ...SEO_FIELDS,
     ],
   },
   {
@@ -89,6 +137,8 @@ export interface SeedResult {
   authorZoneId: string;
   secretId: string;
   cardId: string;
+  blogId: string;
+  postIds: string[];
 }
 
 export async function seed(connectionString?: string): Promise<SeedResult> {
@@ -134,9 +184,9 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
     data: { title: "Built for developers", body: para("Fetch content over a typed REST API.") }, cv: await nextCv(),
   });
 
-  // --- Home page (StandardPage) — EN + NB published ---------------------
+  // --- Home page (LandingPage) — EN + NB published -----------------------
   const homeId = nanoid(24);
-  await db.insert(contentItem).values({ documentId: homeId, type: "StandardPage", kind: "page", parentId: null, sortIndex: 0, sectionId: homeId });
+  await db.insert(contentItem).values({ documentId: homeId, type: "LandingPage", kind: "page", parentId: null, sortIndex: 0, sectionId: homeId });
   const homeArea = [
     { key: "h1", blockType: "HeroBlock", display: "full", ref: null, inline: { title: "Deliver content anywhere", subtitle: "Headless. Multi-language. Preview-ready.", ctaUrl: "/docs" } },
     { key: "h2", blockType: "CardBlock", display: "narrow", ref: cardId, inline: null },
@@ -144,19 +194,57 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
   await db.insert(contentVersion).values({
     documentId: homeId, locale: "en", status: "published", isCurrentPublished: true, versionNumber: 1,
     name: "Home", slug: "home", displayInNav: true,
-    data: { heading: "Welcome to Paperboy", intro: para("A headless CMS with a fast, visual editor."), mainArea: homeArea, seoNotes: "INTERNAL: target keyword 'headless cms'. Do not expose." },
+    data: { heading: "Welcome to Paperboy", intro: para("A headless CMS with a fast, visual editor."), mainArea: homeArea },
     cv: await nextCv(),
   });
   await db.insert(contentVersion).values({
     documentId: homeId, locale: "nb", status: "published", isCurrentPublished: true, versionNumber: 2,
     name: "Hjem", slug: "hjem", displayInNav: true,
-    data: { heading: "Velkommen til Paperboy", intro: para("Et hodeløst CMS med en rask, visuell editor."), mainArea: homeArea, seoNotes: "INTERN: ikke eksponer." },
+    data: { heading: "Velkommen til Paperboy", intro: para("Et hodeløst CMS med en rask, visuell editor."), mainArea: homeArea },
     cv: await nextCv(),
   });
 
+  // --- Blog (ListPage) + two sample posts under it ------------------------
+  const blogId = nanoid(24);
+  await db.insert(contentItem).values({ documentId: blogId, type: "ListPage", kind: "page", parentId: null, sortIndex: 1, sectionId: blogId });
+  await db.insert(contentVersion).values({
+    documentId: blogId, locale: "en", status: "published", isCurrentPublished: true, versionNumber: 1,
+    name: "Blog", slug: "blog", displayInNav: true,
+    data: { heading: "Blog", intro: para("Notes from the Paperboy newsroom."), listedType: "BlogPost", pageSize: 20 },
+    cv: await nextCv(),
+  });
+  const POSTS: Array<{ title: string; slug: string; date: string; summary: string; body: string }> = [
+    {
+      title: "Hello, Paperboy",
+      slug: "hello-paperboy",
+      date: "2026-01-15T09:00:00.000Z",
+      summary: "Why we built another headless CMS — and what makes this one different.",
+      body: "## Why another CMS?\n\nBecause **content modelling should be data**, not code. Paperboy stores types in the database and serves them over a typed delivery API.\n\n- Pages, blocks and globals\n- Draft → preview → publish\n- Multi-language with fallbacks",
+    },
+    {
+      title: "Modelling listings with ListPage",
+      slug: "modelling-listings",
+      date: "2026-02-02T09:00:00.000Z",
+      summary: "A ListPage lists its child pages of a chosen type — no hardcoded URLs in the frontend.",
+      body: "## Listing is a semantic\n\nA blog index is not a *standard page that happens to list things* — it is a **ListPage** with `listedType: BlogPost`. The frontend keys off the type, never the URL.",
+    },
+  ];
+  const postIds: string[] = [];
+  for (const [i, p] of POSTS.entries()) {
+    const postId = nanoid(24);
+    postIds.push(postId);
+    await db.insert(contentItem).values({ documentId: postId, type: "BlogPost", kind: "page", parentId: blogId, sortIndex: i, sectionId: blogId });
+    await db.insert(contentVersion).values({
+      documentId: postId, locale: "en", status: "published", isCurrentPublished: true, versionNumber: 1,
+      name: p.title, slug: p.slug, displayInNav: false,
+      data: { title: p.title, publishDate: p.date, summary: p.summary, author: "Paperboy Team", body: p.body },
+      cv: await nextCv(),
+    });
+  }
+
   // --- Author Zone (a section the Author role is scoped to) -------------
   const authorZoneId = nanoid(24);
-  await db.insert(contentItem).values({ documentId: authorZoneId, type: "StandardPage", kind: "page", parentId: null, sortIndex: 1, sectionId: authorZoneId });
+  await db.insert(contentItem).values({ documentId: authorZoneId, type: "ArticlePage", kind: "page", parentId: null, sortIndex: 2, sectionId: authorZoneId });
   await db.insert(contentVersion).values({
     documentId: authorZoneId, locale: "en", status: "published", isCurrentPublished: true, versionNumber: 1,
     name: "Author Zone", slug: "author-zone", displayInNav: true,
@@ -165,7 +253,7 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
 
   // --- Secret Draft (draft only — proves no-leak) -----------------------
   const secretId = nanoid(24);
-  await db.insert(contentItem).values({ documentId: secretId, type: "StandardPage", kind: "page", parentId: null, sortIndex: 2, sectionId: secretId });
+  await db.insert(contentItem).values({ documentId: secretId, type: "ArticlePage", kind: "page", parentId: null, sortIndex: 3, sectionId: secretId });
   await db.insert(contentVersion).values({
     documentId: secretId, locale: "en", status: "draft", isCurrentPublished: false, versionNumber: 1,
     name: "Top Secret (draft)", slug: "secret", displayInNav: false,
@@ -202,12 +290,13 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
 
   console.log("Seed complete:");
   console.log(`  Home (EN+NB)   documentId=${homeId}`);
+  console.log(`  Blog (ListPage) documentId=${blogId} (${postIds.length} posts)`);
   console.log(`  Author Zone    documentId=${authorZoneId}`);
   console.log(`  Secret draft   documentId=${secretId}`);
   console.log(`  Shared card    documentId=${cardId}`);
   console.log(`  Admin login    ${adminEmail} / ${adminPassword}`);
   await pg.end();
-  return { homeId, authorZoneId, secretId, cardId };
+  return { homeId, authorZoneId, secretId, cardId, blogId, postIds };
 }
 
 // Run directly: `tsx src/seed.ts`

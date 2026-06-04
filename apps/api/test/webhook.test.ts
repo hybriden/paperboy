@@ -68,7 +68,7 @@ describe("Webhooks (HMAC-signed publish events)", () => {
   it("delivers an HMAC-signed content.published event when a page is published", async () => {
     const before = stub.received.length;
     // Create + publish a page (Editor).
-    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(editor), payload: { type: "StandardPage", locale: "en", name: "Hooked" } });
+    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(editor), payload: { type: "ArticlePage", locale: "en", name: "Hooked" } });
     const id = created.json().documentId;
     await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(editor), payload: { name: "Hooked", slug: "hooked", data: { heading: "Hooked" } } });
     await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(editor) });
@@ -87,7 +87,7 @@ describe("Webhooks (HMAC-signed publish events)", () => {
     expect(hit.signature).toBe(expected);
     const payload = JSON.parse(hit.body);
     expect(payload.documentId).toBe(id);
-    expect(payload.type).toBe("StandardPage");
+    expect(payload.type).toBe("ArticlePage");
     expect(payload.urlPath).toBe("/hooked");
   });
 

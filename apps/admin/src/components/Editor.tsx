@@ -14,6 +14,7 @@ import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
+import { BuildFromBriefDialog } from "./BuildFromBrief.js";
 import { ContentArea } from "./fields/ContentArea.js";
 import { MarkdownEditor } from "./fields/MarkdownEditor.js";
 import { RichText } from "./fields/RichText.js";
@@ -46,6 +47,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const navigate = useNavigate();
   const [showVersions, setShowVersions] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
+  const [showBrief, setShowBrief] = useState(false);
   const [hideTranslateOffer, setHideTranslateOffer] = useState(false);
   const detail = useQuery({
     queryKey: ["content", documentId, locale],
@@ -441,7 +443,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         ))}
       </div>
 
-      <div className="mx-auto max-w-3xl space-y-5 p-4 sm:p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
+      <div className="max-w-3xl space-y-5 p-4 sm:p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
         {type?.fields
           .filter((f) => f.group === tab)
           .map((f) => (
@@ -493,12 +495,16 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         </label>
 
         <div className="ml-auto flex items-center gap-2">
-          {showAi && !mobile && (
+          {(showAi || canCreate) && !mobile && (
             <Menu>
               <MenuTrigger className="btn-subtle" aria-label="AI assistant" disabled={ai.isPending}>
                 <span aria-hidden>✨</span> {ai.isPending ? "Thinking…" : "AI"}
               </MenuTrigger>
               <MenuContent>
+                {canCreate && (
+                  <MenuItem onSelect={() => setShowBrief(true)}>Build from brief…</MenuItem>
+                )}
+                {canCreate && showAi && <MenuSeparator />}
                 {hasField("metaTitle") && hasField("metaDescription") && (
                   <MenuItem onSelect={() => void aiSeoBoth()}>Generate SEO title + description</MenuItem>
                 )}
@@ -682,6 +688,16 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             qc.setQueryData(["content", documentId, locale], updated);
             qc.invalidateQueries({ queryKey: ["tree", "root"] });
           }}
+        />
+      )}
+
+      {showBrief && (
+        <BuildFromBriefDialog
+          parentId={isPage ? documentId : null}
+          parentName={isPage ? form.name : null}
+          locale={locale}
+          open={showBrief}
+          onOpenChange={setShowBrief}
         />
       )}
 

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: typecheck · test · build
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: paperboy
+          POSTGRES_PASSWORD: paperboy
+          POSTGRES_DB: paperboy_test
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U paperboy"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # version comes from "packageManager" in package.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: API tests (Vitest + Postgres)
+        run: pnpm --filter @paperboy/api test
+        env:
+          # The suite migrates + seeds this database itself (isolated per run).
+          TEST_DATABASE_URL: postgresql://paperboy:paperboy@localhost:5433/paperboy_test
+
+      - name: Build admin (Vite)
+        run: pnpm --filter @paperboy/admin build
+
+      - name: Build web (Next.js)
+        run: pnpm --filter @paperboy/web build
