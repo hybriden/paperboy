@@ -1440,7 +1440,10 @@ export async function restoreVersion(
   const src = srcRows[0];
   if (!src) throw Errors.notFound("Version");
 
-  const data = src.data as Record<string, unknown>;
+  // Coerce on restore too: a historic version may predate the richtext
+  // sanitizer and still contain editor-breaking TipTap (one such node blanks
+  // the whole doc in the admin), so it must not re-enter the working draft raw.
+  const data = coerceData(type, src.data as Record<string, unknown>);
   // Slug must stay unique among page siblings (the source slug may now collide).
   if (item.kind === "page" && src.slug) {
     await assertSlugUnique(db, documentId, item.parentId, loc, src.slug);
@@ -1527,7 +1530,9 @@ export async function cloneContent(
   });
   let count = 0;
   for (const [code, row] of byLocale) {
-    const data = row.data as Record<string, unknown>;
+    // Coerce on clone for the same reason as restoreVersion: the source data
+    // may predate the richtext sanitizer.
+    const data = coerceData(type, row.data as Record<string, unknown>);
     await db.insert(contentVersion).values({
       documentId: newId,
       locale: code,
