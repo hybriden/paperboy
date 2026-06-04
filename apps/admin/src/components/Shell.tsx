@@ -169,46 +169,50 @@ function UserMenu() {
 }
 
 function Rail() {
+  const { pathname } = useLocation();
   return (
     <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-chrome-border bg-chrome-rail py-3" aria-label="Main">
-      {RAIL.map((it) => (
-        <Tooltip key={it.to} label={it.label} side="right">
-          <NavLink
-            to={it.to}
-            aria-label={it.label}
-            className={({ isActive }) =>
-              `grid h-10 w-10 place-items-center rounded-[var(--radius)] transition-colors ${
-                isActive ? "bg-accent text-accent-fg" : "text-chrome-fg/55 hover:bg-chrome-light hover:text-chrome-fg"
-              }`
-            }
-          >
-            <it.icon />
-          </NavLink>
-        </Tooltip>
-      ))}
+      {RAIL.map((it) => {
+        const isActive = pathname === it.to || pathname.startsWith(`${it.to}/`);
+        return (
+          <Tooltip key={it.to} label={it.label} side="right">
+            <NavLink
+              to={it.to}
+              aria-label={it.label}
+              className={`grid h-10 w-10 place-items-center rounded-[var(--radius)] transition-colors ${
+                isActive ? "bg-accent text-accent-fg" : "text-chrome-fg/80 hover:bg-chrome-light hover:text-chrome-fg"
+              }`}
+            >
+              <it.icon />
+            </NavLink>
+          </Tooltip>
+        );
+      })}
     </nav>
   );
 }
 
 /** Phone navigation: the side rail laid out as a touch-friendly bottom tab bar. */
 function BottomNav() {
+  const { pathname } = useLocation();
   return (
     <nav className="flex shrink-0 items-stretch border-t border-chrome-border bg-chrome-rail" aria-label="Main">
-      {RAIL.map((it) => (
-        <NavLink
-          key={it.to}
-          to={it.to}
-          aria-label={it.label}
-          className={({ isActive }) =>
-            `flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium transition-colors ${
-              isActive ? "text-accent" : "text-chrome-fg/55 hover:text-chrome-fg"
-            }`
-          }
-        >
-          <it.icon />
-          {it.label}
-        </NavLink>
-      ))}
+      {RAIL.map((it) => {
+        const isActive = pathname === it.to || pathname.startsWith(`${it.to}/`);
+        return (
+          <NavLink
+            key={it.to}
+            to={it.to}
+            aria-label={it.label}
+            className={`flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium transition-colors ${
+              isActive ? "text-accent" : "text-chrome-fg/80 hover:text-chrome-fg"
+            }`}
+          >
+            <it.icon />
+            {it.label}
+          </NavLink>
+        );
+      })}
     </nav>
   );
 }

@@ -16,11 +16,19 @@ import {
   deleteWebhook,
   dispatchWebhooks,
   getSiteConfig,
+  getStoredAiKey,
+  getStoredAiModel,
+  setAiConfig,
   setPreviewBaseUrl,
   setStartPage,
   listAudit,
   listDeliveryKeys,
   listTrash,
+  emptyTrash,
+  listAllLocales,
+  createLocale,
+  updateLocale,
+  deleteLocale,
   listUsers,
   listWebhooks,
   renameDeliveryKey,
@@ -39,11 +47,14 @@ import {
   getContent,
   getContentType,
   getTree,
+  getVersion,
   listContentTypes,
   listLocales,
   listVersions,
   moveContent,
   publishContent,
+  schedulePublish,
+  searchContent,
   unpublishContent,
   updateContent,
   updateContentType,
@@ -148,6 +159,47 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       }));
     },
   );
+  app.get(
+    "/locales/all",
+    { preHandler: [requirePermission("contenttype.manage")], schema: { tags: ["manage"], response: { 200: z.array(Locale) } } },
+    async (req) => {
+      const rows = await listAllLocales(app.db, req.accessCtx!);
+      return rows.map((r) => ({
+        code: r.code,
+        displayName: r.displayName,
+        isDefault: r.isDefault,
+        enabled: r.enabled,
+        fallbackLocaleCode: r.fallbackLocaleCode,
+      }));
+    },
+  );
+  app.post(
+    "/locales",
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], body: z.object({ code: z.string().min(2).max(35), displayName: z.string().min(1).max(120), fallbackLocaleCode: z.string().nullable().optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await createLocale(app.db, req.accessCtx!, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "locale.create", ip: req.ip, detail: { code: req.body.code } });
+      return { ok: true };
+    },
+  );
+  app.patch(
+    "/locales/:code",
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ code: z.string() }), body: z.object({ displayName: z.string().min(1).max(120).optional(), fallbackLocaleCode: z.string().nullable().optional(), enabled: z.boolean().optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await updateLocale(app.db, req.accessCtx!, req.params.code, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "locale.update", ip: req.ip, detail: { code: req.params.code, ...req.body } });
+      return { ok: true };
+    },
+  );
+  app.delete(
+    "/locales/:code",
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ code: z.string() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await deleteLocale(app.db, req.accessCtx!, req.params.code);
+      await audit(app.db, { actorUserId: req.user!.id, action: "locale.delete", ip: req.ip, detail: { code: req.params.code } });
+      return { ok: true };
+    },
+  );
 
   /* ------------------------------- tree --------------------------------- */
   app.get(
@@ -210,6 +262,38 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       const r = await publishContent(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.publish", documentId: req.params.documentId, locale, ip: req.ip });
       emitContentEvent("content.published", { documentId: r.documentId, type: r.type, kind: r.kind, locale, name: r.name, urlPath: r.urlPath });
+      return r;
+    },
+  );
+  // Scheduled publish: future go-live (publishAt) and/or expiry (expireAt). A
+  // null publishAt only (re)sets/clears expiry and cancels a pending schedule.
+  app.post(
+    "/content/:documentId/schedule",
+    {
+      preHandler: [requireCsrf, requirePermission("content.publish")],
+      schema: {
+        tags: ["manage"],
+        params: DocParams,
+        querystring: LocaleQuery,
+        body: z.object({ publishAt: z.string().datetime().nullable(), expireAt: z.string().datetime().nullable() }),
+        response: { 200: ContentDetail },
+      },
+    },
+    async (req) => {
+      const locale = req.query.locale ?? "en";
+      const r = await schedulePublish(app.db, req.accessCtx!, req.params.documentId, locale, {
+        publishAt: req.body.publishAt ? new Date(req.body.publishAt) : null,
+        expireAt: req.body.expireAt ? new Date(req.body.expireAt) : null,
+      });
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "content.schedule",
+        documentId: req.params.documentId,
+        locale,
+        ip: req.ip,
+        detail: { publishAt: req.body.publishAt, expireAt: req.body.expireAt },
+      });
+      // If it published immediately, schedulePublish fired the webhook itself.
       return r;
     },
   );
@@ -315,14 +399,74 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
+  /* ------------------------------- search ------------------------------- */
+  app.get(
+    "/content/search",
+    {
+      preHandler: [requirePermission("content.read")],
+      schema: {
+        tags: ["manage"],
+        querystring: z.object({ q: z.string(), limit: z.coerce.number().optional() }),
+        response: {
+          200: z.array(
+            z.object({
+              documentId: z.string(),
+              type: z.string(),
+              kind: z.enum(["page", "block", "global"]),
+              name: z.string(),
+              locale: z.string(),
+              urlPath: z.string().nullable(),
+            }),
+          ),
+        },
+      },
+    },
+    async (req) => searchContent(app.db, req.accessCtx!, req.query.q, { limit: req.query.limit }),
+  );
+
   /* ------------------------------ versions ------------------------------ */
   app.get(
     "/content/:documentId/versions",
-    { schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: z.array(z.object({ id: z.number(), versionNumber: z.number(), status: z.string(), isCurrentPublished: z.boolean(), name: z.string(), createdAt: z.string(), createdBy: z.string().nullable() })) } } },
+    { schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: z.array(z.object({ id: z.number(), versionNumber: z.number(), status: z.string(), isCurrentPublished: z.boolean(), name: z.string(), createdAt: z.string(), createdBy: z.string().nullable(), publishAt: z.string().nullable(), expireAt: z.string().nullable() })) } } },
     async (req) => {
       const locale = req.query.locale ?? "en";
       const rows = await listVersions(app.db, req.accessCtx!, req.params.documentId, locale);
-      return rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+      return rows.map((r) => ({
+        ...r,
+        createdAt: r.createdAt.toISOString(),
+        publishAt: r.publishAt ? r.publishAt.toISOString() : null,
+        expireAt: r.expireAt ? r.expireAt.toISOString() : null,
+      }));
+    },
+  );
+
+  // Full payload of one version — powers the compare/diff view.
+  app.get(
+    "/content/:documentId/versions/:versionId",
+    {
+      schema: {
+        tags: ["manage"],
+        params: z.object({ documentId: z.string(), versionId: z.coerce.number() }),
+        querystring: LocaleQuery,
+        response: {
+          200: z.object({
+            id: z.number(),
+            versionNumber: z.number(),
+            status: z.enum(["draft", "published"]),
+            isCurrentPublished: z.boolean(),
+            name: z.string(),
+            slug: z.string().nullable(),
+            displayInNav: z.boolean(),
+            data: z.record(z.unknown()),
+            createdAt: z.string(),
+            createdBy: z.string().nullable(),
+          }),
+        },
+      },
+    },
+    async (req) => {
+      const locale = req.query.locale ?? "en";
+      return getVersion(app.db, req.accessCtx!, req.params.documentId, locale, req.params.versionId);
     },
   );
 
@@ -404,6 +548,15 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requirePermission("content.read")], schema: { tags: ["manage"], response: { 200: z.array(z.object({ documentId: z.string(), type: z.string(), kind: z.string(), name: z.string(), deletedAt: z.string() })) } } },
     async (req) => listTrash(app.db, req.accessCtx!),
   );
+  app.post(
+    "/content/trash/empty",
+    { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], response: { 200: z.object({ ok: z.boolean(), purged: z.number() }) } } },
+    async (req) => {
+      const r = await emptyTrash(app.db, req.accessCtx!);
+      await audit(app.db, { actorUserId: req.user!.id, action: "content.trash.empty", ip: req.ip, detail: r });
+      return { ok: true, ...r };
+    },
+  );
   app.delete(
     "/content/:documentId",
     { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], params: DocParams, response: { 200: z.object({ ok: z.boolean(), trashed: z.number() }) } } },
@@ -469,6 +622,59 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       await setPreviewBaseUrl(app.db, req.accessCtx!, req.body.url);
       await audit(app.db, { actorUserId: req.user!.id, action: "site.preview_url", ip: req.ip });
       return { ok: true };
+    },
+  );
+
+  /* ------------------------------- AI key ------------------------------- */
+  // Write-only AI provider config. The key is never returned — only whether one
+  // is set, where it comes from (CMS DB vs env fallback), its last 4 chars, and
+  // the model. Admin-gated (user.manage).
+  const AiConfigStatus = z.object({
+    configured: z.boolean(),
+    source: z.enum(["db", "env", "none"]),
+    last4: z.string().nullable(),
+    model: z.string().nullable(),
+  });
+  async function aiStatus(): Promise<z.infer<typeof AiConfigStatus>> {
+    const dbKey = await getStoredAiKey(app.db);
+    const key = dbKey ?? app.aiConfig.apiKey;
+    const dbModel = await getStoredAiModel(app.db);
+    return {
+      configured: Boolean(key),
+      source: dbKey ? "db" : app.aiConfig.apiKey ? "env" : "none",
+      last4: key ? key.slice(-4) : null,
+      model: dbModel ?? app.aiConfig.model ?? null,
+    };
+  }
+  app.get(
+    "/site/ai",
+    { preHandler: [requirePermission("user.manage")], schema: { tags: ["manage"], response: { 200: AiConfigStatus } } },
+    async () => aiStatus(),
+  );
+  app.post(
+    "/site/ai",
+    {
+      preHandler: [requireCsrf, requirePermission("user.manage")],
+      schema: {
+        tags: ["manage"],
+        body: z.object({ apiKey: z.string().max(400).nullable().optional(), model: z.string().max(120).nullable().optional() }),
+        response: { 200: AiConfigStatus },
+      },
+    },
+    async (req) => {
+      await setAiConfig(app.db, req.accessCtx!, { apiKey: req.body.apiKey, model: req.body.model });
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "site.ai_config",
+        ip: req.ip,
+        // Never log the key itself — only what changed.
+        detail: {
+          keySet: typeof req.body.apiKey === "string" && req.body.apiKey.trim().length > 0,
+          keyCleared: req.body.apiKey === null || req.body.apiKey === "",
+          model: req.body.model ?? undefined,
+        },
+      });
+      return aiStatus();
     },
   );
 

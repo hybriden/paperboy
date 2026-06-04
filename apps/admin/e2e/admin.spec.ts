@@ -105,7 +105,9 @@ test("create → edit → add block → translate → publish (with toast)", asy
   await page.getByRole("button", { name: "Create", exact: true }).click();
 
   await page.getByRole("textbox", { name: /Heading/ }).fill("Hello from E2E");
+  await page.getByRole("button", { name: "URL settings" }).click(); // slug lives in the URL popover
   await page.getByLabel("Slug").fill(`e2e-${Date.now().toString().slice(-5)}`);
+  await page.keyboard.press("Escape"); // close the popover
   await page.getByRole("button", { name: "+ Hero" }).click();
   await page.getByLabel("Title").first().fill("E2E hero");
   await page.waitForTimeout(1100); // autosave round-trip
@@ -200,8 +202,11 @@ test("URL structure is built from the page hierarchy (start → child)", async (
   const dlg = page.getByRole("dialog", { name: "Create content" });
   await dlg.getByLabel("Name").fill("Team");
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
-  // Set the URL segment; the editor's URL preview is built from the hierarchy.
+  // Set the URL segment (in the URL popover); the editor's URL chip is built
+  // from the hierarchy.
+  await page.getByRole("button", { name: "URL settings" }).click();
   await page.getByLabel("Slug").fill(seg);
+  await page.keyboard.press("Escape"); // close the popover
   await page.waitForTimeout(1100); // autosave round-trip recomputes the path
   await expect(page.getByText(`/home/${seg}`, { exact: false })).toBeVisible();
 });

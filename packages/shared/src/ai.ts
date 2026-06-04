@@ -115,3 +115,59 @@ export async function aiAssist(req: AiRequest, cfg: AiConfig): Promise<AiResult>
   }
   return { result: fallback(req), provider: "fallback" };
 }
+
+/* ----------------------------- batch translate ---------------------------- */
+
+const TRANSLATE_SYSTEM =
+  "You are a professional translator inside a headless CMS. Translate each input string into the requested language, preserving meaning, tone, and any Markdown/HTML formatting. Return ONLY a JSON array of the translated strings, in the same order and with the same length as the input — no preamble, no code fences.";
+
+async function callAnthropicTranslate(texts: string[], targetLocale: string, cfg: AiConfig): Promise<string[]> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 30_000);
+  try {
+    const prompt = `Translate each string in this JSON array into ${targetLocale}. Return ONLY a JSON array of translations, same order and length.\n\n${JSON.stringify(texts)}`;
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": cfg.apiKey!, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: cfg.model,
+        max_tokens: 8192,
+        system: TRANSLATE_SYSTEM,
+        messages: [{ role: "user", content: prompt }],
+      }),
+      signal: ac.signal,
+    });
+    if (!res.ok) throw new Error(`Anthropic ${res.status}`);
+    const data = (await res.json()) as { content?: { type: string; text?: string }[] };
+    let text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
+    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+    const arr = JSON.parse(text);
+    if (!Array.isArray(arr) || !arr.every((x) => typeof x === "string")) throw new Error("Bad translate response");
+    return arr as string[];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Translate many strings in ONE provider call (so a whole page is one request,
+ * not one per field — which would trip the per-route rate limit). Offline or on
+ * any error it returns the source strings unchanged (provider "fallback"), so the
+ * caller still gets a complete, safe result to seed a draft from.
+ */
+export async function aiTranslateBatch(
+  texts: string[],
+  targetLocale: string,
+  cfg: AiConfig,
+): Promise<{ results: string[]; provider: "anthropic" | "fallback" }> {
+  if (!texts.length) return { results: [], provider: "fallback" };
+  if (cfg.apiKey) {
+    try {
+      const results = await callAnthropicTranslate(texts, targetLocale, cfg);
+      if (results.length === texts.length) return { results, provider: "anthropic" };
+    } catch {
+      // fall through to copy-source fallback
+    }
+  }
+  return { results: [...texts], provider: "fallback" };
+}

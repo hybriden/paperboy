@@ -31,7 +31,11 @@ class DeliveryCtx {
   // re-querying per document per locale-chain step.
   versionsByDoc = new Map<string, (typeof contentVersion.$inferSelect)[]>();
   locales: (typeof locale.$inferSelect)[] | null = null;
-  constructor(public db: Database) {}
+  // Clock for the scheduled-publish window check (published perspective only).
+  constructor(
+    public db: Database,
+    public now: Date = new Date(),
+  ) {}
 
   async asset(documentId: string): Promise<typeof asset.$inferSelect | null> {
     if (this.assets.has(documentId)) return this.assets.get(documentId)!;
@@ -126,6 +130,18 @@ function selectRow(
   return rows.reduce((a, b) => (b.versionNumber > a.versionNumber ? b : a));
 }
 
+/**
+ * Scheduled-publish window: a published row is only PUBLICLY visible while
+ * `publish_at <= now < expire_at` (either bound NULL = unbounded). Defence in
+ * depth — an expired/early item is unreachable under the public key the instant
+ * it should be, independent of the publisher ticker's cadence.
+ */
+function publishWindowOpen(r: typeof contentVersion.$inferSelect, now: Date): boolean {
+  if (r.publishAt && r.publishAt > now) return false;
+  if (r.expireAt && r.expireAt <= now) return false;
+  return true;
+}
+
 async function variantRow(
   ctx: DeliveryCtx,
   perspective: Perspective,
@@ -134,7 +150,11 @@ async function variantRow(
 ): Promise<{ row: typeof contentVersion.$inferSelect; usedLocale: string } | null> {
   const all = await ctx.docVersions(documentId);
   for (const code of await ctx.localeChain(loc)) {
-    const row = selectRow(all.filter((r) => r.locale === code), perspective);
+    let candidates = all.filter((r) => r.locale === code);
+    // Public perspective also enforces the scheduled-publish window; preview
+    // (privileged editors) ignores it so editors can preview anytime.
+    if (perspective === "published") candidates = candidates.filter((r) => publishWindowOpen(r, ctx.now));
+    const row = selectRow(candidates, perspective);
     if (row) return { row, usedLocale: code };
   }
   return null;
