@@ -20,7 +20,7 @@ import { MarkdownEditor } from "./fields/MarkdownEditor.js";
 import { ReferenceField } from "./fields/ReferenceField.js";
 import { RichText } from "./fields/RichText.js";
 import { ImageField } from "./MediaLibrary.js";
-import { PreviewPane } from "./PreviewPane.js";
+import { PreviewPane, publicSiteUrl } from "./PreviewPane.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
@@ -58,6 +58,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Same key + shape as the asset pane (BlockSummary[]) — sharing the key with a
   // different shape would let one consumer overwrite the other's cache.
   const sharedBlocks = useQuery({ queryKey: ["blocks"], queryFn: ({ signal }) => api.blocks(signal) });
+
+  // Site config (preview base URL + start page) for the "View on site" shortcut.
+  // Same query key as PreviewPane, so the request is shared, not duplicated.
+  const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
 
   const type = useMemo(
     () => types.find((t) => t.name === detail.data?.type),
@@ -551,6 +555,18 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                   <Icon.ChevronDown width={15} height={15} />
                 </MenuTrigger>
                 <MenuContent>
+                  {form.status === "published" && form.urlPath != null && (
+                    <>
+                      <MenuItem
+                        onSelect={() =>
+                          window.open(publicSiteUrl(site.data, locale, form.urlPath, documentId), "_blank", "noopener")
+                        }
+                      >
+                        View on site ↗
+                      </MenuItem>
+                      <MenuSeparator />
+                    </>
+                  )}
                   <MenuItem onSelect={() => setShowSchedule(true)}>Schedule publish…</MenuItem>
                   {form.status === "published" && (
                     <>
