@@ -149,6 +149,23 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
   if (b.blockType === "ListBlock") {
     return <ListBlockTeasers d={d} locale={locale} preview={preview} edit={edit} />;
   }
+  // A PAGE dropped into the content area renders as a teaser — a compact card
+  // linking to the page (Optimizely-style). Pages are the only area entries
+  // with a urlPath (blocks resolve to urlPath: null).
+  if (b.shared && b.content?.urlPath) {
+    const c = b.content;
+    const summary = d.summary ?? d.metaDescription ?? null;
+    const date = fmtDate(d.publishDate);
+    return (
+      <div className={`block card post-card card--${b.display}`} data-block="PageTeaser" {...edit}>
+        <a className="post-link" href={`/${locale}${c.urlPath}`}>
+          <h3>{String(d.title ?? c.name)}</h3>
+        </a>
+        {date ? <p className="post-meta">{date}</p> : null}
+        {summary ? <p className="post-summary">{String(summary)}</p> : <Rich doc={d.intro} className="post-summary" />}
+      </div>
+    );
+  }
   return <div className="block card" data-block={b.blockType} {...edit}>Unknown block: {b.blockType}</div>;
 }
 

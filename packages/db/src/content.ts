@@ -629,7 +629,7 @@ async function workingData(db: Database, documentId: string, loc: string): Promi
  * the editor hint a real, write-enforced invariant (an API client cannot bypass
  * it). Throws Errors.validation on the first violation.
  */
-function assertAllowedTypes(type: ContentTypeDef, data: Record<string, unknown>): void {
+async function assertAllowedTypes(db: Database, type: ContentTypeDef, data: Record<string, unknown>): Promise<void> {
   for (const f of type.fields) {
     const v = data[f.name];
     if (v == null) continue;
@@ -643,6 +643,11 @@ function assertAllowedTypes(type: ContentTypeDef, data: Record<string, unknown>)
       for (const b of v as Array<{ blockType?: string }>) {
         const bt = b?.blockType;
         if (bt && !f.allowedBlocks.includes(bt)) {
+          // `allowedBlocks` constrains BLOCK types only. A page dropped into a
+          // content area is rendered as a teaser (Optimizely-style) and is
+          // always placeable — its type name is never in allowedBlocks.
+          const btDef = await db.select().from(contentType).where(eq(contentType.name, bt)).limit(1);
+          if (btDef[0]?.kind === "page") continue;
           throw Errors.validation(`Content area "${f.name}" does not allow block "${bt}"`);
         }
       }
@@ -721,7 +726,7 @@ export async function updateContent(
   const parsed = dataSchemaFor(type, false).safeParse(data);
   if (!parsed.success) throw Errors.validation(formatDataValidation(parsed.error, type));
   // Placement rules ARE enforced even on draft save (allowed blocks / ref types).
-  assertAllowedTypes(type, data);
+  await assertAllowedTypes(db, type, data);
 
   // URL segments must be unique among page siblings (per locale) so paths are unambiguous.
   if (item.kind === "page" && req.slug) {
@@ -825,7 +830,7 @@ async function assertDraftPublishable(
   const type = await getContentType(db, item.type);
   const parsed = dataSchemaFor(type, true).safeParse(draft.data);
   if (!parsed.success) throw Errors.validation(formatValidation(parsed.error));
-  assertAllowedTypes(type, draft.data as Record<string, unknown>);
+  await assertAllowedTypes(db, type, draft.data as Record<string, unknown>);
   // Defence-in-depth: sibling URL segments stay unique at publish time too.
   if (item.kind === "page" && draft.slug) {
     await assertSlugUnique(db, item.documentId, item.parentId, loc, draft.slug);
