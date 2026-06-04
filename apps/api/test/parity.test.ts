@@ -23,7 +23,7 @@ describe("Content-management features", () => {
   });
 
   async function newPage(name: string): Promise<string> {
-    const r = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(editor), payload: { type: "StandardPage", locale: "en", name } });
+    const r = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(editor), payload: { type: "ArticlePage", locale: "en", name } });
     expect(r.statusCode).toBe(200);
     return r.json().documentId;
   }
@@ -108,7 +108,7 @@ describe("Content-management features", () => {
 
   /* --------------------------- C4: delivery list (batched) --------------------- */
   it("lists published pages of a type through the no-leak chokepoint", async () => {
-    const res = await s.app.inject({ method: "GET", url: "/api/v1/delivery/content?type=StandardPage&locale=en&populate=2", headers: pub });
+    const res = await s.app.inject({ method: "GET", url: "/api/v1/delivery/content?type=LandingPage&locale=en&populate=2", headers: pub });
     expect(res.statusCode).toBe(200);
     const items = res.json().items as Array<{ name: string; data: Record<string, unknown> }>;
     expect(items.length).toBeGreaterThan(0);
@@ -116,6 +116,25 @@ describe("Content-management features", () => {
     const home = items.find((i) => i.name === "Home");
     expect(home).toBeTruthy();
     expect(Array.isArray(home!.data.mainArea)).toBe(true);
+  });
+
+  it("lists only a page's children when parentId is given (ListPage semantics)", async () => {
+    // The seeded Blog (ListPage) has two published BlogPost children.
+    const res = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/delivery/content?type=BlogPost&locale=en&parentId=${s.ids.blogId}`,
+      headers: pub,
+    });
+    expect(res.statusCode).toBe(200);
+    const items = res.json().items as Array<{ name: string }>;
+    expect(items.length).toBe(2);
+    // A parentId with no children of that type yields an empty list, not a leak.
+    const none = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/delivery/content?type=BlogPost&locale=en&parentId=${s.ids.homeId}`,
+      headers: pub,
+    });
+    expect(none.json().items).toHaveLength(0);
   });
 
   /* ----------------------------- D4: delivery keys ----------------------------- */

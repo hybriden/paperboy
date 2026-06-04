@@ -1,5 +1,7 @@
 # 📰 Paperboy
 
+[![CI](https://github.com/hybriden/paperboy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hybriden/paperboy/actions/workflows/ci.yml)
+
 **An open-source, headless CMS — editor-first, type-safe, batteries included.**
 
 > **Paperboy ONE** — *Open, No Extras.*  ·  **DPX** — *Don't Pay eXtra.*

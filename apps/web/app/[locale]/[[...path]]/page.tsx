@@ -75,15 +75,20 @@ export default async function ContentPage({
   const preview = isPreview((await draftMode()).isEnabled, await searchParams);
   const content = await resolve(locale, path, preview);
 
-  // The Blog index lists its BlogPost children (newest first).
+  // A ListPage lists its children of the configured type (newest first) —
+  // behavior comes from the content model, never from the URL.
   let posts: Awaited<ReturnType<typeof fetchList>> | undefined;
-  if (content && content.type === "StandardPage" && urlPath === "/blog") {
-    posts = await fetchList("BlogPost", locale, preview);
+  if (content && content.type === "ListPage") {
+    const cfg = content.data as Record<string, unknown>;
+    const listedType = typeof cfg.listedType === "string" && cfg.listedType ? cfg.listedType : "BlogPost";
+    const pageSize = typeof cfg.pageSize === "number" && cfg.pageSize > 0 ? cfg.pageSize : 20;
+    posts = await fetchList(listedType, locale, preview, content.documentId);
     posts.sort((a, b) =>
       String((b.data as Record<string, unknown>).publishDate ?? "").localeCompare(
         String((a.data as Record<string, unknown>).publishDate ?? ""),
       ),
     );
+    posts = posts.slice(0, pageSize);
   }
 
   if (!content) {
@@ -106,7 +111,7 @@ export default async function ContentPage({
       <div className="langbar">
         Language: <strong>{content.locale}</strong> · URL <strong>/{locale}{urlPath || " (start page)"}</strong> · cv {content.cv}
       </div>
-      <Renderer content={content} posts={posts} locale={locale} />
+      <Renderer content={content} posts={posts} locale={locale} basePath={urlPath} />
       {preview && <PreviewBridge />}
     </>
   );

@@ -100,7 +100,7 @@ test("rich text editor (TipTap) loads with a formatting toolbar", async ({ page 
 test("create → edit → add block → translate → publish (with toast)", async ({ page }) => {
   await login(page);
   await page.getByRole("button", { name: "Create new content" }).click();
-  await page.getByLabel("Content type").selectOption("StandardPage");
+  await page.getByLabel("Content type").selectOption("ArticlePage");
   await page.getByLabel("Name").fill(`E2E ${Date.now().toString().slice(-5)}`);
   await page.getByRole("button", { name: "Create", exact: true }).click();
 

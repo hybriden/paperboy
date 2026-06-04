@@ -21,7 +21,7 @@ describe("Delivery API — headless data + structural no-leak", () => {
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
-    expect(body.type).toBe("StandardPage");
+    expect(body.type).toBe("LandingPage");
     expect(body.data.heading).toBe("Welcome to Paperboy");
     // Cache-version + cache headers present.
     expect(typeof body.cv).toBe("number");
@@ -58,10 +58,11 @@ describe("Delivery API — headless data + structural no-leak", () => {
   });
 
   it("strips private fields (fail-closed) regardless of perspective", async () => {
+    // Author Zone is an ArticlePage, whose seoNotes field is delivery:"private".
     for (const headers of [pub, prev]) {
       const res = await s.app.inject({
         method: "GET",
-        url: `/api/v1/delivery/content/${s.ids.homeId}?locale=en&populate=2`,
+        url: `/api/v1/delivery/content/${s.ids.authorZoneId}?locale=en&populate=2`,
         headers,
       });
       expect(res.statusCode).toBe(200);
@@ -105,7 +106,7 @@ describe("Delivery API — headless data + structural no-leak", () => {
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(ed),
-      payload: { type: "StandardPage", locale: "en", name: "Draft Page" },
+      payload: { type: "ArticlePage", locale: "en", name: "Draft Page" },
     });
     const pageId = page.json().documentId;
     await s.app.inject({

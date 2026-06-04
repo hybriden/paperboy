@@ -11,7 +11,7 @@ describe("Structure: page tree, asset pane, URL hierarchy", () => {
   let teamId: string;
 
   async function makePage(parentId: string | null, name: string, slug: string, publish: boolean) {
-    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(admin), payload: { type: "StandardPage", parentId, locale: "en", name } });
+    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(admin), payload: { type: "ArticlePage", parentId, locale: "en", name } });
     const id = created.json().documentId;
     await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(admin), payload: { slug, data: { heading: name } } });
     if (publish) await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(admin) });
@@ -79,7 +79,7 @@ describe("Structure: page tree, asset pane, URL hierarchy", () => {
 
   it("rejects duplicate URL segments among page siblings (409)", async () => {
     await makePage(s.ids.homeId, "First Dup", "dup", false);
-    const second = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(admin), payload: { type: "StandardPage", parentId: s.ids.homeId, locale: "en", name: "Second Dup" } });
+    const second = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(admin), payload: { type: "ArticlePage", parentId: s.ids.homeId, locale: "en", name: "Second Dup" } });
     const id = second.json().documentId;
     const save = await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(admin), payload: { slug: "dup", data: { heading: "Second" } } });
     expect(save.statusCode).toBe(409);

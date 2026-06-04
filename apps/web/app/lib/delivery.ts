@@ -39,11 +39,12 @@ export async function fetchStart(locale: string, preview: boolean): Promise<Deli
   );
 }
 
-/** List all delivered content of a type (e.g. BlogPost) — used for index pages. */
-export async function fetchList(type: string, locale: string, preview: boolean): Promise<DeliveryContent[]> {
+/** List delivered content of a type — optionally only children of a page (ListPage). */
+export async function fetchList(type: string, locale: string, preview: boolean, parentId?: string): Promise<DeliveryContent[]> {
   const key = preview ? PREVIEW_KEY : PUBLIC_KEY;
+  const parent = parentId ? `&parentId=${encodeURIComponent(parentId)}` : "";
   const res = await fetch(
-    `${API}/api/v1/delivery/content?type=${encodeURIComponent(type)}&locale=${encodeURIComponent(locale)}&populate=0`,
+    `${API}/api/v1/delivery/content?type=${encodeURIComponent(type)}&locale=${encodeURIComponent(locale)}&populate=0${parent}`,
     { headers: { authorization: `Bearer ${key}` }, cache: "no-store" },
   );
   if (!res.ok) return [];

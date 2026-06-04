@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { AI_TASKS, aiAssist, aiTranslateBatch } from "@paperboy/shared";
 import { getStoredAiKey, getStoredAiModel } from "@paperboy/db";
+import { runContentAgent } from "../agent.js";
 import { requireAuth, requireCsrf, requirePermission } from "../security.js";
 
 /**
@@ -64,5 +65,52 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
       },
     },
     async (req) => aiTranslateBatch(req.body.texts, req.body.targetLocale, await resolveAiConfig()),
+  );
+
+  // The content agent ("Build from brief"): a server-side tool-use loop that
+  // creates DRAFTS as the signed-in user (its tool registry has no publish/
+  // delete tools — structural guardrail, see agent.ts). Streams progress as
+  // Server-Sent Events so the editor watches the work happen.
+  app.post(
+    "/agent",
+    {
+      preHandler: [requireCsrf, requirePermission("content.create")],
+      config: { rateLimit: { max: 5, timeWindow: "5 minutes" } },
+      schema: {
+        tags: ["ai"],
+        body: z.object({
+          brief: z.string().min(10).max(4000),
+          parentId: z.string().nullable().optional(),
+          locale: z.string().max(40).default("en"),
+        }),
+      },
+    },
+    async (req, reply) => {
+      const cfg = await resolveAiConfig();
+      if (!cfg.apiKey) {
+        return reply.code(409).send({ error: "AI provider is not configured (Settings → Site → AI key)." });
+      }
+      // SSE: take over the raw socket. X-Accel-Buffering disables proxy
+      // buffering (nginx) so events arrive as they happen.
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-cache",
+        connection: "keep-alive",
+        "x-accel-buffering": "no",
+      });
+      const send = (ev: unknown) => reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`);
+      try {
+        await runContentAgent(
+          { db: app.db, ctx: req.accessCtx!, cfg, emit: send },
+          req.body.brief,
+          { parentId: req.body.parentId ?? null, locale: req.body.locale },
+        );
+      } catch (err) {
+        send({ type: "error", text: err instanceof Error ? err.message : "Agent failed" });
+      } finally {
+        reply.raw.end();
+      }
+    },
   );
 }
