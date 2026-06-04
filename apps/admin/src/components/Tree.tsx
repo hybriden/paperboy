@@ -23,6 +23,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { ContentTypeDef, TreeNode } from "@paperboy/shared";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
+import { resolveTypeIcon, useTypeIconName } from "../lib/typeIcons.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { useToast } from "./ui/toast.js";
 
@@ -358,7 +359,10 @@ function Row(props: LevelProps & { node: TreeNode }) {
   const isStartPage = props.startPageId === node.documentId;
   const isOpen = expanded.has(node.documentId);
   const isSelected = selectedId === node.documentId;
-  const TypeIcon = node.kind === "block" ? Icon.Block : Icon.File;
+  // The type's configured icon; falls back to a generic kind icon while the
+  // content-types query loads or for unknown types.
+  const iconName = useTypeIconName(node.type);
+  const TypeIcon = resolveTypeIcon(iconName, node.kind === "block" ? "blocks" : "file");
   const loc = node.locales[locale] ?? Object.values(node.locales)[0];
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: node.documentId, disabled: !dragEnabled });
