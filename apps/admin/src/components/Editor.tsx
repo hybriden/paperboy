@@ -13,6 +13,7 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
+import { TypeIcon } from "../lib/typeIcons.js";
 import { ContentArea } from "./fields/ContentArea.js";
 import { MarkdownEditor } from "./fields/MarkdownEditor.js";
 import { RichText } from "./fields/RichText.js";
@@ -640,6 +641,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           <span className="rounded bg-accent/15 px-2 py-1 text-xs font-medium text-fg">Shared block · lives in the asset pane</span>
         )}
         <div className="ml-auto flex min-w-0 items-center gap-2 text-sm">
+          <TypeIcon name={type?.icon} fallback={form.kind === "block" ? "blocks" : "file"} width={15} height={15} className="shrink-0 text-muted" />
           <span className="truncate font-medium">{type?.displayName ?? form.type}</span>
           <code className="rounded bg-line/70 px-1 text-[11px] text-muted" title={form.documentId}>{form.documentId.slice(0, 10)}…</code>
         </div>

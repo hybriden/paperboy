@@ -4,6 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import type { ContentTypeDef, RoleName } from "@paperboy/shared";
 import { api, type ManagedUser } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
+import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
 import { ContentTypeEditor } from "../ContentTypeEditor.js";
 import { Dialog, DialogContent } from "../ui/dialog.js";
@@ -117,6 +118,7 @@ export function ContentTypesPanel() {
     >
       {(types.data ?? []).map((t) => (
         <div key={t.name} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
+          <TypeIcon name={t.icon} width={16} height={16} className="shrink-0 text-muted" />
           <span className="font-medium text-fg">{t.displayName}</span>
           <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{t.name}</code>
           <span className="rounded bg-canvas px-1.5 py-0.5 text-[11px] text-muted">{t.kind}</span>
