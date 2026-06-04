@@ -1,7 +1,11 @@
 import Link from "@tiptap/extension-link";
-import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
+import { type Editor, EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import { useState } from "react";
+import { type AiTask, api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
+import { Menu, MenuContent, MenuItem, MenuTrigger } from "../ui/menu.js";
+import { useToast } from "../ui/toast.js";
 
 const EMPTY = { type: "doc", content: [{ type: "paragraph" }] };
 
@@ -34,6 +38,52 @@ function Btn({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * ✨ AI menu for the rich-text toolbar (module-level, see Btn). Works on the
+ * CURRENT SELECTION — predictable scope, and the replacement can't mangle the
+ * structure of the whole document. The selection survives the menu click
+ * because TipTap keeps it in editor state while blurred.
+ */
+function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolean }) {
+  const toast = useToast();
+  const [pending, setPending] = useState(false);
+
+  async function run(task: AiTask, label: string) {
+    const { from, to } = editor.state.selection;
+    const text = editor.state.doc.textBetween(from, to, "\n").trim();
+    if (!text) return;
+    setPending(true);
+    try {
+      const r = await api.aiAssist(task, text);
+      editor.chain().focus().insertContentAt({ from, to }, r.result).run();
+      if (r.provider === "fallback") toast.success(`${label} (basic mode)`, "Set an AI key in Settings for full AI.");
+    } catch (e) {
+      toast.error(`${label} failed`, (e as Error).message);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <Menu>
+      <MenuTrigger
+        className={`flex h-7 items-center gap-1 rounded px-1.5 text-xs ${pending ? "text-accent-700" : "text-muted hover:bg-line/60 hover:text-fg"} disabled:opacity-50`}
+        aria-label="AI writing tools"
+        disabled={pending || !hasSelection}
+        title={hasSelection ? "AI writing tools" : "Select some text first"}
+        onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
+      >
+        <span aria-hidden>✨</span>
+        {pending ? "Thinking…" : "AI"}
+      </MenuTrigger>
+      <MenuContent>
+        <MenuItem onSelect={() => void run("improve", "Improve writing")}>Improve writing</MenuItem>
+        <MenuItem onSelect={() => void run("summarize", "Summarize")}>Summarize selection</MenuItem>
+      </MenuContent>
+    </Menu>
   );
 }
 
@@ -79,6 +129,7 @@ export default function RichTextEditor({
             bullet: e.isActive("bulletList"),
             quote: e.isActive("blockquote"),
             link: e.isActive("link"),
+            hasSelection: !e.state.selection.empty,
           }
         : null,
   });
@@ -108,6 +159,8 @@ export default function RichTextEditor({
         <span className="mx-1 h-4 w-px bg-line" />
         <Btn label="Undo" on={() => editor.chain().focus().undo().run()}><Icon.Undo width={14} height={14} /></Btn>
         <Btn label="Redo" on={() => editor.chain().focus().redo().run()}><Icon.Redo width={14} height={14} /></Btn>
+        <span className="mx-1 h-4 w-px bg-line" />
+        <AiMenu editor={editor} hasSelection={active?.hasSelection ?? false} />
       </div>
       <EditorContent editor={editor} />
     </div>
