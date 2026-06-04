@@ -115,4 +115,19 @@ describe("Pages, blocks, content areas + draft/publish lifecycle", () => {
     const after = await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${s.ids.homeId}?locale=en`, headers: pub });
     expect(after.statusCode).toBe(404);
   });
+
+  it("unpublish → publish round-trips (no draft needed to republish)", async () => {
+    // Regression: unpublish only demotes the live row and leaves no draft, so
+    // publish used to 409 with "Nothing to publish" — the page was stuck
+    // unpublished until an edit created a draft.
+    const republish = await s.app.inject({
+      method: "POST",
+      url: `/api/v1/manage/content/${s.ids.homeId}/publish?locale=en`,
+      headers: authHeaders(ed),
+    });
+    expect(republish.statusCode).toBe(200);
+    expect(republish.json().status).toBe("published");
+    const delivery = await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${s.ids.homeId}?locale=en`, headers: pub });
+    expect(delivery.statusCode).toBe(200);
+  });
 });
