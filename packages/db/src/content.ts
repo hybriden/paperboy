@@ -829,7 +829,15 @@ async function assertDraftPublishable(
 ): Promise<void> {
   const type = await getContentType(db, item.type);
   const parsed = dataSchemaFor(type, true).safeParse(draft.data);
-  if (!parsed.success) throw Errors.validation(formatValidation(parsed.error));
+  if (!parsed.success) {
+    // Tell the (often agentic) caller HOW to recover, not just what's wrong:
+    // the draft is salvageable with a partial update — no need to rebuild it.
+    throw Errors.validation(
+      formatValidation(parsed.error) +
+        " — the DRAFT is missing/has invalid fields (drafts save with relaxed validation; publish is strict)." +
+        " Fix it with update_content using merge:true and ONLY the offending fields, then publish again.",
+    );
+  }
   await assertAllowedTypes(db, type, draft.data as Record<string, unknown>);
   // Defence-in-depth: sibling URL segments stay unique at publish time too.
   if (item.kind === "page" && draft.slug) {
