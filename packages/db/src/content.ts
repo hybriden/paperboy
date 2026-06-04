@@ -890,7 +890,18 @@ export async function publishContent(
     )
     .limit(1);
   const draft = draftRows[0];
-  if (!draft) throw Errors.conflict("Nothing to publish (no draft changes)");
+  if (!draft) {
+    // Unpublish → publish must round-trip. Unpublishing only demotes the live
+    // row (no draft is left behind), so with no draft to promote, re-promote
+    // the latest version of this variant instead of refusing.
+    const latest = await latestVersion(db, documentId, loc);
+    if (!latest || latest.isCurrentPublished) {
+      throw Errors.conflict("Nothing to publish (no draft changes)");
+    }
+    await assertDraftPublishable(db, item, loc, latest);
+    await promoteDraft(db, documentId, loc, latest.id, ctx.userId);
+    return getContent(db, ctx, documentId, loc);
+  }
 
   await assertDraftPublishable(db, item, loc, draft);
   await promoteDraft(db, documentId, loc, draft.id, ctx.userId);
