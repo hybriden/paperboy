@@ -80,7 +80,7 @@ export function MarkdownEditor({
   const html = tab === "preview" ? DOMPurify.sanitize(marked.parse(value || "", { async: false }) as string) : "";
 
   return (
-    <div className="rounded-[var(--radius)] border border-line">
+    <div className="rounded-[var(--radius)] border border-line bg-panel">
       <div className="flex flex-wrap items-center gap-0.5 border-b border-line bg-panel px-1.5 py-1">
         <Btn label="B" title="Bold" disabled={disabled} onClick={() => wrap("**", "**", "bold")} bold />
         <Btn label="I" title="Italic" disabled={disabled} onClick={() => wrap("_", "_", "italic")} italic />
