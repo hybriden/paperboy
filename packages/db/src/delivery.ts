@@ -270,19 +270,22 @@ export async function resolveContent(
 ): Promise<DeliveryContent | null> {
   const found = await variantRow(ctx, perspective, documentId, loc);
   if (!found) return null;
-  const typeName = await ctx.itemType(documentId);
-  if (!typeName) return null;
+  const item = await ctx.item(documentId);
+  if (!item) return null;
   const sanitized = await sanitize(
     ctx,
     perspective,
-    typeName,
+    item.type,
     found.row.data as Record<string, unknown>,
     found.usedLocale,
     depth,
   );
   return {
     documentId,
-    type: typeName,
+    type: item.type,
+    // kind lets a frontend tell a PAGE in a content area (render as a teaser
+    // linking to urlPath) from a shared block (render by blockType).
+    kind: item.kind as DeliveryContent["kind"],
     locale: found.usedLocale,
     name: found.row.name,
     slug: found.row.slug,

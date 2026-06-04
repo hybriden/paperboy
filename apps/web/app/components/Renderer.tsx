@@ -150,20 +150,20 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
     return <ListBlockTeasers d={d} locale={locale} preview={preview} edit={edit} />;
   }
   // A PAGE dropped into the content area renders as a teaser — a compact card
-  // linking to the page (Optimizely-style). Pages are the only area entries
-  // with a urlPath (blocks resolve to urlPath: null).
-  if (b.shared && b.content?.urlPath) {
+  // linking to the page (Optimizely-style). A teaser ALWAYS links to the
+  // content it teases: the whole card is the link, and a page that has no
+  // public path (e.g. an unpublished ancestor) renders nothing at all.
+  if (b.shared && b.content?.kind === "page") {
     const c = b.content;
+    if (!c.urlPath) return null;
     const summary = d.summary ?? d.metaDescription ?? null;
     const date = fmtDate(d.publishDate);
     return (
-      <div className={`block card post-card card--${b.display}`} data-block="PageTeaser" {...edit}>
-        <a className="post-link" href={`/${locale}${c.urlPath}`}>
-          <h3>{String(d.title ?? c.name)}</h3>
-        </a>
+      <a className={`block card post-card post-link card--${b.display}`} href={`/${locale}${c.urlPath}`} data-block="PageTeaser" {...edit}>
+        <h3>{String(d.title ?? c.name)}</h3>
         {date ? <p className="post-meta">{date}</p> : null}
         {summary ? <p className="post-summary">{String(summary)}</p> : <Rich doc={d.intro} className="post-summary" />}
-      </div>
+      </a>
     );
   }
   return <div className="block card" data-block={b.blockType} {...edit}>Unknown block: {b.blockType}</div>;

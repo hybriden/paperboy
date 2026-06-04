@@ -77,12 +77,13 @@ describe("pages in content areas → teasers", () => {
       headers: pub,
     });
     expect(res.statusCode).toBe(200);
-    const area = res.json().data.mainArea as Array<{ blockType: string; shared: boolean; content: { name: string; urlPath: string | null } }>;
+    const area = res.json().data.mainArea as Array<{ blockType: string; shared: boolean; content: { name: string; urlPath: string | null; kind: string } }>;
     expect(area).toHaveLength(1);
     expect(area[0].shared).toBe(true);
     expect(area[0].blockType).toBe("LandingPage");
     expect(area[0].content.name).toBe("Teaser Target");
     expect(area[0].content.urlPath).toBe("/teaser-target");
+    expect(area[0].content.kind).toBe("page"); // frontends key teaser rendering on this
   });
 
   it("no-leak: unpublishing the page drops its teaser from the published area", async () => {
