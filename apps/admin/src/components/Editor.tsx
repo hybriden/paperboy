@@ -407,13 +407,15 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveState]);
 
-  if (detail.isLoading || !form) {
-    return <div className="grid h-full place-items-center text-muted">Loading editor…</div>;
-  }
+  // Error first: on a failed load `form` never initialises, so the loading
+  // check would swallow the error and spin forever (e.g. a deleted document).
   if (detail.isError) {
     const err = detail.error;
     const msg = err instanceof ApiError && err.status === 403 ? "You don't have access to this content." : "Failed to load content.";
     return <div className="grid h-full place-items-center text-muted">{msg}</div>;
+  }
+  if (detail.isLoading || !form) {
+    return <div className="grid h-full place-items-center text-muted">Loading editor…</div>;
   }
 
   const groups = type ? [...new Set(type.fields.map((f) => f.group))] : ["Content"];
