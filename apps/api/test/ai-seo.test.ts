@@ -18,7 +18,7 @@ describe("SEO fields + AI editorial assistant", () => {
 
   /* --------------------------------- SEO ---------------------------------- */
   it("delivers public SEO/OpenGraph fields and still strips the private seoNotes", async () => {
-    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "StandardPage", locale: "en", name: "SEO Page" } });
+    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "ArticlePage", locale: "en", name: "SEO Page" } });
     const id = created.json().documentId;
     await s.app.inject({
       method: "PUT",

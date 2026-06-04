@@ -17,7 +17,7 @@ describe("Version compare / diff (per-version payload endpoint)", () => {
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(ed),
-      payload: { type: "StandardPage", locale: "en", name: "Compare Me" },
+      payload: { type: "ArticlePage", locale: "en", name: "Compare Me" },
     });
     const id = created.json().documentId as string;
 

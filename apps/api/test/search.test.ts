@@ -23,7 +23,7 @@ describe("Content search (⌘K backend)", () => {
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(ed),
-      payload: { type: "StandardPage", locale: "en", name },
+      payload: { type: "ArticlePage", locale: "en", name },
     });
     return created.json().documentId as string;
   }

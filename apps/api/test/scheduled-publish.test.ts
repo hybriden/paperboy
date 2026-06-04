@@ -16,13 +16,13 @@ describe("Scheduled publish (timed go-live + expiry)", () => {
   const pub = { authorization: `Bearer ${PUBLIC_KEY}` };
   const prev = { authorization: `Bearer ${PREVIEW_KEY}` };
 
-  /** Create a StandardPage with a valid (publishable) draft. */
+  /** Create a ArticlePage with a valid (publishable) draft. */
   async function makeDraft(name: string, data: Record<string, unknown> = { heading: name }): Promise<string> {
     const created = await s.app.inject({
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(ed),
-      payload: { type: "StandardPage", locale: "en", name },
+      payload: { type: "ArticlePage", locale: "en", name },
     });
     const id = created.json().documentId as string;
     await s.app.inject({
@@ -88,7 +88,7 @@ describe("Scheduled publish (timed go-live + expiry)", () => {
   });
 
   it("re-validation failure at fire time leaves the item a draft (never publishes invalid content)", async () => {
-    // StandardPage requires `heading` at publish; this draft omits it.
+    // ArticlePage requires `heading` at publish; this draft omits it.
     const id = await makeDraft("Invalid Scheduled", { intro: { type: "doc", content: [] } });
     // Force a due publish_at directly, bypassing schedule's strict validation.
     const { createDb } = await import("@paperboy/db");
@@ -112,7 +112,7 @@ describe("Scheduled publish (timed go-live + expiry)", () => {
       method: "POST",
       url: "/api/v1/manage/content",
       headers: authHeaders(author),
-      payload: { type: "StandardPage", locale: "en", parentId: s.ids.authorZoneId, name: "Author Child" },
+      payload: { type: "ArticlePage", locale: "en", parentId: s.ids.authorZoneId, name: "Author Child" },
     });
     expect(created.statusCode).toBe(200);
     const id = created.json().documentId;
