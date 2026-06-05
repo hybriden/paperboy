@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { ContentTypeDef, type ContentKind, type FieldOption, type FieldType, type FieldValidation } from "@paperboy/shared";
 import { api, ApiError } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
-import { TYPE_ICONS, TypeIcon } from "../lib/typeIcons.js";
+import { TypeIcon, resolveIconBase, usePhosphorIconNames } from "../lib/typeIcons.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
 import { Switch } from "./ui/switch.js";
@@ -45,46 +45,55 @@ const newField = (): DraftField => ({
   multiple: false,
 });
 
-/** Visual icon picker: trigger shows the current icon; the popover is a searchable grid. */
+/** Visual icon picker: trigger shows the current icon; the popover is a searchable
+ *  grid over the FULL Phosphor duotone set (~1.5k). Rendering is capped — search
+ *  narrows; stored value is "ph:<name>". */
+const PICKER_CAP = 168;
 function IconPicker({ id, value, onChange }: { id?: string; value: string; onChange: (name: string) => void }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const shown = q.trim()
-    ? TYPE_ICONS.filter(([name]) => name.includes(q.trim().toLowerCase()))
-    : TYPE_ICONS;
+  const all = usePhosphorIconNames();
+  const selected = resolveIconBase(value);
+  const query = q.trim().toLowerCase();
+  const matches = query ? all.filter((name) => name.includes(query)) : all;
+  const shown = matches.slice(0, PICKER_CAP);
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setQ(""); }}>
       <PopoverTrigger id={id} className="field-input flex items-center gap-2 text-left" aria-label="Choose icon">
         <TypeIcon name={value} width={16} height={16} className="shrink-0 text-muted" />
-        <span className="truncate">{value}</span>
+        <span className="truncate">{selected}</span>
         <Icon.ChevronDown width={14} height={14} className="ml-auto shrink-0 text-muted" />
       </PopoverTrigger>
       <PopoverContent className="w-[296px]">
         <input
           className="field-input mb-2 py-1 text-sm"
-          placeholder="Search icons…"
+          placeholder={`Search ${all.length || ""} icons…`}
           value={q}
           onChange={(e) => setQ(e.target.value)}
           aria-label="Search icons"
         />
         <div className="grid max-h-56 grid-cols-8 gap-0.5 overflow-y-auto" role="listbox" aria-label="Icons">
-          {shown.map(([name, Cmp]) => (
+          {shown.map((name) => (
             <button
               key={name}
               type="button"
               role="option"
-              aria-selected={name === value}
+              aria-selected={name === selected}
               title={name}
-              onClick={() => { onChange(name); setOpen(false); setQ(""); }}
+              onClick={() => { onChange(`ph:${name}`); setOpen(false); setQ(""); }}
               className={`grid h-8 w-8 place-items-center rounded ${
-                name === value ? "bg-accent/15 text-accent-700 ring-1 ring-accent" : "text-fg hover:bg-line/60"
+                name === selected ? "bg-accent/15 text-accent-700 ring-1 ring-accent" : "text-fg hover:bg-line/60"
               }`}
             >
-              <Cmp width={16} height={16} />
+              <TypeIcon name={`ph:${name}`} width={16} height={16} />
             </button>
           ))}
-          {shown.length === 0 && <p className="col-span-8 py-3 text-center text-xs text-muted">No icons match.</p>}
+          {all.length === 0 && <p className="col-span-8 py-3 text-center text-xs text-muted">Loading icons…</p>}
+          {all.length > 0 && shown.length === 0 && <p className="col-span-8 py-3 text-center text-xs text-muted">No icons match.</p>}
         </div>
+        {matches.length > shown.length && (
+          <p className="mt-1.5 text-center text-[11px] text-muted">Showing {shown.length} of {matches.length} — search to narrow.</p>
+        )}
       </PopoverContent>
     </Popover>
   );
@@ -151,7 +160,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
   const [name, setName] = useState(initial?.name ?? "");
   const [displayName, setDisplayName] = useState(initial?.displayName ?? "");
   const [kind, setKind] = useState<ContentKind>(initial?.kind ?? "page");
-  const [icon, setIcon] = useState(initial?.icon ?? "file");
+  const [icon, setIcon] = useState(initial?.icon ?? "ph:file");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [fields, setFields] = useState<DraftField[]>(
     () => initial?.fields.map((f) => ({ ...f, _key: `f${uid++}`, helpText: f.helpText })) as DraftField[] ?? [],

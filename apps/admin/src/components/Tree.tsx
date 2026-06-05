@@ -23,7 +23,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { ContentTypeDef, TreeNode } from "@paperboy/shared";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
-import { resolveTypeIcon, useTypeIconName } from "../lib/typeIcons.js";
+import { TypeIcon, useTypeIconName } from "../lib/typeIcons.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { useToast } from "./ui/toast.js";
 
@@ -362,7 +362,6 @@ function Row(props: LevelProps & { node: TreeNode }) {
   // The type's configured icon; falls back to a generic kind icon while the
   // content-types query loads or for unknown types.
   const iconName = useTypeIconName(node.type);
-  const TypeIcon = resolveTypeIcon(iconName, node.kind === "block" ? "blocks" : "file");
   const loc = node.locales[locale] ?? Object.values(node.locales)[0];
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: node.documentId, disabled: !dragEnabled });
@@ -427,7 +426,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
             ) : (
               <span className="h-4 w-4 shrink-0" aria-hidden />
             )}
-            <TypeIcon width={15} height={15} className="shrink-0 text-muted" />
+            <TypeIcon name={iconName} fallback={node.kind === "block" ? "blocks" : "file"} width={15} height={15} className="shrink-0 text-muted" />
             <span className="truncate">{node.name}</span>
             {isStartPage && (
               <span className="shrink-0 rounded bg-accent/15 px-1 text-[10px] font-semibold text-accent-700" title="Served at / (site start page)">/</span>
