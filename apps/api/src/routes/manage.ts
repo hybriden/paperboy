@@ -737,8 +737,8 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   /* ------------------------------- audit -------------------------------- */
   app.get(
     "/audit",
-    { preHandler: [requirePermission("audit.read")], schema: { tags: ["manage"], querystring: z.object({ limit: z.coerce.number().optional(), before: z.coerce.number().optional() }), response: { 200: z.array(z.object({ id: z.number(), ts: z.string(), actorUserId: z.string().nullable(), actorName: z.string().nullable(), action: z.string(), documentId: z.string().nullable(), locale: z.string().nullable(), ip: z.string().nullable(), detail: z.unknown() })) } } },
-    async (req) => listAudit(app.db, req.accessCtx!, { limit: req.query.limit, before: req.query.before }),
+    { preHandler: [requirePermission("audit.read")], schema: { tags: ["manage"], querystring: z.object({ limit: z.coerce.number().optional(), before: z.coerce.number().optional(), action: z.string().max(80).optional(), actor: z.string().max(60).optional(), documentId: z.string().max(60).optional(), from: z.string().max(40).optional(), to: z.string().max(40).optional() }), response: { 200: z.array(z.object({ id: z.number(), ts: z.string(), actorUserId: z.string().nullable(), actorName: z.string().nullable(), action: z.string(), documentId: z.string().nullable(), locale: z.string().nullable(), ip: z.string().nullable(), detail: z.unknown() })) } } },
+    async (req) => listAudit(app.db, req.accessCtx!, { limit: req.query.limit, before: req.query.before, action: req.query.action, actorUserId: req.query.actor, documentId: req.query.documentId, from: req.query.from, to: req.query.to }),
   );
 
   /* ------------------------------- users -------------------------------- */

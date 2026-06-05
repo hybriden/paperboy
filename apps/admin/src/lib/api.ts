@@ -289,7 +289,14 @@ export const api = {
     request<{ id: number; secret: string }>("POST", "/manage/webhooks", body),
   deleteWebhook: (id: number) => request<{ ok: boolean }>("DELETE", `/manage/webhooks/${id}`),
 
-  audit: (limit = 100, signal?: AbortSignal) => request<AuditRow[]>("GET", `/manage/audit?limit=${limit}`, undefined, signal),
+  audit: (
+    opts: { limit?: number; before?: number; action?: string; documentId?: string; from?: string; to?: string } = {},
+    signal?: AbortSignal,
+  ) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(opts)) if (v !== undefined && v !== "") qs.set(k, String(v));
+    return request<AuditRow[]>("GET", `/manage/audit?${qs}`, undefined, signal);
+  },
 
   // AI editorial assistant
   aiStatus: (signal?: AbortSignal) => request<{ enabled: boolean; tasks: string[] }>("GET", "/ai/status", undefined, signal),

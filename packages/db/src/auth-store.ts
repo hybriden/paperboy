@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
-import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, like, lte, sql } from "drizzle-orm";
 import {
   type Permission,
   ROLE_PERMISSIONS,
@@ -465,15 +465,37 @@ export async function audit(
   });
 }
 
-/** Read the append-only audit log (most-recent first), joined to actor names. */
+/** Read the append-only audit log (most-recent first), joined to actor names.
+ *  Cursor-paged (`before` = id of the oldest row already shown) and filterable
+ *  by action (prefix — "content." selects the category), actor, document and
+ *  time range. */
 export async function listAudit(
   db: Database,
   ctx: AccessContext,
-  opts: { limit?: number; before?: number } = {},
+  opts: {
+    limit?: number;
+    before?: number;
+    action?: string;
+    actorUserId?: string;
+    documentId?: string;
+    from?: string;
+    to?: string;
+  } = {},
 ) {
   requirePermission(ctx, "audit.read");
   const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
-  const where = opts.before ? sql`${auditLog.id} < ${opts.before}` : undefined;
+  const conds = [];
+  if (opts.before) conds.push(sql`${auditLog.id} < ${opts.before}`);
+  // Prefix match so "content." selects the whole category; exact actions work
+  // too. LIKE wildcards in the input are stripped, not interpreted.
+  if (opts.action) conds.push(like(auditLog.action, `${opts.action.replace(/[%_]/g, "")}%`));
+  if (opts.actorUserId) conds.push(eq(auditLog.actorUserId, opts.actorUserId));
+  if (opts.documentId) conds.push(eq(auditLog.documentId, opts.documentId));
+  const from = opts.from ? new Date(opts.from) : null;
+  if (from && !Number.isNaN(+from)) conds.push(gte(auditLog.ts, from));
+  const to = opts.to ? new Date(opts.to) : null;
+  if (to && !Number.isNaN(+to)) conds.push(lte(auditLog.ts, to));
+  const where = conds.length ? and(...conds) : undefined;
   const rows = await db
     .select({
       id: auditLog.id,
