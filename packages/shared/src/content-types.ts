@@ -239,15 +239,85 @@ export function fieldFormatHint(f: FieldDef): { format: string; example: unknown
 }
 
 /* --------------------- tolerant input coercion (agents) ------------------- */
-// Flatten a TipTap doc (or any nested {text,content}) to plain text.
-function tiptapToPlainText(node: unknown): string {
-  if (node == null) return "";
-  if (typeof node === "string") return node;
-  if (Array.isArray(node)) return node.map(tiptapToPlainText).join("");
-  const o = node as { text?: string; content?: unknown };
-  let s = typeof o.text === "string" ? o.text : "";
-  if (o.content != null) s += tiptapToPlainText(o.content);
-  return s;
+// TipTap doc → Markdown / plain text. Agents reliably send rich docs for
+// markdown/text fields; the conversion must PRESERVE STRUCTURE. (The previous
+// flattener concatenated text nodes with no separators — "HeadingBody text…" —
+// destroying the content while reporting success, which sent a real agent into
+// a stuck retry loop.)
+type TtNode = { type?: string; text?: string; content?: TtNode[]; attrs?: Record<string, unknown>; marks?: { type: string; attrs?: Record<string, unknown> }[] };
+
+function ttInline(nodes: TtNode[] | undefined, md: boolean): string {
+  return (nodes ?? [])
+    .map((n) => {
+      if (n.type === "hardBreak") return md ? "  \n" : "\n";
+      if (n.type === "image") return md ? `![${String(n.attrs?.alt ?? "")}](${String(n.attrs?.src ?? "")})` : String(n.attrs?.alt ?? "");
+      let t = typeof n.text === "string" ? n.text : ttInline(n.content, md);
+      if (md) {
+        for (const m of n.marks ?? []) {
+          if (m.type === "bold" || m.type === "strong") t = `**${t}**`;
+          else if (m.type === "italic" || m.type === "em") t = `*${t}*`;
+          else if (m.type === "code") t = `\`${t}\``;
+          else if (m.type === "strike") t = `~~${t}~~`;
+          else if (m.type === "link") t = `[${t}](${String(m.attrs?.href ?? "#")})`;
+        }
+      }
+      return t;
+    })
+    .join("");
+}
+
+function ttBlocks(nodes: TtNode[] | undefined, md: boolean): string[] {
+  const out: string[] = [];
+  for (const n of nodes ?? []) {
+    switch (n.type) {
+      case "heading": {
+        const lvl = Math.min(Math.max(Number(n.attrs?.level ?? 2), 1), 6);
+        out.push(md ? `${"#".repeat(lvl)} ${ttInline(n.content, md)}` : ttInline(n.content, md));
+        break;
+      }
+      case "paragraph":
+        out.push(ttInline(n.content, md));
+        break;
+      case "bulletList":
+      case "orderedList": {
+        const lines = (n.content ?? []).map((li, i) => {
+          const inner = ttBlocks(li.content, md).join(md ? "\n  " : "\n");
+          return n.type === "orderedList" ? `${i + 1}. ${inner}` : md ? `- ${inner}` : `• ${inner}`;
+        });
+        out.push(lines.join("\n"));
+        break;
+      }
+      case "blockquote":
+        out.push(ttBlocks(n.content, md).join("\n\n").split("\n").map((l) => (md ? `> ${l}` : l)).join("\n"));
+        break;
+      case "codeBlock":
+        out.push(md ? `\`\`\`\n${ttInline(n.content, false)}\n\`\`\`` : ttInline(n.content, false));
+        break;
+      case "horizontalRule":
+        if (md) out.push("---");
+        break;
+      case "image":
+        out.push(md ? `![${String(n.attrs?.alt ?? "")}](${String(n.attrs?.src ?? "")})` : String(n.attrs?.alt ?? ""));
+        break;
+      default:
+        // Unknown wrapper: descend; bare inline content becomes its own block.
+        if (Array.isArray(n.content)) out.push(...ttBlocks(n.content, md));
+        else if (typeof n.text === "string" && n.text) out.push(n.text);
+    }
+  }
+  return out.filter((b) => b.trim() !== "");
+}
+
+/** TipTap doc → Markdown (structure preserved: headings, lists, marks, links). */
+function tiptapToMarkdown(doc: unknown): string {
+  const d = doc as TtNode;
+  return ttBlocks(Array.isArray(d?.content) ? d.content : [d as TtNode], true).join("\n\n").trim();
+}
+
+/** TipTap doc → plain text, blocks separated (single-line `text` fields). */
+function tiptapToPlainText(doc: unknown): string {
+  const d = doc as TtNode;
+  return ttBlocks(Array.isArray(d?.content) ? d.content : [d as TtNode], false).join("\n").trim();
 }
 // Wrap a plain (possibly multi-paragraph) string into a TipTap doc.
 function stringToTiptapDoc(s: string): unknown {
@@ -455,7 +525,8 @@ const LOCALE_KEY = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
  *  - any field wrapped as { <locale>: inner }     → inner  (locale-map wrap —
  *    the locale is selected by the request's locale param, never by the value;
  *    a real MCP agent burned 12 attempts on this one)
- *  - text/markdown given a TipTap doc             → flattened to plain text
+ *  - text given a TipTap doc                      → plain text (blocks separated)
+ *  - markdown given a TipTap doc                  → real Markdown (structure kept)
  *  - richtext given a plain string                → wrapped into a doc
  *  - richtext docs outside the editor schema      → normalized (see sanitizeRichTextDoc)
  *  - contentArea given a single block object      → wrapped in an array
@@ -481,8 +552,10 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
   }
   switch (f.type) {
     case "text":
-    case "markdown":
       return looksLikeTiptapDoc(value) ? tiptapToPlainText(value) : value;
+    case "markdown":
+      // Structure-preserving: headings/lists/marks become Markdown syntax.
+      return looksLikeTiptapDoc(value) ? tiptapToMarkdown(value) : value;
     case "richtext": {
       const doc = typeof value === "string" ? stringToTiptapDoc(value) : value;
       return looksLikeTiptapDoc(doc) ? sanitizeRichTextDoc(doc) : doc;

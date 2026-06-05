@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import {
   type AccessContext,
   adminCreateUser,
+  audit,
   adminDeleteUser,
   adminUpdateUser,
   cloneContent,
@@ -101,6 +102,11 @@ function need(perm: Permission): void {
 }
 const persp = (preview?: boolean): "preview" | "published" => (preview ? "preview" : "published");
 
+/** Fire-and-forget audit entry — MCP writes leave the same trail as API routes. */
+function mcpAudit(action: string, documentId?: string | null, locale?: string | null, detail?: object): void {
+  void audit(db, { actorUserId: ctx.userId, action, documentId: documentId ?? null, locale: locale ?? null, ip: "mcp", detail }).catch(() => undefined);
+}
+
 // Tool definitions are collected as registrations so a fresh McpServer can be
 // built per stdio process and per stateless HTTP request. A stateless HTTP
 // request needs its own server+transport to carry the MCP init handshake.
@@ -120,7 +126,12 @@ function tool<S extends z.ZodRawShape>(
         const result = await run(args);
         return { content: [{ type: "text" as const, text: JSON.stringify(result ?? { ok: true }, null, 2) }] };
       } catch (err) {
-        return { content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }], isError: true as const };
+        const msg = err instanceof Error ? err.message : String(err);
+        // The error travels back in-band, but agents (and their loop guards)
+        // routinely swallow it — ALSO leave a trail in docker logs, with the
+        // args, so a failed agent run is diagnosable after the fact.
+        console.error(`[paperboy-mcp] tool ${name} failed: ${msg}\n  args: ${JSON.stringify(args)?.slice(0, 4000)}`);
+        return { content: [{ type: "text" as const, text: `Error: ${msg}` }], isError: true as const };
       }
     };
     // The SDK's tool callback type is heavily generic; the wrapper above keeps each
@@ -146,7 +157,11 @@ tool("get_content", "Get a content item's working version (draft else published)
   ({ documentId, locale }) => getContent(db, ctx, documentId, locale ?? "en"));
 tool("create_content", "Create a new content item (page/block/global) as a draft.",
   { type: z.string(), parentId: z.string().nullable().optional(), locale: loc, name: z.string() },
-  ({ type, parentId, locale, name }) => createContent(db, ctx, { type, parentId: parentId ?? null, locale: locale ?? "en", name }));
+  async ({ type, parentId, locale, name }) => {
+    const created = await createContent(db, ctx, { type, parentId: parentId ?? null, locale: locale ?? "en", name });
+    mcpAudit("content.create", created.documentId, created.locale);
+    return created;
+  });
 tool(
   "update_content",
   [
@@ -164,28 +179,47 @@ tool(
   // silently drops required fields like `intro` passes the relaxed draft
   // validation but bricks every subsequent publish — the worst failure mode
   // an agent can hit. Replace semantics stay available via merge:false.
-  ({ documentId, locale, name, slug, displayInNav, data, merge }) =>
-    updateContent(db, ctx, documentId, locale ?? "en", { name, slug, displayInNav, data, merge: merge ?? true }));
+  async ({ documentId, locale, name, slug, displayInNav, data, merge }) => {
+    const updated = await updateContent(db, ctx, documentId, locale ?? "en", { name, slug, displayInNav, data, merge: merge ?? true });
+    mcpAudit("content.update", documentId, locale ?? "en");
+    return updated;
+  });
 tool("publish", "Publish the working draft of a content item for a locale.", { documentId: docId, locale: loc },
-  ({ documentId, locale }) => publishContent(db, ctx, documentId, locale ?? "en"));
+  async ({ documentId, locale }) => {
+    const published = await publishContent(db, ctx, documentId, locale ?? "en");
+    mcpAudit("content.publish", documentId, locale ?? "en");
+    return published;
+  });
 tool("unpublish", "Unpublish (take down) a content item for a locale.", { documentId: docId, locale: loc },
-  ({ documentId, locale }) => unpublishContent(db, ctx, documentId, locale ?? "en"));
+  async ({ documentId, locale }) => {
+    const result = await unpublishContent(db, ctx, documentId, locale ?? "en");
+    mcpAudit("content.unpublish", documentId, locale ?? "en");
+    return result;
+  });
 tool("discard_draft", "Discard unpublished draft changes for a locale.", { documentId: docId, locale: loc },
-  async ({ documentId, locale }) => { await discardDraft(db, ctx, documentId, locale ?? "en"); return { ok: true }; });
+  async ({ documentId, locale }) => { await discardDraft(db, ctx, documentId, locale ?? "en"); mcpAudit("content.discard_draft", documentId, locale ?? "en"); return { ok: true }; });
 tool("move_content", "Reorder (beforeId/afterId) or re-parent (parentId) a page.",
   { documentId: docId, parentId: z.string().nullable().optional(), beforeId: z.string().nullable().optional(), afterId: z.string().nullable().optional() },
-  async ({ documentId, parentId, beforeId, afterId }) => { await moveContent(db, ctx, documentId, { parentId, beforeId, afterId }); return { ok: true }; });
+  async ({ documentId, parentId, beforeId, afterId }) => { await moveContent(db, ctx, documentId, { parentId, beforeId, afterId }); mcpAudit("content.move", documentId); return { ok: true }; });
 tool("duplicate_content", "Duplicate a content item as a new draft sibling.", { documentId: docId, locale: loc },
-  ({ documentId, locale }) => cloneContent(db, ctx, documentId, locale ?? "en"));
+  async ({ documentId, locale }) => {
+    const copy = await cloneContent(db, ctx, documentId, locale ?? "en");
+    mcpAudit("content.duplicate", copy.documentId, copy.locale, { source: documentId });
+    return copy;
+  });
 tool("trash_content", "Soft-delete a content item (and its subtree) to the trash.", { documentId: docId },
-  ({ documentId }) => softDelete(db, ctx, documentId));
+  async ({ documentId }) => { const r = await softDelete(db, ctx, documentId); mcpAudit("content.trash", documentId); return r; });
 tool("restore_content", "Restore a content item from the trash.", { documentId: docId },
-  ({ documentId }) => restoreContent(db, ctx, documentId));
+  async ({ documentId }) => { const r = await restoreContent(db, ctx, documentId); mcpAudit("content.restore", documentId); return r; });
 tool("list_trash", "List soft-deleted content in scope.", {}, () => listTrash(db, ctx));
 tool("list_versions", "List the version history of a content item for a locale.", { documentId: docId, locale: loc },
   ({ documentId, locale }) => listVersions(db, ctx, documentId, locale ?? "en"));
 tool("restore_version", "Restore a historical version into a new draft.", { documentId: docId, locale: loc, versionId: z.number() },
-  ({ documentId, locale, versionId }) => restoreVersion(db, ctx, documentId, locale ?? "en", versionId));
+  async ({ documentId, locale, versionId }) => {
+    const restored = await restoreVersion(db, ctx, documentId, locale ?? "en", versionId);
+    mcpAudit("content.version_restore", documentId, locale ?? "en", { versionId });
+    return restored;
+  });
 tool("list_blocks", "List shared blocks (the assets pane).", {}, () => listBlocks(db, ctx));
 tool("list_pages", "Flat list of all pages in scope (for move/parent pickers).", {}, () => listPages(db, ctx));
 
