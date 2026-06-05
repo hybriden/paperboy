@@ -1,12 +1,19 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
-import type { Asset } from "@paperboy/shared";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import type { Asset, StockSearchResult } from "@paperboy/shared";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { useToast } from "./ui/toast.js";
 
 const ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
+
+/**
+ * Seed for the stock-image search in image pickers — the page name/heading,
+ * provided by the editor so every nested image field (incl. content-area
+ * blocks) opens the Stock tab with a relevant query pre-filled.
+ */
+export const StockQueryContext = createContext("");
 
 function useAssets() {
   return useQuery({ queryKey: ["assets"], queryFn: ({ signal }) => api.assets(signal) });
@@ -116,6 +123,15 @@ export function MediaTab() {
         <Dialog open onOpenChange={(o) => !o && setEditing(null)}>
           <DialogContent title="Image details" className="w-[380px]">
             <img src={assets.data?.find((a) => a.documentId === editing)?.url} alt="" className="mb-3 max-h-48 w-full rounded border border-line object-contain" />
+            {(() => {
+              const meta = assets.data?.find((a) => a.documentId === editing)?.sourceMeta;
+              return meta ? (
+                <p className="mb-2 text-[11px] text-muted">
+                  Photo by <a href={meta.creditUrl} target="_blank" rel="noopener noreferrer" className="underline hover:text-fg">{meta.credit}</a>
+                  {" "}on <a href={meta.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline hover:text-fg">{meta.providerName}</a>
+                </p>
+              ) : null;
+            })()}
             <div className="flex items-center justify-between">
               <label className="field-label" htmlFor="alt">Alt text (accessibility)</label>
               <button
@@ -148,21 +164,112 @@ export function MediaTab() {
   );
 }
 
-/** Image picker dialog (used by the `image` field). */
+/** Image picker dialog (used by the `image` field): library + stock search. */
 function MediaPicker({ onPick, onClose }: { onPick: (a: Asset) => void; onClose: () => void }) {
   const assets = useAssets();
+  const [tab, setTab] = useState<"library" | "stock">("library");
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title="Choose image" description="Pick an existing image or upload a new one." className="w-[560px]">
-        <div className="mb-3 flex justify-end">
-          <UploadButton label="Upload new" onUploaded={(a) => onPick(a)} />
+      <DialogContent title="Choose image" description="Pick an existing image, upload a new one, or import a stock photo." className="w-[560px]">
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex gap-1" role="tablist" aria-label="Image source">
+            {([["library", "Library"], ["stock", "Stock"]] as const).map(([key, label]) => (
+              <button key={key} type="button" role="tab" aria-selected={tab === key}
+                className={`rounded px-2.5 py-1 text-xs font-medium ${tab === key ? "bg-accent/15 text-accent-700" : "text-muted hover:bg-line/60"}`}
+                onClick={() => setTab(key)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          {tab === "library" && <UploadButton label="Upload new" onUploaded={(a) => onPick(a)} />}
         </div>
-        {assets.data?.length === 0 && <p className="py-8 text-center text-sm text-muted">No images yet — upload one above.</p>}
-        <div className="grid max-h-[50vh] grid-cols-4 gap-2 overflow-auto">
-          {assets.data?.map((a) => <AssetThumb key={a.documentId} asset={a} onClick={() => onPick(a)} />)}
-        </div>
+        {tab === "library" ? (
+          <>
+            {assets.data?.length === 0 && <p className="py-8 text-center text-sm text-muted">No images yet — upload one above.</p>}
+            <div className="grid max-h-[50vh] grid-cols-4 gap-2 overflow-auto">
+              {assets.data?.map((a) => <AssetThumb key={a.documentId} asset={a} onClick={() => onPick(a)} />)}
+            </div>
+          </>
+        ) : (
+          <StockTab onPick={onPick} />
+        )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** Stock tab: search the configured provider, import-on-select into the library. */
+function StockTab({ onPick }: { onPick: (a: Asset) => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const suggested = useContext(StockQueryContext);
+  const [q, setQ] = useState(suggested);
+  const [debounced, setDebounced] = useState(suggested);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(q), 400);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  const search = useQuery({
+    queryKey: ["stock-search", debounced],
+    queryFn: ({ signal }) => api.stockSearch(debounced, signal),
+    enabled: debounced.trim().length > 1,
+    staleTime: 5 * 60_000, // protects the provider's request budget
+    retry: false,
+  });
+  const [importing, setImporting] = useState<string | null>(null);
+  const importPhoto = useMutation({
+    mutationFn: (r: StockSearchResult) => api.stockImport({ providerId: r.id, alt: r.description }),
+    onSuccess: (asset) => {
+      qc.invalidateQueries({ queryKey: ["assets"] });
+      toast.success("Image imported", asset.sourceMeta ? `Photo by ${asset.sourceMeta.credit} on ${asset.sourceMeta.providerName}` : asset.filename);
+      onPick(asset);
+    },
+    onError: (e) => toast.error("Import failed", (e as Error).message),
+    onSettled: () => setImporting(null),
+  });
+
+  return (
+    <div>
+      <input
+        className="field-input mb-3"
+        type="search"
+        placeholder="Search stock photos…"
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        aria-label="Search stock photos"
+      />
+      {search.isLoading && <div className="grid grid-cols-4 gap-2">{[0, 1, 2, 3].map((i) => <div key={i} className="aspect-square animate-pulse rounded bg-line/50" />)}</div>}
+      {search.isError && (
+        // Unconfigured/key errors are self-teaching (they point at Settings → Stock images).
+        <p className="py-8 text-center text-sm text-muted">{(search.error as Error).message}</p>
+      )}
+      {!search.isError && debounced.trim().length <= 1 && <p className="py-8 text-center text-sm text-muted">Type to search stock photos.</p>}
+      {search.data?.length === 0 && <p className="py-8 text-center text-sm text-muted">No results for “{debounced}”.</p>}
+      <div className="grid max-h-[50vh] grid-cols-3 gap-2 overflow-auto">
+        {search.data?.map((r) => (
+          <figure key={r.id} className="min-w-0">
+            <button
+              type="button"
+              className="relative block aspect-square w-full overflow-hidden rounded-[var(--radius)] border border-line hover:border-accent/50 disabled:opacity-60"
+              disabled={importing !== null}
+              title={r.description || "Import this photo"}
+              onClick={() => { setImporting(r.id); importPhoto.mutate(r); }}
+            >
+              <img src={r.thumbUrl} alt={r.description} loading="lazy" className="h-full w-full bg-canvas object-cover" />
+              {importing === r.id && (
+                <span className="absolute inset-0 grid place-items-center bg-canvas/70 text-xs font-medium">Importing…</span>
+              )}
+            </button>
+            {/* Required provider attribution (e.g. Unsplash guidelines). */}
+            <figcaption className="mt-0.5 truncate text-[10px] text-muted">
+              Photo by <a href={r.creditUrl} target="_blank" rel="noopener noreferrer" className="underline hover:text-fg" onClick={(e) => e.stopPropagation()}>{r.credit}</a>
+              {" "}on <a href={r.sourceUrl} target="_blank" rel="noopener noreferrer" className="underline hover:text-fg" onClick={(e) => e.stopPropagation()}>Unsplash</a>
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    </div>
   );
 }
 

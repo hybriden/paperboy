@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { BlockDisplayOption, ContentKind } from "./content-types.js";
+import { AssetSourceMeta } from "./stock.js";
 
 /** Publication status of a content version. */
 export const ContentStatus = z.enum(["draft", "published"]);
@@ -76,6 +77,8 @@ export const Asset = z.object({
   size: z.number(),
   url: z.string(),
   alt: z.string(),
+  // Stock-image imports carry provider attribution; null for normal uploads.
+  sourceMeta: AssetSourceMeta.nullable(),
   createdAt: z.string(),
 });
 export type Asset = z.infer<typeof Asset>;

@@ -112,6 +112,8 @@ export const asset = pgTable("asset", {
   size: integer("size").notNull(),
   url: text("url").notNull(),
   alt: text("alt").notNull().default(""),
+  // Stock-image imports: provider attribution (NULL for normal uploads).
+  sourceMeta: jsonb("source_meta"),
   createdBy: text("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

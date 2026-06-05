@@ -54,6 +54,8 @@ services:
       # AI assistant: passes through from the host if set; falls back to offline heuristics otherwise.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-haiku-4-5-20251001}
+      # Stock images: env fallback for the Unsplash key (a CMS-stored key wins).
+      UNSPLASH_ACCESS_KEY: ${UNSPLASH_ACCESS_KEY:-}
     depends_on:
       db:
         condition: service_healthy
@@ -125,11 +127,17 @@ services:
       # Same as the api service: media URLs in MCP delivery reads (preview_content
       # etc.) absolutize against this; empty = relative (same-origin only).
       MEDIA_PUBLIC_BASE: ${MEDIA_PUBLIC_BASE:-}
+      # Stock images: import_stock_image writes into the SAME uploads volume the
+      # api serves at /api/v1/media — without it, imported files would 404.
+      UPLOADS_DIR: /app/uploads
+      UNSPLASH_ACCESS_KEY: ${UNSPLASH_ACCESS_KEY:-}
     depends_on:
       db:
         condition: service_healthy
     ports:
       - "8093:8093"
+    volumes:
+      - paperboy-uploads:/app/uploads
     networks:
       default: {}
       # Join the Cloudflare Tunnel network so sibling stacks (e.g. harmonix) can

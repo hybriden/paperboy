@@ -1,5 +1,7 @@
 import { createServer as createHttpServer, type IncomingMessage } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -29,6 +31,7 @@ import {
   getContentType,
   getSiteConfig,
   getTree,
+  importStockImage,
   listAssets,
   listAudit,
   listBlocks,
@@ -44,6 +47,8 @@ import {
   renameDeliveryKey,
   publishContent,
   restoreContent,
+  MEDIA_PREFIX,
+  searchStockImages,
   restoreVersion,
   revokeDeliveryKey,
   setStartPage,
@@ -74,6 +79,11 @@ const MCP_TOKEN = process.env.MCP_TOKEN; // a Paperboy-issued MCP token (preferr
 const MCP_EMAIL = process.env.MCP_EMAIL ?? "admin@paperboy.test";
 const MCP_PASSWORD = process.env.MCP_PASSWORD ?? "Admin!Passw0rd";
 const AI_CONFIG = { apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.AI_MODEL ?? "claude-haiku-4-5-20251001" };
+// Stock images: env fallback for the Unsplash key (a CMS-stored key wins), and
+// the uploads dir imports are written to — MUST be the same volume the API's
+// /api/v1/media serves, or imported files 404.
+const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY;
+const UPLOADS_DIR = process.env.UPLOADS_DIR ?? "/app/uploads";
 
 // Set MCP_HTTP_PORT to serve over Streamable HTTP (for remote clients like
 // harmonix) instead of stdio. The process still acts as the single MCP_TOKEN
@@ -268,6 +278,32 @@ tool("update_asset_alt", "Set an asset's alt text.", { documentId: docId, alt: z
   ({ documentId, alt }) => updateAssetAlt(db, ctx, documentId, alt));
 tool("delete_asset", "Delete a media asset.", { documentId: docId },
   async ({ documentId }) => { await deleteAsset(db, ctx, documentId); return { ok: true }; });
+tool(
+  "search_stock_images",
+  "Search the configured stock photo provider (Settings → Stock images; Unsplash). Returns photo candidates with id, description and attribution. To USE a photo: call import_stock_image with its id, then set_field the returned asset documentId on an image field.",
+  { query: z.string().min(1).max(200).describe("What the photo should show, e.g. 'mountain lake sunrise'") },
+  ({ query }) => searchStockImages(db, ctx, query, UNSPLASH_ACCESS_KEY),
+);
+tool(
+  "import_stock_image",
+  "Import a stock photo (by the id from search_stock_images) into the media library. Downloads the image, stores it as a regular asset with alt text + attribution, and returns the asset — set its documentId on an image field with set_field.",
+  {
+    providerId: z.string().min(1).max(200).describe("Photo id from search_stock_images"),
+    alt: z.string().max(300).optional().describe("Alt text override (defaults to the provider's description)"),
+  },
+  async ({ providerId, alt }) => {
+    const rec = await importStockImage(db, ctx, { providerId, alt }, {
+      envKey: UNSPLASH_ACCESS_KEY,
+      save: async (fileName, buf) => {
+        await mkdir(UPLOADS_DIR, { recursive: true });
+        await writeFile(join(UPLOADS_DIR, fileName), buf); // safe: server-generated name
+        return { relativePath: `${MEDIA_PREFIX}/${fileName}` };
+      },
+    });
+    mcpAudit("asset.import", rec.documentId, null, { provider: rec.sourceMeta?.provider, providerId, mime: rec.mime, size: rec.size });
+    return rec;
+  },
+);
 
 /* ------------------------------ delivery (read) ------------------------ */
 const delv = { locale: loc, populate: z.number().min(0).max(4).optional(), preview: z.boolean().optional().describe("Use the preview perspective (drafts)") };

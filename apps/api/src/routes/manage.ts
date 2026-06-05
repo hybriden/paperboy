@@ -18,7 +18,11 @@ import {
   getSiteConfig,
   getStoredAiKey,
   getStoredAiModel,
+  getStoredStockConfig,
+  importStockImage,
+  searchStockImages,
   setAiConfig,
+  setStockConfig,
   setPreviewBaseUrl,
   setStartPage,
   listAudit,
@@ -71,8 +75,11 @@ import {
   CreateContentRequest,
   Locale,
   RoleName,
+  STOCK_PROVIDERS,
+  StockSearchResult,
   TreeNode,
   UpdateContentRequest,
+  sniffUpload,
 } from "@paperboy/shared";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
@@ -82,21 +89,6 @@ import { requireAuth, requireCsrf, requirePermission } from "../security.js";
 
 const LocaleQuery = z.object({ locale: z.string().optional() });
 const DocParams = z.object({ documentId: z.string() });
-
-/**
- * Magic-byte sniff — trust the bytes, not the client-declared mimetype/extension.
- * Returns the canonical extension + mime, or null if the bytes are not an allowed type.
- * Images (png/jpeg/gif/webp) and PDF documents are supported.
- */
-function sniffUpload(buf: Buffer): { ext: string; mime: string } | null {
-  if (buf.length < 12) return null;
-  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return { ext: "png", mime: "image/png" };
-  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { ext: "jpg", mime: "image/jpeg" };
-  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return { ext: "gif", mime: "image/gif" };
-  if (buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return { ext: "webp", mime: "image/webp" };
-  if (buf.toString("ascii", 0, 5) === "%PDF-") return { ext: "pdf", mime: "application/pdf" };
-  return null;
-}
 
 export async function registerManageRoutes(appBase: FastifyInstance): Promise<void> {
   const app = appBase.withTypeProvider<ZodTypeProvider>();
@@ -696,6 +688,96 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         },
       });
       return aiStatus();
+    },
+  );
+
+  /* ----------------------------- stock images --------------------------- */
+  // Stock image provider (Unsplash first). Same write-only key handling as the
+  // AI config: the key is never returned, only configured/source/last4.
+  const StockConfigStatus = z.object({
+    configured: z.boolean(),
+    provider: z.enum(STOCK_PROVIDERS),
+    source: z.enum(["db", "env", "none"]),
+    last4: z.string().nullable(),
+  });
+  async function stockStatus(): Promise<z.infer<typeof StockConfigStatus>> {
+    const stored = await getStoredStockConfig(app.db);
+    const key = stored?.apiKey ?? app.stockConfig.unsplashKey;
+    return {
+      configured: Boolean(key),
+      provider: stored?.provider ?? "unsplash",
+      source: stored?.apiKey ? "db" : app.stockConfig.unsplashKey ? "env" : "none",
+      last4: key ? key.slice(-4) : null,
+    };
+  }
+  app.get(
+    "/stock/config",
+    { preHandler: [requirePermission("user.manage")], schema: { tags: ["manage"], response: { 200: StockConfigStatus } } },
+    async () => stockStatus(),
+  );
+  app.post(
+    "/stock/config",
+    {
+      preHandler: [requireCsrf, requirePermission("user.manage")],
+      schema: {
+        tags: ["manage"],
+        body: z.object({ provider: z.enum(STOCK_PROVIDERS).optional(), apiKey: z.string().max(400).nullable().optional() }),
+        response: { 200: StockConfigStatus },
+      },
+    },
+    async (req) => {
+      await setStockConfig(app.db, req.accessCtx!, { provider: req.body.provider, apiKey: req.body.apiKey });
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "site.stock_config",
+        ip: req.ip,
+        // Never log the key itself — only what changed.
+        detail: {
+          keySet: typeof req.body.apiKey === "string" && req.body.apiKey.trim().length > 0,
+          keyCleared: req.body.apiKey === null || req.body.apiKey === "",
+          provider: req.body.provider,
+        },
+      });
+      return stockStatus();
+    },
+  );
+  app.get(
+    "/stock/search",
+    {
+      preHandler: [requirePermission("content.read")],
+      // Protects the provider's request budget (Unsplash demo keys: 50/hour).
+      config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+      schema: { tags: ["manage"], querystring: z.object({ q: z.string().min(1).max(200) }), response: { 200: z.array(StockSearchResult) } },
+    },
+    async (req) => searchStockImages(app.db, req.accessCtx!, req.query.q, app.stockConfig.unsplashKey),
+  );
+  app.post(
+    "/stock/import",
+    {
+      preHandler: [requireCsrf, requirePermission("content.create")],
+      config: { rateLimit: { max: 20, timeWindow: "1 minute" } }, // matches /assets upload
+      schema: {
+        tags: ["manage"],
+        body: z.object({ providerId: z.string().min(1).max(200), alt: z.string().max(300).optional() }),
+        response: { 200: Asset },
+      },
+    },
+    async (req) => {
+      const rec = await importStockImage(app.db, req.accessCtx!, req.body, {
+        envKey: app.stockConfig.unsplashKey,
+        save: async (fileName, buf) => {
+          await writeFile(join(app.uploadsDir, fileName), buf); // safe: server-generated name
+          return { relativePath: `${MEDIA_PREFIX}/${fileName}` };
+        },
+      });
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "asset.import",
+        documentId: rec.documentId,
+        ip: req.ip,
+        detail: { provider: rec.sourceMeta?.provider, providerId: req.body.providerId, mime: rec.mime, size: rec.size },
+      });
+      return rec;
     },
   );
 
