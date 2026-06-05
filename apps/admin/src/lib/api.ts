@@ -268,7 +268,7 @@ export const api = {
   users: (signal?: AbortSignal) => request<ManagedUser[]>("GET", "/manage/users", undefined, signal),
   createUser: (body: { email: string; name: string; password: string; roles: RoleName[]; sections?: string[] }) =>
     request<{ id: string }>("POST", "/manage/users", body),
-  updateUser: (id: string, body: { name?: string; roles?: RoleName[]; sections?: string[] }) =>
+  updateUser: (id: string, body: { name?: string; email?: string; roles?: RoleName[]; sections?: string[] }) =>
     request<{ ok: boolean }>("PUT", `/manage/users/${id}`, body),
   deleteUser: (id: string) => request<{ ok: boolean }>("DELETE", `/manage/users/${id}`),
 

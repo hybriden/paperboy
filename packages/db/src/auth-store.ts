@@ -150,17 +150,27 @@ export async function adminCreateUser(
   return createUser(db, input);
 }
 
-/** Replace a user's roles and section scopes. */
+/** Update a user's profile (name/email), roles and section scopes. */
 export async function adminUpdateUser(
   db: Database,
   ctx: AccessContext,
   userId: string,
-  input: { name?: string; roles?: RoleName[]; sections?: string[] },
+  input: { name?: string; email?: string; roles?: RoleName[]; sections?: string[] },
 ): Promise<void> {
   requirePermission(ctx, "user.manage");
   const target = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (!target[0]) throw Errors.notFound("User");
+  const current = target[0];
+  if (!current) throw Errors.notFound("User");
   if (input.roles) for (const r of input.roles) RoleName.parse(r);
+
+  // Email is the login identity — keep it unique. Sessions are keyed by
+  // userId, so the user's existing sessions survive the change.
+  const email = input.email?.trim();
+  const emailChanged = !!email && email !== current.email;
+  if (emailChanged) {
+    const taken = await db.select().from(users).where(eq(users.email, email)).limit(1);
+    if (taken[0]) throw Errors.conflict("That email is already in use");
+  }
 
   // Guard: never strip the last Admin (avoid locking everyone out).
   if (input.roles && !input.roles.includes("Admin")) {
@@ -171,6 +181,7 @@ export async function adminUpdateUser(
   }
   await db.transaction(async (tx) => {
     if (input.name !== undefined) await tx.update(users).set({ name: input.name }).where(eq(users.id, userId));
+    if (emailChanged) await tx.update(users).set({ email }).where(eq(users.id, userId));
     if (input.roles) {
       await tx.delete(userRole).where(eq(userRole.userId, userId));
       for (const role of input.roles) await tx.insert(userRole).values({ userId, role }).onConflictDoNothing();

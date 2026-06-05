@@ -767,10 +767,10 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   );
   app.put(
     "/users/:id",
-    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1).max(120).optional(), roles: z.array(RoleName).optional(), sections: z.array(z.string()).optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1).max(120).optional(), email: z.string().email().max(200).optional(), roles: z.array(RoleName).optional(), sections: z.array(z.string()).optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await adminUpdateUser(app.db, req.accessCtx!, req.params.id, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "user.update", ip: req.ip, detail: { id: req.params.id, roles: req.body.roles } });
+      await audit(app.db, { actorUserId: req.user!.id, action: "user.update", ip: req.ip, detail: { id: req.params.id, roles: req.body.roles, email: req.body.email } });
       return { ok: true };
     },
   );
