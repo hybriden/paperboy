@@ -122,6 +122,9 @@ services:
       MCP_TOKEN: ${MCP_TOKEN:-} # mint one in Settings → MCP; the server refuses to start in HTTP mode without it
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-haiku-4-5-20251001}
+      # Same as the api service: media URLs in MCP delivery reads (preview_content
+      # etc.) absolutize against this; empty = relative (same-origin only).
+      MEDIA_PUBLIC_BASE: ${MEDIA_PUBLIC_BASE:-}
     depends_on:
       db:
         condition: service_healthy
