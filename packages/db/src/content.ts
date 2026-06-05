@@ -404,7 +404,11 @@ export async function computePath(db: Database, documentId: string, loc: string)
     const item = rows[0];
     if (!item || item.kind !== "page") return null;
     const slug = await workingSlug(db, cur, loc);
-    if (slug) segments.unshift(slug);
+    // No slug → NO URL (null), matching delivery's urlPathOf. Skipping the
+    // segment instead made a slugless child claim its PARENT's path — a fresh
+    // draft post "previewed" as the blog list page.
+    if (!slug) return null;
+    segments.unshift(slug);
     cur = item.parentId;
   }
   return `/${segments.join("/")}`;
@@ -718,7 +722,7 @@ export async function updateContent(
   const merged = req.merge ? { ...(await workingData(db, documentId, loc)), ...req.data } : req.data;
   // Tolerant coercion: fix the unambiguous field-shape mistakes agents make
   // (single block → array, doc → text, string → doc) before validating.
-  const data = coerceData(type, merged);
+  const data = coerceData(type, merged, loc);
 
   // Draft save: relaxed validation (required fields not enforced). On failure
   // the message names each field's expected JSON shape (with an example), so an
@@ -1467,7 +1471,7 @@ export async function restoreVersion(
   // Coerce on restore too: a historic version may predate the richtext
   // sanitizer and still contain editor-breaking TipTap (one such node blanks
   // the whole doc in the admin), so it must not re-enter the working draft raw.
-  const data = coerceData(type, src.data as Record<string, unknown>);
+  const data = coerceData(type, src.data as Record<string, unknown>, loc);
   // Slug must stay unique among page siblings (the source slug may now collide).
   if (item.kind === "page" && src.slug) {
     await assertSlugUnique(db, documentId, item.parentId, loc, src.slug);
@@ -1556,7 +1560,7 @@ export async function cloneContent(
   for (const [code, row] of byLocale) {
     // Coerce on clone for the same reason as restoreVersion: the source data
     // may predate the richtext sanitizer.
-    const data = coerceData(type, row.data as Record<string, unknown>);
+    const data = coerceData(type, row.data as Record<string, unknown>, code);
     await db.insert(contentVersion).values({
       documentId: newId,
       locale: code,

@@ -443,22 +443,41 @@ function sanitizeRichTextDoc(doc: unknown): unknown {
   return { ...o, type: "doc", content: content.length ? content : [{ type: "paragraph" }] };
 }
 
+/** Looks like a BCP-47-ish locale code ("en", "nb", "en-US", "nb-NO"). */
+const LOCALE_KEY = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
+
 /**
  * Be liberal in what we accept (Postel's law) for the field-shape mistakes an
  * LLM agent reliably makes — coerced BEFORE validation. Conservative: only
  * unambiguous fixes; genuinely broken input still falls through to the helpful
  * validation error rather than being silently mangled.
  *  - any field wrapped as { <fieldName>: inner }  → inner  (self-keyed wrap)
+ *  - any field wrapped as { <locale>: inner }     → inner  (locale-map wrap —
+ *    the locale is selected by the request's locale param, never by the value;
+ *    a real MCP agent burned 12 attempts on this one)
  *  - text/markdown given a TipTap doc             → flattened to plain text
  *  - richtext given a plain string                → wrapped into a doc
  *  - richtext docs outside the editor schema      → normalized (see sanitizeRichTextDoc)
  *  - contentArea given a single block object      → wrapped in an array
+ *  - image/media given a resolved asset object    → its documentId string
  */
-export function coerceFieldValue(f: FieldDef, value: unknown): unknown {
+export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): unknown {
   if (value == null) return value;
   if (typeof value === "object" && !Array.isArray(value)) {
-    const keys = Object.keys(value as object);
-    if (keys.length === 1 && keys[0] === f.name) value = (value as Record<string, unknown>)[f.name];
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj);
+    if (keys.length === 1 && keys[0] === f.name) value = obj[f.name];
+  }
+  // Locale-map unwrap: {en: "..."} (agents copy the localized mental model into
+  // the value). Unambiguous when the requested locale is a key, or when every
+  // key is locale-shaped — no field type has locale-shaped object keys.
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const obj = value as Record<string, unknown>;
+    const keys = Object.keys(obj);
+    if (keys.length > 0 && keys.every((k) => LOCALE_KEY.test(k))) {
+      const picked = locale && locale in obj ? obj[locale] : keys.length === 1 ? obj[keys[0]!] : undefined;
+      if (picked !== undefined) value = picked;
+    }
   }
   switch (f.type) {
     case "text":
@@ -470,14 +489,21 @@ export function coerceFieldValue(f: FieldDef, value: unknown): unknown {
     }
     case "contentArea":
       return value && typeof value === "object" && !Array.isArray(value) && "blockType" in (value as object) ? [value] : value;
+    case "image":
+    case "media": {
+      // Agents copy the RESOLVED read shape ({documentId, url, alt}) back into
+      // a write — the write format is the asset documentId string.
+      const id = value && typeof value === "object" ? (value as { documentId?: unknown }).documentId : undefined;
+      return typeof id === "string" && id ? id : value;
+    }
     default:
       return value;
   }
 }
 
-export function coerceData(type: ContentTypeDef, data: Record<string, unknown>): Record<string, unknown> {
+export function coerceData(type: ContentTypeDef, data: Record<string, unknown>, locale?: string): Record<string, unknown> {
   const out: Record<string, unknown> = { ...data };
-  for (const f of type.fields) if (f.name in out) out[f.name] = coerceFieldValue(f, out[f.name]);
+  for (const f of type.fields) if (f.name in out) out[f.name] = coerceFieldValue(f, out[f.name], locale);
   return out;
 }
 

@@ -820,6 +820,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             locale={locale}
             urlPath={form.urlPath}
             documentId={documentId}
+            kind={form.kind}
             refreshSignal={previewRefresh}
             focusField={propFocus}
             mode={opeMode}
