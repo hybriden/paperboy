@@ -184,6 +184,24 @@ tool(
     mcpAudit("content.update", documentId, locale ?? "en");
     return updated;
   });
+tool(
+  "set_field",
+  [
+    "Set ONE field of a content item's draft to a plain string value (merged — other",
+    "fields are kept). THE MOST ROBUST WAY TO WRITE LONG TEXT/MARKDOWN CONTENT:",
+    "a flat string parameter survives tool-call serialization that can mangle long",
+    "strings nested inside `data` records. For text/markdown/select/datetime/image",
+    "fields, and the special field name `name` (the item's display name).",
+  ].join(" "),
+  { documentId: docId, locale: loc, field: z.string().describe("Field name from the content type (or 'name')"), value: z.string().describe("The plain string value") },
+  async ({ documentId, locale, field, value }) => {
+    const updated =
+      field === "name"
+        ? await updateContent(db, ctx, documentId, locale ?? "en", { name: value, data: {}, merge: true })
+        : await updateContent(db, ctx, documentId, locale ?? "en", { data: { [field]: value }, merge: true });
+    mcpAudit("content.update", documentId, locale ?? "en", { field });
+    return updated;
+  });
 tool("publish", "Publish the working draft of a content item for a locale.", { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {
     const published = await publishContent(db, ctx, documentId, locale ?? "en");
