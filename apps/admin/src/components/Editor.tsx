@@ -437,23 +437,35 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       const fieldName = typeof d.field === "string" ? d.field : null;
       const def = fieldName ? type?.fields.find((f) => f.name === fieldName) : undefined;
 
-      // On-page overlay: edit mode + a scalar/richtext page field (not a block).
-      if (opeModeRef.current === "edit" && def && d.blockIndex == null && d.rect && OPE_FIELD_TYPES.has(def.type)) {
-        const click = (d as { click?: { x: number; y: number } }).click;
-        setOpe({
-          field: def.name,
-          rect: d.rect,
-          // Anchor the card at the click, not the element box — clamped inside.
-          ox: click ? Math.max(0, click.x - d.rect.x) : 0,
-          oy: click ? Math.max(0, click.y - d.rect.y) : d.rect.h,
-          n: ++propCounter.current,
-        });
-        return;
+      if (opeModeRef.current === "edit") {
+        if (d.blockIndex == null && d.rect) {
+          const click = (d as { click?: { x: number; y: number } }).click;
+          const anchor = {
+            rect: d.rect,
+            // Anchor the card at the click, not the element box — clamped inside.
+            ox: click ? Math.max(0, click.x - d.rect.x) : 0,
+            oy: click ? Math.max(0, click.y - d.rect.y) : d.rect.h,
+            n: ++propCounter.current,
+          };
+          // The page NAME is marked on most frontends but isn't a data field —
+          // it's still on-page-editable (a plain text value on the version).
+          if (fieldName === "name") {
+            setOpe({ field: "name", ...anchor });
+            return;
+          }
+          if (def && OPE_FIELD_TYPES.has(def.type)) {
+            setOpe({ field: def.name, ...anchor });
+            return;
+          }
+          // A marker that doesn't map to anything editable: do nothing rather
+          // than yanking the editor out of on-page mode.
+          if (!def) return;
+        }
+        // Structural targets (blocks, content areas, references) want the form
+        // panel — which on-page edit hides for real estate. Drop to
+        // side-by-side so the sidebar flow below has somewhere to land.
+        setView("split");
       }
-      // Structural targets (blocks, content areas, references) want the form
-      // panel — which on-page edit hides for real estate. Drop to side-by-side
-      // so the sidebar flow below has somewhere to land.
-      if (opeModeRef.current === "edit") setView("split");
 
       if (def) setTab(def.group);
       setTimeout(() => {
@@ -814,9 +826,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             livePatch={livePatch}
             overlay={(() => {
               if (!ope || !type) return null;
-              const def = type.fields.find((f) => f.name === ope.field);
-              if (!def) return null;
-              const current = form.data[def.name];
+              const isName = ope.field === "name";
+              const def = isName ? null : type.fields.find((f) => f.name === ope.field);
+              if (!isName && !def) return null;
+              const current = isName ? form.name : form.data[def!.name];
+              const liveText = (text: string) => setLivePatch({ field: "name", text, n: ++livePatchCounter.current });
+              const patchName = (v: string) => patch((prev) => ({ ...prev, name: v }));
               return {
                 rect: ope.rect,
                 ox: ope.ox,
@@ -830,28 +845,51 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                       <button className="ml-auto rounded p-1 text-muted hover:bg-line hover:text-fg" aria-label="Close" onClick={closeOpe}>✕</button>
                     </div>
                     <div className="max-h-[55vh] overflow-y-auto p-3">
-                      <Field
-                        field={def}
-                        value={current}
-                        disabled={!canEdit}
-                        types={types}
-                        sharedBlocks={sharedBlocks.data ?? []}
-                        onChange={(v) => {
-                          setField(def.name, v);
-                          pushLivePatch(def, v);
-                        }}
-                      />
-                      {canEdit && (def.type === "text" || def.type === "markdown") && (
+                      {isName ? (
+                        <div>
+                          <label className="field-label" htmlFor="ope-name">Name</label>
+                          <input
+                            id="ope-name"
+                            className="field-input"
+                            value={form.name}
+                            disabled={!canEdit}
+                            onChange={(e) => {
+                              patchName(e.target.value);
+                              liveText(e.target.value);
+                            }}
+                          />
+                        </div>
+                      ) : (
+                        <Field
+                          field={def!}
+                          value={current}
+                          disabled={!canEdit}
+                          types={types}
+                          sharedBlocks={sharedBlocks.data ?? []}
+                          onChange={(v) => {
+                            setField(def!.name, v);
+                            pushLivePatch(def!, v);
+                          }}
+                        />
+                      )}
+                      {canEdit && (isName || def!.type === "text" || def!.type === "markdown") && (
                         <OverlayAi
                           current={String(current ?? "")}
                           context={pageAiContext()}
                           onApply={(v) => {
-                            setField(def.name, v);
-                            pushLivePatch(def, v);
+                            if (isName) {
+                              patchName(v);
+                              liveText(v);
+                            } else {
+                              setField(def!.name, v);
+                              pushLivePatch(def!, v);
+                            }
                           }}
-                          onPreview={(v) =>
-                            pushLivePatch(def, v ?? String((formRef.current ?? form).data[def.name] ?? ""))
-                          }
+                          onPreview={(v) => {
+                            const f = formRef.current ?? form;
+                            if (isName) liveText(v ?? f.name);
+                            else pushLivePatch(def!, v ?? String(f.data[def!.name] ?? ""));
+                          }}
                         />
                       )}
                     </div>
