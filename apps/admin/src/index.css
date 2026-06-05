@@ -161,6 +161,12 @@ body {
 .prose-paperboy :where(strong) { font-weight: 700; }
 .prose-paperboy :where(img) { display: block; max-width: 100%; height: auto; border-radius: var(--radius); margin: 0.4em 0 0.6em; }
 .prose-paperboy :where(img.ProseMirror-selectednode) { outline: 2px solid rgb(var(--c-accent-700)); outline-offset: 2px; }
+/* Resizable image node view (richtext editor): wrapper carries the width %, handle in the corner. */
+.prose-paperboy .pb-rt-img { position: relative; display: block; max-width: 100%; margin: 0.4em 0 0.6em; }
+.prose-paperboy .pb-rt-img img { display: block; width: 100%; height: auto; border-radius: var(--radius); margin: 0; }
+.pb-rt-img-handle { position: absolute; right: -5px; bottom: -5px; width: 12px; height: 12px; border-radius: 3px; background: rgb(var(--c-accent-700)); border: 2px solid #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 0.15); cursor: nwse-resize; opacity: 0; transition: opacity 0.12s; touch-action: none; }
+.prose-paperboy .pb-rt-img:hover .pb-rt-img-handle, .prose-paperboy .pb-rt-img-selected .pb-rt-img-handle { opacity: 1; }
+.prose-paperboy .pb-rt-img-selected img { outline: 2px solid rgb(var(--c-accent-700)); outline-offset: 2px; }
 .prose-paperboy .ProseMirror:focus { outline: none; }
 .prose-paperboy .ProseMirror p.is-editor-empty:first-child::before { content: "Write the story…"; color: rgb(var(--c-muted) / 0.7); float: left; height: 0; pointer-events: none; }
 
