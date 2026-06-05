@@ -375,8 +375,8 @@ test("editor workspace panes are resizable (drag handles present)", async ({ pag
   await expect(page.getByLabel("Name")).toHaveValue("Home");
   // Two dividers by default: tree|editor and editor|assets.
   await expect(page.getByRole("separator")).toHaveCount(2);
-  // Opening Preview adds a third divider (form|preview) that can be dragged.
-  await page.getByRole("button", { name: "Preview" }).click();
+  // Side-by-side view adds a third divider (form|preview) that can be dragged.
+  await page.getByRole("button", { name: "Side by side" }).click();
   await expect(page.getByRole("separator")).toHaveCount(3);
   // Drag the form|preview divider left → no crash, page still responsive.
   const handle = page.getByRole("separator").last();

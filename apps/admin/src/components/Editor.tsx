@@ -27,6 +27,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
 import { useToast } from "./ui/toast.js";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+/** The Episerver-style editor views: form only / side-by-side / on-page edit. */
+type EditorView = "props" | "split" | "onpage";
 
 interface EditorProps {
   documentId: string;
@@ -79,14 +81,26 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const [form, setForm] = useState<ContentDetail | null>(null);
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [tab, setTab] = useState("Content");
-  // Persisted so the preview pane stays open across re-renders/remounts (e.g.
-  // toggling a side pane remounts the editor) instead of collapsing on a click.
-  const [showPreview, setShowPreviewState] = useState<boolean>(() => {
-    try { return localStorage.getItem("pb-show-preview") === "1"; } catch { return false; }
+  // Editor view — the Episerver-style trio. Persisted so it survives
+  // re-renders/remounts (e.g. toggling a side pane remounts the editor):
+  //   props   = all-properties form only
+  //   split   = form + live preview side by side (click preview → focus field)
+  //   onpage  = full-width preview, click an element → edit it in place
+  const [view, setViewState] = useState<EditorView>(() => {
+    try {
+      const v = localStorage.getItem("pb-editor-view");
+      if (v === "props" || v === "split" || v === "onpage") return v;
+      // Migrate the previous two-flag persistence.
+      if (localStorage.getItem("pb-show-preview") === "1") {
+        return localStorage.getItem("pb-preview-mode") === "edit" ? "onpage" : "split";
+      }
+      return "props";
+    } catch { return "props"; }
   });
-  const setShowPreview = (next: boolean) => {
-    setShowPreviewState(next);
-    try { localStorage.setItem("pb-show-preview", next ? "1" : "0"); } catch { /* ignore */ }
+  const setView = (next: EditorView) => {
+    setViewState(next);
+    if (next !== "onpage") closeOpeRef.current?.();
+    try { localStorage.setItem("pb-editor-view", next); } catch { /* ignore */ }
   };
   const [previewRefresh, setPreviewRefresh] = useState(0);
   // Editor → preview sync: focusing/clicking a property highlights its region in
@@ -94,19 +108,15 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const [propFocus, setPropFocus] = useState<{ field: string; n: number } | null>(null);
   const propCounter = useRef(0);
 
-  // ---- On-page edit mode (Optimizely-style OPE) ----------------------------
-  // "inspect" (default): preview clicks focus the sidebar field (classic
-  // side-by-side). "edit": clicks open an anchored overlay editor ON the page.
-  const [opeMode, setOpeModeState] = useState<PreviewMode>(() => {
-    try { return localStorage.getItem("pb-preview-mode") === "edit" ? "edit" : "inspect"; } catch { return "inspect"; }
-  });
-  const setOpeMode = (m: PreviewMode) => {
-    setOpeModeState(m);
-    if (m === "inspect") closeOpeRef.current?.();
-    try { localStorage.setItem("pb-preview-mode", m); } catch { /* ignore */ }
-  };
-  // The open overlay: which field, anchored where (bridge-reported rect).
-  const [ope, setOpe] = useState<{ field: string; rect: PbRect; n: number } | null>(null);
+  // ---- On-page edit (Optimizely-style OPE) ----------------------------------
+  // Derived from the view: in "onpage" the preview clicks open anchored overlay
+  // editors; in "split" they focus the sidebar field (classic side-by-side).
+  const opeMode: PreviewMode = view === "onpage" ? "edit" : "inspect";
+  // The open overlay: which field, anchored where. `rect` is the element's
+  // bridge-reported rect; `ox`/`oy` is the CLICK offset within the element, so
+  // the card opens where the editor clicked — a 2000px-tall richtext body
+  // would otherwise anchor the card at its far-away bottom edge.
+  const [ope, setOpe] = useState<{ field: string; rect: PbRect; ox: number; oy: number; n: number } | null>(null);
   const opeRef = useRef<typeof ope>(null);
   useEffect(() => { opeRef.current = ope; }, [ope]);
   const opeModeRef = useRef(opeMode);
@@ -429,13 +439,21 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
       // On-page overlay: edit mode + a scalar/richtext page field (not a block).
       if (opeModeRef.current === "edit" && def && d.blockIndex == null && d.rect && OPE_FIELD_TYPES.has(def.type)) {
-        setOpe({ field: def.name, rect: d.rect, n: ++propCounter.current });
+        const click = (d as { click?: { x: number; y: number } }).click;
+        setOpe({
+          field: def.name,
+          rect: d.rect,
+          // Anchor the card at the click, not the element box — clamped inside.
+          ox: click ? Math.max(0, click.x - d.rect.x) : 0,
+          oy: click ? Math.max(0, click.y - d.rect.y) : d.rect.h,
+          n: ++propCounter.current,
+        });
         return;
       }
       // Structural targets (blocks, content areas, references) want the form
-      // panel — which on-page edit hides for real estate. Drop back to inspect
+      // panel — which on-page edit hides for real estate. Drop to side-by-side
       // so the sidebar flow below has somewhere to land.
-      if (opeModeRef.current === "edit") setOpeMode("inspect");
+      if (opeModeRef.current === "edit") setView("split");
 
       if (def) setTab(def.group);
       setTimeout(() => {
@@ -522,7 +540,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const groups = type ? [...new Set(type.fields.map((f) => f.group))] : ["Content"];
   const isPage = form.kind === "page";
   // Live preview is a desktop-only split pane; never open it on phones.
-  const previewOpen = showPreview && !mobile;
+  const previewOpen = view !== "props" && !mobile;
   const setField = (name: string, value: unknown) =>
     patch((prev) => ({ ...prev, data: { ...prev.data, [name]: value } }));
 
@@ -627,9 +645,26 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             </MenuContent>
           </Menu>
           {!mobile && (
-            <button className={`btn-subtle ${showPreview ? "ring-2 ring-accent" : ""}`} onClick={() => setShowPreview(!showPreview)}>
-              <Icon.Eye width={16} height={16} /> Preview
-            </button>
+            // Episerver-style view trio: form / side-by-side / on-page edit.
+            <div className="flex rounded border border-line p-0.5" role="group" aria-label="Editor view">
+              {(
+                [
+                  ["props", "Properties", "All-properties form"],
+                  ["split", "Side by side", "Form + live preview"],
+                  ["onpage", "On-page", "Edit directly on the page"],
+                ] as const
+              ).map(([v, label, title]) => (
+                <button
+                  key={v}
+                  className={`rounded px-2 py-0.5 text-xs ${view === v ? "bg-accent text-white" : "text-muted hover:bg-canvas"}`}
+                  aria-pressed={view === v}
+                  title={title}
+                  onClick={() => setView(v)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           )}
           {canPublish && (
             <div className="flex items-stretch">
@@ -776,7 +811,6 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             refreshSignal={previewRefresh}
             focusField={propFocus}
             mode={opeMode}
-            onModeChange={setOpeMode}
             livePatch={livePatch}
             overlay={(() => {
               if (!ope || !type) return null;
@@ -785,6 +819,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               const current = form.data[def.name];
               return {
                 rect: ope.rect,
+                ox: ope.ox,
+                oy: ope.oy,
                 onClose: closeOpe,
                 content: (
                   <div>
@@ -827,7 +863,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         ) : null;
 
         if (mobile) return <div className="min-h-0 flex-1">{formSection}</div>;
-        if (opeMode === "edit" && previewPaneEl) {
+        if (view === "onpage" && previewPaneEl) {
           return <div className="min-h-0 flex-1 border-l border-line bg-panel">{previewPaneEl}</div>;
         }
         return (

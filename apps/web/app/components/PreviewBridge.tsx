@@ -63,7 +63,9 @@ export function PreviewBridge() {
       e.preventDefault();
       e.stopPropagation();
       tracked = target;
-      window.parent.postMessage({ type: "paperboy:edit", ...descriptor(target) }, "*");
+      // click coords let the admin anchor the overlay card AT the click — for a
+      // tall element (long richtext body) the element box is a useless anchor.
+      window.parent.postMessage({ type: "paperboy:edit", ...descriptor(target), click: { x: e.clientX, y: e.clientY } }, "*");
     };
 
     // While an element is picked, stream its rect so the overlay follows
