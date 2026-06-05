@@ -1391,14 +1391,20 @@ function OverlayAi({
     try {
       const r = await api.aiAssist(task, current, { ...opts, context });
       if (task === "variants") {
+        // The server normalizes to a JSON array; the cleanup here is defensive.
+        const cleaned = r.result.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
         let list: string[] = [];
         try {
-          const parsed = JSON.parse(r.result) as unknown;
+          const parsed = JSON.parse(cleaned) as unknown;
           if (Array.isArray(parsed)) list = parsed.filter((x): x is string => typeof x === "string");
         } catch {
-          list = r.result.split("\n").map((s) => s.replace(/^[-*\d.\s]+/, "").trim()).filter(Boolean).slice(0, 3);
+          list = cleaned
+            .split("\n")
+            .map((s) => s.replace(/^[-*\d.\s"[\]]+|[",[\]]+$/g, "").trim())
+            .filter((s) => s && !s.startsWith("```"))
+            .slice(0, 3);
         }
-        setVariants(list.length ? list : [r.result]);
+        setVariants(list.length ? list : [cleaned]);
         if (r.provider === "fallback") toast.success("Basic mode", "Set an AI key in Settings → Site for real suggestions.");
       } else {
         onApply(r.result);
