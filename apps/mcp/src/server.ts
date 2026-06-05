@@ -165,11 +165,34 @@ tool("tree", "List the page tree under a parent (omit parentId for top level).",
   ({ parentId }) => getTree(db, ctx, parentId ?? null));
 tool("get_content", "Get a content item's working version (draft else published) for a locale.", { documentId: docId, locale: loc },
   ({ documentId, locale }) => getContent(db, ctx, documentId, locale ?? "en"));
-tool("create_content", "Create a new content item (page/block/global) as a draft.",
-  { type: z.string(), parentId: z.string().nullable().optional(), locale: loc, name: z.string() },
+tool(
+  "create_content",
+  [
+    "Create a new content item (page/block/global) as a draft.",
+    "IMPORTANT: pages almost always belong UNDER an existing parent — a page's position",
+    "decides its URL and which template the frontend renders it with (a blog post created",
+    "at root gets a generic layout and looks empty when published). Call `tree` first and",
+    "pass the right parentId (e.g. blog posts/articles go under their blog/list page).",
+    "Omit parentId ONLY for genuinely top-level pages like the site's main sections.",
+  ].join(" "),
+  {
+    type: z.string(),
+    parentId: z.string().nullable().optional().describe("documentId of the parent page. Required in practice for pages — find it with `tree`. Omit only for top-level pages."),
+    locale: loc,
+    name: z.string(),
+  },
   async ({ type, parentId, locale, name }) => {
     const created = await createContent(db, ctx, { type, parentId: parentId ?? null, locale: locale ?? "en", name });
     mcpAudit("content.create", created.documentId, created.locale);
+    // A page created at root is usually an agent forgetting parentId (real incident:
+    // a blog post at root rendered "empty" on the live site). Surface a hint the
+    // agent reads in-band — the create still succeeds (top-level pages are legal).
+    if (created.kind === "page" && !parentId) {
+      return {
+        ...created,
+        hint: "This page was created at the TOP LEVEL of the site. If it belongs under another page (e.g. a blog post under the blog page), call `tree` to find the parent and fix it with move_content {documentId, parentId} BEFORE publishing — its URL and rendering template depend on its position.",
+      };
+    }
     return created;
   });
 tool(
