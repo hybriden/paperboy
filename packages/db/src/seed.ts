@@ -159,9 +159,10 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
   await migrate(url);
   const { db, sql: pg } = createDb(url);
 
-  // Clean slate (MVP seed).
+  // Clean slate (MVP seed). Webhooks included: stale subscriptions surviving a
+  // reseed would fire at long-dead URLs (and pile up across test runs).
   await db.execute(
-    sql`TRUNCATE content_item, content_version, content_reference, content_type, locale, users, user_role, user_scope, session, delivery_key, audit_log, asset, site_setting RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE content_item, content_version, content_reference, content_type, locale, users, user_role, user_scope, session, delivery_key, audit_log, asset, site_setting, webhook, webhook_delivery RESTART IDENTITY CASCADE`,
   );
 
   // Locales: English (default), Norwegian (falls back to English).

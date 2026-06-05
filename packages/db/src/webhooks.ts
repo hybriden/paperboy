@@ -73,9 +73,10 @@ export async function deleteWebhook(db: Database, ctx: AccessContext, id: number
 
 /**
  * Fan out an event to every active subscriber whose `events` is empty (all) or
- * contains the event name. Best-effort: each delivery is awaited with its own
- * timeout + try/catch and logged; one failure never affects the others or the
- * caller. Returns per-hook results (used by tests; ignored by the publish path).
+ * contains the event name. Best-effort and CONCURRENT: each delivery has its
+ * own timeout + try/catch and is logged; one dead or slow endpoint never
+ * delays the others or affects the caller. Returns per-hook results (used by
+ * tests; ignored by the publish path).
  */
 export async function dispatchWebhooks(
   db: Database,
@@ -87,34 +88,34 @@ export async function dispatchWebhooks(
     return evts.length === 0 || evts.includes(payload.event);
   });
   const body = JSON.stringify(payload);
-  const results: { id: number; status: number | null; ok: boolean }[] = [];
-  for (const h of subscribed) {
-    let status: number | null = null;
-    let error: string | null = null;
-    try {
-      const ac = new AbortController();
-      const timer = setTimeout(() => ac.abort(), WEBHOOK_TIMEOUT_MS);
+  return Promise.all(
+    subscribed.map(async (h) => {
+      let status: number | null = null;
+      let error: string | null = null;
       try {
-        const res = await fetch(h.url, {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-paperboy-event": payload.event,
-            "x-paperboy-signature": signPayload(h.secret, body),
-          },
-          body,
-          signal: ac.signal,
-        });
-        status = res.status;
-      } finally {
-        clearTimeout(timer);
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), WEBHOOK_TIMEOUT_MS);
+        try {
+          const res = await fetch(h.url, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              "x-paperboy-event": payload.event,
+              "x-paperboy-signature": signPayload(h.secret, body),
+            },
+            body,
+            signal: ac.signal,
+          });
+          status = res.status;
+        } finally {
+          clearTimeout(timer);
+        }
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
       }
-    } catch (err) {
-      error = err instanceof Error ? err.message : String(err);
-    }
-    await db.insert(webhookDelivery).values({ webhookId: h.id, event: payload.event, status, error });
-    await db.update(webhook).set({ lastStatus: status, lastAt: new Date() }).where(eq(webhook.id, h.id));
-    results.push({ id: h.id, status, ok: status != null && status >= 200 && status < 300 });
-  }
-  return results;
+      await db.insert(webhookDelivery).values({ webhookId: h.id, event: payload.event, status, error });
+      await db.update(webhook).set({ lastStatus: status, lastAt: new Date() }).where(eq(webhook.id, h.id));
+      return { id: h.id, status, ok: status != null && status >= 200 && status < 300 };
+    }),
+  );
 }
