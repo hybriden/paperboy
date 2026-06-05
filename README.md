@@ -108,6 +108,17 @@ MCP_TOKEN=mcp_… docker compose --profile mcp up -d --no-deps mcp              
 ```
 The MCP authenticates as a Paperboy user (token or email+password) and inherits its RBAC. The default transport is stdio; set `MCP_HTTP_PORT` (or use the compose `mcp` profile) to expose it over HTTP for remote clients.
 
+### Agent-ready by design
+The MCP surface is hardened against the ways LLM agents actually fail — every one of these came out of running real agent workloads against it:
+
+- **No silent damage** — input is either coerced *meaning-preservingly* (a TipTap doc sent to a markdown field becomes real Markdown, `{en: "…"}` locale wrappers unwrap, a resolved asset object collapses to its id) or **rejected with a self-teaching error** that names the field, the expected shape, and a copyable example. A write never destroys content and reports success.
+- **Serialization-proof writes** — `set_field(documentId, field, value)` writes one field as a flat string parameter, because long strings nested inside record arguments don't survive some clients' tool-call JSON repair (they arrive as `{}`).
+- **Safe defaults** — `update_content` merges over the draft by default (a full replace that drops required fields would brick the next publish), and pages **auto-slug from their name** so agent-created content is always reachable.
+- **A diagnosable trail** — tool errors are logged with their arguments (`docker logs`), and every MCP write lands in the same append-only audit log as the admin/API (`ip=mcp`).
+- **Discoverable contract** — `get_content_type` annotates every field with `valueFormat` + `valueExample`, so an agent learns the exact JSON shape from the schema instead of by trial and error.
+
+The full rules (with the war stories behind them) live in [`CLAUDE.md`](./CLAUDE.md#agent-api-design-rules-mcp--write-endpoints--learned-from-real-failures).
+
 ## Seed accounts
 `admin@` Admin · `editor@` Editor · `author@` Author (section-scoped) · `viewer@` Viewer — passwords follow `<Role>!Passw0rd`.
 
