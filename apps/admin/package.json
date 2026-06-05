@@ -19,6 +19,7 @@
     "@fontsource-variable/hanken-grotesk": "^5.2.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@fontsource-variable/newsreader": "^5.2.10",
+    "@iconify/react": "^6.0.2",
     "@paperboy/shared": "workspace:*",
     "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
@@ -46,6 +47,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.10.1",
+    "@iconify-json/ph": "^1.2.2",
     "@playwright/test": "^1.49.1",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",

@@ -1,77 +1,107 @@
+import { Icon as IconifyIcon, addCollection } from "@iconify/react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  Archive, Award, Bell, Blocks, BookOpen, Bookmark, Box, Boxes, Briefcase,
-  Building2, Calendar, Camera, Car, Clock, Code, Coffee, Compass, Component,
-  Database, File, FileText, Files, Flag, Flame, Folder, FolderOpen, Globe,
-  GraduationCap, Heart, Home, Image, Images, Inbox, Key, Landmark, Layers,
-  LayoutDashboard, LayoutGrid, LayoutList, LayoutTemplate, Leaf, Library,
-  Lightbulb, Link, List, Lock, Mail, Map as MapIcon, MapPin, Megaphone, MessageSquare,
-  Music, Newspaper, Package, Palette, Pencil, Phone, Plane, Puzzle, Quote,
-  Rocket, Rss, Search, Server, Settings, Shield, ShoppingCart, SlidersHorizontal,
-  Sparkles, Square, Star, Store, Table, Tag, Tags, Target, Terminal, Type,
-  User, Users, Video, Wrench, Zap,
-  type LucideIcon,
-} from "lucide-react";
+import { useSyncExternalStore } from "react";
 import { api } from "./api.js";
 
 /**
- * The curated icon set for content types (lucide-react, kebab-case names —
- * the stored value). A deliberate subset: a full icon library in the picker
- * would bloat the bundle and the choice; ~80 covers CMS modelling needs.
+ * Content-type icons: Phosphor DUOTONE (via the bundled Iconify collection —
+ * fully offline, no icon CDN). The ~1.5k-icon collection is code-split and
+ * loaded lazily so the first paint doesn't pay for it; TypeIcon renders a
+ * fixed-size placeholder until it lands (one-time flash, then cached).
+ *
+ * Stored value: "ph:<name>" (e.g. "ph:rocket") — the duotone weight is applied
+ * at render so stored names stay within the 40-char schema limit and survive a
+ * future weight change. Legacy lucide names (pre-Phosphor types and old seeds)
+ * are mapped via LEGACY below.
  */
-export const TYPE_ICONS: ReadonlyArray<readonly [string, LucideIcon]> = [
-  // documents & layout
-  ["file", File], ["file-text", FileText], ["files", Files], ["newspaper", Newspaper],
-  ["book-open", BookOpen], ["library", Library], ["layout-template", LayoutTemplate],
-  ["layout-grid", LayoutGrid], ["layout-list", LayoutList], ["layout-dashboard", LayoutDashboard],
-  ["layers", Layers], ["square", Square], ["blocks", Blocks], ["component", Component],
-  ["puzzle", Puzzle], ["box", Box], ["boxes", Boxes], ["package", Package],
-  // media
-  ["image", Image], ["images", Images], ["camera", Camera], ["video", Video], ["music", Music],
-  // places & navigation
-  ["globe", Globe], ["map", MapIcon], ["map-pin", MapPin], ["compass", Compass], ["home", Home],
-  ["building-2", Building2], ["landmark", Landmark], ["store", Store],
-  // commerce & tags
-  ["shopping-cart", ShoppingCart], ["tag", Tag], ["tags", Tags],
-  // system
-  ["settings", Settings], ["wrench", Wrench], ["sliders-horizontal", SlidersHorizontal],
-  ["database", Database], ["server", Server], ["code", Code], ["terminal", Terminal],
-  // people & contact
-  ["user", User], ["users", Users], ["mail", Mail], ["message-square", MessageSquare], ["phone", Phone],
-  // time
-  ["calendar", Calendar], ["clock", Clock],
-  // marketing & misc
-  ["star", Star], ["heart", Heart], ["award", Award], ["target", Target], ["flag", Flag],
-  ["bookmark", Bookmark], ["bell", Bell], ["megaphone", Megaphone], ["rss", Rss], ["link", Link],
-  ["search", Search], ["lightbulb", Lightbulb], ["rocket", Rocket], ["zap", Zap], ["flame", Flame],
-  ["leaf", Leaf], ["coffee", Coffee], ["car", Car], ["plane", Plane], ["briefcase", Briefcase],
-  ["graduation-cap", GraduationCap], ["shield", Shield], ["lock", Lock], ["key", Key],
-  ["folder", Folder], ["folder-open", FolderOpen], ["archive", Archive], ["inbox", Inbox],
-  ["list", List], ["table", Table], ["quote", Quote], ["type", Type], ["pencil", Pencil],
-  ["palette", Palette], ["sparkles", Sparkles],
-];
 
-const BY_NAME: ReadonlyMap<string, LucideIcon> = new Map(TYPE_ICONS);
+let phosphorNames: ReadonlyArray<string> = [];
+let phosphorSet: ReadonlySet<string> = new Set();
+let loaded = false;
+const listeners = new Set<() => void>();
 
-/** Values stored before the lucide set (or by older seeds) → lucide names. */
-const LEGACY: Record<string, string> = {
-  block: "blocks",
-  dashboard: "layout-dashboard",
-};
+// Duotone-only subset (regenerate with scripts/gen-ph-duotone.mjs) — 1/6 the
+// size of the full all-weights collection.
+void import("./ph-duotone.json").then((mod) => {
+  const collection = (mod as { default?: unknown }).default ?? mod;
+  addCollection(collection as Parameters<typeof addCollection>[0]);
+  const icons = (collection as { icons: Record<string, unknown> }).icons;
+  phosphorNames = Object.keys(icons)
+    .filter((n) => n.endsWith("-duotone"))
+    .map((n) => n.slice(0, -"-duotone".length))
+    .sort();
+  phosphorSet = new Set(phosphorNames);
+  loaded = true;
+  for (const l of listeners) l();
+});
 
-export function resolveTypeIcon(name: string | undefined | null, fallback = "file"): LucideIcon {
-  const key = name ? (LEGACY[name] ?? name) : fallback;
-  return BY_NAME.get(key) ?? BY_NAME.get(fallback) ?? File;
+function subscribe(cb: () => void): () => void {
+  listeners.add(cb);
+  return () => listeners.delete(cb);
 }
 
-/** Render a content-type icon by its stored name (lucide subset + legacy aliases). */
+/** True once the Phosphor collection chunk has loaded. */
+function useIconsReady(): boolean {
+  return useSyncExternalStore(subscribe, () => loaded, () => false);
+}
+
+/** All duotone base names (e.g. "rocket"), sorted — for the icon picker. */
+export function usePhosphorIconNames(): ReadonlyArray<string> {
+  useIconsReady();
+  return phosphorNames;
+}
+
+/** Lucide-era stored names (the old curated set + pre-lucide seeds) → Phosphor. */
+const LEGACY: Record<string, string> = {
+  file: "file", "file-text": "file-text", files: "files", newspaper: "newspaper",
+  "book-open": "book-open", library: "books", "layout-template": "layout",
+  "layout-grid": "squares-four", "layout-list": "rows", "layout-dashboard": "gauge",
+  layers: "stack", square: "square", blocks: "stack", component: "puzzle-piece",
+  puzzle: "puzzle-piece", box: "cube", boxes: "stack", package: "package",
+  image: "image", images: "images", camera: "camera", video: "video-camera", music: "music-notes",
+  globe: "globe", map: "map-trifold", "map-pin": "map-pin", compass: "compass", home: "house",
+  "building-2": "buildings", landmark: "bank", store: "storefront",
+  "shopping-cart": "shopping-cart", tag: "tag", tags: "tag",
+  settings: "gear", wrench: "wrench", "sliders-horizontal": "sliders-horizontal",
+  database: "database", server: "hard-drives", code: "code", terminal: "terminal",
+  user: "user", users: "users", mail: "envelope", "message-square": "chat-text", phone: "phone",
+  calendar: "calendar", clock: "clock",
+  star: "star", heart: "heart", award: "medal", target: "target", flag: "flag",
+  bookmark: "bookmark", bell: "bell", megaphone: "megaphone", rss: "rss", link: "link",
+  search: "magnifying-glass", lightbulb: "lightbulb", rocket: "rocket", zap: "lightning", flame: "fire",
+  leaf: "leaf", coffee: "coffee", car: "car", plane: "airplane", briefcase: "briefcase",
+  "graduation-cap": "graduation-cap", shield: "shield", lock: "lock", key: "key",
+  folder: "folder", "folder-open": "folder-open", archive: "archive", inbox: "tray",
+  list: "list", table: "table", quote: "quotes", type: "text-aa", pencil: "pencil",
+  palette: "palette", sparkles: "sparkle", block: "stack", dashboard: "gauge",
+};
+
+/** Stored value → Phosphor duotone base name ("rocket"), with fallback. */
+export function resolveIconBase(name: string | undefined | null, fallback = "file"): string {
+  const raw = (name?.trim() || fallback).replace(/^ph:/, "").replace(/-duotone$/, "");
+  const base = LEGACY[raw] ?? raw;
+  if (!loaded || phosphorSet.has(base)) return base;
+  const fb = LEGACY[fallback] ?? fallback;
+  return phosphorSet.has(fb) ? fb : "file";
+}
+
+/** Render a content-type icon by its stored name. Accepts width/height/className. */
 export function TypeIcon({
   name,
   fallback,
-  ...svg
-}: { name: string | undefined | null; fallback?: string } & React.ComponentProps<LucideIcon>) {
-  const Cmp = resolveTypeIcon(name, fallback);
-  return <Cmp {...svg} />;
+  width = 16,
+  height = 16,
+  className,
+}: {
+  name: string | undefined | null;
+  fallback?: string;
+  width?: number | string;
+  height?: number | string;
+  className?: string;
+}) {
+  const ready = useIconsReady();
+  if (!ready) return <span style={{ width, height }} className={`inline-block shrink-0 ${className ?? ""}`} aria-hidden />;
+  return <IconifyIcon icon={`ph:${resolveIconBase(name, fallback)}-duotone`} width={width} height={height} className={className} />;
 }
 
 /**
