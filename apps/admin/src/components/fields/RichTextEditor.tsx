@@ -219,7 +219,8 @@ export default function RichTextEditor({
           view.dispatch(
             view.state.tr.insert(
               pos,
-              imageNode.create({ src: p.url, alt: p.alt ?? "", "data-document-id": p.documentId ?? null }),
+              // width: 100 → autofit the text column on insert; resize by hand after.
+              imageNode.create({ src: p.url, alt: p.alt ?? "", "data-document-id": p.documentId ?? null, width: 100 }),
             ),
           );
           return true;
@@ -322,8 +323,9 @@ export default function RichTextEditor({
         <MediaPicker
           onClose={() => setPicking(false)}
           onPick={(a) => {
-            // Same node shape as the Assets-pane drag-drop path above.
-            editor.chain().focus().insertContent({ type: "image", attrs: { src: a.url, alt: a.alt, "data-document-id": a.documentId } }).run();
+            // Same node shape as the Assets-pane drag-drop path above;
+            // width: 100 → autofit the text column on insert.
+            editor.chain().focus().insertContent({ type: "image", attrs: { src: a.url, alt: a.alt, "data-document-id": a.documentId, width: 100 } }).run();
             setPicking(false);
           }}
         />
