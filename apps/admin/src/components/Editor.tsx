@@ -432,6 +432,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         setOpe({ field: def.name, rect: d.rect, n: ++propCounter.current });
         return;
       }
+      // Structural targets (blocks, content areas, references) want the form
+      // panel — which on-page edit hides for real estate. Drop back to inspect
+      // so the sidebar flow below has somewhere to land.
+      if (opeModeRef.current === "edit") setOpeMode("inspect");
 
       if (def) setTab(def.group);
       setTimeout(() => {
@@ -458,6 +462,18 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     }
   }
   closeOpeRef.current = closeOpe;
+
+  // Compact page context for AI tasks launched from the overlay — name + the
+  // page's short string fields, so suggestions match the page's subject/tone.
+  function pageAiContext(): string {
+    const f = formRef.current;
+    if (!f) return "";
+    const bits = [`Page: ${f.name}`];
+    for (const [k, v] of Object.entries(f.data ?? {})) {
+      if (typeof v === "string" && v.trim() && v.length <= 500) bits.push(`${k}: ${v.trim()}`);
+    }
+    return bits.join("\n").slice(0, 3000);
+  }
 
   // Overlay typing → live DOM patch in the preview (text swaps directly;
   // richtext renders to HTML via a lazily-loaded TipTap serializer chunk).
@@ -749,62 +765,85 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
       {/* Canvas + (optional) preview. On phones it's just the full-width form;
           on desktop a resizable split — drag the divider to give the on-page
-          preview more room. */}
-      {mobile ? (
-        <div className="min-h-0 flex-1">{formSection}</div>
-      ) : (
-        <PanelGroup direction="horizontal" autoSaveId={`paperboy-editor-split-${widePreview ? "w" : "n"}`} className="flex min-h-0 flex-1">
-          <Panel id="form" order={1} defaultSize={widePreview ? 32 : 42} minSize={24} className="min-w-0">
-            {formSection}
-          </Panel>
-          {previewOpen && <ResizeHandle />}
-          {previewOpen && (
-            <Panel id="preview" order={2} defaultSize={widePreview ? 68 : 58} minSize={20} className="min-w-0 border-l border-line bg-panel">
-              <PreviewPane
-                locale={locale}
-                urlPath={form.urlPath}
-                documentId={documentId}
-                refreshSignal={previewRefresh}
-                focusField={propFocus}
-                mode={opeMode}
-                onModeChange={setOpeMode}
-                livePatch={livePatch}
-                overlay={(() => {
-                  if (!ope || !type) return null;
-                  const def = type.fields.find((f) => f.name === ope.field);
-                  if (!def) return null;
-                  return {
-                    rect: ope.rect,
-                    onClose: closeOpe,
-                    content: (
-                      <div>
-                        <div className="flex items-center gap-2 border-b border-line px-3 py-1.5">
-                          <span className="text-xs font-semibold text-fg">Edit on page</span>
-                          <SaveIndicator state={saveState} />
-                          <button className="ml-auto rounded p-1 text-muted hover:bg-line hover:text-fg" aria-label="Close" onClick={closeOpe}>✕</button>
-                        </div>
-                        <div className="max-h-[55vh] overflow-y-auto p-3">
-                          <Field
-                            field={def}
-                            value={form.data[def.name]}
-                            disabled={!canEdit}
-                            types={types}
-                            sharedBlocks={sharedBlocks.data ?? []}
-                            onChange={(v) => {
-                              setField(def.name, v);
-                              pushLivePatch(def, v);
-                            }}
-                          />
-                        </div>
-                      </div>
-                    ),
-                  };
-                })()}
-              />
+          preview more room. In on-page edit mode the preview takes the WHOLE
+          row (the all-properties form needs no real estate until you exit). */}
+      {(() => {
+        const previewPaneEl = previewOpen ? (
+          <PreviewPane
+            locale={locale}
+            urlPath={form.urlPath}
+            documentId={documentId}
+            refreshSignal={previewRefresh}
+            focusField={propFocus}
+            mode={opeMode}
+            onModeChange={setOpeMode}
+            livePatch={livePatch}
+            overlay={(() => {
+              if (!ope || !type) return null;
+              const def = type.fields.find((f) => f.name === ope.field);
+              if (!def) return null;
+              const current = form.data[def.name];
+              return {
+                rect: ope.rect,
+                onClose: closeOpe,
+                content: (
+                  <div>
+                    <div className="flex items-center gap-2 border-b border-line px-3 py-1.5">
+                      <span className="text-xs font-semibold text-fg">Edit on page</span>
+                      <SaveIndicator state={saveState} />
+                      <button className="ml-auto rounded p-1 text-muted hover:bg-line hover:text-fg" aria-label="Close" onClick={closeOpe}>✕</button>
+                    </div>
+                    <div className="max-h-[55vh] overflow-y-auto p-3">
+                      <Field
+                        field={def}
+                        value={current}
+                        disabled={!canEdit}
+                        types={types}
+                        sharedBlocks={sharedBlocks.data ?? []}
+                        onChange={(v) => {
+                          setField(def.name, v);
+                          pushLivePatch(def, v);
+                        }}
+                      />
+                      {canEdit && (def.type === "text" || def.type === "markdown") && (
+                        <OverlayAi
+                          current={String(current ?? "")}
+                          context={pageAiContext()}
+                          onApply={(v) => {
+                            setField(def.name, v);
+                            pushLivePatch(def, v);
+                          }}
+                          onPreview={(v) =>
+                            pushLivePatch(def, v ?? String((formRef.current ?? form).data[def.name] ?? ""))
+                          }
+                        />
+                      )}
+                    </div>
+                  </div>
+                ),
+              };
+            })()}
+          />
+        ) : null;
+
+        if (mobile) return <div className="min-h-0 flex-1">{formSection}</div>;
+        if (opeMode === "edit" && previewPaneEl) {
+          return <div className="min-h-0 flex-1 border-l border-line bg-panel">{previewPaneEl}</div>;
+        }
+        return (
+          <PanelGroup direction="horizontal" autoSaveId={`paperboy-editor-split-${widePreview ? "w" : "n"}`} className="flex min-h-0 flex-1">
+            <Panel id="form" order={1} defaultSize={widePreview ? 32 : 42} minSize={24} className="min-w-0">
+              {formSection}
             </Panel>
-          )}
-        </PanelGroup>
-      )}
+            {previewOpen && <ResizeHandle />}
+            {previewOpen && (
+              <Panel id="preview" order={2} defaultSize={widePreview ? 68 : 58} minSize={20} className="min-w-0 border-l border-line bg-panel">
+                {previewPaneEl}
+              </Panel>
+            )}
+          </PanelGroup>
+        );
+      })()}
 
       {showVersions && (
         <VersionsDialog
@@ -1247,6 +1286,112 @@ function SaveIndicator({ state }: { state: SaveState }) {
   const s = map[state];
   if (!s.text) return null;
   return <span className={`text-xs ${s.cls}`} aria-live="polite" data-testid="save-indicator">{s.text}</span>;
+}
+
+/**
+ * ✨ AI inside the on-page overlay (text/markdown fields): quick improve, a
+ * free-form instruction ("shorten to 8 words"), and TRY-ON VARIANTS — hovering
+ * a suggestion live-patches it into the real page so you see it in the actual
+ * design before committing; click applies it. Module-level component (see Btn).
+ */
+function OverlayAi({
+  current,
+  context,
+  onApply,
+  onPreview,
+}: {
+  current: string;
+  context: string;
+  onApply: (v: string) => void;
+  /** Live try-on: patch the page with v; null restores the current value. */
+  onPreview: (v: string | null) => void;
+}) {
+  const toast = useToast();
+  const [instruction, setInstruction] = useState("");
+  const [variants, setVariants] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState<AiTask | null>(null);
+
+  async function run(task: AiTask, opts?: { instruction?: string }) {
+    if (!current.trim() || busy) return;
+    setBusy(task);
+    try {
+      const r = await api.aiAssist(task, current, { ...opts, context });
+      if (task === "variants") {
+        let list: string[] = [];
+        try {
+          const parsed = JSON.parse(r.result) as unknown;
+          if (Array.isArray(parsed)) list = parsed.filter((x): x is string => typeof x === "string");
+        } catch {
+          list = r.result.split("\n").map((s) => s.replace(/^[-*\d.\s]+/, "").trim()).filter(Boolean).slice(0, 3);
+        }
+        setVariants(list.length ? list : [r.result]);
+        if (r.provider === "fallback") toast.success("Basic mode", "Set an AI key in Settings → Site for real suggestions.");
+      } else {
+        onApply(r.result);
+        setInstruction("");
+        if (r.provider === "fallback") toast.success("Basic mode", "Set an AI key in Settings → Site for full AI.");
+      }
+    } catch (e) {
+      toast.error("AI failed", (e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="mt-3 border-t border-line pt-2.5">
+      <div className="flex items-center gap-1.5">
+        <span className="text-xs text-muted" aria-hidden>✨</span>
+        <button type="button" className="btn-subtle px-2 py-0.5 text-xs" disabled={!!busy || !current.trim()} onClick={() => void run("improve")}>
+          {busy === "improve" ? "Improving…" : "Improve"}
+        </button>
+        <button type="button" className="btn-subtle px-2 py-0.5 text-xs" disabled={!!busy || !current.trim()} onClick={() => void run("variants")}>
+          {busy === "variants" ? "Thinking…" : "Suggest variants"}
+        </button>
+      </div>
+      <form
+        className="mt-1.5 flex gap-1.5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (instruction.trim()) void run("rewrite", { instruction: instruction.trim() });
+        }}
+      >
+        <input
+          className="field-input min-w-0 flex-1 py-1 text-xs"
+          placeholder="Tell the AI… e.g. shorten to 8 words"
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          aria-label="AI instruction"
+        />
+        <button type="submit" className="btn-subtle px-2 py-0.5 text-xs" disabled={!!busy || !instruction.trim() || !current.trim()}>
+          {busy === "rewrite" ? "…" : "Go"}
+        </button>
+      </form>
+      {variants && (
+        <ul className="m-0 mt-2 list-none space-y-1 p-0" aria-label="AI suggestions — hover to try on the page">
+          {variants.map((v, i) => (
+            <li key={i}>
+              <button
+                type="button"
+                className="w-full rounded border border-line px-2 py-1.5 text-left text-xs text-fg hover:border-accent hover:bg-accent/5"
+                title="Hover to preview on the page · click to apply"
+                onMouseEnter={() => onPreview(v)}
+                onMouseLeave={() => onPreview(null)}
+                onFocus={() => onPreview(v)}
+                onBlur={() => onPreview(null)}
+                onClick={() => {
+                  onApply(v);
+                  setVariants(null);
+                }}
+              >
+                {v}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function Field({

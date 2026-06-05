@@ -7,13 +7,17 @@
  * and upgrades automatically when one is provided.
  */
 
-export const AI_TASKS = ["meta_title", "meta_description", "summarize", "improve", "alt_text", "translate"] as const;
+export const AI_TASKS = ["meta_title", "meta_description", "summarize", "improve", "alt_text", "translate", "rewrite", "variants"] as const;
 export type AiTask = (typeof AI_TASKS)[number];
 
 export interface AiRequest {
   task: AiTask;
   input: string;
   targetLocale?: string;
+  /** For `rewrite`: the editor's free-form instruction ("shorten to 8 words"). */
+  instruction?: string;
+  /** Surrounding page context (name/intro/etc.) — informs tone and subject. */
+  context?: string;
 }
 export interface AiResult {
   result: string;
@@ -29,19 +33,27 @@ const SYSTEM =
   "You are an expert editorial assistant inside a headless CMS. Follow the instruction exactly and return ONLY the requested text — no preamble, no quotes, no markdown.";
 
 function instruction(req: AiRequest): string {
+  // Page context informs tone/subject without being copied into the output.
+  const ctx = req.context?.trim()
+    ? `\n\nContext about the page this text belongs to (for tone and subject — do NOT copy it verbatim):\n${req.context.trim()}`
+    : "";
   switch (req.task) {
     case "meta_title":
-      return `Write a compelling SEO <title> (max 60 characters) for the following page content.\n\n${req.input}`;
+      return `Write a compelling SEO <title> (max 60 characters) for the following page content.\n\n${req.input}${ctx}`;
     case "meta_description":
-      return `Write an SEO meta description (max 155 characters, active voice, no clickbait) summarising the following page content.\n\n${req.input}`;
+      return `Write an SEO meta description (max 155 characters, active voice, no clickbait) summarising the following page content.\n\n${req.input}${ctx}`;
     case "summarize":
-      return `Summarise the following content in one or two clear sentences.\n\n${req.input}`;
+      return `Summarise the following content in one or two clear sentences.\n\n${req.input}${ctx}`;
     case "improve":
-      return `Improve the clarity, grammar and flow of the following text. Preserve its meaning and keep a similar length.\n\n${req.input}`;
+      return `Improve the clarity, grammar and flow of the following text. Preserve its meaning and keep a similar length.\n\n${req.input}${ctx}`;
     case "alt_text":
-      return `Write concise, descriptive alt text (max 120 characters) for an image. The image's filename/description is:\n\n${req.input}`;
+      return `Write concise, descriptive alt text (max 120 characters) for an image. The image's filename/description is:\n\n${req.input}${ctx}`;
     case "translate":
-      return `Translate the following text into ${req.targetLocale ?? "the target language"}. Preserve meaning and tone.\n\n${req.input}`;
+      return `Translate the following text into ${req.targetLocale ?? "the target language"}. Preserve meaning and tone.\n\n${req.input}${ctx}`;
+    case "rewrite":
+      return `Rewrite the following text according to this instruction: "${req.instruction ?? "improve it"}". Keep the same language as the input. Return ONLY the rewritten text.\n\n${req.input}${ctx}`;
+    case "variants":
+      return `Write exactly 3 alternative versions of the following text — same language, same intent, meaningfully different angles (e.g. punchier, warmer, more concrete). Keep each roughly the same length as the original. Return ONLY a JSON array of 3 strings — no preamble, no code fences.\n\n${req.input}${ctx}`;
   }
 }
 
@@ -102,6 +114,10 @@ function fallback(req: AiRequest): string {
       return truncate(clean.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " "), 120) || "Image";
     case "translate":
       return clean; // offline: cannot translate — return the source unchanged
+    case "rewrite":
+      return clean; // offline: cannot follow instructions — return the source unchanged
+    case "variants":
+      return JSON.stringify([clean]); // offline: a single "variant" (the source)
   }
 }
 
