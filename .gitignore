@@ -11,4 +11,6 @@ coverage/
 proof/screenshots/*.tmp
 test-results/
 playwright-report/
+.playwright-mcp/
 .turbo/
+*.tsbuildinfo
