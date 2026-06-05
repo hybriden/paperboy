@@ -20,7 +20,7 @@ import { MarkdownEditor } from "./fields/MarkdownEditor.js";
 import { ReferenceField } from "./fields/ReferenceField.js";
 import { RichText } from "./fields/RichText.js";
 import { ImageField } from "./MediaLibrary.js";
-import { PreviewPane, publicSiteUrl } from "./PreviewPane.js";
+import { type PbRect, type PreviewMode, PreviewPane, publicSiteUrl } from "./PreviewPane.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
@@ -93,6 +93,30 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // the preview. The counter re-triggers even when the same field is re-focused.
   const [propFocus, setPropFocus] = useState<{ field: string; n: number } | null>(null);
   const propCounter = useRef(0);
+
+  // ---- On-page edit mode (Optimizely-style OPE) ----------------------------
+  // "inspect" (default): preview clicks focus the sidebar field (classic
+  // side-by-side). "edit": clicks open an anchored overlay editor ON the page.
+  const [opeMode, setOpeModeState] = useState<PreviewMode>(() => {
+    try { return localStorage.getItem("pb-preview-mode") === "edit" ? "edit" : "inspect"; } catch { return "inspect"; }
+  });
+  const setOpeMode = (m: PreviewMode) => {
+    setOpeModeState(m);
+    if (m === "inspect") closeOpeRef.current?.();
+    try { localStorage.setItem("pb-preview-mode", m); } catch { /* ignore */ }
+  };
+  // The open overlay: which field, anchored where (bridge-reported rect).
+  const [ope, setOpe] = useState<{ field: string; rect: PbRect; n: number } | null>(null);
+  const opeRef = useRef<typeof ope>(null);
+  useEffect(() => { opeRef.current = ope; }, [ope]);
+  const opeModeRef = useRef(opeMode);
+  useEffect(() => { opeModeRef.current = opeMode; }, [opeMode]);
+  // Saves that happened while the overlay was open (reload deferred to close).
+  const opeDirtyRef = useRef(false);
+  const closeOpeRef = useRef<(() => void) | null>(null);
+  // Live patch for the page DOM (no reload while typing in the overlay).
+  const [livePatch, setLivePatch] = useState<{ field: string; text?: string; html?: string; n: number } | null>(null);
+  const livePatchCounter = useRef(0);
   const activateProp = (e: React.FocusEvent | React.MouseEvent) => {
     const el = (e.target as HTMLElement).closest?.("[data-pb-prop]");
     const field = el?.getAttribute("data-pb-prop");
@@ -179,7 +203,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       formRef.current = formRef.current ? { ...formRef.current, urlPath: updated.urlPath } : formRef.current;
       qc.invalidateQueries({ queryKey: ["tree", "root"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
-      setPreviewRefresh((n) => n + 1); // reload the preview with the saved draft
+      // Reload the preview with the saved draft — but NOT while an on-page
+      // overlay is open (the reload would yank the page out from under the
+      // editor mid-typing; live patches keep it current, and the deferred
+      // reload reconciles on overlay close).
+      if (opeRef.current) opeDirtyRef.current = true;
+      else setPreviewRefresh((n) => n + 1);
     },
     onError: (e) => {
       setSaveState("error");
@@ -374,14 +403,36 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     onError: (e) => toast.error("Couldn’t translate", (e as Error).message),
   });
 
+  // Field types that get an anchored on-page overlay in edit mode; structural
+  // fields (contentArea/reference) genuinely want the sidebar's context, and
+  // block clicks keep the classic focus flow too.
+  const OPE_FIELD_TYPES = new Set(["text", "markdown", "richtext", "boolean", "number", "datetime", "select", "link", "image"]);
+
   // Visual on-page editing: the preview iframe posts which field/block was
-  // clicked → switch to its tab and scroll/focus it here.
+  // clicked. In INSPECT mode → switch to its tab and scroll/focus the sidebar
+  // field (classic). In EDIT mode → open an anchored overlay editor on the page
+  // (paperboy:rect keeps the anchor tracking page scroll/resize).
   useEffect(() => {
     function onMessage(e: MessageEvent) {
-      const d = e.data as { type?: string; field?: string | null; blockIndex?: number | null } | null;
-      if (!d || d.type !== "paperboy:edit") return;
+      const d = e.data as { type?: string; field?: string | null; blockIndex?: number | null; rect?: PbRect } | null;
+      if (!d) return;
+      if (d.type === "paperboy:rect") {
+        // Anchor update for the open overlay (same field only).
+        if (d.rect && opeRef.current && d.field === opeRef.current.field && d.blockIndex == null) {
+          setOpe((prev) => (prev ? { ...prev, rect: d.rect! } : prev));
+        }
+        return;
+      }
+      if (d.type !== "paperboy:edit") return;
       const fieldName = typeof d.field === "string" ? d.field : null;
       const def = fieldName ? type?.fields.find((f) => f.name === fieldName) : undefined;
+
+      // On-page overlay: edit mode + a scalar/richtext page field (not a block).
+      if (opeModeRef.current === "edit" && def && d.blockIndex == null && d.rect && OPE_FIELD_TYPES.has(def.type)) {
+        setOpe({ field: def.name, rect: d.rect, n: ++propCounter.current });
+        return;
+      }
+
       if (def) setTab(def.group);
       setTimeout(() => {
         const id = d.blockIndex != null ? `pb-block-${d.blockIndex}` : fieldName ? `f-${fieldName}` : null;
@@ -394,7 +445,33 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type]);
+
+  // Close the on-page overlay; if anything was saved while it was open, do the
+  // deferred preview reload now (the bridge restores the scroll position).
+  function closeOpe() {
+    setOpe(null);
+    if (opeDirtyRef.current) {
+      opeDirtyRef.current = false;
+      setPreviewRefresh((n) => n + 1);
+    }
+  }
+  closeOpeRef.current = closeOpe;
+
+  // Overlay typing → live DOM patch in the preview (text swaps directly;
+  // richtext renders to HTML via a lazily-loaded TipTap serializer chunk).
+  function pushLivePatch(fieldDef: FieldDef, value: unknown) {
+    if (fieldDef.type === "text" || fieldDef.type === "number") {
+      setLivePatch({ field: fieldDef.name, text: String(value ?? ""), n: ++livePatchCounter.current });
+    } else if (fieldDef.type === "richtext") {
+      void import("../lib/richtextHtml.js").then(({ richTextHtml }) => {
+        const html = richTextHtml(value);
+        if (html != null) setLivePatch({ field: fieldDef.name, html, n: ++livePatchCounter.current });
+      });
+    }
+    // Other types: no in-place patch — the deferred reload on close reconciles.
+  }
 
   // ⌘S / Ctrl+S — force an immediate save of pending edits.
   useEffect(() => {
@@ -683,7 +760,47 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           {previewOpen && <ResizeHandle />}
           {previewOpen && (
             <Panel id="preview" order={2} defaultSize={widePreview ? 68 : 58} minSize={20} className="min-w-0 border-l border-line bg-panel">
-              <PreviewPane locale={locale} urlPath={form.urlPath} documentId={documentId} refreshSignal={previewRefresh} focusField={propFocus} />
+              <PreviewPane
+                locale={locale}
+                urlPath={form.urlPath}
+                documentId={documentId}
+                refreshSignal={previewRefresh}
+                focusField={propFocus}
+                mode={opeMode}
+                onModeChange={setOpeMode}
+                livePatch={livePatch}
+                overlay={(() => {
+                  if (!ope || !type) return null;
+                  const def = type.fields.find((f) => f.name === ope.field);
+                  if (!def) return null;
+                  return {
+                    rect: ope.rect,
+                    onClose: closeOpe,
+                    content: (
+                      <div>
+                        <div className="flex items-center gap-2 border-b border-line px-3 py-1.5">
+                          <span className="text-xs font-semibold text-fg">Edit on page</span>
+                          <SaveIndicator state={saveState} />
+                          <button className="ml-auto rounded p-1 text-muted hover:bg-line hover:text-fg" aria-label="Close" onClick={closeOpe}>✕</button>
+                        </div>
+                        <div className="max-h-[55vh] overflow-y-auto p-3">
+                          <Field
+                            field={def}
+                            value={form.data[def.name]}
+                            disabled={!canEdit}
+                            types={types}
+                            sharedBlocks={sharedBlocks.data ?? []}
+                            onChange={(v) => {
+                              setField(def.name, v);
+                              pushLivePatch(def, v);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ),
+                  };
+                })()}
+              />
             </Panel>
           )}
         </PanelGroup>
