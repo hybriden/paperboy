@@ -414,14 +414,14 @@ export async function computePath(db: Database, documentId: string, loc: string)
   return `/${segments.join("/")}`;
 }
 
-/** Reject a URL segment already used by a page sibling (same parent + locale). */
-async function assertSlugUnique(
+/** True when a page sibling (same parent + locale) already uses this segment. */
+async function slugTakenBySibling(
   db: Database,
   documentId: string,
   parentId: string | null,
   loc: string,
   slug: string,
-): Promise<void> {
+): Promise<boolean> {
   const siblings = await db
     .select({ documentId: contentItem.documentId })
     .from(contentItem)
@@ -434,10 +434,61 @@ async function assertSlugUnique(
     );
   for (const sib of siblings) {
     if (sib.documentId === documentId) continue;
-    if ((await workingSlug(db, sib.documentId, loc)) === slug) {
-      throw Errors.conflict(`Another page already uses the URL segment "${slug}" here`);
-    }
+    if ((await workingSlug(db, sib.documentId, loc)) === slug) return true;
   }
+  return false;
+}
+
+/** Reject a URL segment already used by a page sibling (same parent + locale). */
+async function assertSlugUnique(
+  db: Database,
+  documentId: string,
+  parentId: string | null,
+  loc: string,
+  slug: string,
+): Promise<void> {
+  if (await slugTakenBySibling(db, documentId, parentId, loc, slug)) {
+    throw Errors.conflict(`Another page already uses the URL segment "${slug}" here`);
+  }
+}
+
+/** Kebab-case URL segment derived from a page name ("Hobby Projects" → "hobby-projects"). */
+export function slugify(name: string): string | null {
+  const s = name
+    .toLowerCase()
+    .replace(/æ/g, "ae")
+    .replace(/ø/g, "o")
+    .replace(/å/g, "a")
+    .replace(/ß/g, "ss")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "") // strip diacritics (é → e)
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80)
+    .replace(/-+$/g, "");
+  return s || null;
+}
+
+/**
+ * Auto-derive a unique URL segment from the page name (CMS-12 style): pages
+ * get an address by default, agents/editors never have to remember the slug,
+ * and a sibling collision quietly suffixes (-2, -3, …) instead of erroring.
+ * Renames never touch an EXISTING slug (URL stability) — this only fills null.
+ */
+async function autoSlug(
+  db: Database,
+  documentId: string,
+  parentId: string | null,
+  loc: string,
+  name: string,
+): Promise<string | null> {
+  const base = slugify(name);
+  if (!base) return null;
+  for (let i = 0; i < 50; i++) {
+    const candidate = i === 0 ? base : `${base}-${i + 1}`;
+    if (!(await slugTakenBySibling(db, documentId, parentId, loc, candidate))) return candidate;
+  }
+  return `${base}-${documentId.slice(0, 6).toLowerCase()}`;
 }
 
 /* ------------------------------- create ----------------------------------- */
@@ -480,7 +531,9 @@ export async function createContent(
     isCurrentPublished: false,
     versionNumber: 1,
     name: req.name,
-    slug: null,
+    // Pages get a URL segment from their name right away (CMS-12 style) —
+    // uniquified among siblings; editors can change it in the URL chip.
+    slug: type.kind === "page" ? await autoSlug(db, documentId, req.parentId, req.locale, req.name) : null,
     displayInNav: true,
     data: {},
     cv: 0,
@@ -750,12 +803,21 @@ export async function updateContent(
     )
     .limit(1);
 
+  // Backfill a missing URL segment from the name when the caller doesn't
+  // address the slug at all (existing slugs are never touched — URL stability).
+  const backfillSlug = async (currentSlug: string | null, name: string): Promise<string | null> =>
+    req.slug === undefined && currentSlug == null && item.kind === "page"
+      ? autoSlug(db, documentId, item.parentId, loc, name)
+      : currentSlug;
+
   if (existing[0]) {
+    const name = req.name ?? existing[0].name;
+    const slug = req.slug !== undefined ? req.slug : await backfillSlug(existing[0].slug, name);
     await db
       .update(contentVersion)
       .set({
-        name: req.name ?? existing[0].name,
-        slug: req.slug !== undefined ? req.slug : existing[0].slug,
+        name,
+        slug,
         displayInNav: req.displayInNav ?? existing[0].displayInNav,
         data,
         createdBy: ctx.userId,
@@ -770,14 +832,16 @@ export async function updateContent(
     // the next edit.
     const maxV = await nextVersionNumber(db, documentId, loc);
     const base = (await currentPublished(db, documentId, loc)) ?? (await latestVersion(db, documentId, loc));
+    const name = req.name ?? base?.name ?? "Untitled";
+    const slug = req.slug !== undefined ? req.slug : await backfillSlug(base?.slug ?? null, name);
     await db.insert(contentVersion).values({
       documentId,
       locale: loc,
       status: "draft",
       isCurrentPublished: false,
       versionNumber: maxV,
-      name: req.name ?? base?.name ?? "Untitled",
-      slug: req.slug !== undefined ? req.slug : (base?.slug ?? null),
+      name,
+      slug,
       displayInNav: req.displayInNav ?? base?.displayInNav ?? true,
       data,
       createdBy: ctx.userId,
