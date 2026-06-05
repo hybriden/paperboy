@@ -1,6 +1,7 @@
 import DOMPurify from "dompurify";
 import { marked } from "marked";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { type PbCaret, takeCaret } from "../../lib/caret.js";
 
 marked.setOptions({ gfm: true, breaks: false });
 
@@ -27,6 +28,40 @@ export function MarkdownEditor({
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [tab, setTab] = useState<Tab>("write");
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
+  // Click-to-caret (on-page editing): the preview reported the clicked text;
+  // best-effort find it in the RAW markdown (rendered text nodes are usually
+  // verbatim substrings of the source) and move the textarea caret there.
+  useEffect(() => {
+    if (!id) return;
+    const applyCaret = (caret: PbCaret) => {
+      setTab("write"); // the textarea only exists on the write tab
+      requestAnimationFrame(() => {
+        const el = ref.current;
+        if (!el || el.disabled) return;
+        const idx = valueRef.current.indexOf(caret.snippet);
+        if (idx < 0) return; // markdown syntax in the way — field focus is still right
+        const target = idx + Math.min(Math.max(caret.offset, 0), caret.snippet.length);
+        el.focus();
+        el.setSelectionRange(target, target);
+        // Scroll the caret's line into view (monospace textarea: estimate by line).
+        const line = valueRef.current.slice(0, target).split("\n").length;
+        const lineHeight = Number.parseFloat(getComputedStyle(el).lineHeight) || 20;
+        el.scrollTop = Math.max(0, (line - 3) * lineHeight);
+      });
+    };
+    const queued = takeCaret(id);
+    if (queued) requestAnimationFrame(() => applyCaret(queued));
+    const onEvent = (e: Event) => {
+      if ((e as CustomEvent).detail?.id !== id) return;
+      const c = takeCaret(id);
+      if (c) applyCaret(c);
+    };
+    window.addEventListener("pb:caret", onEvent);
+    return () => window.removeEventListener("pb:caret", onEvent);
+  }, [id]);
 
   const apply = (next: string, selStart: number, selEnd: number) => {
     onChange(next);
