@@ -30,7 +30,7 @@ interface AiConfig {
 }
 
 const SYSTEM =
-  "You are an expert editorial assistant inside a headless CMS. Follow the instruction exactly and return ONLY the requested text — no preamble, no quotes, no markdown.";
+  "You are an expert editorial assistant inside a headless CMS. Follow the instruction exactly and return ONLY the requested text — no preamble, no quotes, no code fences. PRESERVE the input's formatting and markup: Markdown in → Markdown out (keep headings, lists, emphasis, links); plain text in → plain text out (do not add markup).";
 
 function instruction(req: AiRequest): string {
   // Page context informs tone/subject without being copied into the output.
@@ -45,7 +45,7 @@ function instruction(req: AiRequest): string {
     case "summarize":
       return `Summarise the following content in one or two clear sentences.\n\n${req.input}${ctx}`;
     case "improve":
-      return `Improve the clarity, grammar and flow of the following text. Preserve its meaning and keep a similar length.\n\n${req.input}${ctx}`;
+      return `Improve the clarity, grammar and flow of the following text. Preserve its meaning, its formatting/markup, and keep a similar length.\n\n${req.input}${ctx}`;
     case "alt_text":
       return `Write concise, descriptive alt text (max 120 characters) for an image. The image's filename/description is:\n\n${req.input}${ctx}`;
     case "translate":
