@@ -50,7 +50,6 @@ export function PreviewPane({
   refreshSignal = 0,
   focusField,
   mode = "inspect",
-  onModeChange,
   overlay,
   livePatch,
 }: {
@@ -61,9 +60,10 @@ export function PreviewPane({
   focusField?: { field: string; n: number } | null;
   /** inspect = click focuses the sidebar field (classic); edit = on-page overlay. */
   mode?: PreviewMode;
-  onModeChange?: (m: PreviewMode) => void;
-  /** Anchored on-page editor: rect comes from the bridge, content from Editor. */
-  overlay?: { rect: PbRect; content: React.ReactNode; onClose: () => void } | null;
+  /** Anchored on-page editor: rect + click offset from the bridge, content from
+   *  Editor. The card opens at the CLICK point (ox/oy within the element) — a
+   *  very tall element would otherwise push it out of sight. */
+  overlay?: { rect: PbRect; ox: number; oy: number; content: React.ReactNode; onClose: () => void } | null;
   /** Live DOM patch for the page (text/html swap, no reload) — keyed by n. */
   livePatch?: { field: string; text?: string; html?: string; n: number } | null;
 }) {
@@ -131,19 +131,24 @@ export function PreviewPane({
   const innerH = device === "desktop" && scale ? box.h / scale : vh;
 
   // On-page overlay placement: transform the bridge-reported (pre-scale) rect
-  // into pane coordinates, anchor the card under the element, clamp to the pane.
+  // into pane coordinates. The ring outlines the whole element; the card is
+  // anchored at the CLICK POINT inside it (ox/oy, preserved across rect
+  // updates while the page scrolls), clamped so it always fits the pane.
   const CARD_W = 380;
+  const CARD_H_EST = 340; // clamp allowance so the card's body stays visible
   const anchor = overlay
     ? (() => {
         const sx = tx + overlay.rect.x * scale;
         const sy = overlay.rect.y * scale;
         const sw = overlay.rect.w * scale;
         const sh = overlay.rect.h * scale;
+        const clickX = tx + (overlay.rect.x + overlay.ox) * scale;
+        const clickY = (overlay.rect.y + overlay.oy) * scale;
         return {
           ring: { left: sx, top: sy, width: sw, height: sh },
           card: {
-            left: Math.max(8, Math.min(sx, Math.max(8, box.w - CARD_W - 8))),
-            top: Math.max(8, Math.min(sy + sh + 8, Math.max(8, box.h - 240))),
+            left: Math.max(8, Math.min(clickX - 40, Math.max(8, box.w - CARD_W - 8))),
+            top: Math.max(8, Math.min(clickY + 14, Math.max(8, box.h - CARD_H_EST))),
           },
         };
       })()
@@ -166,16 +171,6 @@ export function PreviewPane({
           ))}
         </div>
         <button className="btn-subtle px-2 py-0.5 text-xs" onClick={() => setNonce((n) => n + 1)}>Refresh</button>
-        {onModeChange && (
-          <button
-            className={`rounded border px-2 py-0.5 text-xs ${mode === "edit" ? "border-accent bg-accent/15 font-medium text-accent-700" : "border-line text-muted hover:bg-canvas"}`}
-            aria-pressed={mode === "edit"}
-            title="Edit properties directly on the page (Optimizely-style on-page edit)"
-            onClick={() => onModeChange(mode === "edit" ? "inspect" : "edit")}
-          >
-            ✎ Edit on page
-          </button>
-        )}
         <span className="text-[11px] tabular-nums text-muted">{target}px · {Math.round(scale * 100)}%</span>
         <span className="ml-auto truncate text-xs text-muted">/{locale}{path}</span>
       </div>
