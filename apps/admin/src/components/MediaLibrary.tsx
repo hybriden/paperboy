@@ -71,11 +71,12 @@ function AssetThumb({ asset, selected, onClick }: { asset: Asset; selected?: boo
   );
 }
 
-/** Assets pane → Media tab: grid + upload + per-image alt text. */
+/** Assets pane → Media tab: grid + upload + per-image alt text + stock import. */
 export function MediaTab() {
   const assets = useAssets();
   const qc = useQueryClient();
   const toast = useToast();
+  const [mode, setMode] = useState<"library" | "stock">("library");
   const [editing, setEditing] = useState<string | null>(null);
   const [alt, setAlt] = useState("");
   const saveAlt = useMutation({
@@ -107,18 +108,34 @@ export function MediaTab() {
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-1.5 pb-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">{assets.data?.length ?? 0} images</span>
-        <UploadButton label="Upload" />
+        <div className="flex gap-1" role="tablist" aria-label="Image source">
+          {([["library", `${assets.data?.length ?? 0} images`], ["stock", "Stock"]] as const).map(([key, label]) => (
+            <button key={key} type="button" role="tab" aria-selected={mode === key}
+              className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${mode === key ? "bg-accent/15 text-accent-700" : "text-muted hover:bg-line/60"}`}
+              onClick={() => setMode(key)}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {mode === "library" && <UploadButton label="Upload" />}
       </div>
-      {assets.isLoading && <div className="grid grid-cols-2 gap-1.5 px-1.5">{[0, 1, 2, 3].map((i) => <div key={i} className="aspect-square animate-pulse rounded bg-line/50" />)}</div>}
-      {assets.data?.length === 0 && <p className="px-2 py-8 text-center text-xs text-muted">No images yet. Upload one.</p>}
-      <div className="grid grid-cols-2 gap-1.5 overflow-auto px-1.5">
-        {assets.data?.map((a) => (
-          <div key={a.documentId}>
-            <AssetThumb asset={a} onClick={() => { setEditing(a.documentId); setAlt(a.alt); }} />
-          </div>
-        ))}
-      </div>
+      {mode === "stock" && (
+        <div className="overflow-auto px-1.5">
+          {/* Imported photos land in the library — drag them into richtext/image fields. */}
+          <StockTab cols="grid-cols-2" onPick={() => setMode("library")} />
+        </div>
+      )}
+      {mode === "library" && assets.isLoading && <div className="grid grid-cols-2 gap-1.5 px-1.5">{[0, 1, 2, 3].map((i) => <div key={i} className="aspect-square animate-pulse rounded bg-line/50" />)}</div>}
+      {mode === "library" && assets.data?.length === 0 && <p className="px-2 py-8 text-center text-xs text-muted">No images yet. Upload one.</p>}
+      {mode === "library" && (
+        <div className="grid grid-cols-2 gap-1.5 overflow-auto px-1.5">
+          {assets.data?.map((a) => (
+            <div key={a.documentId}>
+              <AssetThumb asset={a} onClick={() => { setEditing(a.documentId); setAlt(a.alt); }} />
+            </div>
+          ))}
+        </div>
+      )}
       {editing && (
         <Dialog open onOpenChange={(o) => !o && setEditing(null)}>
           <DialogContent title="Image details" className="w-[380px]">
@@ -164,8 +181,8 @@ export function MediaTab() {
   );
 }
 
-/** Image picker dialog (used by the `image` field): library + stock search. */
-function MediaPicker({ onPick, onClose }: { onPick: (a: Asset) => void; onClose: () => void }) {
+/** Image picker dialog (used by the `image` field + richtext toolbar): library + stock search. */
+export function MediaPicker({ onPick, onClose }: { onPick: (a: Asset) => void; onClose: () => void }) {
   const assets = useAssets();
   const [tab, setTab] = useState<"library" | "stock">("library");
   return (
@@ -198,8 +215,8 @@ function MediaPicker({ onPick, onClose }: { onPick: (a: Asset) => void; onClose:
   );
 }
 
-/** Stock tab: search the configured provider, import-on-select into the library. */
-function StockTab({ onPick }: { onPick: (a: Asset) => void }) {
+/** Stock search: query the configured provider, import-on-select into the library. */
+function StockTab({ onPick, cols = "grid-cols-3" }: { onPick: (a: Asset) => void; cols?: string }) {
   const qc = useQueryClient();
   const toast = useToast();
   const suggested = useContext(StockQueryContext);
@@ -239,14 +256,14 @@ function StockTab({ onPick }: { onPick: (a: Asset) => void }) {
         onChange={(e) => setQ(e.target.value)}
         aria-label="Search stock photos"
       />
-      {search.isLoading && <div className="grid grid-cols-4 gap-2">{[0, 1, 2, 3].map((i) => <div key={i} className="aspect-square animate-pulse rounded bg-line/50" />)}</div>}
+      {search.isLoading && <div className={`grid ${cols} gap-2`}>{[0, 1, 2, 3].map((i) => <div key={i} className="aspect-square animate-pulse rounded bg-line/50" />)}</div>}
       {search.isError && (
         // Unconfigured/key errors are self-teaching (they point at Settings → Stock images).
         <p className="py-8 text-center text-sm text-muted">{(search.error as Error).message}</p>
       )}
       {!search.isError && debounced.trim().length <= 1 && <p className="py-8 text-center text-sm text-muted">Type to search stock photos.</p>}
       {search.data?.length === 0 && <p className="py-8 text-center text-sm text-muted">No results for “{debounced}”.</p>}
-      <div className="grid max-h-[50vh] grid-cols-3 gap-2 overflow-auto">
+      <div className={`grid max-h-[50vh] ${cols} gap-2 overflow-auto`}>
         {search.data?.map((r) => (
           <figure key={r.id} className="min-w-0">
             <button
