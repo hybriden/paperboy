@@ -276,6 +276,7 @@ function looksLikeTiptapDoc(v: unknown): boolean {
 const RICHTEXT_NODES = new Set([
   "doc", "paragraph", "text", "heading", "blockquote", "bulletList",
   "orderedList", "listItem", "codeBlock", "horizontalRule", "hardBreak",
+  "image", // block-level <img> (drag a media asset into the editor)
 ]);
 const RICHTEXT_MARKS = new Set(["bold", "italic", "strike", "code", "underline", "link"]);
 // Unknown-but-unambiguous spellings agents produce → the canonical type.
@@ -283,13 +284,14 @@ const NODE_ALIASES: Record<string, string> = {
   separator: "horizontalRule", divider: "horizontalRule", hr: "horizontalRule",
   horizontal_rule: "horizontalRule", bullet_list: "bulletList", ordered_list: "orderedList",
   list_item: "listItem", code_block: "codeBlock", hard_break: "hardBreak", break: "hardBreak",
+  img: "image", picture: "image",
 };
 const MARK_ALIASES: Record<string, string> = {
   strong: "bold", b: "bold", em: "italic", i: "italic",
   strikethrough: "strike", s: "strike", u: "underline", a: "link", hyperlink: "link",
 };
 const INLINE_NODES = new Set(["text", "hardBreak"]);
-const VOID_NODES = new Set(["horizontalRule", "hardBreak"]);
+const VOID_NODES = new Set(["horizontalRule", "hardBreak", "image"]);
 /** Parents whose content model is inline-only / block-only / listItem-only. */
 const INLINE_PARENTS = new Set(["paragraph", "heading"]);
 const BLOCK_PARENTS = new Set(["doc", "blockquote", "listItem"]);
@@ -303,6 +305,33 @@ function inlineDescendants(nodes: RtNode[]): RtNode[] {
   for (const n of nodes) {
     if (INLINE_NODES.has(n.type as string)) out.push(n);
     else if (Array.isArray(n.content)) out.push(...inlineDescendants(n.content as RtNode[]));
+  }
+  return out;
+}
+
+/** True when an image node carries a usable src (PM requires the attribute). */
+function validImage(n: RtNode): boolean {
+  const src = (n.attrs as RtNode | undefined)?.src;
+  return typeof src === "string" && src !== "";
+}
+
+/** Collect valid image descendants of RAW (pre-sanitize) nodes, aliased. */
+function collectImages(children: unknown): RtNode[] {
+  if (!Array.isArray(children)) return [];
+  const out: RtNode[] = [];
+  for (const raw of children) {
+    if (!raw || typeof raw !== "object") continue;
+    const n = raw as RtNode;
+    const t = NODE_ALIASES[(n.type as string) ?? ""] ?? n.type;
+    if (t === "image") {
+      if (validImage(n)) {
+        const img: RtNode = { ...n, type: "image" };
+        delete img.content;
+        out.push(img);
+      }
+    } else {
+      out.push(...collectImages(n.content));
+    }
   }
   return out;
 }
@@ -333,10 +362,21 @@ function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] 
       nodes.push(node);
       continue;
     }
+    if (type === "image") {
+      // PM requires the src attribute; a srcless image invalidates the doc.
+      if (!validImage(node)) continue;
+      delete node.content;
+      nodes.push(node);
+      continue;
+    }
     if (VOID_NODES.has(type)) delete node.content;
     else node.content = sanitizeRichTextNodes(node.content, type);
     if (RICHTEXT_NODES.has(type)) {
       nodes.push(node);
+      // Images can't live inside inline-only parents (paragraph/heading) and
+      // would be silently dropped by the content-model pass — hoist them out
+      // as block-level siblings instead.
+      if (INLINE_PARENTS.has(type)) nodes.push(...collectImages((raw as RtNode).content));
     } else {
       // Unknown type: hoist its (already-sanitized) children into this position.
       const inner = (node.content as RtNode[] | undefined) ?? [];

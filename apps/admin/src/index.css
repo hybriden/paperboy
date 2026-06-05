@@ -159,6 +159,8 @@ body {
 .prose-paperboy :where(a) { color: rgb(var(--c-accent-700)); text-decoration: underline; text-underline-offset: 2px; }
 .prose-paperboy :where(blockquote) { border-left: 3px solid rgb(var(--c-brand)); padding-left: 0.9em; margin: 0 0 0.6em; color: rgb(var(--c-muted)); font-family: var(--font-display); font-style: italic; }
 .prose-paperboy :where(strong) { font-weight: 700; }
+.prose-paperboy :where(img) { display: block; max-width: 100%; height: auto; border-radius: var(--radius); margin: 0.4em 0 0.6em; }
+.prose-paperboy :where(img.ProseMirror-selectednode) { outline: 2px solid rgb(var(--c-accent-700)); outline-offset: 2px; }
 .prose-paperboy .ProseMirror:focus { outline: none; }
 .prose-paperboy .ProseMirror p.is-editor-empty:first-child::before { content: "Write the story…"; color: rgb(var(--c-muted) / 0.7); float: left; height: 0; pointer-events: none; }
 

@@ -167,6 +167,25 @@ async function variantRow(
   return null;
 }
 
+/** Absolutize the src of every image node in a TipTap doc (non-mutating). */
+function absolutizeRichTextImages(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(absolutizeRichTextImages);
+  if (!node || typeof node !== "object") return node;
+  const o = node as Record<string, unknown>;
+  let next = o;
+  if (o.type === "image" && o.attrs && typeof o.attrs === "object") {
+    const attrs = o.attrs as Record<string, unknown>;
+    if (typeof attrs.src === "string" && attrs.src) {
+      next = { ...o, attrs: { ...attrs, src: absoluteAssetUrl(attrs.src) } };
+    }
+  }
+  if (Array.isArray(next.content)) {
+    const content = next.content.map(absolutizeRichTextImages);
+    next = next === o ? { ...o, content } : { ...next, content };
+  }
+  return next;
+}
+
 /** Strip private fields and resolve/shallow references + content areas. */
 async function sanitize(
   ctx: DeliveryCtx,
@@ -199,6 +218,10 @@ async function sanitize(
       } else {
         out[f.name] = { documentId: rv.documentId, type: rv.type ?? null };
       }
+    } else if (f.type === "richtext" && v && typeof v === "object") {
+      // Image srcs are stored as uploaded (usually relative /uploads/… paths);
+      // absolutize at read time like image FIELDS, so any frontend origin works.
+      out[f.name] = absolutizeRichTextImages(v);
     } else if (f.type === "contentArea" && Array.isArray(v)) {
       const blocks: unknown[] = [];
       for (const b of v as Array<Record<string, unknown>>) {
