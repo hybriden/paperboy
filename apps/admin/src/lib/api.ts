@@ -300,8 +300,8 @@ export const api = {
 
   // AI editorial assistant
   aiStatus: (signal?: AbortSignal) => request<{ enabled: boolean; tasks: string[] }>("GET", "/ai/status", undefined, signal),
-  aiAssist: (task: AiTask, input: string, targetLocale?: string) =>
-    request<{ result: string; provider: "anthropic" | "fallback" }>("POST", "/ai/assist", { task, input, targetLocale }),
+  aiAssist: (task: AiTask, input: string, opts?: { targetLocale?: string; instruction?: string; context?: string }) =>
+    request<{ result: string; provider: "anthropic" | "fallback" }>("POST", "/ai/assist", { task, input, ...opts }),
   aiTranslate: (texts: string[], targetLocale: string) =>
     request<{ results: string[]; provider: "anthropic" | "fallback" }>("POST", "/ai/translate", { texts, targetLocale }),
 
@@ -355,4 +355,4 @@ export interface AgentEvent {
   created?: Array<{ documentId: string; name: string; type: string }>;
 }
 
-export type AiTask = "meta_title" | "meta_description" | "summarize" | "improve" | "alt_text" | "translate";
+export type AiTask = "meta_title" | "meta_description" | "summarize" | "improve" | "alt_text" | "translate" | "rewrite" | "variants";

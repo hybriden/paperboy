@@ -41,6 +41,8 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
           task: z.enum(AI_TASKS),
           input: z.string().min(1).max(20_000),
           targetLocale: z.string().max(40).optional(),
+          instruction: z.string().max(500).optional(),
+          context: z.string().max(4000).optional(),
         }),
         response: { 200: z.object({ result: z.string(), provider: z.enum(["anthropic", "fallback"]) }) },
       },
