@@ -1,3 +1,4 @@
+import type { AssetSourceMeta } from "@paperboy/shared";
 import { desc, eq } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
@@ -26,6 +27,8 @@ export interface AssetRecord {
   size: number;
   url: string; // absolute
   alt: string;
+  /** Stock-image imports carry provider attribution; null for normal uploads. */
+  sourceMeta: AssetSourceMeta | null;
   createdAt: string;
 }
 
@@ -37,6 +40,7 @@ function toRecord(row: typeof asset.$inferSelect): AssetRecord {
     size: row.size,
     url: absoluteAssetUrl(row.url),
     alt: row.alt,
+    sourceMeta: (row.sourceMeta as AssetSourceMeta | null) ?? null,
     createdAt: row.createdAt.toISOString(),
   };
 }
@@ -45,7 +49,15 @@ function toRecord(row: typeof asset.$inferSelect): AssetRecord {
 export async function insertAsset(
   db: Database,
   ctx: AccessContext,
-  input: { documentId: string; filename: string; mime: string; size: number; relativePath: string },
+  input: {
+    documentId: string;
+    filename: string;
+    mime: string;
+    size: number;
+    relativePath: string;
+    alt?: string;
+    sourceMeta?: AssetSourceMeta;
+  },
 ): Promise<AssetRecord> {
   requirePermission(ctx, "content.create");
   await db.insert(asset).values({
@@ -54,7 +66,8 @@ export async function insertAsset(
     mime: input.mime,
     size: input.size,
     url: input.relativePath,
-    alt: "",
+    alt: input.alt ?? "",
+    sourceMeta: input.sourceMeta ?? null,
     createdBy: ctx.userId,
   });
   return getAssetRecord(db, input.documentId);

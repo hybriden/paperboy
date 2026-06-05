@@ -19,7 +19,7 @@ import { ContentArea } from "./fields/ContentArea.js";
 import { MarkdownEditor } from "./fields/MarkdownEditor.js";
 import { ReferenceField } from "./fields/ReferenceField.js";
 import { RichText } from "./fields/RichText.js";
-import { ImageField } from "./MediaLibrary.js";
+import { ImageField, StockQueryContext } from "./MediaLibrary.js";
 import { type PbRect, type PreviewMode, PreviewPane, publicSiteUrl } from "./PreviewPane.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
@@ -593,7 +593,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     </section>
   );
 
+  // Seed image pickers' stock search with the page subject (name + heading).
+  const stockQuery = [form.name, typeof form.data.heading === "string" ? form.data.heading : ""]
+    .filter(Boolean).join(" ").trim().slice(0, 120);
+
   return (
+    <StockQueryContext.Provider value={stockQuery}>
     <div className="flex h-full flex-col">
       {/* Workflow toolbar */}
       <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-panel px-4 py-1.5">
@@ -968,6 +973,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         />
       )}
     </div>
+    </StockQueryContext.Provider>
   );
 }
 

@@ -6,6 +6,7 @@ import type {
   Locale,
   RoleName,
   SessionUser,
+  StockSearchResult,
   TreeNode,
 } from "@paperboy/shared";
 
@@ -73,6 +74,13 @@ export interface AiConfigStatus {
   source: "db" | "env" | "none";
   last4: string | null;
   model: string | null;
+}
+/** Write-only stock image provider config status (the key itself is never returned). */
+export interface StockConfigStatus {
+  configured: boolean;
+  provider: string;
+  source: "db" | "env" | "none";
+  last4: string | null;
 }
 /** A content search hit (⌘K). */
 export interface SearchResult {
@@ -207,6 +215,16 @@ export const api = {
     request<AiConfigStatus>("GET", "/manage/site/ai", undefined, signal),
   setAiConfig: (body: { apiKey?: string | null; model?: string | null }) =>
     request<AiConfigStatus>("POST", "/manage/site/ai", body),
+
+  // stock images
+  stockConfig: (signal?: AbortSignal) =>
+    request<StockConfigStatus>("GET", "/manage/stock/config", undefined, signal),
+  setStockConfig: (body: { provider?: string; apiKey?: string | null }) =>
+    request<StockConfigStatus>("POST", "/manage/stock/config", body),
+  stockSearch: (q: string, signal?: AbortSignal) =>
+    request<StockSearchResult[]>("GET", `/manage/stock/search?q=${encodeURIComponent(q)}`, undefined, signal),
+  stockImport: (body: { providerId: string; alt?: string }) =>
+    request<Asset>("POST", "/manage/stock/import", body),
 
   // media
   assets: (signal?: AbortSignal) => request<Asset[]>("GET", "/manage/assets", undefined, signal),

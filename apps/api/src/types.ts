@@ -11,6 +11,7 @@ declare module "fastify" {
     loginRateMax: number;
     uploadsDir: string;
     aiConfig: { apiKey?: string; model: string };
+    stockConfig: { unsplashKey?: string };
   }
   interface FastifyRequest {
     user: SessionUser | null;

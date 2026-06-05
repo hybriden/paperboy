@@ -53,6 +53,7 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   process.env.MEDIA_PUBLIC_BASE = env.MEDIA_PUBLIC_BASE;
   app.decorate("uploadsDir", env.UPLOADS_DIR);
   app.decorate("aiConfig", { apiKey: env.ANTHROPIC_API_KEY, model: env.AI_MODEL });
+  app.decorate("stockConfig", { unsplashKey: env.UNSPLASH_ACCESS_KEY });
 
   await app.register(cookie, { secret: env.SESSION_SECRET });
   await app.register(cors, { origin: env.CORS_ORIGIN, credentials: true });

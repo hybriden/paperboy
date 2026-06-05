@@ -5,7 +5,7 @@ import { api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { useUser } from "../../lib/user.js";
 import type { ShellOutlet } from "../Shell.js";
-import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, LanguagesPanel, McpTokensPanel, PasswordPanel, SitePanel, TrashPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
+import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, LanguagesPanel, McpTokensPanel, PasswordPanel, SitePanel, StockImagesPanel, TrashPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
@@ -93,6 +93,7 @@ export function SettingsView() {
     { key: "keys", label: "API keys", group: "Administration", show: has("deliverykey.manage"), render: () => <DeliveryKeysPanel /> },
     { key: "mcp", label: "MCP", group: "Administration", show: has("user.manage"), render: () => <McpTokensPanel /> },
     { key: "ai", label: "AI", group: "Administration", show: has("user.manage"), render: () => <AiPanel /> },
+    { key: "stock", label: "Stock images", group: "Administration", show: has("user.manage"), render: () => <StockImagesPanel /> },
     { key: "webhooks", label: "Webhooks", group: "Administration", show: has("webhook.manage"), render: () => <WebhooksPanel /> },
     { key: "audit", label: "Audit log", group: "Administration", show: has("audit.read"), render: () => <AuditPanel /> },
     { key: "trash", label: "Trash", group: "Administration", show: true, render: () => <TrashPanel /> },

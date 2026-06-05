@@ -26,6 +26,9 @@ const EnvSchema = z.object({
   // otherwise a deterministic local fallback keeps the feature usable offline.
   ANTHROPIC_API_KEY: z.string().optional(),
   AI_MODEL: z.string().default("claude-haiku-4-5-20251001"),
+  // Stock images (Settings → Stock images). Env fallback for the Unsplash
+  // access key; a key stored in the CMS takes precedence.
+  UNSPLASH_ACCESS_KEY: z.string().optional(),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

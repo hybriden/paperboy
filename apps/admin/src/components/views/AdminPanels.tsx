@@ -416,6 +416,85 @@ export function AiPanel() {
   );
 }
 
+/* ----------------------------- Stock images ------------------------------- */
+export function StockImagesPanel() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const cfg = useQuery({ queryKey: ["stock-config"], queryFn: ({ signal }) => api.stockConfig(signal) });
+  const [keyInput, setKeyInput] = useState("");
+  const status = cfg.data;
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.setStockConfig({
+        provider: "unsplash",
+        apiKey: keyInput.trim() ? keyInput.trim() : undefined, // blank = keep current
+      }),
+    onSuccess: (s) => {
+      qc.setQueryData(["stock-config"], s);
+      setKeyInput("");
+      toast.success("Stock image settings saved", s.configured ? "Stock search is enabled in the image picker." : "No key set — stock search is disabled.");
+    },
+    onError: (e) => toast.error("Couldn’t save", (e as Error).message),
+  });
+  const clearKey = useMutation({
+    mutationFn: () => api.setStockConfig({ apiKey: null }),
+    onSuccess: (s) => {
+      qc.setQueryData(["stock-config"], s);
+      toast.success("Key cleared", s.source === "env" ? "Falling back to the environment key." : "Stock search is now disabled.");
+    },
+    onError: (e) => toast.error("Couldn’t clear", (e as Error).message),
+  });
+  const test = useMutation({
+    mutationFn: () => api.stockSearch("nature"),
+    onSuccess: (r) => toast.success("Stock search is live", `Unsplash returned ${r.length} results.`),
+    onError: (e) => toast.error("Stock search failed", (e as Error).message),
+  });
+
+  const statusText =
+    status?.source === "db"
+      ? `Key configured in the CMS (ending ••${status.last4})`
+      : status?.source === "env"
+        ? `Using the UNSPLASH_ACCESS_KEY environment value (ending ••${status.last4})`
+        : "No key configured — the Stock tab in the image picker is disabled.";
+
+  return (
+    <PanelShell title="Stock images" hint="Connect an Unsplash access key so editors (and agents) can search stock photos and import them straight into the media library — with alt text and photographer attribution. The key is stored encrypted and never shown again.">
+      <div className="space-y-4 p-4">
+        <div className="flex items-center gap-2 text-sm">
+          <span className={`h-2 w-2 rounded-full ${status?.configured ? "bg-published" : "bg-draft"}`} />
+          <span className="text-muted">{statusText}</span>
+        </div>
+        <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+          <label className="text-sm" style={{ minWidth: 160 }}>
+            <span className="field-label">Provider</span>
+            <select className="field-input" value="unsplash" onChange={() => undefined}>
+              <option value="unsplash">Unsplash</option>
+            </select>
+          </label>
+          <label className="grow text-sm" style={{ minWidth: 320 }}>
+            <span className="field-label">Unsplash access key</span>
+            <input
+              className="field-input"
+              type="password"
+              autoComplete="off"
+              placeholder={status?.configured ? "•••••••• (leave blank to keep)" : "Access key from unsplash.com/developers"}
+              value={keyInput}
+              onChange={(e) => setKeyInput(e.target.value)}
+            />
+            <span className="mt-1 block text-xs text-muted">Stored encrypted at rest. Demo keys allow 50 requests/hour.</span>
+          </label>
+          <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
+          <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>Test</button>
+          {status?.source === "db" && (
+            <button type="button" className="btn-subtle" disabled={clearKey.isPending} onClick={() => clearKey.mutate()}>Clear key</button>
+          )}
+        </form>
+      </div>
+    </PanelShell>
+  );
+}
+
 export function PasswordPanel() {
   const toast = useToast();
   const [oldPassword, setOld] = useState("");
