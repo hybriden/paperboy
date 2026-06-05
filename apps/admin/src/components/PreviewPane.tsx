@@ -47,6 +47,7 @@ export function PreviewPane({
   locale,
   urlPath,
   documentId,
+  kind,
   refreshSignal = 0,
   focusField,
   mode = "inspect",
@@ -56,6 +57,8 @@ export function PreviewPane({
   locale: string;
   urlPath: string | null;
   documentId?: string;
+  /** Content kind — a PAGE with no urlPath has nothing to preview (see below). */
+  kind?: string;
   refreshSignal?: number;
   focusField?: { field: string; n: number } | null;
   /** inspect = click focuses the sidebar field (classic); edit = on-page overlay. */
@@ -175,6 +178,16 @@ export function PreviewPane({
         <span className="ml-auto truncate text-xs text-muted">/{locale}{path}</span>
       </div>
       <div ref={stageRef} className="relative min-h-0 flex-1 overflow-hidden bg-canvas">
+        {kind === "page" && !urlPath && !isStart ? (
+          // A page without a URL segment resolves to NOTHING on the site —
+          // loading the iframe would show some other page (e.g. its parent).
+          <div className="grid h-full place-items-center p-6 text-center">
+            <div className="max-w-xs text-sm text-muted">
+              <p className="font-medium text-fg">No URL yet</p>
+              <p className="mt-1">Give this page a URL segment (the chip next to the name) to preview it on the site.</p>
+            </div>
+          </div>
+        ) : (
         <div
           style={{
             position: "absolute",
@@ -195,6 +208,7 @@ export function PreviewPane({
             style={{ width: "100%", height: "100%", border: 0 }}
           />
         </div>
+        )}
         {anchor && overlay && (
           <>
             {/* Highlight ring over the element being edited. */}

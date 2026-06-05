@@ -200,6 +200,25 @@ describe("update_content ergonomics: helpful errors + merge mode", () => {
     expect(intro.content[0].attrs.src).toBe("http://localhost:8091/uploads/a.png");
   });
 
+  it("unwraps locale-map values ({en: ...}) — the exact mistake a real agent burned 12 attempts on", async () => {
+    const res = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${pageId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: {
+        merge: true,
+        data: {
+          heading: { en: "Locale-wrapped heading" }, // requested locale present
+          intro: { nb: { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Eneste nøkkel" }] }] } }, // single locale-shaped key
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const got = (await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${pageId}?locale=en`, headers: authHeaders(ed) })).json();
+    expect(got.data.heading).toBe("Locale-wrapped heading");
+    expect(got.data.intro.type).toBe("doc"); // unwrapped, then kept as a doc
+  });
+
   it("merge mode patches one field and leaves the rest intact", async () => {
     const res = await s.app.inject({
       method: "PUT",
