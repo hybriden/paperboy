@@ -12,10 +12,88 @@ import { useToast } from "../ui/toast.js";
 const EMPTY = { type: "doc", content: [{ type: "paragraph" }] };
 
 /** Block-level images; keeps the asset documentId so the source asset stays
- *  traceable (delivery absolutizes the stored — usually relative — src). */
+ *  traceable (delivery absolutizes the stored — usually relative — src), and
+ *  supports drag-to-resize via a `width` attr (percent of the text column,
+ *  15–100; null = natural size). Percent survives any frontend responsively. */
 const AssetImage = Image.extend({
   addAttributes() {
-    return { ...this.parent?.(), "data-document-id": { default: null } };
+    return {
+      ...this.parent?.(),
+      "data-document-id": { default: null },
+      width: {
+        default: null,
+        parseHTML: (el: HTMLElement) => {
+          const m = /^(\d+(?:\.\d+)?)%$/.exec((el.style?.width || el.getAttribute("width") || "").trim());
+          return m ? Math.round(Number(m[1])) : null;
+        },
+        renderHTML: (attrs: { width?: number | null }) => (attrs.width ? { style: `width: ${attrs.width}%` } : {}),
+      },
+    };
+  },
+  // Custom node view: wraps the <img> with a corner handle that resizes by
+  // dragging. The width is applied live as a percent of the editor column and
+  // committed to the node attrs (one undo step) on release.
+  addNodeView() {
+    return ({ node, editor, getPos }) => {
+      let current = node;
+      const dom = document.createElement("div");
+      dom.className = "pb-rt-img";
+      const img = document.createElement("img");
+      const handle = document.createElement("span");
+      handle.className = "pb-rt-img-handle";
+      handle.title = "Drag to resize";
+      dom.append(img, handle);
+
+      const apply = () => {
+        img.src = String(current.attrs.src ?? "");
+        img.alt = String(current.attrs.alt ?? "");
+        dom.style.width = current.attrs.width ? `${current.attrs.width}%` : "";
+      };
+      apply();
+
+      handle.addEventListener("pointerdown", (e: PointerEvent) => {
+        if (!editor.isEditable) return;
+        e.preventDefault();
+        e.stopPropagation(); // don't start a ProseMirror node drag
+        const column = (dom.parentElement ?? editor.view.dom).getBoundingClientRect().width;
+        const startX = e.clientX;
+        const startWidth = dom.getBoundingClientRect().width;
+        let pct: number | null = null;
+        const move = (ev: PointerEvent) => {
+          const next = Math.round(((startWidth + (ev.clientX - startX)) / column) * 100);
+          pct = Math.min(100, Math.max(15, next));
+          dom.style.width = `${pct}%`;
+        };
+        const up = () => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          const pos = typeof getPos === "function" ? getPos() : undefined;
+          if (pct !== null && typeof pos === "number") {
+            editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, undefined, { ...current.attrs, width: pct }));
+          }
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      });
+
+      return {
+        dom,
+        update(n) {
+          if (n.type !== current.type) return false;
+          current = n;
+          apply();
+          return true;
+        },
+        selectNode() {
+          dom.classList.add("pb-rt-img-selected");
+        },
+        deselectNode() {
+          dom.classList.remove("pb-rt-img-selected");
+        },
+        // Style mutations during the live drag must not make PM re-render the node.
+        ignoreMutation: () => true,
+      };
+    };
   },
 });
 
