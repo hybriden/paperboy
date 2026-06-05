@@ -6,7 +6,7 @@ type Step = "email" | "password" | "code";
 
 export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
   const [step, setStep] = useState<Step>("email");
-  const [email, setEmail] = useState("admin@paperboy.test");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

@@ -522,7 +522,7 @@ function UserDialog({
 
   const save = useMutation({
     mutationFn: async () => {
-      if (editing) await api.updateUser(editing.id, { name, roles, sections });
+      if (editing) await api.updateUser(editing.id, { name, email, roles, sections });
       else await api.createUser({ email, name, password, roles, sections });
     },
     onSuccess: () => { toast.success(editing ? "User updated" : "User created"); onSaved(); },
@@ -534,7 +534,7 @@ function UserDialog({
       <DialogContent title={editing ? `Edit ${editing.email}` : "New user"} description="Assign roles; Authors are scoped to the sections you select." className="w-[min(560px,94vw)]">
         <div className="grid grid-cols-2 gap-3">
           <label className="text-sm"><span className="field-label">Email</span>
-            <input className="field-input" value={email} disabled={!!editing} onChange={(e) => setEmail(e.target.value)} /></label>
+            <input className="field-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
           <label className="text-sm"><span className="field-label">Name</span>
             <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} /></label>
           {!editing && (
@@ -567,7 +567,7 @@ function UserDialog({
         )}
         <div className="mt-4 flex justify-end gap-2">
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={save.isPending || roles.length === 0 || (!editing && (password.length < 10 || !email))} onClick={() => save.mutate()}>
+          <button className="btn-primary" disabled={save.isPending || roles.length === 0 || !email || (!editing && password.length < 10)} onClick={() => save.mutate()}>
             {save.isPending ? "Saving…" : editing ? "Save" : "Create user"}
           </button>
         </div>
