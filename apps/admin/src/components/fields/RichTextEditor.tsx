@@ -5,6 +5,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { useState } from "react";
 import { type AiTask, api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
+import { MediaPicker } from "../MediaLibrary.js";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "../ui/menu.js";
 import { useToast } from "../ui/toast.js";
 
@@ -106,6 +107,7 @@ export default function RichTextEditor({
   value: unknown;
   onChange: (doc: unknown) => void;
 }) {
+  const [picking, setPicking] = useState(false); // insert-image media picker
   const editor = useEditor({
     extensions: [
       // StarterKit now bundles Link; disable it so our custom-configured Link
@@ -198,6 +200,7 @@ export default function RichTextEditor({
         <Btn label="Bullet list" active={active?.bullet} on={() => editor.chain().focus().toggleBulletList().run()}><Icon.ListBullet width={14} height={14} /></Btn>
         <Btn label="Quote" active={active?.quote} on={() => editor.chain().focus().toggleBlockquote().run()}><Icon.Quote width={14} height={14} /></Btn>
         <Btn label="Link" active={active?.link} on={setLink}><Icon.Link width={14} height={14} /></Btn>
+        <Btn label="Insert image" on={() => setPicking(true)}><Icon.Image width={14} height={14} /></Btn>
         <span className="mx-1 h-4 w-px bg-line" />
         <Btn label="Undo" on={() => editor.chain().focus().undo().run()}><Icon.Undo width={14} height={14} /></Btn>
         <Btn label="Redo" on={() => editor.chain().focus().redo().run()}><Icon.Redo width={14} height={14} /></Btn>
@@ -205,6 +208,16 @@ export default function RichTextEditor({
         <AiMenu editor={editor} hasSelection={active?.hasSelection ?? false} />
       </div>
       <EditorContent editor={editor} />
+      {picking && (
+        <MediaPicker
+          onClose={() => setPicking(false)}
+          onPick={(a) => {
+            // Same node shape as the Assets-pane drag-drop path above.
+            editor.chain().focus().insertContent({ type: "image", attrs: { src: a.url, alt: a.alt, "data-document-id": a.documentId } }).run();
+            setPicking(false);
+          }}
+        />
+      )}
     </div>
   );
 }
