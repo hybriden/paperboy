@@ -121,10 +121,32 @@ function fallback(req: AiRequest): string {
   }
 }
 
+/** Normalize a `variants` response to a guaranteed JSON string array — models
+ *  routinely wrap JSON in ```fences or add prose despite instructions. */
+function normalizeVariants(raw: string): string {
+  const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const tryParse = (s: string): string | null => {
+    try {
+      const arr = JSON.parse(s) as unknown;
+      if (Array.isArray(arr) && arr.length && arr.every((x) => typeof x === "string")) return JSON.stringify(arr);
+    } catch { /* not JSON */ }
+    return null;
+  };
+  const direct = tryParse(text);
+  if (direct) return direct;
+  const embedded = text.match(/\[[\s\S]*\]/);
+  if (embedded) {
+    const fromEmbedded = tryParse(embedded[0]);
+    if (fromEmbedded) return fromEmbedded;
+  }
+  return JSON.stringify([text]); // salvage: one variant, never raw fences
+}
+
 export async function aiAssist(req: AiRequest, cfg: AiConfig): Promise<AiResult> {
   if (cfg.apiKey) {
     try {
-      return { result: await callAnthropic(req, cfg), provider: "anthropic" };
+      const result = await callAnthropic(req, cfg);
+      return { result: req.task === "variants" ? normalizeVariants(result) : result, provider: "anthropic" };
     } catch {
       // Provider error/timeout → degrade to the deterministic fallback.
     }
