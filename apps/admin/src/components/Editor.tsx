@@ -11,6 +11,7 @@ import type {
 import { Panel, PanelGroup } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
+import { postCaret } from "../lib/caret.js";
 import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
@@ -436,6 +437,15 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       if (d.type !== "paperboy:edit") return;
       const fieldName = typeof d.field === "string" ? d.field : null;
       const def = fieldName ? type?.fields.find((f) => f.name === fieldName) : undefined;
+
+      // Click-to-caret: the bridge reports where INSIDE the field the click
+      // landed (text snippet + offset). Long richtext/markdown fields use it to
+      // open at the clicked text, not the top. Mailbox: the target editor may
+      // mount later (OPE overlay / lazy TipTap chunk).
+      const caret = (d as { caret?: { snippet?: string; offset?: number } }).caret;
+      if (fieldName && def && (def.type === "richtext" || def.type === "markdown") && typeof caret?.snippet === "string" && caret.snippet.length > 0) {
+        postCaret(`f-${fieldName}`, { snippet: caret.snippet, offset: typeof caret.offset === "number" ? caret.offset : 0 });
+      }
 
       if (opeModeRef.current === "edit") {
         if (d.blockIndex == null && d.rect) {

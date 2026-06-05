@@ -2,8 +2,9 @@ import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import { type Editor, EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { type AiTask, api } from "../../lib/api.js";
+import { type PbCaret, takeCaret } from "../../lib/caret.js";
 import { Icon } from "../../lib/icons.js";
 import { MediaPicker } from "../MediaLibrary.js";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "../ui/menu.js";
@@ -236,6 +237,37 @@ export default function RichTextEditor({
       },
     },
   });
+
+  // Click-to-caret (on-page editing): the preview reported where inside this
+  // field the click landed; find that snippet in the doc and put the caret
+  // there. The snippet comes from a single rendered DOM text node, which maps
+  // 1:1 to a doc text node, so a plain per-text-node search suffices.
+  useEffect(() => {
+    if (!editor) return;
+    const applyCaret = (caret: PbCaret) => {
+      let pos: number | null = null;
+      editor.state.doc.descendants((n, p) => {
+        if (pos !== null) return false;
+        if (n.isText && n.text) {
+          const i = n.text.indexOf(caret.snippet);
+          if (i >= 0) pos = p + i + Math.min(Math.max(caret.offset, 0), caret.snippet.length);
+        }
+        return pos === null;
+      });
+      if (pos === null) return; // text changed since render — field focus is still right
+      editor.chain().focus().setTextSelection(pos).run();
+      editor.view.dispatch(editor.view.state.tr.scrollIntoView());
+    };
+    const queued = takeCaret(id);
+    if (queued) requestAnimationFrame(() => applyCaret(queued)); // after lazy mount + initial layout
+    const onEvent = (e: Event) => {
+      if ((e as CustomEvent).detail?.id !== id) return;
+      const c = takeCaret(id);
+      if (c) applyCaret(c);
+    };
+    window.addEventListener("pb:caret", onEvent);
+    return () => window.removeEventListener("pb:caret", onEvent);
+  }, [editor, id]);
 
   // TipTap v3 doesn't re-render on transactions by default — subscribe to the
   // active states the toolbar highlights, or they'd be permanently stale.
