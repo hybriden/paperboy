@@ -148,6 +148,58 @@ describe("update_content ergonomics: helpful errors + merge mode", () => {
     expect(intro.content[3].content[0].text).toBe("salvaged");
   });
 
+  it("richtext images: kept at block level, hoisted out of paragraphs, srcless dropped", async () => {
+    const res = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${pageId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: {
+        merge: true,
+        data: {
+          intro: {
+            type: "doc",
+            content: [
+              { type: "image", attrs: { src: "/uploads/a.png", alt: "A" } }, // valid block-level image
+              {
+                type: "paragraph",
+                content: [
+                  { type: "text", text: "around " },
+                  { type: "image", attrs: { src: "/uploads/b.png", alt: "B" } }, // inside a paragraph → hoisted out
+                ],
+              },
+              { type: "img", attrs: { src: "/uploads/c.png" } }, // alias → image
+              { type: "image", attrs: { alt: "no src" } }, // srcless → dropped (PM requires src)
+            ],
+          },
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const intro = (await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${pageId}?locale=en`, headers: authHeaders(ed) })).json().data.intro;
+    expect(intro.content.map((n: { type: string }) => n.type)).toEqual(["image", "paragraph", "image", "image"]);
+    expect(intro.content[1].content.map((n: { type: string }) => n.type)).toEqual(["text"]); // image gone from the paragraph…
+    expect(intro.content[2].attrs.src).toBe("/uploads/b.png"); // …and hoisted right after it
+    expect(intro.content[3].attrs.src).toBe("/uploads/c.png");
+  });
+
+  it("delivery absolutizes richtext image srcs", async () => {
+    const publish = await s.app.inject({
+      method: "POST",
+      url: `/api/v1/manage/content/${pageId}/publish?locale=en`,
+      headers: authHeaders(ed),
+    });
+    expect(publish.statusCode).toBe(200);
+    const res = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/delivery/content/${pageId}?locale=en`,
+      headers: { "x-api-key": "pk_live_test_public" },
+    });
+    expect(res.statusCode).toBe(200);
+    const intro = res.json().data.intro;
+    // MEDIA_PUBLIC_BASE is http://localhost:8091 in the test env.
+    expect(intro.content[0].attrs.src).toBe("http://localhost:8091/uploads/a.png");
+  });
+
   it("merge mode patches one field and leaves the rest intact", async () => {
     const res = await s.app.inject({
       method: "PUT",

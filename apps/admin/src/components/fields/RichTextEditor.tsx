@@ -1,3 +1,4 @@
+import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import { type Editor, EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -8,6 +9,14 @@ import { Menu, MenuContent, MenuItem, MenuTrigger } from "../ui/menu.js";
 import { useToast } from "../ui/toast.js";
 
 const EMPTY = { type: "doc", content: [{ type: "paragraph" }] };
+
+/** Block-level images; keeps the asset documentId so the source asset stays
+ *  traceable (delivery absolutizes the stored — usually relative — src). */
+const AssetImage = Image.extend({
+  addAttributes() {
+    return { ...this.parent?.(), "data-document-id": { default: null } };
+  },
+});
 
 /**
  * Toolbar button. Deliberately a MODULE-LEVEL component: defined inside the
@@ -103,6 +112,7 @@ export default function RichTextEditor({
       // (no duplicate extension warning) is the only one registered.
       StarterKit.configure({ heading: { levels: [2, 3] }, link: false }),
       Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { rel: "noopener" } }),
+      AssetImage.configure({ allowBase64: false }),
     ],
     content: (value && typeof value === "object" && "type" in (value as object) ? value : EMPTY) as object,
     onUpdate: ({ editor }) => onChange(editor.getJSON()),
@@ -111,6 +121,38 @@ export default function RichTextEditor({
         id,
         class:
           "prose-paperboy min-h-[120px] rounded-b-[var(--radius)] border border-t-0 border-line bg-panel px-3 py-2.5 text-sm text-fg outline-none focus:border-accent",
+      },
+      // Drop a media asset (dragged from the Assets pane) → insert an image
+      // node at the drop position. Same application/x-paperboy channel as
+      // image fields and content areas.
+      handleDrop: (view, event) => {
+        const raw = event.dataTransfer?.getData("application/x-paperboy");
+        if (!raw) return false;
+        try {
+          const p = JSON.parse(raw) as { kind?: string; documentId?: string; url?: string; alt?: string };
+          if (p.kind !== "media" || !p.url) return false;
+          const imageNode = view.state.schema.nodes.image;
+          if (!imageNode) return false;
+          event.preventDefault();
+          const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? view.state.selection.to;
+          view.dispatch(
+            view.state.tr.insert(
+              pos,
+              imageNode.create({ src: p.url, alt: p.alt ?? "", "data-document-id": p.documentId ?? null }),
+            ),
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      // External drags don't get PM's dragover handling — without preventDefault
+      // the browser refuses the drop.
+      handleDOMEvents: {
+        dragover: (_view, event) => {
+          if (event.dataTransfer?.types.includes("application/x-paperboy")) event.preventDefault();
+          return false;
+        },
       },
     },
   });

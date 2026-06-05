@@ -48,6 +48,13 @@ function renderNode(node: Node, key: number): ReactNode {
       return <blockquote key={key}>{kids}</blockquote>;
     case "hardBreak":
       return <br key={key} />;
+    case "horizontalRule":
+      return <hr key={key} />;
+    case "image": {
+      const src = String(node.attrs?.src ?? "");
+      if (!src) return null;
+      return <img key={key} src={src} alt={String(node.attrs?.alt ?? "")} title={node.attrs?.title ? String(node.attrs.title) : undefined} loading="lazy" />;
+    }
     default:
       return <Fragment key={key}>{kids}</Fragment>;
   }
