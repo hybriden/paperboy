@@ -257,8 +257,9 @@ tool("create_webhook", "Create a webhook (admin). Returns the signing secret onc
   (a) => createWebhook(db, ctx, a));
 tool("delete_webhook", "Delete a webhook by id (admin).", { id: z.number() },
   async ({ id }) => { await deleteWebhook(db, ctx, id); return { ok: true }; });
-tool("list_audit", "Read the append-only audit log (admin).", { limit: z.number().optional(), before: z.number().optional() },
-  ({ limit, before }) => listAudit(db, ctx, { limit, before }));
+tool("list_audit", "Read the append-only audit log (admin). Filter by action prefix (e.g. 'content.'), actor user id, documentId, or ISO time range.",
+  { limit: z.number().optional(), before: z.number().optional(), action: z.string().optional(), actorUserId: z.string().optional(), documentId: z.string().optional(), from: z.string().optional(), to: z.string().optional() },
+  (a) => listAudit(db, ctx, a));
 tool("list_locales", "List enabled locales.", {}, async () => { need("content.read"); return listLocales(db); });
 
 /* ---------------------------------- AI --------------------------------- */

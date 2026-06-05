@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import type { ContentTypeDef, RoleName } from "@paperboy/shared";
@@ -833,22 +833,68 @@ export function TrashPanel() {
 }
 
 /* ------------------------------- Audit log -------------------------------- */
+const AUDIT_PAGE = 50;
+// Action categories (prefix-matched server-side; "content." covers the group).
+const AUDIT_ACTIONS = ["content.", "auth.", "user.", "contenttype.", "locale.", "media.", "webhook.", "site."];
+
 export function AuditPanel() {
-  const audit = useQuery({ queryKey: ["audit"], queryFn: ({ signal }) => api.audit(100, signal) });
+  const [action, setAction] = useState("");
+  const [documentId, setDocumentId] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const filters = {
+    action: action || undefined,
+    documentId: documentId.trim() || undefined,
+    from: from ? new Date(from).toISOString() : undefined,
+    // `to` is a date — include the whole day.
+    to: to ? new Date(`${to}T23:59:59.999`).toISOString() : undefined,
+  };
+  const audit = useInfiniteQuery({
+    queryKey: ["audit", filters],
+    queryFn: ({ pageParam, signal }) => api.audit({ ...filters, limit: AUDIT_PAGE, before: pageParam }, signal),
+    initialPageParam: undefined as number | undefined,
+    // A full page means there may be older rows; the cursor is the oldest id shown.
+    getNextPageParam: (last) => (last.length === AUDIT_PAGE ? last[last.length - 1]?.id : undefined),
+  });
+  const rows = audit.data?.pages.flat() ?? [];
   return (
     <PanelShell title="Audit log" hint="Append-only record of every privileged action.">
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
+        <select className="field-input w-auto py-1 text-xs" value={action} onChange={(e) => setAction(e.target.value)} aria-label="Filter by action">
+          <option value="">All actions</option>
+          {AUDIT_ACTIONS.map((a) => <option key={a} value={a}>{a.slice(0, -1)}</option>)}
+        </select>
+        <input className="field-input w-44 py-1 font-mono text-xs" placeholder="Document ID…" value={documentId} onChange={(e) => setDocumentId(e.target.value)} aria-label="Filter by document ID" />
+        <input className="field-input w-auto py-1 text-xs" type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From date" />
+        <span className="text-xs text-muted">–</span>
+        <input className="field-input w-auto py-1 text-xs" type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To date" />
+        {(action || documentId || from || to) && (
+          <button className="btn-subtle px-2 py-1 text-xs" onClick={() => { setAction(""); setDocumentId(""); setFrom(""); setTo(""); }}>Clear</button>
+        )}
+      </div>
       <div className="max-h-[420px] overflow-auto">
-        {(audit.data ?? []).map((a) => (
+        {rows.map((a) => (
           <div key={a.id} className="flex items-center gap-3 border-b border-line px-4 py-2 text-xs last:border-0">
             <span className="font-mono text-muted">{new Date(a.ts).toLocaleString()}</span>
             <span className="rounded bg-line/70 px-1.5 py-0.5 font-medium text-fg">{a.action}</span>
             {a.actorName && <span className="text-muted">by {a.actorName}</span>}
-            {a.documentId && <code className="text-muted">{a.documentId.slice(0, 8)}…</code>}
+            {a.documentId && (
+              <button className="font-mono text-muted hover:text-fg" title="Filter by this document" onClick={() => setDocumentId(a.documentId ?? "")}>
+                {a.documentId.slice(0, 8)}…
+              </button>
+            )}
             {a.locale && <span className="text-muted">[{a.locale}]</span>}
             {a.ip && <span className="ml-auto text-muted">{a.ip}</span>}
           </div>
         ))}
-        {audit.data?.length === 0 && <p className="p-4 text-sm text-muted">No audit entries.</p>}
+        {rows.length === 0 && !audit.isLoading && <p className="p-4 text-sm text-muted">No audit entries match.</p>}
+        {audit.hasNextPage && (
+          <div className="p-2 text-center">
+            <button className="btn-subtle px-3 py-1 text-xs" disabled={audit.isFetchingNextPage} onClick={() => void audit.fetchNextPage()}>
+              {audit.isFetchingNextPage ? "Loading…" : "Load older entries"}
+            </button>
+          </div>
+        )}
       </div>
     </PanelShell>
   );
