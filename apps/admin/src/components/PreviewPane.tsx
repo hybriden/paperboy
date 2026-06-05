@@ -39,7 +39,34 @@ const WIDTHS: Record<Device, number> = { desktop: 1280, tablet: 834, mobile: 390
 // Real device viewport heights so `100vh` sections look right (not inflated).
 const HEIGHTS: Record<Device, number> = { desktop: 860, tablet: 1112, mobile: 844 };
 
-export function PreviewPane({ locale, urlPath, documentId, refreshSignal = 0, focusField }: { locale: string; urlPath: string | null; documentId?: string; refreshSignal?: number; focusField?: { field: string; n: number } | null }) {
+/** Element rect inside the iframe's viewport (CSS px, pre-scale). */
+export interface PbRect { x: number; y: number; w: number; h: number }
+export type PreviewMode = "inspect" | "edit";
+
+export function PreviewPane({
+  locale,
+  urlPath,
+  documentId,
+  refreshSignal = 0,
+  focusField,
+  mode = "inspect",
+  onModeChange,
+  overlay,
+  livePatch,
+}: {
+  locale: string;
+  urlPath: string | null;
+  documentId?: string;
+  refreshSignal?: number;
+  focusField?: { field: string; n: number } | null;
+  /** inspect = click focuses the sidebar field (classic); edit = on-page overlay. */
+  mode?: PreviewMode;
+  onModeChange?: (m: PreviewMode) => void;
+  /** Anchored on-page editor: rect comes from the bridge, content from Editor. */
+  overlay?: { rect: PbRect; content: React.ReactNode; onClose: () => void } | null;
+  /** Live DOM patch for the page (text/html swap, no reload) — keyed by n. */
+  livePatch?: { field: string; text?: string; html?: string; n: number } | null;
+}) {
   const [device, setDevice] = useState<Device>("desktop");
   const [nonce, setNonce] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -49,6 +76,23 @@ export function PreviewPane({ locale, urlPath, documentId, refreshSignal = 0, fo
   useEffect(() => {
     if (focusField?.field) iframeRef.current?.contentWindow?.postMessage({ type: "paperboy:focus", field: focusField.field }, "*");
   }, [focusField]);
+  // Editor → preview: live-update the clicked field's rendered content so the
+  // page reflects overlay typing WITHOUT a full iframe reload.
+  useEffect(() => {
+    if (livePatch?.field) {
+      iframeRef.current?.contentWindow?.postMessage(
+        { type: "paperboy:patch", field: livePatch.field, text: livePatch.text, html: livePatch.html },
+        "*",
+      );
+    }
+  }, [livePatch]);
+  // Esc closes the on-page overlay (when focus is on the admin side).
+  useEffect(() => {
+    if (!overlay) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") overlay.onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [overlay]);
 
   // Measure the stage so we can scale the fixed-width viewport down to fit.
   const stageRef = useRef<HTMLDivElement>(null);
@@ -86,12 +130,33 @@ export function PreviewPane({ locale, urlPath, documentId, refreshSignal = 0, fo
   // Desktop fills the pane height (scroll inside); tablet/mobile keep their real height.
   const innerH = device === "desktop" && scale ? box.h / scale : vh;
 
+  // On-page overlay placement: transform the bridge-reported (pre-scale) rect
+  // into pane coordinates, anchor the card under the element, clamp to the pane.
+  const CARD_W = 380;
+  const anchor = overlay
+    ? (() => {
+        const sx = tx + overlay.rect.x * scale;
+        const sy = overlay.rect.y * scale;
+        const sw = overlay.rect.w * scale;
+        const sh = overlay.rect.h * scale;
+        return {
+          ring: { left: sx, top: sy, width: sw, height: sh },
+          card: {
+            left: Math.max(8, Math.min(sx, Math.max(8, box.w - CARD_W - 8))),
+            top: Math.max(8, Math.min(sy + sh + 8, Math.max(8, box.h - 240))),
+          },
+        };
+      })()
+    : null;
+
   return (
     <div className="flex h-full flex-col">
       {/* Persistent "viewing drafts" banner (editors must know). */}
-      <div className="flex items-center gap-2 bg-draft/15 px-3 py-1.5 text-xs font-medium text-draft" role="status">
-        <span className="h-2 w-2 rounded-full bg-draft" />
-        Preview — click any heading, text or block to edit it
+      <div className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium ${mode === "edit" ? "bg-accent/15 text-accent-700" : "bg-draft/15 text-draft"}`} role="status">
+        <span className={`h-2 w-2 rounded-full ${mode === "edit" ? "bg-accent" : "bg-draft"}`} />
+        {mode === "edit"
+          ? "On-page editing — click an element to edit it right here"
+          : "Preview — click any heading, text or block to edit it"}
       </div>
       <div className="flex items-center gap-2 border-b border-line bg-panel px-3 py-2">
         <div className="flex rounded border border-line p-0.5">
@@ -101,6 +166,16 @@ export function PreviewPane({ locale, urlPath, documentId, refreshSignal = 0, fo
           ))}
         </div>
         <button className="btn-subtle px-2 py-0.5 text-xs" onClick={() => setNonce((n) => n + 1)}>Refresh</button>
+        {onModeChange && (
+          <button
+            className={`rounded border px-2 py-0.5 text-xs ${mode === "edit" ? "border-accent bg-accent/15 font-medium text-accent-700" : "border-line text-muted hover:bg-canvas"}`}
+            aria-pressed={mode === "edit"}
+            title="Edit properties directly on the page (Optimizely-style on-page edit)"
+            onClick={() => onModeChange(mode === "edit" ? "inspect" : "edit")}
+          >
+            ✎ Edit on page
+          </button>
+        )}
         <span className="text-[11px] tabular-nums text-muted">{target}px · {Math.round(scale * 100)}%</span>
         <span className="ml-auto truncate text-xs text-muted">/{locale}{path}</span>
       </div>
@@ -125,6 +200,25 @@ export function PreviewPane({ locale, urlPath, documentId, refreshSignal = 0, fo
             style={{ width: "100%", height: "100%", border: 0 }}
           />
         </div>
+        {anchor && overlay && (
+          <>
+            {/* Highlight ring over the element being edited. */}
+            <div
+              className="pointer-events-none absolute z-10 rounded-sm ring-2 ring-accent"
+              style={anchor.ring}
+              aria-hidden
+            />
+            {/* The anchored editor card (unscaled admin UI). */}
+            <div
+              className="absolute z-20 rounded-[var(--radius-lg)] border border-line bg-panel shadow-pop"
+              style={{ ...anchor.card, width: CARD_W }}
+              role="dialog"
+              aria-label="Edit property"
+            >
+              {overlay.content}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
