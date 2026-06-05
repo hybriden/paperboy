@@ -219,6 +219,45 @@ describe("update_content ergonomics: helpful errors + merge mode", () => {
     expect(got.data.intro.type).toBe("doc"); // unwrapped, then kept as a doc
   });
 
+  it("converts a TipTap doc sent to a MARKDOWN field into real Markdown (structure kept)", async () => {
+    // Regression: a real agent sent {type:"doc",…} for BlogPost.body (markdown).
+    // The old flattener concatenated text nodes with NO separators — destroyed
+    // content + reported success → the agent looped re-sending the payload.
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: authHeaders(ed),
+      payload: { type: "BlogPost", locale: "en", name: "Md Coercion", parentId: s.ids.blogId },
+    });
+    const id = created.json().documentId;
+    const res = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${id}?locale=en`,
+      headers: authHeaders(ed),
+      payload: {
+        merge: true,
+        data: {
+          title: "Md Coercion",
+          body: {
+            type: "doc",
+            content: [
+              { type: "heading", attrs: { level: 2 }, content: [{ type: "text", text: "The Numbers That Matter" }] },
+              { type: "paragraph", content: [{ type: "text", text: "Gartner's latest research says " }, { type: "text", text: "75%", marks: [{ type: "bold" }] }, { type: "text", text: " of new apps." }] },
+              { type: "bulletList", content: [
+                { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "First point" }] }] },
+                { type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "Second point" }] }] },
+              ] },
+            ],
+          },
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json().data.body as string;
+    expect(typeof body).toBe("string");
+    expect(body).toBe("## The Numbers That Matter\n\nGartner's latest research says **75%** of new apps.\n\n- First point\n- Second point");
+  });
+
   it("merge mode patches one field and leaves the rest intact", async () => {
     const res = await s.app.inject({
       method: "PUT",
