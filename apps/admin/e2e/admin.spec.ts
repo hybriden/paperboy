@@ -307,13 +307,15 @@ test("duplicate a page from the tree context menu → opens a (copy)", async ({ 
   const dlg = page.getByRole("dialog", { name: "Create content" });
   await dlg.getByLabel("Name").fill(unique);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(page.getByLabel("Name")).toHaveValue(unique, { timeout: 10_000 });
+  // Scoped to #editor: while the dialog is closing, its Name input also matches.
+  const editorName = page.locator("#editor").getByRole("textbox", { name: "Name" });
+  await expect(editorName).toHaveValue(unique, { timeout: 10_000 });
 
   // Right-click the new page → Duplicate.
   await page.getByRole("treeitem", { name: new RegExp(unique) }).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Duplicate" }).click();
   // The editor navigates to the clone, whose name carries "(copy)".
-  await expect(page.getByLabel("Name")).toHaveValue(`${unique} (copy)`, { timeout: 10_000 });
+  await expect(editorName).toHaveValue(`${unique} (copy)`, { timeout: 10_000 });
 });
 
 test("version history dialog lists versions and can restore", async ({ page }) => {
