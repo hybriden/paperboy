@@ -20,6 +20,7 @@ import { registerAiRoutes } from "./routes/ai.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDeliveryRoutes } from "./routes/delivery.js";
 import { registerHealthRoutes } from "./routes/health.js";
+import { registerMediaRoutes } from "./routes/media.js";
 import { registerManageRoutes } from "./routes/manage.js";
 import "./types.js";
 
@@ -141,6 +142,9 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   await app.register(registerManageRoutes, { prefix: "/api/v1/manage" });
   await app.register(registerAiRoutes, { prefix: "/api/v1/ai" });
   await app.register(registerDeliveryRoutes, { prefix: "/api/v1/delivery" });
+  // Image transforms (?w=&format=&q=) — the :file param route also serves
+  // originals; the static wildcard above remains as fallback for nested paths.
+  await app.register(registerMediaRoutes);
 
   // Scheduled-publish ticker: promotes due drafts and expires due content. Single
   // long-lived process (one container); the query uses no cross-request state.
