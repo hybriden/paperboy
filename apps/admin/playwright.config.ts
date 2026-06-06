@@ -5,8 +5,9 @@ export default defineConfig({
   timeout: 60_000,
   fullyParallel: false,
   workers: 1,
-  retries: 0,
-  reporter: [["list"]],
+  // Local runs fail fast; CI absorbs the flake budget of a real browser + composed stack.
+  retries: process.env.CI ? 2 : 0,
+  reporter: process.env.CI ? [["list"], ["github"]] : [["list"]],
   use: {
     baseURL: process.env.ADMIN_URL ?? "http://localhost:8090",
     screenshot: "only-on-failure",

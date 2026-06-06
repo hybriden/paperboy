@@ -57,3 +57,52 @@ jobs:
 
       - name: Build web (Next.js)
         run: pnpm --filter @paperboy/web build
+
+  e2e:
+    name: e2e (Playwright vs composed stack)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright chromium
+        run: pnpm --filter @paperboy/admin exec playwright install --with-deps chromium
+
+      - name: Start the full stack (db → migrate+seed → api → web → admin)
+        # COOKIE_SECURE=false: the suite logs in over http://localhost:8090
+        # (the same reason live-deploy runs need ADMIN_URL=https://…).
+        run: docker compose up -d --build --wait
+        env:
+          COOKIE_SECURE: "false"
+          ALLOW_INSECURE_COOKIES: "true"
+
+      - name: Wait for admin + api
+        run: |
+          curl --retry 30 --retry-delay 2 --retry-all-errors -fsS http://localhost:8091/health
+          curl --retry 30 --retry-delay 2 --retry-all-errors -fsS -o /dev/null http://localhost:8090
+
+      - name: Run e2e suite
+        run: pnpm --filter @paperboy/admin test:e2e
+
+      - name: Stack logs (on failure)
+        if: failure()
+        run: docker compose logs --tail 200 api admin web
+
+      - name: Upload traces/screenshots (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            apps/admin/test-results/
+          retention-days: 7
