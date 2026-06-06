@@ -1,6 +1,15 @@
-import { PaperboyError, createClient, mediaSrcset, mediaUrl } from "@paperboy/client";
+import { type DeliveryContent as ClientDeliveryContent, PaperboyError, createClient, mediaSrcset, mediaUrl } from "@paperboy/client";
+import type { DeliveryContent as SharedDeliveryContent } from "@paperboy/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PREVIEW_KEY, PUBLIC_KEY, type Suite, authHeaders, login, setupApi } from "./helpers.js";
+
+// COMPILE-TIME parity: the client ships its own DeliveryContent (zero-dep npm
+// package); it must stay assignable BOTH ways with the server's shared schema
+// type. A drift in either direction breaks this file's typecheck/transform.
+const _sharedToClient: ClientDeliveryContent = {} as SharedDeliveryContent;
+const _clientToShared: SharedDeliveryContent = {} as ClientDeliveryContent;
+void _sharedToClient;
+void _clientToShared;
 
 /**
  * @paperboy/client end-to-end: the SDK talks REAL HTTP to a listening api

@@ -1,20 +1,38 @@
 {
   "name": "@paperboy/client",
   "version": "0.1.0",
-  "private": true,
+  "description": "Typed client for the Paperboy headless CMS Delivery API — lists, search, media variants, optional ETag cache. Zero dependencies, no codegen.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hybriden/paperboy.git",
+    "directory": "packages/client"
+  },
+  "homepage": "https://github.com/hybriden/paperboy/tree/main/packages/client#readme",
+  "keywords": ["paperboy", "cms", "headless-cms", "delivery-api", "typescript", "client", "sdk"],
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": ["dist", "README.md"],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      }
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo 'lint: client (typecheck covers it)'"
-  },
-  "dependencies": {
-    "@paperboy/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^22",

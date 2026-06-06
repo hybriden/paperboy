@@ -278,10 +278,6 @@ importers:
         version: 5.9.3
 
   packages/client:
-    dependencies:
-      '@paperboy/shared':
-        specifier: workspace:*
-        version: link:../shared
     devDependencies:
       '@types/node':
         specifier: ^22

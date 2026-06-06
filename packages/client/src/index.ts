@@ -1,11 +1,10 @@
-import type { DeliveryContent } from "@paperboy/shared";
-
 /**
  * @paperboy/client — the typed Delivery API client.
  *
- * A thin, dependency-free wrapper over the Delivery API's HTTP contract. The
- * types come straight from @paperboy/shared (the same Zod schemas the server
- * serializes with), so a consumer is end-to-end typed without codegen.
+ * A thin, ZERO-dependency wrapper over the Delivery API's HTTP contract. The
+ * types mirror @paperboy/shared (the same Zod schemas the server serializes
+ * with — parity is asserted at compile time in the monorepo's SDK test), so a
+ * consumer is end-to-end typed without codegen.
  *
  *   const cms = createClient({ baseUrl: "https://cms.example.com", key: "pk_live_…" });
  *   const post = await cms.getBySlug<BlogPostData>("hello-world", { locale: "en", populate: 2 });
@@ -14,6 +13,26 @@ import type { DeliveryContent } from "@paperboy/shared";
  * Two-token model: a `pk_live_…` key sees PUBLISHED content only; a `prv_…`
  * key sees drafts (use it server-side only — e.g. Next.js Draft Mode).
  */
+
+/**
+ * A delivered content item — the Delivery API's resolved output shape.
+ * Mirrors @paperboy/shared's DeliveryContent (compile-time parity-checked in
+ * the monorepo) so this package ships with zero dependencies.
+ */
+export interface DeliveryContent {
+  documentId: string;
+  type: string;
+  /** page | block | global — render pages in content areas as teasers (urlPath), blocks by type. */
+  kind: "page" | "block" | "global";
+  locale: string;
+  name: string;
+  slug: string | null;
+  /** Hierarchical URL path (pages only) — null for blocks or no-leak-hidden ancestors. */
+  urlPath: string | null;
+  /** Cache-version: bumped on publish; used for ETag / cache busting. */
+  cv: number;
+  data: Record<string, unknown>;
+}
 
 export interface PaperboyClientOptions {
   /** API origin, e.g. "https://cms.example.com" or "http://localhost:8091". */
