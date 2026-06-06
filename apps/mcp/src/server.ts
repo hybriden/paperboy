@@ -87,20 +87,34 @@ const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY;
 const UPLOADS_DIR = process.env.UPLOADS_DIR ?? "/app/uploads";
 
 // Set MCP_HTTP_PORT to serve over Streamable HTTP (for remote clients like
-// harmonix) instead of stdio. The process still acts as the single MCP_TOKEN
-// user; every HTTP request must present that same token as a Bearer.
+// harmonix) instead of stdio. The process acts as a single user (its boot
+// identity); a request may authenticate with the boot MCP_TOKEN itself OR any
+// unrevoked admin-minted token belonging to the SAME user — so "mint a token
+// in Settings → MCP, paste it into the client" works with no server restart.
 const MCP_HTTP_PORT = process.env.MCP_HTTP_PORT ? Number(process.env.MCP_HTTP_PORT) : undefined;
 const MCP_HTTP_PATH = process.env.MCP_HTTP_PATH ?? "/mcp";
 
-/** Constant-time check that the request carries `Authorization: Bearer <MCP_TOKEN>`. */
-function bearerOk(req: IncomingMessage): boolean {
-  const token = MCP_TOKEN;
-  if (!token) return false;
+function bearerOf(req: IncomingMessage): string | null {
   const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "");
-  if (!m?.[1]) return false;
-  const got = Buffer.from(m[1]);
-  const want = Buffer.from(token);
-  return got.length === want.length && timingSafeEqual(got, want);
+  return m?.[1] ?? null;
+}
+
+/**
+ * Accept the boot token (constant-time compare) or any valid mcp_token row
+ * resolving to the SAME user the process authenticated as. A token for a
+ * DIFFERENT user is rejected — this process carries one identity; impersonating
+ * another user through it would bypass that user's own RBAC trail.
+ */
+async function bearerOk(req: IncomingMessage, bootUserId: string): Promise<boolean> {
+  const presented = bearerOf(req);
+  if (!presented) return false;
+  if (MCP_TOKEN) {
+    const got = Buffer.from(presented);
+    const want = Buffer.from(MCP_TOKEN);
+    if (got.length === want.length && timingSafeEqual(got, want)) return true;
+  }
+  const userId = await verifyMcpToken(db, presented); // hashed lookup; null when unknown/revoked
+  return userId !== null && userId === bootUserId;
 }
 
 const { db } = createDb(DATABASE_URL);
@@ -437,7 +451,7 @@ async function main(): Promise<void> {
         res.end(JSON.stringify({ error: "not found" }));
         return;
       }
-      if (!bearerOk(req)) {
+      if (!(await bearerOk(req, userId))) {
         res.writeHead(401, { "content-type": "application/json", "www-authenticate": "Bearer" });
         res.end(JSON.stringify({ error: "unauthorized" }));
         return;
