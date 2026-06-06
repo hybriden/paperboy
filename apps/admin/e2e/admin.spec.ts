@@ -252,9 +252,13 @@ test("URL structure is built from the page hierarchy (start → child)", async (
   await page.getByRole("treeitem", { name: /Home/ }).click({ button: "right" });
   await page.getByRole("menuitem", { name: /New child page/ }).click();
   const seg = `team${Date.now().toString().slice(-4)}`;
+  const teamName = `Team-${seg}`;
   const dlg = page.getByRole("dialog", { name: "Create content" });
-  await dlg.getByLabel("Name").fill("Team");
+  await dlg.getByLabel("Name").fill(teamName);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
+  // Wait for navigation to the new child — filling the URL popover while the
+  // editor still shows HOME would edit the start page's slug.
+  await expect(editorName(page)).toHaveValue(teamName, { timeout: 15_000 });
   // Set the URL segment (in the URL popover); the editor's URL chip is built
   // from the hierarchy.
   await page.getByRole("button", { name: "URL settings" }).click();
@@ -266,23 +270,26 @@ test("URL structure is built from the page hierarchy (start → child)", async (
 
 test("re-parent a page via Move to… (change hierarchical position)", async ({ page }) => {
   await login(page);
-  // Create a top-level page.
+  // Create a top-level page (unique name: a CI retry would otherwise collide
+  // with the previous attempt's leftover and break the strict-mode locators).
+  const mover = `Mover-${Date.now().toString(36)}`;
   await page.getByRole("button", { name: "Create new content" }).click();
   const dlg = page.getByRole("dialog", { name: "Create content" });
-  await dlg.getByLabel("Name").fill("Mover");
+  await dlg.getByLabel("Name").fill(mover);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(page.getByRole("treeitem", { name: /Mover/ })).toBeVisible(); // top-level
+  await expect(page.getByRole("treeitem", { name: new RegExp(mover) })).toBeVisible(); // top-level
 
   // Move it under "Home" via the context menu.
-  await page.getByRole("treeitem", { name: /Mover/ }).click({ button: "right" });
+  await page.getByRole("treeitem", { name: new RegExp(mover) }).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Move to…", exact: true }).click();
   await page.getByLabel("New parent").selectOption({ label: "Home" });
   await page.getByRole("button", { name: "Move here" }).click();
 
-  // Hierarchy changed: confirmation toast, the page left the top level, and
-  // "Home" now exposes an expand affordance (aria-expanded) because it gained a child.
-  await expect(page.getByText("Page moved")).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole("treeitem", { name: /Mover/ })).toHaveCount(0, { timeout: 10_000 });
+  // Hierarchy changed: confirmation toast (.first(): the toast text is doubled
+  // by its aria-live announcement), the page left the top level, and "Home" now
+  // exposes an expand affordance (aria-expanded) because it gained a child.
+  await expect(page.getByText("Page moved").first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("treeitem", { name: new RegExp(mover) })).toHaveCount(0, { timeout: 10_000 });
   await expect(page.getByRole("treeitem", { name: /Home/ }).first()).toHaveAttribute("aria-expanded", "false");
 });
 
