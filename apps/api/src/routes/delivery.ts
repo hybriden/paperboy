@@ -6,6 +6,7 @@ import {
   deliveryGetBySlug,
   deliveryGlobal,
   deliveryList,
+  deliverySearch,
   deliveryStartPage,
   verifyDeliveryKey,
 } from "@paperboy/db";
@@ -72,9 +73,18 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
           type: z.string().optional(),
           /** Only items that are direct children of this document (e.g. a ListPage's own subtree). */
           parentId: z.string().optional(),
-        }),
+          /** Page size (pagination is opt-in; omitted = all items). */
+          limit: z.coerce.number().int().min(1).max(500).optional(),
+          offset: z.coerce.number().int().min(0).optional(),
+          /** Sort key: name | createdAt | data.<field>; prefix "-" for descending. */
+          sort: z
+            .string()
+            .regex(/^-?(name|createdAt|data\.[A-Za-z0-9_]+)$/, "sort must be name, createdAt or data.<field>, optionally prefixed with -")
+            .optional(),
+          // Equality filters arrive as extra `data.<field>=value` params (catchall below).
+        }).catchall(z.string()),
         response: {
-          200: z.object({ items: z.array(DeliveryContent), cv: z.number() }),
+          200: z.object({ items: z.array(DeliveryContent), cv: z.number(), total: z.number() }),
           400: z.object({ error: z.string() }),
         },
       },
@@ -85,10 +95,45 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       }
       const perspective = req.perspective!;
       const locale = req.query.locale ?? "en";
-      const items = await deliveryList(app.db, perspective, req.query.type, locale, req.query.populate, req.query.parentId);
+      // `data.<field>=value` query params become equality filters.
+      const filter: Record<string, string> = {};
+      for (const [k, v] of Object.entries(req.query)) {
+        if (k.startsWith("data.") && typeof v === "string") filter[k.slice(5)] = v;
+      }
+      const { items, total } = await deliveryList(app.db, perspective, req.query.type, locale, req.query.populate, req.query.parentId, {
+        limit: req.query.limit,
+        offset: req.query.offset,
+        sort: req.query.sort,
+        filter,
+      });
       const maxCv = items.reduce((m, i) => Math.max(m, i.cv), 0);
       setCacheHeaders(reply, perspective, maxCv);
-      return { items, cv: maxCv };
+      reply.header("X-Total-Count", String(total));
+      return { items, cv: maxCv, total };
+    },
+  );
+
+  app.get(
+    "/search",
+    {
+      config: { rateLimit: { max: 300, timeWindow: "1 minute" } },
+      schema: {
+        tags: ["delivery"],
+        querystring: z.object({
+          q: z.string().min(1).max(200),
+          type: z.string().optional(),
+          locale: z.string().optional(),
+          limit: z.coerce.number().int().min(1).max(100).optional(),
+        }),
+        response: { 200: z.object({ items: z.array(DeliveryContent), total: z.number() }) },
+      },
+    },
+    async (req, reply) => {
+      const perspective = req.perspective!;
+      const { items, total } = await deliverySearch(app.db, perspective, req.query.q, req.query.locale ?? "en", req.query.type, req.query.limit);
+      // Search results change with content — short public cache only.
+      reply.header("Cache-Control", perspective === "preview" ? "private, no-store" : "public, max-age=30");
+      return { items, total };
     },
   );
 

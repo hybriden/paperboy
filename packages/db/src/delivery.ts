@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import type { ContentTypeDef, DeliveryContent } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import type { Database } from "./client.js";
@@ -357,6 +357,30 @@ export async function deliveryGetBySlug(
   return null;
 }
 
+/** List query options: pagination, sorting and simple field filters. */
+export interface DeliveryListOptions {
+  /** Page size. Omitted = all items (back-compat). */
+  limit?: number;
+  offset?: number;
+  /**
+   * Sort key: `name`, `createdAt`, or `data.<field>`; prefix `-` for
+   * descending. Omitted = tree order (sortIndex). Sorting reads the SAME
+   * perspective-selected version row the chokepoint would deliver.
+   */
+  sort?: string;
+  /** Equality filters on data fields, e.g. { author: "Jane" }. Arrays match by inclusion. */
+  filter?: Record<string, string>;
+}
+
+/** Sort-key comparator: numbers numerically, everything else as strings (ISO dates compare correctly). */
+function compareKeys(a: unknown, b: unknown): number {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1; // missing values sort last
+  if (b == null) return -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+}
+
 export async function deliveryList(
   db: Database,
   perspective: Perspective,
@@ -364,8 +388,9 @@ export async function deliveryList(
   loc: string,
   populate?: number,
   parentId?: string,
-): Promise<DeliveryContent[]> {
-  if (!typeName && !parentId) return []; // unbounded "everything" listing is not a thing
+  opts: DeliveryListOptions = {},
+): Promise<{ items: DeliveryContent[]; total: number }> {
+  if (!typeName && !parentId) return { items: [], total: 0 }; // unbounded "everything" listing is not a thing
   const ctx = new DeliveryCtx(db);
   // Optional hierarchy filter (a ListPage / teaser ListBlock listing a page's
   // children — with parentId the type may be omitted to list children of any
@@ -379,8 +404,53 @@ export async function deliveryList(
     .where(and(...conds))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
   await ctx.primeVersions(items.map((i) => i.documentId)); // one query, not N
-  const out: DeliveryContent[] = [];
+
+  // Visibility, filtering and sorting all read the CHOKEPOINT's own version
+  // selection (variantRow: perspective + publish window + locale fallback) —
+  // never a parallel query path — so a draft can't influence public ordering.
+  const candidates: { documentId: string; row: typeof contentVersion.$inferSelect }[] = [];
   for (const it of items) {
+    const variant = await variantRow(ctx, perspective, it.documentId, loc);
+    if (variant) candidates.push({ documentId: it.documentId, row: variant.row });
+  }
+
+  let filtered = candidates;
+  if (opts.filter && Object.keys(opts.filter).length) {
+    filtered = filtered.filter(({ row }) => {
+      const data = row.data as Record<string, unknown>;
+      for (const [field, want] of Object.entries(opts.filter!)) {
+        const have = field === "name" ? row.name : field === "slug" ? row.slug : data[field];
+        const ok = Array.isArray(have) ? have.map(String).includes(want) : String(have ?? "") === want;
+        if (!ok) return false;
+      }
+      return true;
+    });
+  }
+
+  if (opts.sort) {
+    const descending = opts.sort.startsWith("-");
+    const key = descending ? opts.sort.slice(1) : opts.sort;
+    const keyOf = (row: typeof contentVersion.$inferSelect): unknown => {
+      if (key === "name") return row.name;
+      if (key === "createdAt") return row.createdAt.toISOString();
+      if (key.startsWith("data.")) return (row.data as Record<string, unknown>)[key.slice(5)];
+      return null;
+    };
+    filtered = [...filtered].sort((a, b) => {
+      const cmp = compareKeys(keyOf(a.row), keyOf(b.row));
+      // Missing keys stay last regardless of direction; equal keys keep tree order.
+      if (cmp === 0 || keyOf(a.row) == null || keyOf(b.row) == null) return cmp;
+      return descending ? -cmp : cmp;
+    });
+  }
+
+  const total = filtered.length;
+  const offset = Math.max(0, opts.offset ?? 0);
+  const page = opts.limit != null ? filtered.slice(offset, offset + opts.limit) : filtered.slice(offset);
+
+  // Only the requested page pays the full resolve cost (populate graph etc.).
+  const out: DeliveryContent[] = [];
+  for (const it of page) {
     const resolved = await resolveContent(
       ctx,
       perspective,
@@ -390,7 +460,54 @@ export async function deliveryList(
     );
     if (resolved) out.push(resolved);
   }
-  return out;
+  return { items: out, total };
+}
+
+/**
+ * Public full-text search over delivered content. The tsquery prefilter ONLY
+ * narrows candidates — and only ever scans the version rows this perspective
+ * may see (published: current-published rows; preview: drafts too), so draft
+ * text can't leak into public results even as a match signal. Every hit is
+ * then re-resolved through the chokepoint.
+ */
+export async function deliverySearch(
+  db: Database,
+  perspective: Perspective,
+  query: string,
+  loc: string,
+  typeName?: string,
+  limit = 20,
+): Promise<{ items: DeliveryContent[]; total: number }> {
+  const q = query.trim();
+  if (!q) return { items: [], total: 0 };
+  const ctx = new DeliveryCtx(db);
+  const chain = await ctx.localeChain(loc);
+  const max = Math.min(Math.max(limit, 1), 100);
+  // Matches the expression GIN index in 0007_delivery_search.sql exactly.
+  const rows = (await db.execute(sql`
+    SELECT DISTINCT v.document_id AS id,
+           MAX(ts_rank(to_tsvector('simple', coalesce(v.name,'') || ' ' || coalesce(v.data::text,'')),
+                       websearch_to_tsquery('simple', ${q}))) AS rank
+    FROM content_version v
+    JOIN content_item i ON i.document_id = v.document_id AND i.deleted_at IS NULL
+    WHERE to_tsvector('simple', coalesce(v.name,'') || ' ' || coalesce(v.data::text,''))
+          @@ websearch_to_tsquery('simple', ${q})
+      AND v.locale IN (${sql.join(chain.map((c) => sql`${c}`), sql`, `)})
+      AND ${perspective === "published" ? sql`v.is_current_published` : sql`(v.status = 'draft' OR v.is_current_published)`}
+      ${typeName ? sql`AND i.type = ${typeName}` : sql``}
+    GROUP BY v.document_id
+    ORDER BY rank DESC
+    LIMIT ${max * 3}
+  `)) as unknown as { id: string; rank: number }[];
+  await ctx.primeVersions(rows.map((r) => r.id));
+  const out: DeliveryContent[] = [];
+  for (const r of rows) {
+    if (out.length >= max) break;
+    // Chokepoint re-validates (publish window, perspective, locale fallback).
+    const resolved = await resolveContent(ctx, perspective, r.id, loc, 0);
+    if (resolved) out.push(resolved);
+  }
+  return { items: out, total: out.length };
 }
 
 /**
