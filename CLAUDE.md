@@ -7,7 +7,7 @@ Guidance for Claude / contributors. Read this before changing or deploying anyth
 
 - `apps/api` — Fastify v5 + `fastify-type-provider-zod` (one Zod schema per route → validation + serialization + **OpenAPI 3.1**). Management API (session + CSRF + RBAC) and Delivery API (GET-only, key-scoped).
 - `apps/admin` — React 19 + Vite SPA. The editor (page tree, content areas, all-properties, live preview, visual on-page editing). react-router-dom, TanStack Query, Radix, @dnd-kit, TipTap.
-- `apps/web` — Next.js 15 reference frontend (Draft Mode preview), consuming the Delivery API via `@paperboy/client`.
+- `apps/web` — Next.js 15 reference frontend (Draft Mode preview), consuming the Delivery API via `@paperboycms/client`.
 - `apps/mcp` — stdio MCP server. Imports `@paperboy/db` and calls the **same functions** the API does, so it inherits RBAC + Zod + the no-leak chokepoint + audit.
 - `packages/shared` — Zod schemas + types (single source of truth) + the AI provider.
 - `packages/db` — Drizzle schema, forward-only SQL migrations, the query layer (all object-level authz lives here, deny-by-default), seed.

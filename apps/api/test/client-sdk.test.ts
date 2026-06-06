@@ -1,4 +1,4 @@
-import { type DeliveryContent as ClientDeliveryContent, PaperboyError, createClient, mediaSrcset, mediaUrl } from "@paperboy/client";
+import { type DeliveryContent as ClientDeliveryContent, PaperboyError, createClient, mediaSrcset, mediaUrl } from "@paperboycms/client";
 import type { DeliveryContent as SharedDeliveryContent } from "@paperboy/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PREVIEW_KEY, PUBLIC_KEY, type Suite, authHeaders, login, setupApi } from "./helpers.js";
@@ -12,12 +12,12 @@ void _sharedToClient;
 void _clientToShared;
 
 /**
- * @paperboy/client end-to-end: the SDK talks REAL HTTP to a listening api
+ * @paperboycms/client end-to-end: the SDK talks REAL HTTP to a listening api
  * (not inject), so the full contract — auth header, query building, ETag
  * replay, error mapping — is exercised exactly as a consumer would.
  */
 
-describe("@paperboy/client against a live server", () => {
+describe("@paperboycms/client against a live server", () => {
   let s: Suite;
   let admin: Awaited<ReturnType<typeof login>>;
   let baseUrl: string;

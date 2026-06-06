@@ -30,7 +30,7 @@
     "zod-to-json-schema": "^3.25.2"
   },
   "devDependencies": {
-    "@paperboy/client": "workspace:^",
+    "@paperboycms/client": "workspace:^",
     "@types/node": "^22",
     "fast-check": "^4.8.0",
     "tsx": "^4.19.2",

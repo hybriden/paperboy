@@ -1,4 +1,4 @@
-import { createClient } from "@paperboy/client";
+import { createClient } from "@paperboycms/client";
 import type { DeliveryContent } from "@paperboy/shared";
 
 const API = process.env.PAPERBOY_API_URL ?? "http://localhost:8091";
@@ -6,7 +6,7 @@ const PUBLIC_KEY = process.env.PAPERBOY_PUBLIC_KEY ?? "pk_live_seed_public_key_v
 const PREVIEW_KEY = process.env.PAPERBOY_PREVIEW_KEY ?? "prv_seed_preview_key_value";
 
 /**
- * Two-token model via @paperboy/client: the published site uses the PUBLIC
+ * Two-token model via @paperboycms/client: the published site uses the PUBLIC
  * key; preview/draft mode uses the PREVIEW key (server-side only). Next.js
  * caches fetch aggressively — `no-store` keeps drafts and fresh publishes live.
  */

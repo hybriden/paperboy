@@ -1,11 +1,11 @@
-# @paperboy/client
+# @paperboycms/client
 
 The typed Delivery API client. Thin, dependency-free (besides the shared
 types), end-to-end typed from the same Zod schemas the server serializes with —
 no codegen step.
 
 ```ts
-import { createClient } from "@paperboy/client";
+import { createClient } from "@paperboycms/client";
 
 const cms = createClient({
   baseUrl: "https://cms.example.com",
@@ -32,7 +32,7 @@ await cms.startPage({ populate: 2 });
 await cms.global("SiteSettings");
 
 // Responsive images via the server's variant pipeline
-import { mediaUrl, mediaSrcset } from "@paperboy/client";
+import { mediaUrl, mediaSrcset } from "@paperboycms/client";
 const src = mediaUrl(post!.data.image as string, { w: 640, format: "webp" });
 const srcset = mediaSrcset(post!.data.image as string); // 320/640/1024/1600w webp
 ```

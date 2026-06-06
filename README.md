@@ -22,7 +22,7 @@ on-page editing, a Next.js reference frontend, and a stdio MCP server — on Pos
 - **Visual on-page editing** — click an element in the live preview to focus its field in the editor, and focus a field to highlight it in the preview (both ways).
 - **Multi-language** (document-level i18n + fallback chain), **hierarchical URLs** from the page tree, **version history** + restore, **trash**/restore, **duplicate**.
 - **Secure by default** — Argon2id + opaque server-side sessions + CSRF, **passwordless TOTP 2FA**, deny-by-default **RBAC** with object-level scope checks, append-only **audit log**.
-- **Typed client SDK** — `@paperboy/client`: `createClient({ baseUrl, key })`, then typed `getBySlug`/`list`/`search` + media-variant helpers and an optional ETag cache. No codegen — types come from the shared Zod schemas.
+- **Typed client SDK** — `@paperboycms/client`: `createClient({ baseUrl, key })`, then typed `getBySlug`/`list`/`search` + media-variant helpers and an optional ETag cache. No codegen — types come from the shared Zod schemas.
 - **Agent provenance & review** — every version records whether a human or an agent wrote it (🤖 badges), agent drafts carry a one-click-approve review flag, and an opt-in gate keeps agents from publishing unreviewed work.
 - **Integrations** — HMAC **publish webhooks**, media uploads, SEO/OpenGraph metadata, an optional **AI editorial assistant**, and a full **MCP server** (drive the CMS from an AI client, with revocable tokens).
 - **Great admin** — React 19 + Vite, light/dark themes, ⌘K command palette, accessible (axe-clean), keyboard-operable drag-drop.
@@ -35,10 +35,10 @@ apps/web      Next.js 15 — reference headless frontend with Draft Mode preview
 apps/mcp      stdio MCP server — operate the whole CMS over the Model Context Protocol
 packages/shared  Zod schemas + shared types (single source of truth)
 packages/db      Drizzle schema, migrations, query layer (object-level authz), seed
-packages/client  @paperboy/client — the typed Delivery API SDK (see its README)
+packages/client  @paperboycms/client — the typed Delivery API SDK (see its README)
 ```
 Any frontend (Next, Astro, SvelteKit, …) can be a Paperboy client — either with
-`@paperboy/client` (typed, ETag-aware) or by reading the Delivery API over plain HTTP;
+`@paperboycms/client` (typed, ETag-aware) or by reading the Delivery API over plain HTTP;
 it doesn't import the CMS, only the contract.
 
 ## Quickstart (Docker)
