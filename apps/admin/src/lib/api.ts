@@ -246,7 +246,7 @@ export const api = {
     request<ContentDetail>("GET", `/manage/content/${documentId}?locale=${locale}`, undefined, signal),
   versions: (documentId: string, locale: string, signal?: AbortSignal) =>
     request<
-      Array<{ id: number; versionNumber: number; status: string; isCurrentPublished: boolean; name: string; createdAt: string; createdBy: string | null; createdVia: "mcp" | "web" | null; needsReview: boolean; publishAt: string | null; expireAt: string | null }>
+      Array<{ id: number; versionNumber: number; status: string; isCurrentPublished: boolean; name: string; createdAt: string; createdBy: string | null; createdVia: "mcp" | "agent" | "web" | null; needsReview: boolean; publishAt: string | null; expireAt: string | null }>
     >("GET", `/manage/content/${documentId}/versions?locale=${locale}`, undefined, signal),
   // Agent review: approve an agent-written draft / toggle the publish gate.
   approveReview: (documentId: string, locale: string) =>

@@ -166,10 +166,10 @@ Workflow:
 1. Call list_content_types first to learn the available types and their fields. Use tree/list_pages to understand the site structure.
 2. Create pages with create_content, then fill them with update_content (set a kebab-case slug!).
 3. Choose types by their semantics: LandingPage = block-composed canvas; ArticlePage = long-form content; ListPage = lists its CHILDREN of the type in its "listedType" field (a blog/news index); BlogPost = a dated item (set publishDate, summary).
-4. Create list items as CHILDREN of their ListPage (parentId = the ListPage's documentId).
+4. PLACEMENT IS PART OF CORRECTNESS: a list-item type (any type named in some ListPage's "listedType", e.g. BlogPost) MUST be created as a CHILD of that ListPage — find it with list_pages/tree. This rule OVERRIDES any suggested parent from the editor: a blog post created under the wrong parent renders with the wrong template at the wrong URL (this exact mistake has shipped broken pages twice).
 
 Field value formats (by field type in the content type definition):
-- text / markdown: plain string (markdown fields take Markdown).
+- text / markdown: plain string (markdown fields take Markdown). NEVER start a markdown body with an H1 repeating the page title — the frontend renders the title separately (start at ## or plain prose).
 - richtext: TipTap JSON, e.g. {"type":"doc","content":[{"type":"paragraph","content":[{"type":"text","text":"Hello"}]}]}.
 - boolean / number: JSON primitives. datetime: ISO-8601 string. select: one option *value* string.
 - contentArea: array of block instances: {"key":"b1","blockType":"HeroBlock","display":"full","ref":null,"inline":{...block fields...}} (inline) — "display" is "full" or "narrow".
@@ -264,8 +264,8 @@ export async function runContentAgent(
     `Brief from the editor:\n\n${brief}\n\n` +
     `Target locale: ${opts.locale}. ` +
     (opts.parentId
-      ? `Create new top-level pages UNDER the page with documentId ${opts.parentId} (use it as parentId).`
-      : "Create new pages at the top level (parentId null) unless the brief says otherwise.");
+      ? `The editor launched this from the page with documentId ${opts.parentId} — use it as the DEFAULT parent for new pages, EXCEPT where placement rule 4 applies (a list-item type always goes under its ListPage instead).`
+      : "Create new pages at the top level (parentId null) unless the brief says otherwise — EXCEPT where placement rule 4 applies (a list-item type always goes under its ListPage).");
 
   const messages: Array<{ role: string; content: unknown }> = [{ role: "user", content: intro }];
 

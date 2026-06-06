@@ -18,6 +18,7 @@ Guidance for Claude / contributors. Read this before changing or deploying anyth
 The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds — **wiping all data and regenerating IDs** — but the CLI is GUARDED: on a database that already holds content it skips the wipe (and still applies migrations) unless `FORCE_SEED=1`. The guard exists because a plain `docker compose up <svc>` pulling in `init` caused real data loss; treat it as a seatbelt, not an invitation.
 
 - **Redeploy one service:** `docker compose up -d --no-deps --force-recreate <svc>` (still the correct habit).
+- **`docker compose start <svc>` ALSO starts its `depends_on` services — including `init`, as the CONTAINER it was last created from.** A stale pre-guard init container re-ran an old unguarded seed this way and wiped production (2026-06-06; restored from backup). After pulling a new image, recreate init once: `docker compose rm -f init && docker compose up -d init`.
 - **Apply migrations without reseeding:** migrations run on api boot, on any guarded-skip init run, or `docker compose exec api pnpm --filter @paperboy/db migrate` (forward-only, idempotent, tracked in `_migrations` — separate from `seed`).
 - **Reseed deliberately (wipes everything):** `FORCE_SEED=1 docker compose run --rm init`.
 - Tests are unaffected: they import `seed()` directly, which stays unguarded.

@@ -15,11 +15,12 @@ export interface AccessContext {
   siteWide: boolean;
   sections: string[]; // allowed top-level section document_ids
   /**
-   * Which surface this request came through — "mcp" for agent writes, "web"
-   * for the browser/API session. Drives provenance (content_version.created_via)
-   * and the agent-review flag; never an authorization input.
+   * Which surface this request came through — "mcp" for MCP agent writes,
+   * "agent" for the in-product content agent (Build from brief), "web" for the
+   * browser/API session. Drives provenance (content_version.created_via) and
+   * the agent-review flag; never an authorization input.
    */
-  via?: "mcp" | "web";
+  via?: "mcp" | "agent" | "web";
 }
 
 /** Verb check (RBAC). Deny-by-default. */

@@ -104,7 +104,9 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
       const send = (ev: unknown) => reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`);
       try {
         await runContentAgent(
-          { db: app.db, ctx: req.accessCtx!, cfg, emit: send },
+          // via:"agent" — drafts the brief-builder writes are agent provenance:
+          // versions record created_via='agent' and carry the needs-review flag.
+          { db: app.db, ctx: { ...req.accessCtx!, via: "agent" }, cfg, emit: send },
           req.body.brief,
           { parentId: req.body.parentId ?? null, locale: req.body.locale },
         );

@@ -540,7 +540,7 @@ export async function createContent(
     cv: 0,
     createdBy: ctx.userId,
     createdVia: ctx.via ?? null,
-    needsReview: ctx.via === "mcp",
+    needsReview: ctx.via === "mcp" || ctx.via === "agent",
   });
 
   return getContent(db, ctx, documentId, req.locale);
@@ -628,7 +628,7 @@ export async function getContent(
     expireAt: working.expireAt ? working.expireAt.toISOString() : null,
     updatedAt: working.createdAt.toISOString(),
     updatedBy: working.createdBy,
-    updatedVia: (working.createdVia as "mcp" | "web" | null) ?? null,
+    updatedVia: (working.createdVia as "mcp" | "agent" | "web" | null) ?? null,
     needsReview: working.needsReview,
   };
 }
@@ -832,7 +832,7 @@ export async function updateContent(
         // Provenance: an agent (mcp) write flags the draft for human review; a
         // human (web) write clears it — the human has seen the content.
         createdVia: ctx.via ?? null,
-        needsReview: ctx.via === "mcp",
+        needsReview: ctx.via === "mcp" || ctx.via === "agent",
       })
       .where(eq(contentVersion.id, existing[0].id));
   } else {
@@ -857,7 +857,7 @@ export async function updateContent(
       data,
       createdBy: ctx.userId,
       createdVia: ctx.via ?? null,
-      needsReview: ctx.via === "mcp",
+      needsReview: ctx.via === "mcp" || ctx.via === "agent",
     });
   }
 
