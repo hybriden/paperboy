@@ -7,10 +7,12 @@ Guidance for Claude / contributors. Read this before changing or deploying anyth
 
 - `apps/api` — Fastify v5 + `fastify-type-provider-zod` (one Zod schema per route → validation + serialization + **OpenAPI 3.1**). Management API (session + CSRF + RBAC) and Delivery API (GET-only, key-scoped).
 - `apps/admin` — React 19 + Vite SPA. The editor (page tree, content areas, all-properties, live preview, visual on-page editing). react-router-dom, TanStack Query, Radix, @dnd-kit, TipTap.
-- `apps/web` — Next.js 15 reference frontend (Draft Mode preview). Any frontend can instead consume the Delivery API over HTTP.
+- `apps/web` — Next.js 15 reference frontend (Draft Mode preview), consuming the Delivery API via `@paperboy/client`.
 - `apps/mcp` — stdio MCP server. Imports `@paperboy/db` and calls the **same functions** the API does, so it inherits RBAC + Zod + the no-leak chokepoint + audit.
 - `packages/shared` — Zod schemas + types (single source of truth) + the AI provider.
 - `packages/db` — Drizzle schema, forward-only SQL migrations, the query layer (all object-level authz lives here, deny-by-default), seed.
+- `packages/client` — the typed Delivery API client SDK (`createClient`, lists/search/media variants, optional ETag cache). End-to-end tested in `apps/api/test/client-sdk.test.ts` against a live server.
+- `evals/` — model-driven MCP usability eval (weekly workflow; needs `ANTHROPIC_API_KEY` secret). `ops/` — reference copies of the production backup/monitor scripts.
 
 ## ⚠️ Deploy safety (most important rule)
 The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds — **wiping all data and regenerating IDs** — but the CLI is GUARDED: on a database that already holds content it skips the wipe (and still applies migrations) unless `FORCE_SEED=1`. The guard exists because a plain `docker compose up <svc>` pulling in `init` caused real data loss; treat it as a seatbelt, not an invitation.
@@ -54,6 +56,17 @@ Every rule below traces to a real agent run that broke. Do not regress them.
 - **Contract-freeze layers** (all in `apps/api/test/`): `shared-*.test.ts` are pure unit/property tests of packages/shared (no DB — richtext sanitizer fixpoint, coercion matrix); `delivery-contract` + `openapi-snapshot` pin delivered JSON shapes and the API surface as snapshots — a failing snapshot means you changed a PUBLIC CONTRACT: review the diff and update the snapshot deliberately in the same commit, never blind `--update`; `mcp-parity` spawns the real stdio MCP server and locks the tool surface, write parity, and self-teaching error shapes.
 - e2e: `pnpm --filter @paperboy/admin test:e2e` (Playwright + axe). Run against the live deploy with `ADMIN_URL=https://<host>` (needed because `COOKIE_SECURE` breaks http login). Don't run the full data-mutating suite against a live instance you care about.
 - Always typecheck before deploying: `pnpm -r typecheck`.
+
+## Code Quality Rules
+
+- Prefer simple, human-readable implementations over clever abstractions.
+- Keep files and functions focused on a single responsibility.
+- Avoid large monolithic modules; split by feature or domain.
+- Write code so a new engineer can understand it quickly.
+- Favor explicit naming over shortened or ambiguous names.
+- Keep functions small and composable.
+- Minimize hidden side effects and implicit behavior.
+- Structure code for maintainability first, optimization second.
 
 ## Conventions
 - TypeScript strict, end-to-end types from the shared Zod schemas. Match surrounding style.
