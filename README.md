@@ -7,6 +7,10 @@
 > **Paperboy ONE** — *Open, No Extras.*  ·  **DPX** — *Don't Pay eXtra.*
 > A proper headless CMS without the enterprise "experience platform" invoice. Self-host it, own your content, ship.
 
+**Built for teams of humans *and* agents.** Every write path — admin UI, REST, MCP — goes through the same
+validation, permissions and audit trail; agents are first-class editors, not an integration afterthought
+(the MCP↔API parity is [test-enforced](apps/api/test/mcp-parity.test.ts)). See [docs/POSITIONING.md](docs/POSITIONING.md).
+
 A TypeScript monorepo: a Fastify Management + Delivery API, a React admin with visual
 on-page editing, a Next.js reference frontend, and a stdio MCP server — on PostgreSQL.
 
