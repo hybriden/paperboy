@@ -132,7 +132,7 @@ export function MarkdownEditor({
               key={t}
               type="button"
               onClick={() => setTab(t)}
-              className={`rounded px-2 py-0.5 text-xs capitalize ${tab === t ? "bg-accent text-white" : "text-muted hover:bg-canvas"}`}
+              className={`rounded px-2 py-0.5 text-xs capitalize ${tab === t ? "bg-accent/15 font-semibold text-accent-700" : "text-muted hover:bg-canvas"}`}
             >
               {t}
             </button>

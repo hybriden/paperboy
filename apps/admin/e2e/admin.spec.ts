@@ -1,14 +1,32 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { type Page, expect, test } from "@playwright/test";
 
 const SHOT = "../../proof/screenshots";
+// Playwright runs from apps/admin (the config's directory).
+const TEST_RESULTS = join(process.cwd(), "test-results");
 
 // Cache one session cookie per role so the suite doesn't trip the production
 // login rate-limit (10/min/IP) — the SPA re-authenticates from the cookie via /auth/me.
-const sessionCache = new Map<string, { name: string; value: string }>();
+// FILE-backed (not just in-memory): Playwright restarts the worker process after
+// every test failure, which wiped an in-memory cache and turned one real failure
+// into a 429 cascade for the rest of the run.
+const SESSION_FILE = join(TEST_RESULTS, ".session-cache.json");
+const sessionCache = new Map<string, { name: string; value: string }>(
+  existsSync(SESSION_FILE) ? Object.entries(JSON.parse(readFileSync(SESSION_FILE, "utf8"))) : [],
+);
 
 async function login(page: Page, email = "admin@paperboy.test", password = "Admin!Passw0rd") {
   let cookie = sessionCache.get(email);
+  if (cookie) {
+    // A cached cookie may have been revoked/expired — validate before trusting it.
+    const me = await page.request.get("/api/v1/auth/me", { headers: { cookie: `${cookie.name}=${cookie.value}` } });
+    if (!me.ok()) {
+      cookie = undefined;
+      sessionCache.delete(email);
+    }
+  }
   if (!cookie) {
     const res = await page.request.post("/api/v1/auth/login", { data: { email, password } });
     if (!res.ok()) throw new Error(`login failed ${res.status()}`);
@@ -17,6 +35,8 @@ async function login(page: Page, email = "admin@paperboy.test", password = "Admi
     const eq = pair.indexOf("=");
     cookie = { name: pair.slice(0, eq), value: pair.slice(eq + 1) };
     sessionCache.set(email, cookie);
+    mkdirSync(dirname(SESSION_FILE), { recursive: true });
+    writeFileSync(SESSION_FILE, JSON.stringify(Object.fromEntries(sessionCache)));
   }
   await page.context().addCookies([{ name: cookie.name, value: cookie.value, domain: "localhost", path: "/" }]);
   await page.goto("/");
@@ -59,6 +79,13 @@ test("shell + tree + editor render; axe clean in LIGHT and DARK", async ({ page 
   await page.getByRole("button", { name: "Theme" }).click();
   await page.getByRole("menuitem", { name: "Dark" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  // The 160ms `transition-colors` on inputs must SETTLE before the contrast
+  // scan — axe mid-transition sees blended (failing) colors. Wait for a
+  // field-input's color to reach the dark-theme foreground.
+  await page.waitForFunction(() => {
+    const el = document.querySelector(".field-input");
+    return el && getComputedStyle(el).color === "rgb(236, 233, 225)";
+  });
   await page.screenshot({ path: `${SHOT}/03-editor-dark.png` });
   await axeClean(page, "editor-dark");
 });
@@ -99,12 +126,22 @@ test("rich text editor (TipTap) loads with a formatting toolbar", async ({ page 
 
 test("create → edit → add block → translate → publish (with toast)", async ({ page }) => {
   await login(page);
+  const pageName = `E2E ${Date.now().toString().slice(-5)}`;
   await page.getByRole("button", { name: "Create new content" }).click();
-  await page.getByLabel("Content type").selectOption("ArticlePage");
-  await page.getByLabel("Name").fill(`E2E ${Date.now().toString().slice(-5)}`);
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  // Scope to the dialog: the editor behind it has its own "Name" input.
+  const createDlg = page.getByRole("dialog", { name: "Create content" });
+  await createDlg.getByLabel("Content type").selectOption("ArticlePage");
+  await createDlg.getByLabel("Name").fill(pageName);
+  await createDlg.getByRole("button", { name: "Create", exact: true }).click();
+  // Wait for navigation to the NEW page before touching fields — the editor
+  // behind the dialog (often Home) has its own Heading + block headings.
+  // Scoped to #editor: while the dialog is closing its Name input also matches.
+  await expect(page.locator("#editor").getByRole("textbox", { name: "Name" })).toHaveValue(pageName, { timeout: 15_000 });
 
-  await page.getByRole("textbox", { name: /Heading/ }).fill("Hello from E2E");
+  // The page's own heading field — block fields inside content areas can carry
+  // the same label, so target the field id, not an unscoped role lookup.
+  const heading = page.locator("#f-heading");
+  await heading.fill("Hello from E2E");
   await page.getByRole("button", { name: "URL settings" }).click(); // slug lives in the URL popover
   await page.getByLabel("Slug").fill(`e2e-${Date.now().toString().slice(-5)}`);
   await page.keyboard.press("Escape"); // close the popover
@@ -113,11 +150,15 @@ test("create → edit → add block → translate → publish (with toast)", asy
   await page.waitForTimeout(1100); // autosave round-trip
 
   await page.getByLabel("Language").selectOption("nb");
-  await page.getByRole("textbox", { name: /Heading/ }).fill("Hei fra E2E");
+  // The editor REMOUNTS on locale switch (key=documentId+locale). Wait for the
+  // fresh nb scaffold (empty heading) before typing — filling during the
+  // remount races the dying EN editor and the text lands in the EN draft.
+  await expect(heading).toHaveValue("", { timeout: 10_000 });
+  await heading.fill("Hei fra E2E");
   await page.waitForTimeout(1100);
 
   await page.getByLabel("Language").selectOption("en");
-  await expect(page.getByRole("textbox", { name: /Heading/ })).toHaveValue("Hello from E2E");
+  await expect(heading).toHaveValue("Hello from E2E", { timeout: 10_000 });
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   await expect(page.getByText("Published", { exact: false }).first()).toBeVisible({ timeout: 10_000 });
 });

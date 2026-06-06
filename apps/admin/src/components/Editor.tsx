@@ -683,7 +683,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               ).map(([v, label, title]) => (
                 <button
                   key={v}
-                  className={`rounded px-2 py-0.5 text-xs ${view === v ? "bg-accent text-white" : "text-muted hover:bg-canvas"}`}
+                  className={`rounded px-2 py-0.5 text-xs ${view === v ? "bg-accent/15 font-semibold text-accent-700" : "text-muted hover:bg-canvas"}`}
                   aria-pressed={view === v}
                   title={title}
                   onClick={() => setView(v)}
