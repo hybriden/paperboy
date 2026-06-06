@@ -24,6 +24,7 @@ import {
   deliveryGetBySlug,
   deliveryGlobal,
   deliveryList,
+  deliverySearch,
   deliveryStartPage,
   discardDraft,
   getAccessContext,
@@ -336,8 +337,24 @@ tool("delivery_get_by_slug", "Read delivered content by slug.", { slug: z.string
   ({ slug, locale, populate, preview }) => deliveryGetBySlug(db, persp(preview), slug, locale ?? "en", populate));
 tool("delivery_get_by_path", "Read delivered content by hierarchical URL path (e.g. /home/about).", { path: z.string(), ...delv },
   ({ path, locale, populate, preview }) => deliveryGetByPath(db, persp(preview), path.split("/").filter(Boolean), locale ?? "en", populate));
-tool("delivery_list", "List delivered content of a type.", { type: z.string(), ...delv },
-  ({ type, locale, populate, preview }) => deliveryList(db, persp(preview), type, locale ?? "en", populate));
+tool(
+  "delivery_list",
+  "List delivered content of a type. Supports pagination (limit/offset), sorting (sort: 'name' | 'createdAt' | 'data.<field>', prefix '-' for descending) and equality filters on data fields. Returns { items, total }.",
+  {
+    type: z.string(),
+    ...delv,
+    limit: z.number().int().min(1).max(500).optional(),
+    offset: z.number().int().min(0).optional(),
+    sort: z.string().optional().describe("name | createdAt | data.<field>; prefix - for descending"),
+    filter: z.record(z.string()).optional().describe("Equality filters on data fields, e.g. {\"author\": \"Jane\"}"),
+  },
+  ({ type, locale, populate, preview, limit, offset, sort, filter }) =>
+    deliveryList(db, persp(preview), type, locale ?? "en", populate, undefined, { limit, offset, sort, filter }));
+tool(
+  "delivery_search",
+  "Full-text search over delivered content (name + field text). Returns { items, total } resolved through the same no-leak chokepoint.",
+  { query: z.string().min(1).max(200), type: z.string().optional(), locale: loc, limit: z.number().int().min(1).max(100).optional(), preview: z.boolean().optional() },
+  ({ query, type, locale, limit, preview }) => deliverySearch(db, persp(preview), query, locale ?? "en", type, limit));
 tool("delivery_global", "Read a delivered global singleton by type.", { type: z.string(), locale: loc, preview: z.boolean().optional() },
   ({ type, locale, preview }) => deliveryGlobal(db, persp(preview), type, locale ?? "en"));
 tool("delivery_start", "Read the configured start page (served at /).", { locale: loc, populate: z.number().min(0).max(4).optional(), preview: z.boolean().optional() },
