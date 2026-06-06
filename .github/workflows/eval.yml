@@ -1,0 +1,89 @@
+name: MCP Eval
+
+# Usability eval: a REAL model drives the MCP server through a realistic
+# editorial task ("write a post from this brief, set a summary, publish it").
+# The parity suite (CI) locks the tool *contract*; this locks the *usability*
+# against model drift — when a tool description silently stops steering the
+# model, this goes red and the scorecard prints which tool errors it hit.
+#
+# Runs weekly + on demand. It calls the paid Anthropic API, so it is NOT on
+# every push. If the ANTHROPIC_API_KEY secret is not configured the job exits
+# 0 with a notice (green-not-failed) so forks and unconfigured repos stay green.
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  eval:
+    name: MCP usability eval (real model)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: paperboy
+          POSTGRES_PASSWORD: paperboy
+          POSTGRES_DB: paperboy_eval
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U paperboy"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://paperboy:paperboy@localhost:5433/paperboy_eval
+      EVAL_MODEL: claude-haiku-4-5-20251001
+
+    steps:
+      # First step: if the API key secret is empty, skip the rest gracefully.
+      # The job stays GREEN (not failed) when the secret isn't configured.
+      - name: Check for ANTHROPIC_API_KEY secret
+        id: guard
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::notice::ANTHROPIC_API_KEY is not configured — skipping the MCP eval (exiting green)."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v5
+        if: steps.guard.outputs.run == 'true'
+
+      - uses: pnpm/action-setup@v4
+        if: steps.guard.outputs.run == 'true'
+        # version comes from "packageManager" in package.json
+
+      - uses: actions/setup-node@v5
+        if: steps.guard.outputs.run == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        if: steps.guard.outputs.run == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Seed the eval database
+        if: steps.guard.outputs.run == 'true'
+        # Values mirror apps/api/test/helpers.ts so the eval can log in as the
+        # seed admin (MCP_EMAIL/MCP_PASSWORD default to these).
+        env:
+          SEED_ADMIN_EMAIL: admin@paperboy.test
+          SEED_ADMIN_PASSWORD: Admin!Passw0rd
+          PAPERBOY_PUBLIC_KEY: pk_live_test_public
+          PAPERBOY_PREVIEW_KEY: prv_test_preview
+        run: pnpm --filter @paperboy/db seed
+
+      - name: Run the MCP eval
+        if: steps.guard.outputs.run == 'true'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node evals/mcp-eval.mjs

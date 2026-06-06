@@ -19,6 +19,7 @@ import {
   requirePermission,
 } from "./scope.js";
 import { auditLog, contentItem, contentReference, contentType, contentVersion, locale } from "./schema.js";
+import { getAgentReviewRequired } from "./site.js";
 import { dispatchWebhooks } from "./webhooks.js";
 
 /* ----------------------------- content types ----------------------------- */
@@ -538,6 +539,8 @@ export async function createContent(
     data: {},
     cv: 0,
     createdBy: ctx.userId,
+    createdVia: ctx.via ?? null,
+    needsReview: ctx.via === "mcp",
   });
 
   return getContent(db, ctx, documentId, req.locale);
@@ -600,6 +603,8 @@ export async function getContent(
       expireAt: null,
       updatedAt: new Date().toISOString(),
       updatedBy: null,
+      updatedVia: null,
+      needsReview: false,
     };
   }
 
@@ -623,6 +628,8 @@ export async function getContent(
     expireAt: working.expireAt ? working.expireAt.toISOString() : null,
     updatedAt: working.createdAt.toISOString(),
     updatedBy: working.createdBy,
+    updatedVia: (working.createdVia as "mcp" | "web" | null) ?? null,
+    needsReview: working.needsReview,
   };
 }
 
@@ -822,6 +829,10 @@ export async function updateContent(
         data,
         createdBy: ctx.userId,
         createdAt: new Date(),
+        // Provenance: an agent (mcp) write flags the draft for human review; a
+        // human (web) write clears it — the human has seen the content.
+        createdVia: ctx.via ?? null,
+        needsReview: ctx.via === "mcp",
       })
       .where(eq(contentVersion.id, existing[0].id));
   } else {
@@ -845,6 +856,8 @@ export async function updateContent(
       displayInNav: req.displayInNav ?? base?.displayInNav ?? true,
       data,
       createdBy: ctx.userId,
+      createdVia: ctx.via ?? null,
+      needsReview: ctx.via === "mcp",
     });
   }
 
@@ -971,6 +984,19 @@ export async function publishContent(
     )
     .limit(1);
   const draft = draftRows[0];
+
+  // Agent-review gate (opt-in via Settings → MCP): an agent cannot publish its
+  // own unreviewed draft — a human must approve it first (or edit it, which
+  // clears the flag). Self-teaching: the error tells the agent exactly what
+  // unblocks it. Human publishes are never gated (publishing IS reviewing).
+  if (ctx.via === "mcp" && draft?.needsReview && (await getAgentReviewRequired(db))) {
+    throw Errors.forbidden(
+      "This draft was written by an agent and the site requires human review before publishing " +
+        "(Settings → MCP → Agent review). Ask a human to approve it in the editor, or via " +
+        `POST /manage/content/${documentId}/review?locale=${loc}. The flag also clears when a human edits the draft.`,
+    );
+  }
+
   if (!draft) {
     // Unpublish → publish must round-trip. Unpublishing only demotes the live
     // row (no draft is left behind), so with no draft to promote, re-promote
@@ -1459,12 +1485,40 @@ export async function listVersions(
       name: contentVersion.name,
       createdAt: contentVersion.createdAt,
       createdBy: contentVersion.createdBy,
+      createdVia: contentVersion.createdVia,
+      needsReview: contentVersion.needsReview,
       publishAt: contentVersion.publishAt,
       expireAt: contentVersion.expireAt,
     })
     .from(contentVersion)
     .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)))
     .orderBy(desc(contentVersion.versionNumber));
+}
+
+/**
+ * Human approval of an agent-written draft: clears the review flag (and
+ * records who approved in created_via staying intact — the audit log carries
+ * the approver). Requires content.update; the editor exposes it as "Approve".
+ */
+export async function markReviewed(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  loc: string,
+): Promise<ContentDetail> {
+  requirePermission(ctx, "content.update");
+  await loadAuthorized(db, ctx, documentId);
+  await db
+    .update(contentVersion)
+    .set({ needsReview: false })
+    .where(
+      and(
+        eq(contentVersion.documentId, documentId),
+        eq(contentVersion.locale, loc),
+        eq(contentVersion.status, "draft"),
+      ),
+    );
+  return getContent(db, ctx, documentId, loc);
 }
 
 /**

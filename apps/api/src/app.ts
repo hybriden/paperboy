@@ -111,7 +111,9 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     req.sessionToken = token;
     req.sessionCsrf = sess.csrfToken;
     req.user = await getSessionUser(db, sess.userId);
-    req.accessCtx = await getAccessContext(db, sess.userId);
+    // via:"web" — session writes are human; the MCP server tags its ctx "mcp".
+    // Drives provenance (content_version.created_via) + the agent-review flag.
+    req.accessCtx = { ...(await getAccessContext(db, sess.userId)), via: "web" };
   });
 
   // Unified error handling.

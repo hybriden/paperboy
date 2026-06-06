@@ -67,6 +67,22 @@ export async function getSiteConfig(db: Database, ctx: AccessContext): Promise<{
   return { startPageId: rows[0] ? id : null, previewBaseUrl };
 }
 
+/* ------------------------------ agent review ------------------------------ */
+
+const AGENT_REVIEW_KEY = "agentReview";
+
+/** Whether agent (MCP) drafts must be human-approved before an AGENT may publish them. */
+export async function getAgentReviewRequired(db: Database): Promise<boolean> {
+  const v = await getSetting<{ required: boolean }>(db, AGENT_REVIEW_KEY);
+  return v?.required ?? false;
+}
+
+/** Toggle the agent-review publish gate (Admin only; default off). */
+export async function setAgentReviewRequired(db: Database, ctx: AccessContext, required: boolean): Promise<void> {
+  requirePermission(ctx, "user.manage");
+  await putSetting(db, AGENT_REVIEW_KEY, { required });
+}
+
 /* --------------------------------- AI key --------------------------------- */
 
 /**

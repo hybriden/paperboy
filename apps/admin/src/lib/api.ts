@@ -246,8 +246,13 @@ export const api = {
     request<ContentDetail>("GET", `/manage/content/${documentId}?locale=${locale}`, undefined, signal),
   versions: (documentId: string, locale: string, signal?: AbortSignal) =>
     request<
-      Array<{ id: number; versionNumber: number; status: string; isCurrentPublished: boolean; name: string; createdAt: string; createdBy: string | null; publishAt: string | null; expireAt: string | null }>
+      Array<{ id: number; versionNumber: number; status: string; isCurrentPublished: boolean; name: string; createdAt: string; createdBy: string | null; createdVia: "mcp" | "web" | null; needsReview: boolean; publishAt: string | null; expireAt: string | null }>
     >("GET", `/manage/content/${documentId}/versions?locale=${locale}`, undefined, signal),
+  // Agent review: approve an agent-written draft / toggle the publish gate.
+  approveReview: (documentId: string, locale: string) =>
+    request<ContentDetail>("POST", `/manage/content/${documentId}/review?locale=${locale}`),
+  agentReview: (signal?: AbortSignal) => request<{ required: boolean }>("GET", "/manage/site/agent-review", undefined, signal),
+  setAgentReview: (required: boolean) => request<{ required: boolean }>("POST", "/manage/site/agent-review", { required }),
   version: (documentId: string, locale: string, versionId: number, signal?: AbortSignal) =>
     request<VersionDetail>("GET", `/manage/content/${documentId}/versions/${versionId}?locale=${locale}`, undefined, signal),
   create: (body: { type: string; parentId: string | null; locale: string; name: string }) =>

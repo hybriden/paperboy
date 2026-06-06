@@ -759,6 +759,16 @@ export function McpTokensPanel() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["mcp-tokens"] }); toast.success("Token revoked"); },
     onError: (e) => toast.error("Couldn’t revoke", (e as Error).message),
   });
+  // Agent-review gate: agent drafts must be human-approved before an AGENT may publish them.
+  const review = useQuery({ queryKey: ["agent-review"], queryFn: ({ signal }) => api.agentReview(signal) });
+  const toggleReview = useMutation({
+    mutationFn: (required: boolean) => api.setAgentReview(required),
+    onSuccess: (r) => {
+      qc.setQueryData(["agent-review"], r);
+      toast.success(r.required ? "Agent review required" : "Agent review optional", r.required ? "Agents can no longer publish their own unreviewed drafts." : "Agents may publish their own drafts again.");
+    },
+    onError: (e) => toast.error("Couldn’t save", (e as Error).message),
+  });
 
   return (
     <PanelShell
@@ -798,6 +808,22 @@ export function McpTokensPanel() {
         </div>
       ))}
       {tokens.data?.length === 0 && <p className="p-4 text-sm text-muted">No MCP tokens yet.</p>}
+      <label className="flex items-start gap-2.5 border-t border-line px-4 py-3 text-sm">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={review.data?.required ?? false}
+          disabled={toggleReview.isPending || review.isLoading}
+          onChange={(e) => toggleReview.mutate(e.target.checked)}
+        />
+        <span>
+          <span className="font-medium text-fg">Require human review before agents publish</span>
+          <span className="mt-0.5 block text-xs text-muted">
+            Drafts written via MCP carry a 🤖 needs-review flag. With this on, an agent can’t publish its own
+            unreviewed draft — a human approves it in the editor (or simply edits it) first. Human publishing is never gated.
+          </span>
+        </span>
+      </label>
     </PanelShell>
   );
 }

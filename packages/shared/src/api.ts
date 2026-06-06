@@ -57,6 +57,10 @@ export const ContentDetail = z.object({
   expireAt: z.string().nullable(),
   updatedAt: z.string(),
   updatedBy: z.string().nullable(),
+  /** Which surface wrote the working version: "mcp" = agent, "web" = human, null = pre-feature. */
+  updatedVia: z.enum(["mcp", "web"]).nullable(),
+  /** Agent-written drafts carry this until a human edits or approves (see docs/POSITIONING.md). */
+  needsReview: z.boolean(),
 });
 export type ContentDetail = z.infer<typeof ContentDetail>;
 

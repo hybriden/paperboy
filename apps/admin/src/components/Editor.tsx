@@ -219,9 +219,20 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       // Keep the query cache authoritative so switching away and back shows the
       // latest saved state (not the initial fetch).
       qc.setQueryData(["content", documentId, locale], updated);
-      // Sync the server-computed URL path live (derived, not user-edited).
-      setForm((prev) => (prev ? { ...prev, urlPath: updated.urlPath } : prev));
-      formRef.current = formRef.current ? { ...formRef.current, urlPath: updated.urlPath } : formRef.current;
+      // Sync the server-computed metadata live (derived, never user-edited —
+      // user-typed name/data must NOT be clobbered by the round-trip): the URL
+      // path and the publish status. Without the status sync, editing a
+      // published page didn't show "Published · changes" (or enable "Discard
+      // draft changes") until a full reload.
+      const meta = {
+        urlPath: updated.urlPath,
+        status: updated.status,
+        hasUnpublishedChanges: updated.hasUnpublishedChanges,
+        publishAt: updated.publishAt,
+        expireAt: updated.expireAt,
+      };
+      setForm((prev) => (prev ? { ...prev, ...meta } : prev));
+      formRef.current = formRef.current ? { ...formRef.current, ...meta } : formRef.current;
       qc.invalidateQueries({ queryKey: ["tree", "root"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
       // Reload the preview with the saved draft — but NOT while an on-page
@@ -331,6 +342,19 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       navigate(`/edit/${created.documentId}${locale !== "en" ? `?lang=${locale}` : ""}`);
     },
     onError: (e) => toast.error("Couldn’t duplicate", (e as Error).message),
+  });
+
+  // Human approval of an agent-written draft (clears the needs-review flag).
+  const approve = useMutation({
+    mutationFn: () => api.approveReview(documentId, locale),
+    onSuccess: (updated) => {
+      const meta = { needsReview: updated.needsReview, updatedVia: updated.updatedVia };
+      setForm((prev) => (prev ? { ...prev, ...meta } : prev));
+      formRef.current = formRef.current ? { ...formRef.current, ...meta } : formRef.current;
+      qc.setQueryData(["content", documentId, locale], updated);
+      toast.success("Draft approved", "The agent-written draft is marked as reviewed.");
+    },
+    onError: (e) => toast.error("Couldn’t approve", (e as Error).message),
   });
 
   const trash = useMutation({
@@ -629,6 +653,27 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             <span className={`h-2 w-2 rounded-full ${form.status === "published" ? "bg-published" : "bg-draft"}`} />
             {form.status === "published" ? (form.hasUnpublishedChanges ? "Published · changes" : "Published") : "Draft"}
           </span>
+          {/* Agent provenance: the working draft was written via MCP and awaits a human eye. */}
+          {form.needsReview && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-draft/10 px-2.5 py-1 text-xs font-semibold text-draft" title="The working draft was written by an agent (via MCP). Approve it or edit it to clear the flag.">
+              <span aria-hidden>🤖</span> Needs review
+              {canEdit && (
+                <button
+                  type="button"
+                  className="ml-0.5 rounded bg-draft/15 px-1.5 py-0.5 text-[11px] font-semibold hover:bg-draft/25"
+                  disabled={approve.isPending}
+                  onClick={() => approve.mutate()}
+                >
+                  {approve.isPending ? "Approving…" : "Approve"}
+                </button>
+              )}
+            </span>
+          )}
+          {!form.needsReview && form.updatedVia === "mcp" && (
+            <span className="text-[11px] text-muted" title="The working version was last written by an agent via MCP.">
+              <span aria-hidden>🤖</span> agent-edited
+            </span>
+          )}
           <SaveIndicator state={saveState} />
         </div>
 
@@ -1089,6 +1134,11 @@ function VersionsDialog({
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${v.isCurrentPublished ? "bg-published/10 text-published" : v.status === "draft" ? "bg-draft/10 text-draft" : "bg-line text-muted"}`}>
                     {v.isCurrentPublished ? "live" : v.status}
                   </span>
+                  {v.createdVia === "mcp" && (
+                    <span className="rounded-full bg-line px-2 py-0.5 text-[11px] font-semibold text-muted" title="Written by an agent via MCP">
+                      <span aria-hidden>🤖</span> agent
+                    </span>
+                  )}
                   <span className="ml-auto text-xs text-muted">{new Date(v.createdAt).toLocaleString()}</span>
                   {canRestore && !v.isCurrentPublished && (
                     <button className="btn-subtle px-2 py-0.5 text-xs" disabled={restore.isPending} onClick={() => restore.mutate(v.id)}>
