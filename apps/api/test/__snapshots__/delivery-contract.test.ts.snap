@@ -1,0 +1,532 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Delivery API — golden-shape contract freeze > GET /delivery/content/:homeId populate=0 (preview) — frozen shape 1`] = `
+{
+  "cv": "<cv>",
+  "data": {
+    "heading": "Welcome to Paperboy",
+    "intro": {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "A headless CMS with a fast, visual editor.",
+              "type": "text",
+            },
+          ],
+          "type": "paragraph",
+        },
+      ],
+      "type": "doc",
+    },
+    "mainArea": [
+      {
+        "blockType": "HeroBlock",
+        "data": {
+          "ctaUrl": "/docs",
+          "subtitle": "Headless. Multi-language. Preview-ready.",
+          "title": "Deliver content anywhere",
+        },
+        "display": "full",
+        "shared": false,
+      },
+      {
+        "blockType": "CardBlock",
+        "content": {
+          "documentId": "<id-2>",
+          "type": "CardBlock",
+        },
+        "display": "narrow",
+        "shared": true,
+      },
+      {
+        "blockType": "ListBlock",
+        "data": {
+          "count": 2,
+          "heading": "Latest from the blog",
+          "source": {
+            "documentId": "<id-3>",
+            "type": "ListPage",
+          },
+        },
+        "display": "narrow",
+        "shared": false,
+      },
+    ],
+  },
+  "documentId": "<id-1>",
+  "kind": "page",
+  "locale": "en",
+  "name": "Home",
+  "slug": "home",
+  "type": "LandingPage",
+  "urlPath": "/home",
+}
+`;
+
+exports[`Delivery API — golden-shape contract freeze > GET /delivery/content/:homeId populate=0 (public) — frozen shape 1`] = `
+{
+  "cv": "<cv>",
+  "data": {
+    "heading": "Welcome to Paperboy",
+    "intro": {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "A headless CMS with a fast, visual editor.",
+              "type": "text",
+            },
+          ],
+          "type": "paragraph",
+        },
+      ],
+      "type": "doc",
+    },
+    "mainArea": [
+      {
+        "blockType": "HeroBlock",
+        "data": {
+          "ctaUrl": "/docs",
+          "subtitle": "Headless. Multi-language. Preview-ready.",
+          "title": "Deliver content anywhere",
+        },
+        "display": "full",
+        "shared": false,
+      },
+      {
+        "blockType": "CardBlock",
+        "content": {
+          "documentId": "<id-2>",
+          "type": "CardBlock",
+        },
+        "display": "narrow",
+        "shared": true,
+      },
+      {
+        "blockType": "ListBlock",
+        "data": {
+          "count": 2,
+          "heading": "Latest from the blog",
+          "source": {
+            "documentId": "<id-3>",
+            "type": "ListPage",
+          },
+        },
+        "display": "narrow",
+        "shared": false,
+      },
+    ],
+  },
+  "documentId": "<id-1>",
+  "kind": "page",
+  "locale": "en",
+  "name": "Home",
+  "slug": "home",
+  "type": "LandingPage",
+  "urlPath": "/home",
+}
+`;
+
+exports[`Delivery API — golden-shape contract freeze > GET /delivery/content/:homeId populate=2 (preview) — frozen shape 1`] = `
+{
+  "cv": "<cv>",
+  "data": {
+    "heading": "Welcome to Paperboy",
+    "intro": {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "A headless CMS with a fast, visual editor.",
+              "type": "text",
+            },
+          ],
+          "type": "paragraph",
+        },
+      ],
+      "type": "doc",
+    },
+    "mainArea": [
+      {
+        "blockType": "HeroBlock",
+        "data": {
+          "ctaUrl": "/docs",
+          "subtitle": "Headless. Multi-language. Preview-ready.",
+          "title": "Deliver content anywhere",
+        },
+        "display": "full",
+        "shared": false,
+      },
+      {
+        "blockType": "CardBlock",
+        "content": {
+          "cv": "<cv>",
+          "data": {
+            "body": {
+              "content": [
+                {
+                  "content": [
+                    {
+                      "text": "Fetch content over a typed REST API.",
+                      "type": "text",
+                    },
+                  ],
+                  "type": "paragraph",
+                },
+              ],
+              "type": "doc",
+            },
+            "title": "Built for developers",
+          },
+          "documentId": "<id-2>",
+          "kind": "block",
+          "locale": "en",
+          "name": "Featured Card",
+          "slug": null,
+          "type": "CardBlock",
+          "urlPath": null,
+        },
+        "display": "narrow",
+        "shared": true,
+      },
+      {
+        "blockType": "ListBlock",
+        "data": {
+          "count": 2,
+          "heading": "Latest from the blog",
+          "source": {
+            "cv": "<cv>",
+            "data": {
+              "heading": "Blog",
+              "intro": {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "Notes from the Paperboy newsroom.",
+                        "type": "text",
+                      },
+                    ],
+                    "type": "paragraph",
+                  },
+                ],
+                "type": "doc",
+              },
+              "listedType": "BlogPost",
+              "pageSize": 20,
+            },
+            "documentId": "<id-3>",
+            "kind": "page",
+            "locale": "en",
+            "name": "Blog",
+            "slug": "blog",
+            "type": "ListPage",
+            "urlPath": "/blog",
+          },
+        },
+        "display": "narrow",
+        "shared": false,
+      },
+    ],
+  },
+  "documentId": "<id-1>",
+  "kind": "page",
+  "locale": "en",
+  "name": "Home",
+  "slug": "home",
+  "type": "LandingPage",
+  "urlPath": "/home",
+}
+`;
+
+exports[`Delivery API — golden-shape contract freeze > GET /delivery/content/:homeId populate=2 (public) — frozen shape 1`] = `
+{
+  "cv": "<cv>",
+  "data": {
+    "heading": "Welcome to Paperboy",
+    "intro": {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "A headless CMS with a fast, visual editor.",
+              "type": "text",
+            },
+          ],
+          "type": "paragraph",
+        },
+      ],
+      "type": "doc",
+    },
+    "mainArea": [
+      {
+        "blockType": "HeroBlock",
+        "data": {
+          "ctaUrl": "/docs",
+          "subtitle": "Headless. Multi-language. Preview-ready.",
+          "title": "Deliver content anywhere",
+        },
+        "display": "full",
+        "shared": false,
+      },
+      {
+        "blockType": "CardBlock",
+        "content": {
+          "cv": "<cv>",
+          "data": {
+            "body": {
+              "content": [
+                {
+                  "content": [
+                    {
+                      "text": "Fetch content over a typed REST API.",
+                      "type": "text",
+                    },
+                  ],
+                  "type": "paragraph",
+                },
+              ],
+              "type": "doc",
+            },
+            "title": "Built for developers",
+          },
+          "documentId": "<id-2>",
+          "kind": "block",
+          "locale": "en",
+          "name": "Featured Card",
+          "slug": null,
+          "type": "CardBlock",
+          "urlPath": null,
+        },
+        "display": "narrow",
+        "shared": true,
+      },
+      {
+        "blockType": "ListBlock",
+        "data": {
+          "count": 2,
+          "heading": "Latest from the blog",
+          "source": {
+            "cv": "<cv>",
+            "data": {
+              "heading": "Blog",
+              "intro": {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "Notes from the Paperboy newsroom.",
+                        "type": "text",
+                      },
+                    ],
+                    "type": "paragraph",
+                  },
+                ],
+                "type": "doc",
+              },
+              "listedType": "BlogPost",
+              "pageSize": 20,
+            },
+            "documentId": "<id-3>",
+            "kind": "page",
+            "locale": "en",
+            "name": "Blog",
+            "slug": "blog",
+            "type": "ListPage",
+            "urlPath": "/blog",
+          },
+        },
+        "display": "narrow",
+        "shared": false,
+      },
+    ],
+  },
+  "documentId": "<id-1>",
+  "kind": "page",
+  "locale": "en",
+  "name": "Home",
+  "slug": "home",
+  "type": "LandingPage",
+  "urlPath": "/home",
+}
+`;
+
+exports[`Delivery API — golden-shape contract freeze > GET /delivery/content?type=BlogPost (public) — frozen shape 1`] = `
+{
+  "cv": "<cv>",
+  "items": [
+    {
+      "cv": "<cv>",
+      "data": {
+        "author": "Paperboy Team",
+        "body": "## Why another CMS?
+
+Because **content modelling should be data**, not code. Paperboy stores types in the database and serves them over a typed delivery API.
+
+- Pages, blocks and globals
+- Draft → preview → publish
+- Multi-language with fallbacks",
+        "publishDate": "<ts>",
+        "summary": "Why we built another headless CMS — and what makes this one different.",
+        "title": "Hello, Paperboy",
+      },
+      "documentId": "<id-1>",
+      "kind": "page",
+      "locale": "en",
+      "name": "Hello, Paperboy",
+      "slug": "hello-paperboy",
+      "type": "BlogPost",
+      "urlPath": "/blog/hello-paperboy",
+    },
+    {
+      "cv": "<cv>",
+      "data": {
+        "author": "Paperboy Team",
+        "body": "## Listing is a semantic
+
+A blog index is not a *standard page that happens to list things* — it is a **ListPage** with \`listedType: BlogPost\`. The frontend keys off the type, never the URL.",
+        "publishDate": "<ts>",
+        "summary": "A ListPage lists its child pages of a chosen type — no hardcoded URLs in the frontend.",
+        "title": "Modelling listings with ListPage",
+      },
+      "documentId": "<id-2>",
+      "kind": "page",
+      "locale": "en",
+      "name": "Modelling listings with ListPage",
+      "slug": "modelling-listings",
+      "type": "BlogPost",
+      "urlPath": "/blog/modelling-listings",
+    },
+  ],
+  "total": 2,
+}
+`;
+
+exports[`Delivery API — golden-shape contract freeze > GET /delivery/globals/:type (public) — frozen shape 1`] = `
+{
+  "cv": "<cv>",
+  "data": {
+    "siteName": "Paperboy",
+  },
+  "documentId": "<id-1>",
+  "kind": "global",
+  "locale": "en",
+  "name": "Site Settings",
+  "slug": null,
+  "type": "SiteSettings",
+  "urlPath": null,
+}
+`;
+
+exports[`Delivery API — golden-shape contract freeze > GET /delivery/start (public) — frozen shape 1`] = `
+{
+  "cv": "<cv>",
+  "data": {
+    "heading": "Welcome to Paperboy",
+    "intro": {
+      "content": [
+        {
+          "content": [
+            {
+              "text": "A headless CMS with a fast, visual editor.",
+              "type": "text",
+            },
+          ],
+          "type": "paragraph",
+        },
+      ],
+      "type": "doc",
+    },
+    "mainArea": [
+      {
+        "blockType": "HeroBlock",
+        "data": {
+          "ctaUrl": "/docs",
+          "subtitle": "Headless. Multi-language. Preview-ready.",
+          "title": "Deliver content anywhere",
+        },
+        "display": "full",
+        "shared": false,
+      },
+      {
+        "blockType": "CardBlock",
+        "content": {
+          "cv": "<cv>",
+          "data": {
+            "body": {
+              "content": [
+                {
+                  "content": [
+                    {
+                      "text": "Fetch content over a typed REST API.",
+                      "type": "text",
+                    },
+                  ],
+                  "type": "paragraph",
+                },
+              ],
+              "type": "doc",
+            },
+            "title": "Built for developers",
+          },
+          "documentId": "<id-2>",
+          "kind": "block",
+          "locale": "en",
+          "name": "Featured Card",
+          "slug": null,
+          "type": "CardBlock",
+          "urlPath": null,
+        },
+        "display": "narrow",
+        "shared": true,
+      },
+      {
+        "blockType": "ListBlock",
+        "data": {
+          "count": 2,
+          "heading": "Latest from the blog",
+          "source": {
+            "cv": "<cv>",
+            "data": {
+              "heading": "Blog",
+              "intro": {
+                "content": [
+                  {
+                    "content": [
+                      {
+                        "text": "Notes from the Paperboy newsroom.",
+                        "type": "text",
+                      },
+                    ],
+                    "type": "paragraph",
+                  },
+                ],
+                "type": "doc",
+              },
+              "listedType": "BlogPost",
+              "pageSize": 20,
+            },
+            "documentId": "<id-3>",
+            "kind": "page",
+            "locale": "en",
+            "name": "Blog",
+            "slug": "blog",
+            "type": "ListPage",
+            "urlPath": "/blog",
+          },
+        },
+        "display": "narrow",
+        "shared": false,
+      },
+    ],
+  },
+  "documentId": "<id-1>",
+  "kind": "page",
+  "locale": "en",
+  "name": "Home",
+  "slug": "home",
+  "type": "LandingPage",
+  "urlPath": "/home",
+}
+`;
