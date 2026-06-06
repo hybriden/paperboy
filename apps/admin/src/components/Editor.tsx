@@ -669,7 +669,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               )}
             </span>
           )}
-          {!form.needsReview && form.updatedVia === "mcp" && (
+          {!form.needsReview && (form.updatedVia === "mcp" || form.updatedVia === "agent") && (
             <span className="text-[11px] text-muted" title="The working version was last written by an agent via MCP.">
               <span aria-hidden>🤖</span> agent-edited
             </span>
@@ -1134,7 +1134,7 @@ function VersionsDialog({
                   <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${v.isCurrentPublished ? "bg-published/10 text-published" : v.status === "draft" ? "bg-draft/10 text-draft" : "bg-line text-muted"}`}>
                     {v.isCurrentPublished ? "live" : v.status}
                   </span>
-                  {v.createdVia === "mcp" && (
+                  {(v.createdVia === "mcp" || v.createdVia === "agent") && (
                     <span className="rounded-full bg-line px-2 py-0.5 text-[11px] font-semibold text-muted" title="Written by an agent via MCP">
                       <span aria-hidden>🤖</span> agent
                     </span>
