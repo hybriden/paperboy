@@ -397,6 +397,15 @@ function collectImages(children: unknown): RtNode[] {
       if (validImage(n)) {
         const img: RtNode = { ...n, type: "image" };
         delete img.content;
+        // Same mark treatment as the per-node pass — a hoisted image must be
+        // byte-identical to what re-sanitizing would produce (fixpoint).
+        if (Array.isArray(img.marks)) {
+          img.marks = (img.marks as RtNode[])
+            .filter((m) => m && typeof m === "object")
+            .map((m) => ({ ...m, type: MARK_ALIASES[m.type as string] ?? m.type }))
+            .filter((m) => RICHTEXT_MARKS.has(m.type as string));
+          if (!(img.marks as RtNode[]).length) delete img.marks;
+        }
         out.push(img);
       }
     } else {
@@ -472,9 +481,12 @@ function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] 
     return nodes.flatMap((n) => (INLINE_NODES.has(n.type as string) ? [n] : inlineDescendants([n])));
   }
   if (LIST_PARENTS.has(parentType)) {
-    // listItem children only: wrap loose blocks / inline runs
+    // listItem children only: wrap loose blocks / inline runs. Empty containers
+    // are dropped BEFORE wrapping (a listItem holding only an empty blockquote
+    // is PM-invalid — found by the property suite's fixpoint check).
     const items: RtNode[] = [];
     for (const n of nodes) {
+      if (isEmptyContainer(n)) continue;
       if (n.type === "listItem") items.push(n);
       else if (INLINE_NODES.has(n.type as string)) items.push({ type: "listItem", content: [{ type: "paragraph", content: [n] }] });
       else items.push({ type: "listItem", content: [n] });
@@ -483,7 +495,10 @@ function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] 
   }
   if (BLOCK_PARENTS.has(parentType)) {
     // block content only: group consecutive loose inline nodes into paragraphs,
-    // and drop block containers that ended up empty (PM requires block+).
+    // drop block containers that ended up empty (PM requires block+), and wrap
+    // loose listItems in a list (a bare listItem under doc/blockquote is
+    // PM-invalid — found by the property suite's fixpoint check). Consecutive
+    // loose items merge into one bulletList.
     const out: RtNode[] = [];
     let run: RtNode[] = [];
     const flush = () => {
@@ -494,10 +509,14 @@ function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] 
       if (INLINE_NODES.has(n.type as string)) run.push(n);
       else {
         flush();
-        const isEmptyContainer =
-          (n.type === "blockquote" || n.type === "listItem" || LIST_PARENTS.has(n.type as string)) &&
-          !(n.content as RtNode[]).length;
-        if (!isEmptyContainer) out.push(n);
+        if (isEmptyContainer(n)) continue;
+        if (n.type === "listItem") {
+          const prev = out[out.length - 1];
+          if (prev && prev.type === "bulletList") (prev.content as RtNode[]).push(n);
+          else out.push({ type: "bulletList", content: [n] });
+        } else {
+          out.push(n);
+        }
       }
     }
     flush();
@@ -506,15 +525,32 @@ function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] 
   return nodes;
 }
 
+/** A block container PM rejects when empty (block+ content model). */
+function isEmptyContainer(n: RtNode): boolean {
+  return (
+    (n.type === "blockquote" || n.type === "listItem" || LIST_PARENTS.has(n.type as string)) &&
+    !(n.content as RtNode[] | undefined)?.length
+  );
+}
+
 /** Normalize a TipTap doc to the shape the admin editor can actually load. */
 function sanitizeRichTextDoc(doc: unknown): unknown {
   const o = doc as RtNode;
   const content = sanitizeRichTextNodes(o.content, "doc");
-  return { ...o, type: "doc", content: content.length ? content : [{ type: "paragraph" }] };
+  // The fallback paragraph carries content: [] like every sanitized paragraph,
+  // so sanitize(sanitize(x)) === sanitize(x) exactly (single-pass fixpoint).
+  return { ...o, type: "doc", content: content.length ? content : [{ type: "paragraph", content: [] }] };
 }
 
 /** Looks like a BCP-47-ish locale code ("en", "nb", "en-US", "nb-NO"). */
 const LOCALE_KEY = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
+/**
+ * Short keys that MATCH the locale regex but are payload vocabulary, never
+ * locales. Without this, {url: "/x.png"} on an image field was locale-unwrapped
+ * into a bare string that persisted as a (bogus) documentId — found by the
+ * property suite; real garbage-in-success-out.
+ */
+const NOT_LOCALE_KEYS = new Set(["url", "uri", "src", "alt", "ref", "rel", "img", "tag", "val", "raw"]);
 
 /**
  * Be liberal in what we accept (Postel's law) for the field-shape mistakes an
@@ -545,7 +581,7 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const obj = value as Record<string, unknown>;
     const keys = Object.keys(obj);
-    if (keys.length > 0 && keys.every((k) => LOCALE_KEY.test(k))) {
+    if (keys.length > 0 && keys.every((k) => LOCALE_KEY.test(k) && !NOT_LOCALE_KEYS.has(k))) {
       const picked = locale && locale in obj ? obj[locale] : keys.length === 1 ? obj[keys[0]!] : undefined;
       if (picked !== undefined) value = picked;
     }
