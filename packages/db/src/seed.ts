@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { ContentTypeDef } from "@paperboy/shared";
 import { nanoid } from "nanoid";
 import { createDb } from "./client.js";
@@ -314,12 +315,37 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
   return { homeId, authorZoneId, secretId, cardId, blogId, postIds };
 }
 
-// Run directly: `tsx src/seed.ts`
-if (import.meta.url === `file://${process.argv[1]}`) {
-  seed()
-    .then(() => process.exit(0))
-    .catch((err) => {
-      console.error("Seed failed:", err);
-      process.exit(1);
-    });
+// Run directly: `tsx src/seed.ts` (the compose `init` service).
+// GUARDED: a populated database is never wiped unless FORCE_SEED=1 — a plain
+// `docker compose up` pulling in the init service has destroyed real data
+// before. The skip still applies migrations, so a normal compose up keeps the
+// schema current. Tests import seed() directly and stay unguarded.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  (async () => {
+    const url = process.env.DATABASE_URL;
+    if (!url) throw new Error("DATABASE_URL is not set");
+    if (process.env.FORCE_SEED !== "1") {
+      const { sql: pg } = createDb(url);
+      let items = 0;
+      try {
+        const rows = await pg`SELECT count(*)::int AS n FROM content_item`;
+        items = (rows[0]?.n as number) ?? 0;
+      } catch {
+        items = 0; // table doesn't exist yet → fresh database → safe to seed
+      }
+      await pg.end();
+      if (items > 0) {
+        console.log(`Seed SKIPPED: this database already holds ${items} content items.`);
+        console.log("A reseed TRUNCATES everything and regenerates IDs. If that is really");
+        console.log("what you want: FORCE_SEED=1 docker compose run --rm init");
+        await migrate(url); // keep forward-only migrations flowing
+        process.exit(0);
+      }
+    }
+    await seed();
+    process.exit(0);
+  })().catch((err) => {
+    console.error("Seed failed:", err);
+    process.exit(1);
+  });
 }
