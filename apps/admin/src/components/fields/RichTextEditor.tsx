@@ -204,25 +204,43 @@ export default function RichTextEditor({
           "prose-paperboy min-h-[120px] rounded-b-[var(--radius)] border border-t-0 border-line bg-panel px-3 py-2.5 text-sm text-fg outline-none focus:border-accent",
       },
       // Drop a media asset (dragged from the Assets pane) → insert an image
-      // node at the drop position. Same application/x-paperboy channel as
-      // image fields and content areas.
+      // node at the drop position; an OS image FILE uploads through the normal
+      // asset pipeline first, then inserts the same node. Same
+      // application/x-paperboy channel as image fields and content areas.
       handleDrop: (view, event) => {
+        const insertAt = (pos: number, src: string, alt: string, documentId: string | null) => {
+          const imageNode = view.state.schema.nodes.image;
+          if (!imageNode) return;
+          view.dispatch(
+            view.state.tr.insert(
+              pos,
+              // width: 100 → autofit the text column on insert; resize by hand after.
+              imageNode.create({ src, alt, "data-document-id": documentId, width: 100 }),
+            ),
+          );
+        };
+        const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? view.state.selection.to;
+
+        const file = event.dataTransfer?.files?.[0];
+        if (file) {
+          if (!file.type.startsWith("image/")) return false;
+          event.preventDefault();
+          // Async: upload, then insert at the captured position (clamped — the
+          // doc may have changed while the upload was in flight).
+          void api.uploadAsset(file).then(
+            (asset) => insertAt(Math.min(pos, view.state.doc.content.size), asset.url, asset.alt || file.name, asset.documentId),
+            () => undefined, // upload errors surface via the assets pane next refresh
+          );
+          return true;
+        }
+
         const raw = event.dataTransfer?.getData("application/x-paperboy");
         if (!raw) return false;
         try {
           const p = JSON.parse(raw) as { kind?: string; documentId?: string; url?: string; alt?: string };
           if (p.kind !== "media" || !p.url) return false;
-          const imageNode = view.state.schema.nodes.image;
-          if (!imageNode) return false;
           event.preventDefault();
-          const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? view.state.selection.to;
-          view.dispatch(
-            view.state.tr.insert(
-              pos,
-              // width: 100 → autofit the text column on insert; resize by hand after.
-              imageNode.create({ src: p.url, alt: p.alt ?? "", "data-document-id": p.documentId ?? null, width: 100 }),
-            ),
-          );
+          insertAt(pos, p.url, p.alt ?? "", p.documentId ?? null);
           return true;
         } catch {
           return false;
@@ -232,7 +250,7 @@ export default function RichTextEditor({
       // the browser refuses the drop.
       handleDOMEvents: {
         dragover: (_view, event) => {
-          if (event.dataTransfer?.types.includes("application/x-paperboy")) event.preventDefault();
+          if (event.dataTransfer?.types.includes("application/x-paperboy") || event.dataTransfer?.types.includes("Files")) event.preventDefault();
           return false;
         },
       },

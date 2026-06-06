@@ -15,12 +15,13 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
 import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
 import { api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { ImageField } from "../MediaLibrary.js";
+import { useToast } from "../ui/toast.js";
 import { MarkdownEditor } from "./MarkdownEditor.js";
 import { ReferenceField } from "./ReferenceField.js";
 import { RichText } from "./RichText.js";
@@ -51,6 +52,9 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  const toast = useToast();
+  const qc = useQueryClient();
+
   function addInline(blockType: string) {
     onChange([...blocks, { key: newKey(), blockType, display: "automatic", inline: {}, ref: null }]);
   }
@@ -58,17 +62,87 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
     onChange([...blocks, { key: newKey(), blockType, display: "automatic", inline: null, ref: documentId }]);
   }
 
-  // Drop a shared block (Assets pane) or a page (content tree) into this
-  // content area. A dropped page becomes a teaser — a reference entry that
-  // delivery resolves to {name, urlPath, public data} (Optimizely-style).
+  // ----- image drops: a dropped image becomes a BLOCK carrying that image -----
+  // Candidates = allowed block types that have an image field. One candidate →
+  // insert immediately; several → a popover at the drop point; none → toast.
+  const imageCandidates = allowed.filter((t) => t.kind === "block" && t.fields.some((f) => f.type === "image"));
+  const [imagePicker, setImagePicker] = useState<{ x: number; y: number; documentId: string; index: number } | null>(null);
+
+  /** Insertion index from the drop's Y position over the block rows. */
+  function dropIndex(e: React.DragEvent): number {
+    const rows = (e.currentTarget as HTMLElement).querySelectorAll(":scope > ul > li");
+    let index = blocks.length;
+    rows.forEach((row, i) => {
+      const r = row.getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2 && i < index) index = i;
+    });
+    return index;
+  }
+
+  function insertImageBlock(blockType: string, documentId: string, index: number) {
+    const type = allowed.find((t) => t.name === blockType);
+    const imageField = type?.fields.find((f) => f.type === "image");
+    if (!imageField) return;
+    const next = [...blocks];
+    next.splice(index, 0, { key: newKey(), blockType, display: "automatic", inline: { [imageField.name]: documentId }, ref: null });
+    onChange(next);
+  }
+
+  function dropImage(documentId: string, index: number, at: { x: number; y: number }) {
+    if (imageCandidates.length === 0) {
+      toast.error("Can’t drop an image here", "No block allowed in this area has an image field.");
+      return;
+    }
+    if (imageCandidates.length === 1) {
+      insertImageBlock(imageCandidates[0]!.name, documentId, index);
+      return;
+    }
+    setImagePicker({ ...at, documentId, index });
+  }
+
+  /** OS file drop: upload through the normal asset pipeline, then insert. */
+  async function dropFile(file: File, index: number, at: { x: number; y: number }) {
+    if (!file.type.startsWith("image/")) {
+      toast.error("Only images can be dropped here", file.name);
+      return;
+    }
+    try {
+      const asset = await api.uploadAsset(file);
+      qc.invalidateQueries({ queryKey: ["assets"] });
+      dropImage(asset.documentId, index, at);
+    } catch (err) {
+      toast.error("Upload failed", (err as Error).message);
+    }
+  }
+
+  // Drop a shared block (Assets pane), a page (content tree — becomes a
+  // teaser), a media asset (becomes a block with its image field set), or an
+  // OS image file (uploaded, then the same image-block flow).
   const [dropOver, setDropOver] = useState(false);
   function onDrop(e: React.DragEvent) {
     setDropOver(false);
+    const at = { x: e.clientX, y: e.clientY };
+    const index = dropIndex(e);
+
+    if (e.dataTransfer.files.length > 0) {
+      e.preventDefault();
+      void dropFile(e.dataTransfer.files[0]!, index, at);
+      return;
+    }
+
     const raw = e.dataTransfer.getData("application/x-paperboy");
     if (!raw) return;
     e.preventDefault();
     try {
-      const p = JSON.parse(raw) as { kind?: string; documentId?: string; blockType?: string };
+      const p = JSON.parse(raw) as { kind?: string; documentId?: string; blockType?: string; url?: string };
+      if (p.kind === "media" && p.documentId) {
+        if (p.url?.endsWith(".pdf")) {
+          toast.error("Can’t drop a PDF here", "Content-area image drops take images.");
+          return;
+        }
+        dropImage(p.documentId, index, at);
+        return;
+      }
       if (!p.documentId || !p.blockType) return;
       if (p.kind === "block") {
         // allowedBlocks constrains which BLOCK types may be placed here.
@@ -138,13 +212,18 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
       <div
         data-testid={`content-area-${field.name}`}
         className={`rounded-md border-2 border-dashed p-2 transition-colors ${dropOver ? "border-accent bg-accent/10" : "border-line bg-canvas/60"}`}
-        onDragOver={(e) => { if (e.dataTransfer.types.includes("application/x-paperboy")) { e.preventDefault(); setDropOver(true); } }}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("application/x-paperboy") || e.dataTransfer.types.includes("Files")) {
+            e.preventDefault();
+            setDropOver(true);
+          }
+        }}
         onDragLeave={() => setDropOver(false)}
         onDrop={onDrop}
       >
         {blocks.length === 0 ? (
           <p className="px-2 py-6 text-center text-sm text-muted">
-            {dropOver ? "Drop it here" : "Click a block above to add it, or drag in a shared block (Assets pane) or a page (content tree — shown as a teaser)."}
+            {dropOver ? "Drop it here" : "Click a block above to add it, or drag in a shared block (Assets pane), a page (content tree — shown as a teaser), or an image (library or your desktop)."}
           </p>
         ) : (
           <SortableContext items={blocks.map((b) => b.key)} strategy={verticalListSortingStrategy}>
@@ -168,7 +247,68 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
           </SortableContext>
         )}
       </div>
+
+      {imagePicker && (
+        <ImageBlockPicker
+          at={imagePicker}
+          candidates={imageCandidates}
+          onPick={(blockType) => {
+            insertImageBlock(blockType, imagePicker.documentId, imagePicker.index);
+            setImagePicker(null);
+          }}
+          onClose={() => setImagePicker(null)}
+        />
+      )}
     </DndContext>
+  );
+}
+
+/**
+ * "Insert dropped image as which block?" — shown at the drop point when more
+ * than one allowed block type carries an image field.
+ */
+function ImageBlockPicker({
+  at,
+  candidates,
+  onPick,
+  onClose,
+}: {
+  at: { x: number; y: number };
+  candidates: ContentTypeDef[];
+  onPick: (blockType: string) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden />
+      <div
+        role="menu"
+        aria-label="Insert image as block"
+        className="fixed z-50 w-52 rounded-[var(--radius)] border border-line bg-panel p-1 shadow-pop"
+        style={{ left: Math.min(at.x, window.innerWidth - 220), top: Math.min(at.y, window.innerHeight - 40 * candidates.length - 16) }}
+      >
+        <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Insert image as…</p>
+        {candidates.map((t) => (
+          <button
+            key={t.name}
+            role="menuitem"
+            type="button"
+            className="block w-full rounded px-2 py-1.5 text-left text-sm text-fg hover:bg-canvas"
+            onClick={() => onPick(t.name)}
+          >
+            {t.displayName}
+          </button>
+        ))}
+      </div>
+    </>
   );
 }
 
