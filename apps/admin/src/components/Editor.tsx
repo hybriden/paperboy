@@ -128,10 +128,20 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Live patch for the page DOM (no reload while typing in the overlay).
   const [livePatch, setLivePatch] = useState<{ field: string; text?: string; html?: string; n: number } | null>(null);
   const livePatchCounter = useRef(0);
+  const activeFieldRef = useRef<string | null>(null);
   const activateProp = (e: React.FocusEvent | React.MouseEvent) => {
     const el = (e.target as HTMLElement).closest?.("[data-pb-prop]");
     const field = el?.getAttribute("data-pb-prop");
-    if (field) setPropFocus({ field, n: ++propCounter.current });
+    if (!field) return;
+    // Defer to the NEXT FRAME (not a microtask, which still flushes mid-click
+    // sequence): running setPropFocus synchronously in the capture phase
+    // re-renders the field between a click's mousedown/focus and its click,
+    // which swallows the click on controlled inputs — a boolean checkbox would
+    // never toggle. Also skip when the field is unchanged so re-focusing the
+    // same field (e.g. clicking a checkbox already focused) issues no re-render.
+    if (field === activeFieldRef.current) return;
+    activeFieldRef.current = field;
+    requestAnimationFrame(() => setPropFocus({ field, n: ++propCounter.current }));
   };
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formRef = useRef<ContentDetail | null>(null);

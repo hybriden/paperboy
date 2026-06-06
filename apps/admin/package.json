@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "echo 'lint: admin (typecheck covers it)'",
     "test:e2e": "playwright test",
+    "test:e2e:debug": "playwright test --config playwright.debug.config.ts",
     "test:e2e:install": "playwright install chromium"
   },
   "dependencies": {
