@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { Panel, PanelGroup } from "react-resizable-panels";
 import { useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api.js";
@@ -31,10 +31,20 @@ export function EditView() {
   // Opening Edit with nothing selected defaults to the configured start page ("/")
   // on desktop, so the editor isn't empty. Mobile keeps its list-first flow.
   // Falls back to the Welcome screen when no start page is configured.
+  // DEFERRED one tick: a just-created page's navigation can still be committing
+  // when the site query resolves — redirecting synchronously stomped it ("create
+  // bounces back to Home"). The cleanup cancels the pending redirect as soon as
+  // a real navigation lands.
+  const docIdRef = useRef(documentId);
+  docIdRef.current = documentId;
   useEffect(() => {
     if (documentId || isMobile) return;
     const startId = site.data?.startPageId;
-    if (startId) navigate(`/edit/${startId}${locale !== "en" ? `?lang=${locale}` : ""}`, { replace: true });
+    if (!startId) return;
+    const t = setTimeout(() => {
+      if (!docIdRef.current) navigate(`/edit/${startId}${locale !== "en" ? `?lang=${locale}` : ""}`, { replace: true });
+    }, 50);
+    return () => clearTimeout(t);
   }, [documentId, isMobile, site.data?.startPageId, locale, navigate]);
 
   const setLocale = useCallback(

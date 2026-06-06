@@ -15,10 +15,13 @@ import {
   deleteAsset,
   deleteWebhook,
   dispatchWebhooks,
+  getAgentReviewRequired,
   getSiteConfig,
   getStoredAiKey,
   getStoredAiModel,
   getStoredStockConfig,
+  markReviewed,
+  setAgentReviewRequired,
   importStockImage,
   searchStockImages,
   setAiConfig,
@@ -318,6 +321,17 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       const r = await unpublishContent(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.unpublish", documentId: req.params.documentId, locale, ip: req.ip });
       emitContentEvent("content.unpublished", { documentId: r.documentId, type: r.type, kind: r.kind, locale, name: r.name, urlPath: r.urlPath });
+      return r;
+    },
+  );
+  // Human approval of an agent-written draft (clears the needs-review flag).
+  app.post(
+    "/content/:documentId/review",
+    { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: ContentDetail } } },
+    async (req) => {
+      const locale = req.query.locale ?? "en";
+      const r = await markReviewed(app.db, req.accessCtx!, req.params.documentId, locale);
+      await audit(app.db, { actorUserId: req.user!.id, action: "content.review", documentId: req.params.documentId, locale, ip: req.ip });
       return r;
     },
   );
@@ -688,6 +702,24 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         },
       });
       return aiStatus();
+    },
+  );
+
+  /* ----------------------------- agent review --------------------------- */
+  // Opt-in gate: agent (MCP) drafts must be human-approved before an AGENT may
+  // publish them. Default off so existing agent pipelines keep working.
+  app.get(
+    "/site/agent-review",
+    { preHandler: [requirePermission("user.manage")], schema: { tags: ["manage"], response: { 200: z.object({ required: z.boolean() }) } } },
+    async () => ({ required: await getAgentReviewRequired(app.db) }),
+  );
+  app.post(
+    "/site/agent-review",
+    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], body: z.object({ required: z.boolean() }), response: { 200: z.object({ required: z.boolean() }) } } },
+    async (req) => {
+      await setAgentReviewRequired(app.db, req.accessCtx!, req.body.required);
+      await audit(app.db, { actorUserId: req.user!.id, action: "site.agent_review", ip: req.ip, detail: { required: req.body.required } });
+      return { required: req.body.required };
     },
   );
 

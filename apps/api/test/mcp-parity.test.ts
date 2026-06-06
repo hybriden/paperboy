@@ -211,6 +211,59 @@ describe("MCP parity: real stdio server vs the API", () => {
     expect(m.items.map((i) => i.documentId)).toEqual(viaApi.items.map((i) => i.documentId));
   }, 60_000);
 
+  it("provenance: MCP writes record updatedVia='mcp' + the needs-review flag; a human edit clears both", async () => {
+    const created = await mcp.call("create_content", { type: "BlogPost", parentId: s.ids.blogId, name: "MCP Provenance" });
+    const id = (created.json as { documentId: string }).documentId;
+
+    const afterAgent = (await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${id}?locale=en`, headers: { cookie: admin.cookie } })).json();
+    expect(afterAgent.updatedVia).toBe("mcp");
+    expect(afterAgent.needsReview).toBe(true);
+
+    // A human (web session) edit supersedes the flag — the human has seen the content.
+    const put = await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(admin), payload: { data: { title: "Human touch" }, merge: true } });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().updatedVia).toBe("web");
+    expect(put.json().needsReview).toBe(false);
+  }, 60_000);
+
+  it("agent-review gate OFF (default): an agent may publish its own draft", async () => {
+    const created = await mcp.call("create_content", { type: "BlogPost", parentId: s.ids.blogId, name: "MCP Self Publish" });
+    const id = (created.json as { documentId: string }).documentId;
+    await mcp.call("update_content", { documentId: id, data: { title: "Self publish" } });
+    const pub = await mcp.call("publish", { documentId: id });
+    expect(pub.isError).toBe(false);
+  }, 60_000);
+
+  it("agent-review gate ON: agent publish is blocked with a self-teaching error until a human approves", async () => {
+    const enable = await s.app.inject({ method: "POST", url: "/api/v1/manage/site/agent-review", headers: authHeaders(admin), payload: { required: true } });
+    expect(enable.statusCode).toBe(200);
+    try {
+      const created = await mcp.call("create_content", { type: "BlogPost", parentId: s.ids.blogId, name: "MCP Gated" });
+      const id = (created.json as { documentId: string }).documentId;
+      await mcp.call("update_content", { documentId: id, data: { title: "Gated" } });
+
+      const blocked = await mcp.call("publish", { documentId: id });
+      expect(blocked.isError).toBe(true);
+      expect(blocked.text).toContain("human review"); // names the problem
+      expect(blocked.text).toContain("/review"); // and the unblock path
+
+      // Human approves → the agent can publish.
+      const approve = await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/review?locale=en`, headers: authHeaders(admin) });
+      expect(approve.statusCode).toBe(200);
+      expect(approve.json().needsReview).toBe(false);
+
+      const pub = await mcp.call("publish", { documentId: id });
+      expect(pub.isError).toBe(false);
+
+      // HUMAN publishing is never gated: agent-drafts another change, human publishes it.
+      await mcp.call("set_field", { documentId: id, field: "title", value: "Gated v2" });
+      const humanPub = await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(admin) });
+      expect(humanPub.statusCode).toBe(200);
+    } finally {
+      await s.app.inject({ method: "POST", url: "/api/v1/manage/site/agent-review", headers: authHeaders(admin), payload: { required: false } });
+    }
+  }, 90_000);
+
   it("a revoked token is refused at boot (process exits non-zero)", async () => {
     const revoke = await s.app.inject({ method: "POST", url: `/api/v1/manage/mcp-tokens/${tokenId}/revoke`, headers: authHeaders(admin) });
     expect(revoke.statusCode).toBe(200);

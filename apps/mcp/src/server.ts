@@ -409,7 +409,9 @@ async function main(): Promise<void> {
   } else {
     userId = await verifyLogin(db, MCP_EMAIL, MCP_PASSWORD);
   }
-  ctx = await getAccessContext(db, userId);
+  // via:"mcp" — every write through this server is agent provenance: versions
+  // record created_via='mcp' and drafts carry the needs-review flag.
+  ctx = { ...(await getAccessContext(db, userId)), via: "mcp" };
   console.error(`[paperboy-mcp] authenticated (${userId}) via ${MCP_TOKEN ? "token" : "password"} — ${ctx.permissions.length} permissions`);
 
   if (MCP_HTTP_PORT) {

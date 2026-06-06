@@ -14,6 +14,12 @@ export interface AccessContext {
   permissions: Permission[];
   siteWide: boolean;
   sections: string[]; // allowed top-level section document_ids
+  /**
+   * Which surface this request came through — "mcp" for agent writes, "web"
+   * for the browser/API session. Drives provenance (content_version.created_via)
+   * and the agent-review flag; never an authorization input.
+   */
+  via?: "mcp" | "web";
 }
 
 /** Verb check (RBAC). Deny-by-default. */

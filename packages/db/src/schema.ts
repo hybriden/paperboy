@@ -79,6 +79,10 @@ export const contentVersion = pgTable(
     // Scheduled publish: timed go-live (publish_at, on a draft) + expiry (expire_at).
     publishAt: timestamp("publish_at", { withTimezone: true }),
     expireAt: timestamp("expire_at", { withTimezone: true }),
+    // Agent provenance: which surface wrote this version ("mcp" | "web"; NULL = pre-feature).
+    createdVia: text("created_via"),
+    // Agent-written drafts carry a review flag until a human edits or approves.
+    needsReview: boolean("needs_review").notNull().default(false),
   },
   (t) => ({
     docLocaleIdx: index("content_version_doc_locale_idx").on(t.documentId, t.locale),
