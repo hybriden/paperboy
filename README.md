@@ -13,7 +13,8 @@ on-page editing, a Next.js reference frontend, and a stdio MCP server — on Pos
 ## Highlights
 - **Data-driven content types** — pages, blocks, and globals defined as data, not code.
 - **Content areas** with inline + shared blocks and per-field "allowed types".
-- **No-leak Delivery API** — one read chokepoint with a `perspective`; public keys see only published content, private fields never serialize, preview keys see drafts.
+- **No-leak Delivery API** — one read chokepoint with a `perspective`; public keys see only published content, private fields never serialize, preview keys see drafts. Lists support **pagination, sorting and field filters** (`?limit=&offset=&sort=-data.publishDate&data.author=Jane`), plus **full-text search** (`/delivery/search?q=`).
+- **Image transforms** — `?w=800&format=webp&q=75` on any media URL; variants generated once with sharp and cached on disk (widths/qualities snap to fixed steps).
 - **Visual on-page editing** — click an element in the live preview to focus its field in the editor, and focus a field to highlight it in the preview (both ways).
 - **Multi-language** (document-level i18n + fallback chain), **hierarchical URLs** from the page tree, **version history** + restore, **trash**/restore, **duplicate**.
 - **Secure by default** — Argon2id + opaque server-side sessions + CSRF, **passwordless TOTP 2FA**, deny-by-default **RBAC** with object-level scope checks, append-only **audit log**.

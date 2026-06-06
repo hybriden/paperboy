@@ -51,6 +51,7 @@ Every rule below traces to a real agent run that broke. Do not regress them.
 
 ## Testing
 - API: `pnpm --filter @paperboy/api test` (Vitest + a real Postgres test DB; isolated).
+- **Contract-freeze layers** (all in `apps/api/test/`): `shared-*.test.ts` are pure unit/property tests of packages/shared (no DB — richtext sanitizer fixpoint, coercion matrix); `delivery-contract` + `openapi-snapshot` pin delivered JSON shapes and the API surface as snapshots — a failing snapshot means you changed a PUBLIC CONTRACT: review the diff and update the snapshot deliberately in the same commit, never blind `--update`; `mcp-parity` spawns the real stdio MCP server and locks the tool surface, write parity, and self-teaching error shapes.
 - e2e: `pnpm --filter @paperboy/admin test:e2e` (Playwright + axe). Run against the live deploy with `ADMIN_URL=https://<host>` (needed because `COOKIE_SECURE` breaks http login). Don't run the full data-mutating suite against a live instance you care about.
 - Always typecheck before deploying: `pnpm -r typecheck`.
 

@@ -1,0 +1,1365 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`OpenAPI surface — stable digest snapshot > digest of every path+method is frozen 1`] = `
+{
+  "DELETE /api/v1/manage/assets/{documentId}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "DELETE /api/v1/manage/content-types/{name}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:name",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "DELETE /api/v1/manage/content/{documentId}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "ok",
+      "trashed",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "DELETE /api/v1/manage/locales/{code}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:code",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "DELETE /api/v1/manage/users/{id}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "DELETE /api/v1/manage/webhooks/{id}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/ai/status": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "enabled",
+      "tasks",
+    ],
+    "summary": null,
+    "tags": [
+      "ai",
+    ],
+  },
+  "GET /api/v1/auth/2fa/status": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "backupCodesRemaining",
+      "enabled",
+    ],
+    "summary": null,
+    "tags": [
+      "auth",
+    ],
+  },
+  "GET /api/v1/auth/me": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "csrfToken",
+      "user",
+    ],
+    "summary": null,
+    "tags": [
+      "auth",
+    ],
+  },
+  "GET /api/v1/delivery/content": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "cv",
+      "items",
+      "total",
+    ],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/delivery/content/by-path": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "query:path",
+    ],
+    "response200Props": [
+      "cv",
+      "data",
+      "documentId",
+      "kind",
+      "locale",
+      "name",
+      "slug",
+      "type",
+      "urlPath",
+    ],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/delivery/content/by-slug": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "query:slug",
+    ],
+    "response200Props": [
+      "cv",
+      "data",
+      "documentId",
+      "kind",
+      "locale",
+      "name",
+      "slug",
+      "type",
+      "urlPath",
+    ],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/delivery/content/{documentId}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "cv",
+      "data",
+      "documentId",
+      "kind",
+      "locale",
+      "name",
+      "slug",
+      "type",
+      "urlPath",
+    ],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/delivery/globals/{type}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:type",
+    ],
+    "response200Props": [
+      "cv",
+      "data",
+      "documentId",
+      "kind",
+      "locale",
+      "name",
+      "slug",
+      "type",
+      "urlPath",
+    ],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/delivery/search": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "query:q",
+    ],
+    "response200Props": [
+      "items",
+      "total",
+    ],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/delivery/start": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "cv",
+      "data",
+      "documentId",
+      "kind",
+      "locale",
+      "name",
+      "slug",
+      "type",
+      "urlPath",
+    ],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/manage/assets": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]alt",
+      "[]createdAt",
+      "[]documentId",
+      "[]filename",
+      "[]mime",
+      "[]size",
+      "[]sourceMeta",
+      "[]url",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/audit": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]action",
+      "[]actorName",
+      "[]actorUserId",
+      "[]detail",
+      "[]documentId",
+      "[]id",
+      "[]ip",
+      "[]locale",
+      "[]ts",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/blocks": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]documentId",
+      "[]locales",
+      "[]name",
+      "[]type",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/content-types": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]description",
+      "[]displayName",
+      "[]fields",
+      "[]icon",
+      "[]kind",
+      "[]name",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/content-types-usage": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/content-types/{name}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:name",
+    ],
+    "response200Props": [
+      "description",
+      "displayName",
+      "fields",
+      "icon",
+      "kind",
+      "name",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/content/search": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "query:q",
+    ],
+    "response200Props": [
+      "[]documentId",
+      "[]kind",
+      "[]locale",
+      "[]name",
+      "[]type",
+      "[]urlPath",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/content/trash": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]deletedAt",
+      "[]documentId",
+      "[]kind",
+      "[]name",
+      "[]type",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/content/tree": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]documentId",
+      "[]hasChildren",
+      "[]kind",
+      "[]locales",
+      "[]name",
+      "[]parentId",
+      "[]sortIndex",
+      "[]type",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/content/{documentId}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "data",
+      "displayInNav",
+      "documentId",
+      "expireAt",
+      "hasUnpublishedChanges",
+      "kind",
+      "locale",
+      "name",
+      "parentId",
+      "publishAt",
+      "slug",
+      "sortIndex",
+      "status",
+      "type",
+      "updatedAt",
+      "updatedBy",
+      "urlPath",
+      "versionNumber",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/content/{documentId}/versions": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "[]createdAt",
+      "[]createdBy",
+      "[]expireAt",
+      "[]id",
+      "[]isCurrentPublished",
+      "[]name",
+      "[]publishAt",
+      "[]status",
+      "[]versionNumber",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/content/{documentId}/versions/{versionId}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+      "path:versionId",
+    ],
+    "response200Props": [
+      "createdAt",
+      "createdBy",
+      "data",
+      "displayInNav",
+      "id",
+      "isCurrentPublished",
+      "name",
+      "slug",
+      "status",
+      "versionNumber",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/delivery-keys": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]createdAt",
+      "[]id",
+      "[]keyPrefix",
+      "[]name",
+      "[]revokedAt",
+      "[]type",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/locales": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]code",
+      "[]displayName",
+      "[]enabled",
+      "[]fallbackLocaleCode",
+      "[]isDefault",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/locales/all": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]code",
+      "[]displayName",
+      "[]enabled",
+      "[]fallbackLocaleCode",
+      "[]isDefault",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/mcp-tokens": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]createdAt",
+      "[]email",
+      "[]id",
+      "[]lastUsedAt",
+      "[]name",
+      "[]revokedAt",
+      "[]userId",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/pages": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]documentId",
+      "[]name",
+      "[]parentId",
+      "[]type",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/site": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "previewBaseUrl",
+      "startPageId",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/site/ai": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "configured",
+      "last4",
+      "model",
+      "source",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/stock/config": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "configured",
+      "last4",
+      "provider",
+      "source",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/stock/search": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "query:q",
+    ],
+    "response200Props": [
+      "[]credit",
+      "[]creditUrl",
+      "[]description",
+      "[]height",
+      "[]id",
+      "[]sourceUrl",
+      "[]thumbUrl",
+      "[]width",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/users": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]createdAt",
+      "[]email",
+      "[]id",
+      "[]locked",
+      "[]name",
+      "[]roles",
+      "[]sections",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/webhooks": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]active",
+      "[]createdAt",
+      "[]events",
+      "[]id",
+      "[]lastAt",
+      "[]lastStatus",
+      "[]name",
+      "[]url",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/media/{file}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:file",
+    ],
+    "response200Props": [],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /health": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": null,
+    "tags": [],
+  },
+  "GET /health/ready": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": null,
+    "tags": [],
+  },
+  "PATCH /api/v1/manage/locales/{code}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:code",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/ai/agent": {
+    "requestBodyRequired": [
+      "brief",
+    ],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": null,
+    "tags": [
+      "ai",
+    ],
+  },
+  "POST /api/v1/ai/assist": {
+    "requestBodyRequired": [
+      "input",
+      "task",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "provider",
+      "result",
+    ],
+    "summary": null,
+    "tags": [
+      "ai",
+    ],
+  },
+  "POST /api/v1/ai/translate": {
+    "requestBodyRequired": [
+      "targetLocale",
+      "texts",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "provider",
+      "results",
+    ],
+    "summary": null,
+    "tags": [
+      "ai",
+    ],
+  },
+  "POST /api/v1/auth/2fa/disable": {
+    "requestBodyRequired": [
+      "password",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "auth",
+    ],
+  },
+  "POST /api/v1/auth/2fa/enable": {
+    "requestBodyRequired": [
+      "code",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "backupCodes",
+    ],
+    "summary": null,
+    "tags": [
+      "auth",
+    ],
+  },
+  "POST /api/v1/auth/2fa/setup": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "secret",
+      "uri",
+    ],
+    "summary": null,
+    "tags": [
+      "auth",
+    ],
+  },
+  "POST /api/v1/auth/change-password": {
+    "requestBodyRequired": [
+      "newPassword",
+      "oldPassword",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "auth",
+    ],
+  },
+  "POST /api/v1/auth/login": {
+    "requestBodyRequired": [
+      "email",
+    ],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": null,
+    "tags": [
+      "auth",
+    ],
+  },
+  "POST /api/v1/auth/login/mfa": {
+    "requestBodyRequired": [
+      "code",
+      "mfaToken",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "csrfToken",
+      "user",
+    ],
+    "summary": null,
+    "tags": [
+      "auth",
+    ],
+  },
+  "POST /api/v1/auth/logout": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "auth",
+    ],
+  },
+  "POST /api/v1/manage/assets": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "alt",
+      "createdAt",
+      "documentId",
+      "filename",
+      "mime",
+      "size",
+      "sourceMeta",
+      "url",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content": {
+    "requestBodyRequired": [
+      "locale",
+      "name",
+      "type",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "data",
+      "displayInNav",
+      "documentId",
+      "expireAt",
+      "hasUnpublishedChanges",
+      "kind",
+      "locale",
+      "name",
+      "parentId",
+      "publishAt",
+      "slug",
+      "sortIndex",
+      "status",
+      "type",
+      "updatedAt",
+      "updatedBy",
+      "urlPath",
+      "versionNumber",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content-types": {
+    "requestBodyRequired": [
+      "displayName",
+      "fields",
+      "kind",
+      "name",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "description",
+      "displayName",
+      "fields",
+      "icon",
+      "kind",
+      "name",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content/trash/empty": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "ok",
+      "purged",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content/{documentId}/discard-draft": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content/{documentId}/duplicate": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "data",
+      "displayInNav",
+      "documentId",
+      "expireAt",
+      "hasUnpublishedChanges",
+      "kind",
+      "locale",
+      "name",
+      "parentId",
+      "publishAt",
+      "slug",
+      "sortIndex",
+      "status",
+      "type",
+      "updatedAt",
+      "updatedBy",
+      "urlPath",
+      "versionNumber",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content/{documentId}/move": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content/{documentId}/publish": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "data",
+      "displayInNav",
+      "documentId",
+      "expireAt",
+      "hasUnpublishedChanges",
+      "kind",
+      "locale",
+      "name",
+      "parentId",
+      "publishAt",
+      "slug",
+      "sortIndex",
+      "status",
+      "type",
+      "updatedAt",
+      "updatedBy",
+      "urlPath",
+      "versionNumber",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content/{documentId}/restore": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "ok",
+      "restored",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content/{documentId}/schedule": {
+    "requestBodyRequired": [
+      "expireAt",
+      "publishAt",
+    ],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "data",
+      "displayInNav",
+      "documentId",
+      "expireAt",
+      "hasUnpublishedChanges",
+      "kind",
+      "locale",
+      "name",
+      "parentId",
+      "publishAt",
+      "slug",
+      "sortIndex",
+      "status",
+      "type",
+      "updatedAt",
+      "updatedBy",
+      "urlPath",
+      "versionNumber",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content/{documentId}/unpublish": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "data",
+      "displayInNav",
+      "documentId",
+      "expireAt",
+      "hasUnpublishedChanges",
+      "kind",
+      "locale",
+      "name",
+      "parentId",
+      "publishAt",
+      "slug",
+      "sortIndex",
+      "status",
+      "type",
+      "updatedAt",
+      "updatedBy",
+      "urlPath",
+      "versionNumber",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content/{documentId}/versions/{versionId}/restore": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+      "path:versionId",
+    ],
+    "response200Props": [
+      "data",
+      "displayInNav",
+      "documentId",
+      "expireAt",
+      "hasUnpublishedChanges",
+      "kind",
+      "locale",
+      "name",
+      "parentId",
+      "publishAt",
+      "slug",
+      "sortIndex",
+      "status",
+      "type",
+      "updatedAt",
+      "updatedBy",
+      "urlPath",
+      "versionNumber",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/delivery-keys": {
+    "requestBodyRequired": [
+      "name",
+      "type",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "key",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/delivery-keys/{id}/revoke": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/locales": {
+    "requestBodyRequired": [
+      "code",
+      "displayName",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/mcp-tokens": {
+    "requestBodyRequired": [
+      "name",
+      "userId",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "token",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/mcp-tokens/{id}/revoke": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/site/ai": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "configured",
+      "last4",
+      "model",
+      "source",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/site/preview-url": {
+    "requestBodyRequired": [
+      "url",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/site/start-page": {
+    "requestBodyRequired": [
+      "documentId",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/stock/config": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "configured",
+      "last4",
+      "provider",
+      "source",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/stock/import": {
+    "requestBodyRequired": [
+      "providerId",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "alt",
+      "createdAt",
+      "documentId",
+      "filename",
+      "mime",
+      "size",
+      "sourceMeta",
+      "url",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/users": {
+    "requestBodyRequired": [
+      "email",
+      "name",
+      "password",
+      "roles",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "id",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/webhooks": {
+    "requestBodyRequired": [
+      "name",
+      "url",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "id",
+      "secret",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "PUT /api/v1/manage/assets/{documentId}": {
+    "requestBodyRequired": [
+      "alt",
+    ],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "alt",
+      "createdAt",
+      "documentId",
+      "filename",
+      "mime",
+      "size",
+      "sourceMeta",
+      "url",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "PUT /api/v1/manage/content-types/{name}": {
+    "requestBodyRequired": [
+      "displayName",
+      "fields",
+      "kind",
+      "name",
+    ],
+    "requiredParams": [
+      "path:name",
+    ],
+    "response200Props": [
+      "description",
+      "displayName",
+      "fields",
+      "icon",
+      "kind",
+      "name",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "PUT /api/v1/manage/content/{documentId}": {
+    "requestBodyRequired": [
+      "data",
+    ],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "data",
+      "displayInNav",
+      "documentId",
+      "expireAt",
+      "hasUnpublishedChanges",
+      "kind",
+      "locale",
+      "name",
+      "parentId",
+      "publishAt",
+      "slug",
+      "sortIndex",
+      "status",
+      "type",
+      "updatedAt",
+      "updatedBy",
+      "urlPath",
+      "versionNumber",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "PUT /api/v1/manage/delivery-keys/{id}": {
+    "requestBodyRequired": [
+      "name",
+    ],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "PUT /api/v1/manage/users/{id}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+}
+`;
