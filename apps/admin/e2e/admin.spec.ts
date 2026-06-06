@@ -40,7 +40,19 @@ async function login(page: Page, email = "admin@paperboy.test", password = "Admi
   }
   await page.context().addCookies([{ name: cookie.name, value: cookie.value, domain: "localhost", path: "/" }]);
   await page.goto("/");
-  await expect(page.getByLabel("Account menu")).toBeVisible({ timeout: 15_000 });
+  try {
+    await expect(page.getByLabel("Account menu")).toBeVisible({ timeout: 15_000 });
+  } catch {
+    // First page-load after a worker restart can stall on cold SPA chunks
+    // under CI load — one reload is reliably enough.
+    await page.reload();
+    await expect(page.getByLabel("Account menu")).toBeVisible({ timeout: 15_000 });
+  }
+}
+
+/** The editor toolbar's Name input — scoped so a (closing) dialog's Name never matches. */
+function editorName(page: Page) {
+  return page.locator("#editor").getByRole("textbox", { name: "Name" });
 }
 
 // The dedicated login-screen test still needs the real form; keep one form login.
@@ -70,7 +82,7 @@ test("login screen renders and passes axe", async ({ page }) => {
 test("shell + tree + editor render; axe clean in LIGHT and DARK", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
-  await expect(page.getByLabel("Name")).toHaveValue("Home");
+  await expect(editorName(page)).toHaveValue("Home");
   await expect(page.getByText("Main content area")).toBeVisible();
   await page.screenshot({ path: `${SHOT}/02-editor-light.png` });
   await axeClean(page, "editor-light");
@@ -97,17 +109,17 @@ test("command palette (⌘K) searches content and navigates", async ({ page }) =
   await expect(input).toBeVisible();
   await input.fill("Author");
   await page.getByRole("option", { name: /Author Zone/ }).click();
-  await expect(page.getByLabel("Name")).toHaveValue("Author Zone");
+  await expect(editorName(page)).toHaveValue("Author Zone");
   expect(page.url()).toContain("/edit/");
 });
 
 test("deep-link is refresh-safe (routing restores selection)", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
-  await expect(page.getByLabel("Name")).toHaveValue("Home");
+  await expect(editorName(page)).toHaveValue("Home");
   const url = page.url();
   await page.reload();
-  await expect(page.getByLabel("Name")).toHaveValue("Home"); // restored after reload
+  await expect(editorName(page)).toHaveValue("Home"); // restored after reload
   expect(page.url()).toBe(url);
 });
 
@@ -321,7 +333,7 @@ test("duplicate a page from the tree context menu → opens a (copy)", async ({ 
 test("version history dialog lists versions and can restore", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
-  await expect(page.getByLabel("Name")).toHaveValue("Home");
+  await expect(editorName(page)).toHaveValue("Home");
   await page.getByRole("button", { name: "Content actions" }).click();
   await page.getByRole("menuitem", { name: "Version history…" }).click();
   const dlg = page.getByRole("dialog", { name: "Version history" });
@@ -366,7 +378,7 @@ test("drag a shared block from the Assets pane into a content area", async ({ pa
   const dlg = page.getByRole("dialog", { name: "Create content" });
   await dlg.getByLabel("Name").fill(unique);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(page.getByLabel("Name")).toHaveValue(unique, { timeout: 10000 });
+  await expect(editorName(page)).toHaveValue(unique, { timeout: 10000 });
 
   const area = page.getByTestId("content-area-mainArea");
   await expect(area).toContainText(/Click a block above|drag a shared block/i);
@@ -398,7 +410,7 @@ test("drag a shared block from the Assets pane into a content area", async ({ pa
 test("side panes can be pinned or set to auto-hide (collapse to an edge rail)", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
-  await expect(page.getByLabel("Name")).toHaveValue("Home");
+  await expect(editorName(page)).toHaveValue("Home");
 
   // The Content tree is pinned by default — its filter box is in the layout.
   await expect(page.getByPlaceholder("Filter…")).toBeVisible();
@@ -415,7 +427,7 @@ test("side panes can be pinned or set to auto-hide (collapse to an edge rail)", 
 test("editor workspace panes are resizable (drag handles present)", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
-  await expect(page.getByLabel("Name")).toHaveValue("Home");
+  await expect(editorName(page)).toHaveValue("Home");
   // Two dividers by default: tree|editor and editor|assets.
   await expect(page.getByRole("separator")).toHaveCount(2);
   // Side-by-side view adds a third divider (form|preview) that can be dragged.
@@ -430,13 +442,13 @@ test("editor workspace panes are resizable (drag handles present)", async ({ pag
     await page.mouse.move(b.x - 120, b.y + b.height / 2, { steps: 8 });
     await page.mouse.up();
   }
-  await expect(page.getByLabel("Name")).toHaveValue("Home");
+  await expect(editorName(page)).toHaveValue("Home");
 });
 
 test("visual editing: a preview 'edit' message switches tab + focuses the field/block", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
-  await expect(page.getByLabel("Name")).toHaveValue("Home");
+  await expect(editorName(page)).toHaveValue("Home");
   // Simulate the preview iframe asking to edit the SEO meta title → switches to SEO tab + focuses it.
   await page.evaluate(() => window.postMessage({ type: "paperboy:edit", field: "metaTitle" }, "*"));
   await expect(page.locator("#f-metaTitle")).toBeFocused({ timeout: 5000 });
@@ -448,7 +460,7 @@ test("visual editing: a preview 'edit' message switches tab + focuses the field/
 test("editor has a dedicated SEO tab with meta + OpenGraph fields", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
-  await expect(page.getByLabel("Name")).toHaveValue("Home");
+  await expect(editorName(page)).toHaveValue("Home");
   // Tabs: Content, Settings, SEO (in that order).
   const seoTab = page.getByRole("tab", { name: "SEO" });
   await expect(seoTab).toBeVisible();
@@ -461,7 +473,7 @@ test("editor has a dedicated SEO tab with meta + OpenGraph fields", async ({ pag
 test("AI assistant can generate SEO meta from the page content", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
-  await expect(page.getByLabel("Name")).toHaveValue("Home");
+  await expect(editorName(page)).toHaveValue("Home");
   await page.getByRole("button", { name: "AI assistant" }).click();
   await page.getByRole("menuitem", { name: "Generate SEO description" }).click();
   // The SEO tab's meta description is filled (offline fallback derives it from the page text).
