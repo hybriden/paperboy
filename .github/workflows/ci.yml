@@ -85,6 +85,9 @@ jobs:
         env:
           COOKIE_SECURE: "false"
           ALLOW_INSECURE_COOKIES: "true"
+          # 28 tests + retries from one runner IP — the production limit (10/min)
+          # would turn a single real failure into a 429 cascade.
+          LOGIN_RATE_MAX: "1000"
 
       - name: Wait for admin + api
         run: |

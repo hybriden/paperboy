@@ -169,7 +169,7 @@ export function PreviewPane({
       <div className="flex items-center gap-2 border-b border-line bg-panel px-3 py-2">
         <div className="flex rounded border border-line p-0.5">
           {(["desktop", "tablet", "mobile"] as Device[]).map((d) => (
-            <button key={d} className={`rounded px-2 py-0.5 text-xs capitalize ${device === d ? "bg-accent text-white" : "text-muted hover:bg-canvas"}`}
+            <button key={d} className={`rounded px-2 py-0.5 text-xs capitalize ${device === d ? "bg-accent/15 font-semibold text-accent-700" : "text-muted hover:bg-canvas"}`}
               onClick={() => setDevice(d)}>{d}</button>
           ))}
         </div>

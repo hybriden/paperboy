@@ -29,6 +29,9 @@ const EnvSchema = z.object({
   // Stock images (Settings → Stock images). Env fallback for the Unsplash
   // access key; a key stored in the CMS takes precedence.
   UNSPLASH_ACCESS_KEY: z.string().optional(),
+  // Brute-force limit on login (per IP per minute). Raise for e2e runs where
+  // one runner IP legitimately logs in many times; leave at 10 in production.
+  LOGIN_RATE_MAX: z.coerce.number().int().positive().default(10),
 });
 
 export type Env = z.infer<typeof EnvSchema>;

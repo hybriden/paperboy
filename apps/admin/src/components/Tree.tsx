@@ -571,6 +571,11 @@ function CreateDialog(props: {
   const qc = useQueryClient();
   const [type, setType] = useState(props.types[0]?.name ?? "");
   const [name, setName] = useState("");
+  // The dialog can mount before the types query resolves; the select would then
+  // SHOW the first option while the state stays "" — Create disabled forever.
+  useEffect(() => {
+    if (!type && props.types[0]) setType(props.types[0].name);
+  }, [props.types, type]);
   const create = useMutation({
     mutationFn: () => api.create({ type, parentId: props.parentId, locale: props.locale, name }),
     onSuccess: (created) => {
