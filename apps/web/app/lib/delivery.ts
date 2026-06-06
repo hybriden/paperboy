@@ -1,3 +1,4 @@
+import { createClient } from "@paperboy/client";
 import type { DeliveryContent } from "@paperboy/shared";
 
 const API = process.env.PAPERBOY_API_URL ?? "http://localhost:8091";
@@ -5,51 +6,34 @@ const PUBLIC_KEY = process.env.PAPERBOY_PUBLIC_KEY ?? "pk_live_seed_public_key_v
 const PREVIEW_KEY = process.env.PAPERBOY_PREVIEW_KEY ?? "prv_seed_preview_key_value";
 
 /**
- * Two-token model: the published site uses the PUBLIC key; preview/draft mode
- * uses the PREVIEW key. The preview key is only ever used server-side here.
+ * Two-token model via @paperboy/client: the published site uses the PUBLIC
+ * key; preview/draft mode uses the PREVIEW key (server-side only). Next.js
+ * caches fetch aggressively — `no-store` keeps drafts and fresh publishes live.
  */
-async function fetchKeyed(url: string, preview: boolean): Promise<DeliveryContent | null> {
-  const key = preview ? PREVIEW_KEY : PUBLIC_KEY;
-  const res = await fetch(url, { headers: { authorization: `Bearer ${key}` }, cache: "no-store" });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Delivery API ${res.status}`);
-  return (await res.json()) as DeliveryContent;
-}
+const published = createClient({ baseUrl: API, key: PUBLIC_KEY, fetchInit: { cache: "no-store" } });
+const preview = createClient({ baseUrl: API, key: PREVIEW_KEY, fetchInit: { cache: "no-store" } });
+const cms = (usePreview: boolean) => (usePreview ? preview : published);
 
 export async function fetchBySlug(slug: string, locale: string, preview: boolean): Promise<DeliveryContent | null> {
-  return fetchKeyed(
-    `${API}/api/v1/delivery/content/by-slug?slug=${encodeURIComponent(slug)}&locale=${encodeURIComponent(locale)}&populate=2`,
-    preview,
-  );
+  return cms(preview).getBySlug(slug, { locale, populate: 2 });
 }
 
 /** Resolve a hierarchical URL path (e.g. "/about/team") built from the page tree. */
 export async function fetchByPath(path: string, locale: string, preview: boolean): Promise<DeliveryContent | null> {
-  return fetchKeyed(
-    `${API}/api/v1/delivery/content/by-path?path=${encodeURIComponent(path)}&locale=${encodeURIComponent(locale)}&populate=2`,
-    preview,
-  );
+  return cms(preview).getByPath(path, { locale, populate: 2 });
 }
 
 /** The configured start page (served at "/" and "/{locale}"). */
 export async function fetchStart(locale: string, preview: boolean): Promise<DeliveryContent | null> {
-  return fetchKeyed(
-    `${API}/api/v1/delivery/start?locale=${encodeURIComponent(locale)}&populate=2`,
-    preview,
-  );
+  return cms(preview).startPage({ locale, populate: 2 });
 }
 
 /** List delivered content of a type and/or the children of a page (ListPage, teaser blocks). */
 export async function fetchList(type: string | null, locale: string, preview: boolean, parentId?: string): Promise<DeliveryContent[]> {
-  const key = preview ? PREVIEW_KEY : PUBLIC_KEY;
-  const params = new URLSearchParams({ locale, populate: "0" });
-  if (type) params.set("type", type);
-  if (parentId) params.set("parentId", parentId);
-  const res = await fetch(`${API}/api/v1/delivery/content?${params}`, {
-    headers: { authorization: `Bearer ${key}` },
-    cache: "no-store",
-  });
-  if (!res.ok) return [];
-  const body = (await res.json()) as { items?: DeliveryContent[] } | DeliveryContent[];
-  return Array.isArray(body) ? body : (body.items ?? []);
+  try {
+    const { items } = await cms(preview).list(type, { locale, populate: 0, parentId });
+    return items;
+  } catch {
+    return []; // listing is decorative on this reference frontend — degrade quietly
+  }
 }
