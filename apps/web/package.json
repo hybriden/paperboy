@@ -10,7 +10,7 @@
     "lint": "echo 'lint: web (typecheck covers it)'"
   },
   "dependencies": {
-    "@paperboy/client": "workspace:^",
+    "@paperboycms/client": "workspace:^",
     "@paperboy/shared": "workspace:*",
     "isomorphic-dompurify": "^2",
     "marked": "^18.0.4",

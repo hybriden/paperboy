@@ -1,5 +1,5 @@
 /**
- * @paperboy/client — the typed Delivery API client.
+ * @paperboycms/client — the typed Delivery API client.
  *
  * A thin, ZERO-dependency wrapper over the Delivery API's HTTP contract. The
  * types mirror @paperboy/shared (the same Zod schemas the server serializes
@@ -121,7 +121,7 @@ export function mediaSrcset(url: string, widths: number[] = [320, 640, 1024, 160
 export function createClient(options: PaperboyClientOptions) {
   const base = options.baseUrl.replace(/\/+$/, "");
   const doFetch = options.fetch ?? globalThis.fetch;
-  if (!doFetch) throw new Error("@paperboy/client: no fetch available — pass options.fetch");
+  if (!doFetch) throw new Error("@paperboycms/client: no fetch available — pass options.fetch");
   const etags = options.etagCache ? new Map<string, { etag: string; body: unknown }>() : null;
 
   async function request<T>(path: string, params: Record<string, string | number | undefined>): Promise<{ status: number; body: T | null }> {

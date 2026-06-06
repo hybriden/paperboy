@@ -196,7 +196,7 @@ importers:
         specifier: ^3.25.2
         version: 3.25.2(zod@3.25.76)
     devDependencies:
-      '@paperboy/client':
+      '@paperboycms/client':
         specifier: workspace:^
         version: link:../../packages/client
       '@types/node':
@@ -242,12 +242,12 @@ importers:
 
   apps/web:
     dependencies:
-      '@paperboy/client':
-        specifier: workspace:^
-        version: link:../../packages/client
       '@paperboy/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      '@paperboycms/client':
+        specifier: workspace:^
+        version: link:../../packages/client
       isomorphic-dompurify:
         specifier: ^2
         version: 2.36.0(@noble/hashes@2.2.0)
