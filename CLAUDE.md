@@ -13,12 +13,12 @@ Guidance for Claude / contributors. Read this before changing or deploying anyth
 - `packages/db` — Drizzle schema, forward-only SQL migrations, the query layer (all object-level authz lives here, deny-by-default), seed.
 
 ## ⚠️ Deploy safety (most important rule)
-The compose `init` service runs migrate **+ seed**, and `seed` TRUNCATEs and reseeds — **wiping all data and regenerating IDs**.
+The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds — **wiping all data and regenerating IDs** — but the CLI is GUARDED: on a database that already holds content it skips the wipe (and still applies migrations) unless `FORCE_SEED=1`. The guard exists because a plain `docker compose up <svc>` pulling in `init` caused real data loss; treat it as a seatbelt, not an invitation.
 
-- **Redeploy one service:** `docker compose up -d --no-deps --force-recreate <svc>`
-- **NEVER** run a plain `docker compose up <svc>` — it pulls in the `init` dependency and reseeds. This has caused real data loss.
-- **Apply migrations without reseeding:** migrations run on api boot, or `docker compose exec api pnpm --filter @paperboy/db migrate` (forward-only, idempotent, tracked in `_migrations` — separate from `seed`).
-- Only reseed deliberately: `docker compose run --rm init`.
+- **Redeploy one service:** `docker compose up -d --no-deps --force-recreate <svc>` (still the correct habit).
+- **Apply migrations without reseeding:** migrations run on api boot, on any guarded-skip init run, or `docker compose exec api pnpm --filter @paperboy/db migrate` (forward-only, idempotent, tracked in `_migrations` — separate from `seed`).
+- **Reseed deliberately (wipes everything):** `FORCE_SEED=1 docker compose run --rm init`.
+- Tests are unaffected: they import `seed()` directly, which stays unguarded.
 
 ## Ports & env
 - admin **8090**, api **8091**, web **8092**, Postgres **5433** (host) → 5432 (container).

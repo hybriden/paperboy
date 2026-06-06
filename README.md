@@ -45,7 +45,8 @@ docker compose up -d            # db → init(migrate+seed) → api → web → 
 # Web     http://localhost:8092
 ```
 > ⚠️ Redeploy one service with `docker compose up -d --no-deps --force-recreate <svc>`.
-> A plain `docker compose up <svc>` re-runs the seed and **wipes data**. See `CLAUDE.md`.
+> The seed CLI refuses to wipe a database that already holds content (set `FORCE_SEED=1`
+> for a deliberate reseed) — but don't lean on the seatbelt. See `CLAUDE.md`.
 
 ## 🪟 Super-simple setup (Windows, no experience needed)
 
