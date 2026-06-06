@@ -293,12 +293,33 @@ function StockTab({ onPick, cols = "grid-cols-3" }: { onPick: (a: Asset) => void
 /** The `image` content-type field: thumbnail + choose/clear. Stores asset documentId. */
 export function ImageField({ id, value, disabled, onChange }: { id: string; value: unknown; disabled?: boolean; onChange: (v: string | null) => void }) {
   const assets = useAssets();
+  const qc = useQueryClient();
+  const toast = useToast();
   const [picking, setPicking] = useState(false);
   const [dropOver, setDropOver] = useState(false);
   const current = typeof value === "string" && value ? assets.data?.find((a) => a.documentId === value) : undefined;
 
   const onDrop = (e: React.DragEvent) => {
     setDropOver(false);
+
+    // An OS image file: upload through the normal asset pipeline, then set.
+    const file = e.dataTransfer.files[0];
+    if (file) {
+      e.preventDefault();
+      if (!file.type.startsWith("image/")) {
+        toast.error("Only images can be dropped here", file.name);
+        return;
+      }
+      api.uploadAsset(file).then(
+        (asset) => {
+          qc.invalidateQueries({ queryKey: ["assets"] });
+          onChange(asset.documentId);
+        },
+        (err) => toast.error("Upload failed", (err as Error).message),
+      );
+      return;
+    }
+
     const raw = e.dataTransfer.getData("application/x-paperboy");
     if (!raw) return;
     e.preventDefault();
@@ -312,7 +333,7 @@ export function ImageField({ id, value, disabled, onChange }: { id: string; valu
     <div
       id={id}
       className={`flex items-center gap-3 rounded-[var(--radius)] ${dropOver ? "ring-2 ring-accent ring-offset-2" : ""}`}
-      onDragOver={(e) => { if (!disabled && e.dataTransfer.types.includes("application/x-paperboy")) { e.preventDefault(); setDropOver(true); } }}
+      onDragOver={(e) => { if (!disabled && (e.dataTransfer.types.includes("application/x-paperboy") || e.dataTransfer.types.includes("Files"))) { e.preventDefault(); setDropOver(true); } }}
       onDragLeave={() => setDropOver(false)}
       onDrop={disabled ? undefined : onDrop}
     >

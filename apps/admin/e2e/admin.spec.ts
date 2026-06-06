@@ -414,6 +414,38 @@ test("drag a shared block from the Assets pane into a content area", async ({ pa
   await page.getByRole("menuitem", { name: "Move to trash" }).click();
 });
 
+test("drag an IMAGE into a content area → a block carrying it is auto-created", async ({ page }) => {
+  await login(page);
+  const unique = `ImgDrop-${Date.now().toString(36)}`;
+  await page.getByRole("button", { name: "Create new content" }).click();
+  const dlg = page.getByRole("dialog", { name: "Create content" });
+  await dlg.getByLabel("Name").fill(unique);
+  await dlg.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(editorName(page)).toHaveValue(unique, { timeout: 10000 });
+
+  const area = page.getByTestId("content-area-mainArea");
+  await expect(area).toBeVisible();
+  // Synthesize the Assets-pane media drag payload directly (the drop side is
+  // what this feature adds): LandingPage's mainArea allows HeroBlock, whose
+  // image field makes it the single candidate → auto-insert, no popover.
+  await area.evaluate((target) => {
+    const dt = new DataTransfer();
+    dt.setData("application/x-paperboy", JSON.stringify({ kind: "media", documentId: "e2e-img-asset", url: "/api/v1/media/e2e.png", alt: "E2E" }));
+    const fire = (type: string) => target.dispatchEvent(new DragEvent(type, { dataTransfer: dt, bubbles: true, cancelable: true }));
+    fire("dragenter");
+    fire("dragover");
+    fire("drop");
+  });
+  // A Hero block instance appeared, its image field populated (the fake id
+  // renders the "not found" state — the structural insert is the contract).
+  await expect(area.getByText("Hero", { exact: false }).first()).toBeVisible({ timeout: 10_000 });
+  await expect(area.getByText(/Image not found/)).toBeVisible();
+
+  // Cleanup: trash the throwaway page.
+  await page.getByRole("treeitem", { name: new RegExp(unique) }).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Move to trash" }).click();
+});
+
 test("side panes can be pinned or set to auto-hide (collapse to an edge rail)", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
