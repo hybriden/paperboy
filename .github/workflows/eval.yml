@@ -1,16 +1,25 @@
 name: MCP Eval
 
-# Usability eval: a REAL model drives the MCP server through a realistic
-# editorial task ("write a post from this brief, set a summary, publish it").
-# The parity suite (CI) locks the tool *contract*; this locks the *usability*
-# against model drift — when a tool description silently stops steering the
-# model, this goes red and the scorecard prints which tool errors it hit.
+# Outcome-invariant eval: a REAL model drives the MCP server through several
+# realistic editorial SCENARIOS (blog post, article under a list page, a
+# Norwegian article), and the harness asserts OUTCOME INVARIANTS on every
+# document produced — reachable, real name, published, visible-where-meant
+# (type === parent listedType), complete, right language branch. Each
+# production incident this project hit maps to one of those checks, so the net
+# catches the NEXT one before a human does. The parity suite locks the contract;
+# this locks whether a real model lands a GOOD OUTCOME.
 #
-# Runs weekly + on demand. It calls the paid Anthropic API, so it is NOT on
-# every push. If the ANTHROPIC_API_KEY secret is not configured the job exits
-# 0 with a notice (green-not-failed) so forks and unconfigured repos stay green.
+# Runs on every push/PR to main AND weekly + on demand — this is the proactive
+# net, so it gates changes, not just a weekly heartbeat. It calls the paid
+# Anthropic API; if the ANTHROPIC_API_KEY secret is not configured the job
+# exits 0 with a notice (green-not-failed) so forks/unconfigured repos stay
+# green and the push gate never blocks on a missing key.
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   schedule:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC
   workflow_dispatch:
