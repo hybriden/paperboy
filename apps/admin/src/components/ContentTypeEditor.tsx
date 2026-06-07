@@ -27,7 +27,10 @@ interface DraftField {
   multiple: boolean;
   validation?: FieldValidation;
   helpText?: string;
+  seoRole?: "title" | "description" | "image" | "datePublished" | "dateModified" | "author" | "keywords";
 }
+
+const SEO_ROLES = ["title", "description", "image", "datePublished", "dateModified", "author", "keywords"] as const;
 
 let uid = 0;
 const newField = (): DraftField => ({
@@ -162,6 +165,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
   const [kind, setKind] = useState<ContentKind>(initial?.kind ?? "page");
   const [icon, setIcon] = useState(initial?.icon ?? "ph:file");
   const [description, setDescription] = useState(initial?.description ?? "");
+  const [schemaType, setSchemaType] = useState(initial?.schemaType ?? "");
   const [fields, setFields] = useState<DraftField[]>(
     () => initial?.fields.map((f) => ({ ...f, _key: `f${uid++}`, helpText: f.helpText })) as DraftField[] ?? [],
   );
@@ -204,6 +208,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
       kind,
       description,
       icon,
+      ...(schemaType.trim() ? { schemaType: schemaType.trim() } : {}),
       fields: fields.map(({ _key, ...f }) => f),
     };
     const parsed = ContentTypeDef.safeParse(def);
@@ -266,6 +271,13 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
             <label className="field-label" htmlFor="ct-icon">Icon</label>
             <IconPicker id="ct-icon" value={icon} onChange={setIcon} />
           </div>
+          {kind === "page" && (
+            <div>
+              <label className="field-label" htmlFor="ct-schema">schema.org type</label>
+              <input id="ct-schema" className="field-input" value={schemaType} placeholder="auto (WebPage / Article / …)"
+                onChange={(e) => setSchemaType(e.target.value)} aria-label="schema.org type" />
+            </div>
+          )}
           <div className="col-span-2">
             <label className="field-label" htmlFor="ct-desc">Description</label>
             <input id="ct-desc" className="field-input" value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -305,6 +317,14 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                   </select>
                 </label>
                 {f.delivery === "public" && <span className="rounded bg-draft/10 px-1.5 py-0.5 text-[11px] text-draft">exposed to public API</span>}
+                <label className="inline-flex items-center gap-1.5 text-sm" title="Maps this field into the delivered SEO/JSON-LD contract">
+                  <span className="text-muted">SEO</span>
+                  <select className="rounded border border-line bg-panel px-1.5 py-0.5 text-xs text-fg" value={f.seoRole ?? ""} aria-label="Field SEO role"
+                    onChange={(e) => patchField(f._key, { seoRole: (e.target.value || undefined) as DraftField["seoRole"] })}>
+                    <option value="">—</option>
+                    {SEO_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                </label>
                 <div className="ml-auto flex items-center gap-0.5">
                   <button className="rounded p-1 text-muted hover:bg-line" aria-label="Move field up" onClick={() => moveField(f._key, -1)}><Icon.Up width={14} height={14} /></button>
                   <button className="rounded p-1 text-muted hover:bg-line" aria-label="Move field down" onClick={() => moveField(f._key, 1)}><Icon.Down width={14} height={14} /></button>

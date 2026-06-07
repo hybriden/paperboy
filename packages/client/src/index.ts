@@ -19,6 +19,34 @@
  * Mirrors @paperboy/shared's DeliveryContent (compile-time parity-checked in
  * the monorepo) so this package ships with zero dependencies.
  */
+/**
+ * Normalized SEO + schema.org block, computed server-side and present on every
+ * PAGE item (null for blocks/globals). Render the meta tags + `jsonLd` directly.
+ * Origin-dependent URLs are RELATIVE (`canonicalPath`, breadcrumb `urlPath`) —
+ * absolutize them against your site origin and add the site-identity JSON-LD
+ * (WebSite/Organization/publisher) + the @id/url on `jsonLd`.
+ */
+export interface DeliverySeo {
+  title: string;
+  description: string | null;
+  /** Relative path (or an absolute URL if the editor entered one in canonicalUrl). */
+  canonicalPath: string | null;
+  /** "index, follow" / "noindex, follow"; always "noindex, nofollow" in preview. */
+  robots: string;
+  og: {
+    title: string;
+    description: string | null;
+    type: string;
+    image: { url: string; alt: string } | null;
+    siteName: string | null;
+  };
+  twitter: { card: string };
+  /** schema.org page-entity node; add @id/url/publisher on the frontend. */
+  jsonLd: Record<string, unknown>;
+  /** Ancestor trail incl. self (root→leaf); urlPath null when not addressable. */
+  breadcrumb: Array<{ name: string; urlPath: string | null }>;
+}
+
 export interface DeliveryContent {
   documentId: string;
   type: string;
@@ -32,6 +60,8 @@ export interface DeliveryContent {
   /** Cache-version: bumped on publish; used for ETag / cache busting. */
   cv: number;
   data: Record<string, unknown>;
+  /** Normalized SEO/schema.org contract — present on pages, null otherwise. */
+  seo: DeliverySeo | null;
 }
 
 export interface PaperboyClientOptions {

@@ -90,6 +90,15 @@ export const FieldDef = z.object({
   /** Tab/group in the All-Properties editor. */
   group: z.string().min(1).max(60).default("Content"),
   helpText: z.string().max(300).optional(),
+  /**
+   * SEO meaning of this field, for the delivered `seo`/`jsonLd` contract. Lets
+   * ANY field declare its role (decoupled from field names) — delivery reads
+   * the value of the field tagged "title"/"description"/"image"/etc. Explicit
+   * metaTitle/metaDescription/ogImage still override the role-derived value.
+   */
+  seoRole: z
+    .enum(["title", "description", "image", "datePublished", "dateModified", "author", "keywords"])
+    .optional(),
 });
 export type FieldDef = z.infer<typeof FieldDef>;
 
@@ -102,11 +111,31 @@ export const ContentTypeDef = z
     description: z.string().max(300).default(""),
     icon: z.string().max(40).default("file"),
     fields: z.array(FieldDef).max(60),
+    /**
+     * schema.org @type for the delivered JSON-LD (e.g. "Article", "BlogPosting",
+     * "CollectionPage", "WebPage"). Omitted → delivery derives a sensible default
+     * from the type's roles/fields (dated → Article/BlogPosting; has listedType →
+     * CollectionPage; else WebPage).
+     */
+    schemaType: z.string().max(60).optional(),
   })
   // Field names must be unique within a type (else dataSchemaFor / delivery collide).
   .refine(
     (t) => new Set(t.fields.map((f) => f.name)).size === t.fields.length,
     { message: "Field names must be unique within a content type", path: ["fields"] },
+  )
+  // At most ONE field per seoRole — a second "title"/"description"/… is
+  // ambiguous for the seo contract. Self-teaching message (agent-API rule 2).
+  .refine(
+    (t) => {
+      const roles = t.fields.map((f) => f.seoRole).filter(Boolean) as string[];
+      return new Set(roles).size === roles.length;
+    },
+    {
+      message:
+        "Each seoRole (title/description/image/datePublished/dateModified/author/keywords) may be used by at most one field — two fields claim the same role.",
+      path: ["fields"],
+    },
   );
 export type ContentTypeDef = z.infer<typeof ContentTypeDef>;
 
