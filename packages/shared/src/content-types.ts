@@ -580,8 +580,9 @@ function unwrapTextCarrier(value: unknown): unknown {
  *  - any field wrapped as { <locale>: inner }     → inner  (locale-map wrap —
  *    the locale is selected by the request's locale param, never by the value;
  *    a real MCP agent burned 12 attempts on this one)
- *  - text/markdown given a single-key text carrier → the inner string
- *    ({text}, {type:'text',text}, {value}, {raw}, {content}, {markdown})
+ *  - text/markdown/select/datetime/image given a single-key carrier → the
+ *    inner string ({text}, {type:'text',text}, {value}, {type:'select',value},
+ *    {raw}, {content}, {markdown})
  *  - text given a TipTap doc                      → plain text (blocks separated)
  *  - markdown given a TipTap doc                  → real Markdown (structure kept)
  *  - richtext given a plain string                → wrapped into a doc
@@ -623,12 +624,21 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
     }
     case "contentArea":
       return value && typeof value === "object" && !Array.isArray(value) && "blockType" in (value as object) ? [value] : value;
+    case "select":
+    case "datetime":
+      // Same carrier family on scalar fields — a real agent sent
+      // {type:'select', value:'article'} / {type:'datetime', value:'…Z'} and
+      // looped 8× on the reject (2026-06-07 13:0x run).
+      return unwrapTextCarrier(value);
     case "image":
     case "media": {
-      // Agents copy the RESOLVED read shape ({documentId, url, alt}) back into
-      // a write — the write format is the asset documentId string.
-      const id = value && typeof value === "object" ? (value as { documentId?: unknown }).documentId : undefined;
-      return typeof id === "string" && id ? id : value;
+      // {type:'image', value:'<assetId>'} — same run, same carrier family.
+      const unwrapped = unwrapTextCarrier(value);
+      // Agents also copy the RESOLVED read shape ({documentId, url, alt}) back
+      // into a write — the write format is the asset documentId string.
+      const id =
+        unwrapped && typeof unwrapped === "object" ? (unwrapped as { documentId?: unknown }).documentId : undefined;
+      return typeof id === "string" && id ? id : unwrapped;
     }
     default:
       return value;

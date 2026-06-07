@@ -75,6 +75,28 @@ describe("coerceFieldValue: text-carrier unwrap (the 2026-06-04 wrapper dance)",
     const v = { type: "text", text: "X" };
     expect(coerceFieldValue(f("richtext"), v)).toBe(v);
   });
+
+  // The 2026-06-07 13:0x run: the agent annotated SCALAR values with their
+  // field type — {type:'select', value:'article'}, {type:'datetime', value:
+  // '…Z'}, {type:'image', value:'<assetId>'} — and looped 8× on the reject.
+  it("unwraps {type:'select', value:'X'} for select fields", () => {
+    expect(coerceFieldValue(f("select"), { type: "select", value: "article" })).toBe("article");
+    expect(coerceFieldValue(f("select"), { value: "article" })).toBe("article");
+  });
+  it("unwraps {type:'datetime', value:'X'} for datetime fields", () => {
+    expect(coerceFieldValue(f("datetime"), { type: "datetime", value: "2026-06-07T12:00:00.000Z" })).toBe(
+      "2026-06-07T12:00:00.000Z",
+    );
+  });
+  it("unwraps {type:'image', value:'<assetId>'} for image fields", () => {
+    expect(coerceFieldValue(f("image"), { type: "image", value: "dKgpZAnRFGVEfmTjlWHwgV_X" })).toBe(
+      "dKgpZAnRFGVEfmTjlWHwgV_X",
+    );
+  });
+  it("still does NOT unwrap ambiguous objects on scalar fields", () => {
+    const v = { value: "article", label: "Article" };
+    expect(coerceFieldValue(f("select"), v)).toBe(v);
+  });
   it("an empty object ({} — the client-mangled long string) stays an object → validation error", () => {
     const v = {};
     expect(coerceFieldValue(f("markdown"), v)).toBe(v);
