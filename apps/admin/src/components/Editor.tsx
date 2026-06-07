@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   BlockInstance,
@@ -12,6 +12,7 @@ import { Panel, PanelGroup } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { postCaret } from "../lib/caret.js";
+import { pickTranslateSource } from "../lib/translate-offer.js";
 import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
@@ -195,16 +196,25 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const canPublish = user.permissions.includes("content.publish");
 
   // Untranslated variant: this locale has no saved version yet (the server returns
-  // a blank scaffold with versionNumber 0). If the default locale HAS content, we
-  // offer to seed this translation from it (AI-translating the text fields).
+  // a blank scaffold with versionNumber 0). Offer to seed it from ANY locale that
+  // has content — preferring the default — in either direction (2026-06-07: an
+  // nb-only article opened in en got no offer because the old logic was one-way).
   const defaultLocale = useMemo(() => locales.find((l) => l.isDefault)?.code ?? "en", [locales]);
-  const untranslated = !!detail.data && detail.data.versionNumber === 0 && locale !== defaultLocale;
-  const source = useQuery({
-    queryKey: ["content", documentId, defaultLocale],
-    queryFn: ({ signal }) => api.get(documentId, defaultLocale, signal),
-    enabled: untranslated,
+  const untranslated = !!detail.data && detail.data.versionNumber === 0;
+  const otherLocales = useMemo(() => locales.filter((l) => l.code !== locale).map((l) => l.code), [locales, locale]);
+  const probes = useQueries({
+    queries: otherLocales.map((code) => ({
+      queryKey: ["content", documentId, code],
+      queryFn: ({ signal }: { signal?: AbortSignal }) => api.get(documentId, code, signal),
+      enabled: untranslated,
+    })),
   });
-  const canTranslate = untranslated && (source.data?.versionNumber ?? 0) > 0;
+  const localesWithContent = otherLocales.filter((_, i) => (probes[i]?.data?.versionNumber ?? 0) > 0);
+  const sourceLocale = untranslated
+    ? pickTranslateSource({ currentLocale: locale, defaultLocale, localesWithContent })
+    : null;
+  const sourceData = sourceLocale ? probes[otherLocales.indexOf(sourceLocale)]?.data : undefined;
+  const canTranslate = !!sourceLocale && !!sourceData;
 
   const save = useMutation({
     mutationFn: (f: ContentDetail) =>
@@ -395,7 +405,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // are copied as a starting point. Falls back to copying when AI is offline.
   const translate = useMutation({
     mutationFn: async () => {
-      const src = source.data;
+      const src = sourceData;
       if (!src) throw new Error("No source content to translate from");
       // Collect all translatable strings (name + text/markdown fields) and send
       // them in ONE request — one /assist call per field would trip the rate limit
@@ -797,7 +807,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         </div>
       </div>
 
-      {/* Untranslated-locale → offer an AI translation seeded from the default locale */}
+      {/* Untranslated-locale → offer an AI translation seeded from any locale with content */}
       {untranslated && canTranslate && !hideTranslateOffer && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-accent/10 px-4 py-2 text-sm">
           <span className="text-fg">
@@ -809,7 +819,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 <span aria-hidden>✨</span>{" "}
                 {translate.isPending
                   ? "Translating…"
-                  : `Translate from ${locales.find((l) => l.code === defaultLocale)?.displayName ?? defaultLocale}`}
+                  : `Translate from ${locales.find((l) => l.code === sourceLocale)?.displayName ?? sourceLocale}`}
               </button>
             )}
             <button className="btn-subtle px-3 py-1 text-xs" onClick={() => setHideTranslateOffer(true)}>
