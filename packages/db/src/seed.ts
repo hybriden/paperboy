@@ -71,7 +71,7 @@ const TYPES: ContentTypeDef[] = ([
     fields: [
       { name: "heading", displayName: "Heading", type: "text", localized: true, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
       { name: "intro", displayName: "Intro", type: "richtext", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
-      { name: "listedType", displayName: "Listed content type", type: "select", localized: false, required: true, delivery: "public", group: "Content", options: [{ value: "BlogPost", label: "Blog Post" }, { value: "ArticlePage", label: "Article Page" }], helpText: "Children of this page with this type are listed (newest first)." },
+      { name: "listedType", displayName: "Listed content type", type: "select", localized: false, required: true, delivery: "public", group: "Content", optionsFromContentTypes: true, options: [{ value: "BlogPost", label: "Blog Post" }, { value: "ArticlePage", label: "Article Page" }], helpText: "Children of this page with this type are listed (newest first). Must be an installed content type." },
       { name: "pageSize", displayName: "Max items", type: "number", localized: false, required: false, delivery: "public", group: "Content", helpText: "Maximum number of items to show (default 20)." },
       ...SEO_FIELDS,
     ],

@@ -830,7 +830,32 @@ async function workingData(db: Database, documentId: string, loc: string): Promi
  * the editor hint a real, write-enforced invariant (an API client cannot bypass
  * it). Throws Errors.validation on the first violation.
  */
+/** The set of installed content-type names (for content-type-referencing fields). */
+async function installedTypeNames(db: Database): Promise<string[]> {
+  const rows = await db.select({ name: contentType.name }).from(contentType).orderBy(asc(contentType.name));
+  return rows.map((r) => r.name);
+}
+
 async function assertAllowedTypes(db: Database, type: ContentTypeDef, data: Record<string, unknown>): Promise<void> {
+  // Fields whose value names a content type (e.g. a ListPage's listedType) must
+  // reference an INSTALLED type — never a hardcoded "fantasy" option. A list
+  // page pointing at a non-existent type lists nothing and traps agents the
+  // placement guard sends to create it (2026-06-07 incident).
+  const installed = type.fields.some((f) => f.optionsFromContentTypes) ? await installedTypeNames(db) : [];
+  for (const f of type.fields) {
+    if (!f.optionsFromContentTypes) continue;
+    const raw = data[f.name];
+    if (raw == null) continue;
+    const vals = (Array.isArray(raw) ? raw : [raw]).filter((x) => typeof x === "string");
+    for (const val of vals) {
+      if (!installed.includes(val)) {
+        throw Errors.validation(
+          `Field "${f.name}" must be an installed content type, but "${val}" does not exist. ` +
+            `Available: ${installed.join(", ")}. (Create that content type first, or pick one of these.)`,
+        );
+      }
+    }
+  }
   for (const f of type.fields) {
     const v = data[f.name];
     if (v == null) continue;
