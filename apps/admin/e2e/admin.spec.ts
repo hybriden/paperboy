@@ -175,6 +175,32 @@ test("create → edit → add block → translate → publish (with toast)", asy
   await expect(page.getByText("Published", { exact: false }).first()).toBeVisible({ timeout: 10_000 });
 });
 
+test("translate offer is directionless: an nb-only page offers translation when opened in en", async ({ page }) => {
+  // The 2026-06-07 incident: content authored ONLY in nb showed no
+  // "Translate from …" offer when opened in the default (en) locale.
+  await login(page);
+  const pageName = `Rev ${Date.now().toString().slice(-5)}`;
+  await page.getByRole("button", { name: "Create new content" }).click();
+  const dlg = page.getByRole("dialog", { name: "Create content" });
+  await dlg.getByLabel("Content type").selectOption("ArticlePage");
+  await dlg.getByLabel("Name").fill(pageName);
+  await dlg.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.locator("#editor").getByRole("textbox", { name: "Name" })).toHaveValue(pageName, { timeout: 15_000 });
+
+  // Author content ONLY in nb (the non-default locale), leaving en empty.
+  await page.getByLabel("Language").selectOption("nb");
+  const heading = page.locator("#f-heading");
+  await expect(heading).toHaveValue("", { timeout: 10_000 });
+  await heading.fill("Bare på norsk");
+  await page.waitForTimeout(1100); // autosave
+
+  // Back to the default (en) locale — which has NO version. The reverse-
+  // direction offer must appear, naming Norwegian (Bokmål) as the source.
+  await page.getByLabel("Language").selectOption("en");
+  await expect(page.getByText("Not translated to", { exact: false })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("button", { name: /Translate from .*Bokmål/i })).toBeVisible({ timeout: 10_000 });
+});
+
 test("tree reorder persists via the move endpoint", async ({ page }) => {
   await login(page);
   const names = async () =>
