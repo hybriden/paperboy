@@ -89,6 +89,48 @@ describe("intrinsic reserved SEO group", () => {
     expect(fieldNames(def).filter((x: string) => x === "metaTitle")).toHaveLength(1);
   });
 
+  it("convention fallback: a page type with NO seoRoles still gets description/image/date/author/keywords from conventional field names", async () => {
+    const r = await createType("ConventionPage", "page", [
+      { name: "heading", displayName: "Heading", type: "text", localized: true, required: true, delivery: "public", group: "Content" },
+      { name: "summary", displayName: "Summary", type: "text", localized: true, required: false, delivery: "public", group: "Content" },
+      { name: "coverImage", displayName: "Cover", type: "image", localized: false, required: false, delivery: "public", group: "Content" },
+      { name: "publishDate", displayName: "Date", type: "datetime", localized: false, required: false, delivery: "public", group: "Content" },
+      { name: "author", displayName: "Author", type: "text", localized: false, required: false, delivery: "public", group: "Content" },
+      { name: "tags", displayName: "Tags", type: "text", localized: false, required: false, delivery: "public", group: "Content" },
+    ]);
+    expect(r.statusCode, r.body).toBe(200);
+    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "ConventionPage", locale: "en", name: "Conv One" } });
+    const id = created.json().documentId as string;
+    await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${id}?locale=en`,
+      headers: authHeaders(ed),
+      payload: { data: { heading: "Conv Heading", summary: "A convention summary.", publishDate: "2026-06-08T09:00:00.000Z", author: "Jane Doe", tags: "a, b" } },
+    });
+    await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(ed) });
+    const seo = (await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${id}?locale=en`, headers: { authorization: `Bearer ${PUBLIC_KEY}` } })).json().seo;
+    // No roles set — these all come from conventional field names.
+    expect(seo.description).toBe("A convention summary.");
+    expect(seo.jsonLd.datePublished).toBe("2026-06-08T09:00:00.000Z");
+    expect(seo.jsonLd.author).toEqual({ "@type": "Person", name: "Jane Doe" });
+    expect(seo.jsonLd.keywords).toBe("a, b");
+  });
+
+  it("an explicit seoRole overrides the convention", async () => {
+    const r = await createType("OverridePage", "page", [
+      { name: "heading", displayName: "Heading", type: "text", localized: true, required: true, delivery: "public", group: "Content" },
+      { name: "summary", displayName: "Summary", type: "text", localized: true, required: false, delivery: "public", group: "Content" },
+      { name: "blurb", displayName: "Blurb", type: "text", localized: true, required: false, delivery: "public", group: "Content", seoRole: "description" },
+    ]);
+    expect(r.statusCode, r.body).toBe(200);
+    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "OverridePage", locale: "en", name: "Ov" } });
+    const id = created.json().documentId as string;
+    await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(ed), payload: { data: { heading: "H", summary: "convention summary", blurb: "role blurb wins" } } });
+    await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(ed) });
+    const seo = (await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${id}?locale=en`, headers: { authorization: `Bearer ${PUBLIC_KEY}` } })).json().seo;
+    expect(seo.description).toBe("role blurb wins"); // explicit role beats the conventionally-named summary
+  });
+
   it("blocks never get the SEO group", async () => {
     const r = await createType("PlainBlock", "block", [
       { name: "label", displayName: "Label", type: "text", localized: true, required: false, delivery: "public", group: "Content" },
