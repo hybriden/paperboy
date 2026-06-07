@@ -107,10 +107,26 @@ steering signal — which description degraded), and per-document PASS/FAIL for
 every invariant. A scenario fails if it produced nothing, or any produced doc
 fails any invariant. `OVERALL: PASS` only if every scenario passed.
 
+## Two drivers: mock (free) vs real model
+
+The outcome invariants test the **system**, not the model — so they don't need
+a real model to catch a regression, only a realistic sequence of writes. So
+there are two drivers:
+
+| Driver | Flag | Cost | What it's for |
+|---|---|---|---|
+| **mock** | `--mock` | free, deterministic, no API key | A scripted transcript of real MCP tool calls per scenario. Gates **every push**. Catches every SYSTEM regression (the 14 incidents). |
+| **real model** | (default) | paid Anthropic API | A real model loop. Tests tool-description **drift** — only a model can. Runs **weekly + on demand**. |
+
+Both run the identical invariant net, so a mock failure and a real failure read
+the same.
+
 ## CI
 
-`.github/workflows/eval.yml` runs this **on every push/PR to `main`**, weekly
-(Mondays 06:00 UTC), and on `workflow_dispatch` — it is the proactive net, so it
-gates changes. It calls the paid Anthropic API; if the `ANTHROPIC_API_KEY`
-secret is not configured the job exits green with a notice (so forks /
-unconfigured repos and the push gate never block on a missing key).
+`.github/workflows/eval.yml` chooses the driver from the trigger:
+
+- **push / PR to `main`** → `--mock` (deterministic, **no API calls, no cost**) —
+  this is the proactive gate.
+- **schedule (Mondays 06:00 UTC) / `workflow_dispatch`** → the real model. If the
+  `ANTHROPIC_API_KEY` secret is not configured it exits green with a notice (so
+  forks / unconfigured repos don't show red).

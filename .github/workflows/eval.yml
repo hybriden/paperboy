@@ -1,19 +1,18 @@
 name: MCP Eval
 
-# Outcome-invariant eval: a REAL model drives the MCP server through several
-# realistic editorial SCENARIOS (blog post, article under a list page, a
-# Norwegian article), and the harness asserts OUTCOME INVARIANTS on every
-# document produced — reachable, real name, published, visible-where-meant
-# (type === parent listedType), complete, right language branch. Each
-# production incident this project hit maps to one of those checks, so the net
-# catches the NEXT one before a human does. The parity suite locks the contract;
-# this locks whether a real model lands a GOOD OUTCOME.
+# Outcome-invariant eval: drives the MCP server through realistic editorial
+# SCENARIOS (blog post, article under a list page, a Norwegian article) and
+# asserts OUTCOME INVARIANTS on every document produced — reachable, real name,
+# published, visible-where-meant (type === parent listedType), complete, right
+# language branch. Each production incident this project hit maps to one of
+# those checks, so the net catches the NEXT one before a human does.
 #
-# Runs on every push/PR to main AND weekly + on demand — this is the proactive
-# net, so it gates changes, not just a weekly heartbeat. It calls the paid
-# Anthropic API; if the ANTHROPIC_API_KEY secret is not configured the job
-# exits 0 with a notice (green-not-failed) so forks/unconfigured repos stay
-# green and the push gate never blocks on a missing key.
+# TWO DRIVERS, by trigger — so the push gate is FREE and deterministic:
+#   • push / PR → --mock: a deterministic scripted driver (real MCP tool calls,
+#     NO model, NO API key, NO cost). This is the proactive gate. The invariant
+#     net is identical, so it catches every SYSTEM regression.
+#   • schedule / manual → real model (paid Anthropic API): tests tool-description
+#     drift, which only a real model can. Skips green if no key is configured.
 
 on:
   push:
@@ -26,7 +25,7 @@ on:
 
 jobs:
   eval:
-    name: MCP usability eval (real model)
+    name: MCP outcome-invariant eval
     runs-on: ubuntu-latest
 
     services:
@@ -49,39 +48,46 @@ jobs:
       EVAL_MODEL: claude-haiku-4-5-20251001
 
     steps:
-      # First step: if the API key secret is empty, skip the rest gracefully.
-      # The job stays GREEN (not failed) when the secret isn't configured.
-      - name: Check for ANTHROPIC_API_KEY secret
-        id: guard
+      # Decide the driver from the trigger. push/PR → mock (free, always runs).
+      # schedule/manual → real model, but only if the API key is configured
+      # (else skip green so forks / unconfigured repos don't show red).
+      - name: Decide driver
+        id: mode
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::notice::ANTHROPIC_API_KEY is not configured — skipping the MCP eval (exiting green)."
+          if [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "mode=mock" >> "$GITHUB_OUTPUT"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::push/PR → running the MCP eval in --mock mode (deterministic, no API calls)."
+          elif [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "mode=real" >> "$GITHUB_OUTPUT"
             echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ANTHROPIC_API_KEY is not configured — skipping the real-model eval (exiting green)."
           else
+            echo "mode=real" >> "$GITHUB_OUTPUT"
             echo "run=true" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: actions/checkout@v5
-        if: steps.guard.outputs.run == 'true'
+        if: steps.mode.outputs.run == 'true'
 
       - uses: pnpm/action-setup@v4
-        if: steps.guard.outputs.run == 'true'
+        if: steps.mode.outputs.run == 'true'
         # version comes from "packageManager" in package.json
 
       - uses: actions/setup-node@v5
-        if: steps.guard.outputs.run == 'true'
+        if: steps.mode.outputs.run == 'true'
         with:
           node-version: 22
           cache: pnpm
 
       - name: Install
-        if: steps.guard.outputs.run == 'true'
+        if: steps.mode.outputs.run == 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Seed the eval database
-        if: steps.guard.outputs.run == 'true'
+        if: steps.mode.outputs.run == 'true'
         # Values mirror apps/api/test/helpers.ts so the eval can log in as the
         # seed admin (MCP_EMAIL/MCP_PASSWORD default to these).
         env:
@@ -91,8 +97,12 @@ jobs:
           PAPERBOY_PREVIEW_KEY: prv_test_preview
         run: pnpm --filter @paperboy/db seed
 
-      - name: Run the MCP eval
-        if: steps.guard.outputs.run == 'true'
+      - name: Run the MCP eval (mock — deterministic, no API)
+        if: steps.mode.outputs.run == 'true' && steps.mode.outputs.mode == 'mock'
+        run: node evals/mcp-eval.mjs --mock
+
+      - name: Run the MCP eval (real model)
+        if: steps.mode.outputs.run == 'true' && steps.mode.outputs.mode == 'real'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: node evals/mcp-eval.mjs
