@@ -75,6 +75,14 @@ export const FieldDef = z.object({
   allowedTypes: z.array(z.string().max(60)).default([]),
   /** For select: the choosable options. */
   options: z.array(FieldOption).default([]),
+  /**
+   * For select: the value names an INSTALLED content type (e.g. a ListPage's
+   * listedType). The options reflect what content types actually exist — never
+   * a hardcoded fantasy list — and the value is write-enforced against the
+   * installed types in the db layer (a list page can't reference a type that
+   * doesn't exist; 2026-06-07 incident).
+   */
+  optionsFromContentTypes: z.boolean().default(false),
   /** For select: allow choosing more than one option (value is then an array). */
   multiple: z.boolean().default(false),
   /** Optional per-field validation rules (text length, number range, regex). */
@@ -169,8 +177,13 @@ export function dataSchemaFor(type: ContentTypeDef, strict: boolean): z.ZodTypeA
         break;
       case "select": {
         const values = f.options.map((o) => o.value);
+        // optionsFromContentTypes: the valid values are the INSTALLED content
+        // types (validated in the db layer against reality), so don't pin to a
+        // static option list here — a stale option must never gate.
         const one: z.ZodTypeAny =
-          strict && values.length ? z.string().refine((v) => values.includes(v), "Invalid option") : z.string();
+          strict && values.length && !f.optionsFromContentTypes
+            ? z.string().refine((v) => values.includes(v), "Invalid option")
+            : z.string();
         s = f.multiple ? z.array(one) : one;
         break;
       }

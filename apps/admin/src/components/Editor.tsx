@@ -1634,7 +1634,7 @@ function Field({
         <input id={id} type="datetime-local" className="field-input" value={(value as string) ?? ""} disabled={disabled}
           onChange={(e) => onChange(e.target.value || null)} />
       )}
-      {field.type === "select" && <SelectField id={id} field={field} value={value} disabled={disabled} onChange={onChange} />}
+      {field.type === "select" && <SelectField id={id} field={field} types={types} value={value} disabled={disabled} onChange={onChange} />}
       {field.type === "reference" && <ReferenceField id={id} value={value} disabled={disabled} onChange={onChange} />}
       {field.type === "link" && <LinkField id={id} value={value} disabled={disabled} onChange={onChange} />}
       {field.type === "image" && (
@@ -1648,26 +1648,39 @@ function Field({
   );
 }
 
-function SelectField({ id, field, value, disabled, onChange }: { id: string; field: FieldDef; value: unknown; disabled: boolean; onChange: (v: unknown) => void }) {
+function SelectField({ id, field, types, value, disabled, onChange }: { id: string; field: FieldDef; types: ContentTypeDef[]; value: unknown; disabled: boolean; onChange: (v: unknown) => void }) {
+  // optionsFromContentTypes: the dropdown reflects the INSTALLED page content
+  // types (reality), not a hardcoded option list (2026-06-07: a list page could
+  // be set to list "ArticlePage" when no such type existed). The current value
+  // is always shown — even if its type is missing — so a misconfigured page is
+  // visible rather than silently blank.
+  const options = field.optionsFromContentTypes
+    ? (() => {
+        const installed = types.filter((t) => t.kind === "page").map((t) => ({ value: t.name, label: t.displayName || t.name }));
+        const cur = typeof value === "string" ? value : "";
+        if (cur && !installed.some((o) => o.value === cur)) installed.push({ value: cur, label: `${cur} (not installed)` });
+        return installed;
+      })()
+    : field.options;
   if (field.multiple) {
     const arr = Array.isArray(value) ? (value as string[]) : [];
     const toggle = (v: string) => onChange(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
     return (
       <div className="flex flex-wrap gap-1.5" role="group" aria-labelledby={id}>
-        {field.options.map((o) => (
+        {options.map((o) => (
           <button key={o.value} type="button" disabled={disabled} onClick={() => toggle(o.value)}
             className={`rounded-full border px-2.5 py-0.5 text-xs ${arr.includes(o.value) ? "border-accent bg-accent/15 text-fg" : "border-line text-muted hover:bg-line/60"}`}>
             {o.label}
           </button>
         ))}
-        {field.options.length === 0 && <span className="text-xs text-muted">No options configured.</span>}
+        {options.length === 0 && <span className="text-xs text-muted">No options configured.</span>}
       </div>
     );
   }
   return (
     <select id={id} className="field-input" value={(value as string) ?? ""} disabled={disabled} onChange={(e) => onChange(e.target.value || null)}>
       <option value="">— choose —</option>
-      {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
     </select>
   );
 }
