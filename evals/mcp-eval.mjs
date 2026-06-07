@@ -44,6 +44,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DRY_RUN = process.argv.includes("--dry-run");
+// Mock mode: replace the paid Anthropic loop with a DETERMINISTIC scripted
+// driver per scenario (real MCP tool calls, no model). The outcome-invariant
+// net is identical, so this catches every SYSTEM regression for free — it is
+// what runs on every push. The real-model loop stays for weekly drift checks.
+const MOCK = process.argv.includes("--mock");
 const ONLY = (process.argv.find((a) => a.startsWith("--only=")) ?? "").slice("--only=".length) || null;
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const MCP_DIR = join(REPO, "apps", "mcp");
@@ -58,8 +63,8 @@ const EVAL_MODEL = process.env.EVAL_MODEL ?? "claude-haiku-4-5-20251001";
 const MCP_EMAIL = process.env.MCP_EMAIL ?? "admin@paperboy.test";
 const MCP_PASSWORD = process.env.MCP_PASSWORD ?? "Admin!Passw0rd";
 
-if (!DRY_RUN && !ANTHROPIC_API_KEY) {
-  console.error("[eval] ANTHROPIC_API_KEY is required for the model loop (or pass --dry-run).");
+if (!DRY_RUN && !MOCK && !ANTHROPIC_API_KEY) {
+  console.error("[eval] ANTHROPIC_API_KEY is required for the model loop (or pass --mock / --dry-run).");
   process.exit(2);
 }
 
@@ -278,6 +283,40 @@ async function runAgent(mcp, tools, task) {
 }
 
 /* ------------------------------------------------------------------ *
+ * Mock driver — a deterministic scripted "agent" (real MCP tool calls, no
+ * model). Records the same telemetry shape as runAgent, so the scorecard and
+ * the invariant net treat mock and real runs identically. This is what gates
+ * every push: free, deterministic, and it exercises the same write paths a
+ * real agent does — so the outcome invariants catch the same regressions.
+ * ------------------------------------------------------------------ */
+function recorder(mcp) {
+  const toolCalls = new Map();
+  /** @type {{name:string,args:unknown,text:string}[]} */
+  const toolErrors = [];
+  const call = async (name, args = {}) => {
+    toolCalls.set(name, (toolCalls.get(name) ?? 0) + 1);
+    const r = await mcp.call(name, args);
+    if (r.isError) toolErrors.push({ name, args, text: r.text });
+    return r;
+  };
+  const telemetry = () => ({
+    toolCalls,
+    toolErrors,
+    iterations: [...toolCalls.values()].reduce((a, b) => a + b, 0),
+    stopReason: "mock",
+  });
+  return { call, telemetry };
+}
+
+/** Find a top-level page's documentId by name (Blog, Projects are top-level). */
+async function findTopLevel(mcp, name) {
+  const res = await mcp.call("tree");
+  const top = Array.isArray(res.json) ? res.json : [];
+  const node = top.find((n) => typeof n?.name === "string" && n.name.trim().toLowerCase() === name.toLowerCase());
+  return node?.documentId ?? null;
+}
+
+/* ------------------------------------------------------------------ *
  * CMS reads used by setup + invariants (via the MCP client directly).
  * ------------------------------------------------------------------ */
 /** Flat set of every page documentId currently in scope. */
@@ -406,6 +445,20 @@ function scenarios(stamp) {
           "least one heading) about running AI models locally, set a one-sentence summary,",
           "and publish it.",
         ].join(" "),
+      // Deterministic transcript: the well-behaved path a correct agent takes.
+      script: async (mcp, _loc, title) => {
+        const rec = recorder(mcp);
+        const blog = await findTopLevel(mcp, "Blog");
+        const c = await rec.call("create_content", { type: "BlogPost", parentId: blog, locale: "en", name: title });
+        const id = c.json?.documentId;
+        if (id) {
+          await rec.call("set_field", { documentId: id, locale: "en", field: "title", value: title });
+          await rec.call("set_field", { documentId: id, locale: "en", field: "body", value: "# Local AI\n\nRunning models locally is increasingly practical. This post covers the trade-offs of on-device inference." });
+          await rec.call("set_field", { documentId: id, locale: "en", field: "summary", value: "A short note on running AI models locally." });
+          await rec.call("publish", { documentId: id, locale: "en" });
+        }
+        return rec.telemetry();
+      },
       expect: { parentName: "Blog", locale: "en", minDocs: 1 },
     },
     {
@@ -420,6 +473,22 @@ function scenarios(stamp) {
           "small open-source project. Find the Projects page with the tree tool, create the",
           "article as its child with a markdown body and a one-sentence summary, and publish it.",
         ].join(" "),
+      // OMIT the type → it must inherit the parent's listedType (ArticlePage).
+      // If that inheritance regresses, create errors → no doc → scenario fails.
+      // If the mismatch guard regresses, an explicit BlogPost would slip through
+      // → the "visible where meant" invariant fails. Either way: caught.
+      script: async (mcp, _loc, title) => {
+        const rec = recorder(mcp);
+        const projects = await findTopLevel(mcp, "Projects");
+        const c = await rec.call("create_content", { parentId: projects, locale: "en", name: title });
+        const id = c.json?.documentId;
+        if (id) {
+          await rec.call("set_field", { documentId: id, locale: "en", field: "heading", value: title });
+          await rec.call("set_field", { documentId: id, locale: "en", field: "intro", value: "A small open-source project." });
+          await rec.call("publish", { documentId: id, locale: "en" });
+        }
+        return rec.telemetry();
+      },
       expect: { parentName: "Projects", locale: "en", minDocs: 1 },
     },
     {
@@ -435,6 +504,22 @@ function scenarios(stamp) {
           "minst én overskrift, om japansk interiørdesign, og en sammendrags-setning.",
           "Finn Blog-siden med tree-verktøyet, opprett artikkelen under den, og publiser den.",
         ].join(" "),
+      // Norwegian content created and published on the nb branch — the right
+      // branch. (Note: the seeded Blog lists BlogPost, so the title here is the
+      // listed type; we create a BlogPost in nb.)
+      script: async (mcp, _loc, title) => {
+        const rec = recorder(mcp);
+        const blog = await findTopLevel(mcp, "Blog");
+        const c = await rec.call("create_content", { type: "BlogPost", parentId: blog, locale: "nb", name: title });
+        const id = c.json?.documentId;
+        if (id) {
+          await rec.call("set_field", { documentId: id, locale: "nb", field: "title", value: title });
+          await rec.call("set_field", { documentId: id, locale: "nb", field: "body", value: "# Japansk interiør\n\nJapansk interiørdesign bygger på enkelhet, naturmaterialer og harmoni. Wabi-sabi feirer det ufullkomne og det forgjengelige." });
+          await rec.call("set_field", { documentId: id, locale: "nb", field: "summary", value: "En kort introduksjon til japansk interiørdesign og wabi-sabi." });
+          await rec.call("publish", { documentId: id, locale: "nb" });
+        }
+        return rec.telemetry();
+      },
       expect: { parentName: "Blog", locale: "nb", minDocs: 1 },
     },
   ];
@@ -449,8 +534,9 @@ async function runScenario(mcp, tools, scenario, loc) {
   // is excluded from "produced by the model".
   const afterSetup = await pageIdSet(mcp);
 
-  const task = scenario.task(scenario.title);
-  const telemetry = await runAgent(mcp, tools, task);
+  const telemetry = MOCK
+    ? await scenario.script(mcp, loc, scenario.title)
+    : await runAgent(mcp, tools, scenario.task(scenario.title));
 
   const after = await pageIdSet(mcp);
   const produced = [...after].filter((id) => !afterSetup.has(id));
@@ -498,7 +584,7 @@ function printScenario(result, dryRun) {
   console.log(line);
 
   if (!dryRun) {
-    console.log(`  model: stop_reason=${telemetry.stopReason}, iterations=${telemetry.iterations}`);
+    console.log(`  driver: stop_reason=${telemetry.stopReason}, tool calls=${telemetry.iterations}`);
     console.log(`  produced ${produced.length} document(s)${producedEnough ? "" : "  ✗ EXPECTED ≥ " + (scenario.expect?.minDocs ?? 1)}`);
     if (telemetry.toolErrors.length) {
       console.log("  tool errors hit (the steering signal):");
@@ -553,7 +639,11 @@ async function main() {
       process.exit(0);
     }
 
-    console.log(`[eval] model=${EVAL_MODEL}  locales=${loc.enabled.join(",")} (default ${loc.def})`);
+    console.log(
+      MOCK
+        ? `[eval] MOCK mode (deterministic scripted driver — no model)  locales=${loc.enabled.join(",")} (default ${loc.def})`
+        : `[eval] model=${EVAL_MODEL}  locales=${loc.enabled.join(",")} (default ${loc.def})`,
+    );
     const results = [];
     for (const s of all) {
       console.log(`\n[eval] running scenario: ${s.id}`);
