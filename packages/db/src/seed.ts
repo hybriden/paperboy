@@ -18,17 +18,6 @@ import { sql } from "drizzle-orm";
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
 // --- SEO pane: search + social metadata, shared by every page type ---------
-const SEO_FIELDS = [
-  { name: "metaTitle", displayName: "Meta title", type: "text", localized: true, delivery: "public", group: "SEO", validation: { maxLength: 70 }, helpText: "The <title> tag. Aim for ≤ 60 characters." },
-  { name: "metaDescription", displayName: "Meta description", type: "text", localized: true, delivery: "public", group: "SEO", validation: { maxLength: 200 }, helpText: "Search-result snippet. Aim for ≤ 160 characters." },
-  { name: "canonicalUrl", displayName: "Canonical URL", type: "text", localized: false, delivery: "public", group: "SEO", helpText: "Absolute URL of the canonical version (optional)." },
-  { name: "noIndex", displayName: "Hide from search engines (noindex)", type: "boolean", localized: false, delivery: "public", group: "SEO" },
-  { name: "ogTitle", displayName: "Social title (Open Graph)", type: "text", localized: true, delivery: "public", group: "SEO", helpText: "Falls back to the meta title." },
-  { name: "ogDescription", displayName: "Social description (Open Graph)", type: "text", localized: true, delivery: "public", group: "SEO", helpText: "Falls back to the meta description." },
-  { name: "ogImage", displayName: "Social share image", type: "image", localized: false, delivery: "public", group: "SEO", helpText: "Shown when shared. 1200×630 recommended." },
-  { name: "ogType", displayName: "Open Graph type", type: "select", localized: false, delivery: "public", group: "SEO", options: [{ value: "website", label: "Website" }, { value: "article", label: "Article" }] },
-  { name: "twitterCard", displayName: "Twitter card", type: "select", localized: false, delivery: "public", group: "SEO", options: [{ value: "summary", label: "Summary" }, { value: "summary_large_image", label: "Summary, large image" }] },
-] as const;
 
 // The out-of-the-box page model: LandingPage (block canvas), ArticlePage
 // (long-form content), ListPage (children index) and BlogPost (dated item).
@@ -46,7 +35,6 @@ const TYPES: ContentTypeDef[] = ([
       { name: "heading", displayName: "Heading", type: "text", localized: true, required: true, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content", seoRole: "title" },
       { name: "intro", displayName: "Intro", type: "richtext", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
       { name: "mainArea", displayName: "Main content area", type: "contentArea", localized: true, required: false, delivery: "public", allowedBlocks: ["HeroBlock", "CardBlock", "ListBlock"], allowedTypes: [], group: "Content" },
-      ...SEO_FIELDS,
     ],
   },
   {
@@ -61,7 +49,6 @@ const TYPES: ContentTypeDef[] = ([
       { name: "intro", displayName: "Intro", type: "richtext", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
       { name: "mainArea", displayName: "Main content area", type: "contentArea", localized: true, required: false, delivery: "public", allowedBlocks: ["HeroBlock", "CardBlock", "ListBlock"], allowedTypes: [], group: "Content" },
       { name: "seoNotes", displayName: "Internal SEO notes", type: "text", localized: true, required: false, delivery: "private", allowedBlocks: [], allowedTypes: [], group: "Settings", helpText: "Never exposed by the public delivery API." },
-      ...SEO_FIELDS,
     ],
   },
   {
@@ -76,7 +63,6 @@ const TYPES: ContentTypeDef[] = ([
       { name: "intro", displayName: "Intro", type: "richtext", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
       { name: "listedType", displayName: "Listed content type", type: "select", localized: false, required: true, delivery: "public", group: "Content", optionsFromContentTypes: true, options: [{ value: "BlogPost", label: "Blog Post" }, { value: "ArticlePage", label: "Article Page" }], helpText: "Children of this page with this type are listed (newest first). Must be an installed content type." },
       { name: "pageSize", displayName: "Max items", type: "number", localized: false, required: false, delivery: "public", group: "Content", helpText: "Maximum number of items to show (default 20)." },
-      ...SEO_FIELDS,
     ],
   },
   {
@@ -92,7 +78,6 @@ const TYPES: ContentTypeDef[] = ([
       { name: "summary", displayName: "Summary", type: "text", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content", validation: { maxLength: 400 }, helpText: "Shown in list pages and as the lead paragraph.", seoRole: "description" },
       { name: "author", displayName: "Author", type: "text", localized: false, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content", seoRole: "author" },
       { name: "body", displayName: "Body", type: "markdown", localized: true, required: false, delivery: "public", allowedBlocks: [], allowedTypes: [], group: "Content" },
-      ...SEO_FIELDS,
     ],
   },
   {

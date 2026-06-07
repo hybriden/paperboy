@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { ContentTypeDef, type ContentKind, type FieldOption, type FieldType, type FieldValidation } from "@paperboy/shared";
+import { ContentTypeDef, SEO_FIELD_NAMES, type ContentKind, type FieldOption, type FieldType, type FieldValidation } from "@paperboy/shared";
 import { api, ApiError } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon, resolveIconBase, usePhosphorIconNames } from "../lib/typeIcons.js";
@@ -167,7 +167,12 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
   const [description, setDescription] = useState(initial?.description ?? "");
   const [schemaType, setSchemaType] = useState(initial?.schemaType ?? "");
   const [fields, setFields] = useState<DraftField[]>(
-    () => initial?.fields.map((f) => ({ ...f, _key: `f${uid++}`, helpText: f.helpText })) as DraftField[] ?? [],
+    // The reserved SEO group is injected on read but is system-managed — never
+    // edited or stored here, so it can't be removed. Filter it out of the CRUD
+    // list; a locked note tells the editor it's automatic on every page.
+    () => (initial?.fields ?? [])
+      .filter((f) => !SEO_FIELD_NAMES.has(f.name))
+      .map((f) => ({ ...f, _key: `f${uid++}`, helpText: f.helpText })) as DraftField[],
   );
   const [errors, setErrors] = useState<string[]>([]);
 
@@ -290,6 +295,13 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
             <Icon.Plus width={14} height={14} /> Add field
           </button>
         </div>
+
+        {kind === "page" && (
+          <p className="mb-2 rounded-[var(--radius)] border border-line bg-canvas px-3 py-2 text-xs text-muted">
+            🔒 Every page automatically includes the reserved <strong>SEO</strong> group (meta title/description,
+            canonical, noindex, Open Graph, Twitter) — managed by the system, not editable here.
+          </p>
+        )}
 
         <div className="space-y-2">
           {fields.length === 0 && <p className="rounded border border-dashed border-line px-3 py-4 text-center text-sm text-muted">No fields yet.</p>}

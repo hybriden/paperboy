@@ -139,6 +139,48 @@ export const ContentTypeDef = z
   );
 export type ContentTypeDef = z.infer<typeof ContentTypeDef>;
 
+/**
+ * The reserved SEO field group — INTRINSIC to every page. Defined ONCE here,
+ * never stored in a type's definition: injected at read time (withSeoGroup) and
+ * stripped at write time (stripSeoGroup). So every page kind has it
+ * automatically (incl. custom types), it can't be removed, and it can't drift.
+ * These are the OUTPUT-control fields (meta/og/twitter/canonical/noindex); the
+ * CONTENT fields a type author defines (heading/title/…) carry the seoRoles.
+ */
+export const SEO_GROUP: FieldDef[] = (
+  [
+    { name: "metaTitle", displayName: "Meta title", type: "text", localized: true, delivery: "public", group: "SEO", validation: { maxLength: 70 }, helpText: "The <title> tag. Aim for ≤ 60 characters." },
+    { name: "metaDescription", displayName: "Meta description", type: "text", localized: true, delivery: "public", group: "SEO", validation: { maxLength: 200 }, helpText: "Search-result snippet. Aim for ≤ 160 characters." },
+    { name: "canonicalUrl", displayName: "Canonical URL", type: "text", localized: false, delivery: "public", group: "SEO", helpText: "Absolute URL of the canonical version (optional)." },
+    { name: "noIndex", displayName: "Hide from search engines (noindex)", type: "boolean", localized: false, delivery: "public", group: "SEO" },
+    { name: "ogTitle", displayName: "Social title (Open Graph)", type: "text", localized: true, delivery: "public", group: "SEO", helpText: "Falls back to the meta title." },
+    { name: "ogDescription", displayName: "Social description (Open Graph)", type: "text", localized: true, delivery: "public", group: "SEO", helpText: "Falls back to the meta description." },
+    { name: "ogImage", displayName: "Social share image", type: "image", localized: false, delivery: "public", group: "SEO", helpText: "Shown when shared. 1200×630 recommended." },
+    { name: "ogType", displayName: "Open Graph type", type: "select", localized: false, delivery: "public", group: "SEO", options: [{ value: "website", label: "Website" }, { value: "article", label: "Article" }] },
+    { name: "twitterCard", displayName: "Twitter card", type: "select", localized: false, delivery: "public", group: "SEO", options: [{ value: "summary", label: "Summary" }, { value: "summary_large_image", label: "Summary, large image" }] },
+  ] as const
+).map((f) => FieldDef.parse(f));
+
+/** The reserved SEO field names (system-managed; never stored per type). */
+export const SEO_FIELD_NAMES: ReadonlySet<string> = new Set(SEO_GROUP.map((f) => f.name));
+
+/**
+ * Read-time augmentation: every PAGE kind gets the reserved SEO group. Strips
+ * any stored field that collides with a reserved name first (canonical wins,
+ * can't drift), then appends the group — so this is idempotent and a stale
+ * stored SEO field can never shadow the canonical one.
+ */
+export function withSeoGroup(def: ContentTypeDef): ContentTypeDef {
+  if (def.kind !== "page") return def;
+  const fields = def.fields.filter((f) => !SEO_FIELD_NAMES.has(f.name)).concat(SEO_GROUP);
+  return { ...def, fields };
+}
+
+/** Write-time: drop the reserved SEO fields so they're never persisted per type. */
+export function stripSeoGroup(def: ContentTypeDef): ContentTypeDef {
+  return { ...def, fields: def.fields.filter((f) => !SEO_FIELD_NAMES.has(f.name)) };
+}
+
 /** Display option for a block placed in a content area. */
 export const BlockDisplayOption = z.enum(["automatic", "full", "wide", "narrow"]);
 export type BlockDisplayOption = z.infer<typeof BlockDisplayOption>;
