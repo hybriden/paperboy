@@ -46,6 +46,41 @@ describe("coerceFieldValue: self-keyed wrap unwrap edges", () => {
   });
 });
 
+describe("coerceFieldValue: text-carrier unwrap (the 2026-06-04 wrapper dance)", () => {
+  // The three exact shapes a production agent invented for a text field,
+  // rejected three times in a row before this coercion existed.
+  it("unwraps {type:'text', text:'X'} for text fields", () => {
+    expect(coerceFieldValue(f("text"), { type: "text", text: "X" })).toBe("X");
+  });
+  it("unwraps {text:'X'} for text fields", () => {
+    expect(coerceFieldValue(f("text"), { text: "X" })).toBe("X");
+  });
+  it("unwraps {raw:'X'} for markdown fields", () => {
+    expect(coerceFieldValue(f("markdown"), { raw: "X" })).toBe("X");
+  });
+  it("unwraps {value:'X'} / {content:'X'} / {markdown:'X'}", () => {
+    expect(coerceFieldValue(f("text"), { value: "X" })).toBe("X");
+    expect(coerceFieldValue(f("markdown"), { content: "X" })).toBe("X");
+    expect(coerceFieldValue(f("markdown"), { markdown: "X" })).toBe("X");
+  });
+  it("does NOT unwrap when a sibling key makes it ambiguous", () => {
+    const v = { text: "X", html: "<b>X</b>" };
+    expect(coerceFieldValue(f("text"), v)).toBe(v);
+  });
+  it("does NOT unwrap a non-string carrier ({text: 1})", () => {
+    const v = { text: 1 };
+    expect(coerceFieldValue(f("text"), v)).toBe(v);
+  });
+  it("does NOT unwrap for richtext fields (a PM text node is not a doc)", () => {
+    const v = { type: "text", text: "X" };
+    expect(coerceFieldValue(f("richtext"), v)).toBe(v);
+  });
+  it("an empty object ({} — the client-mangled long string) stays an object → validation error", () => {
+    const v = {};
+    expect(coerceFieldValue(f("markdown"), v)).toBe(v);
+  });
+});
+
 describe("coerceFieldValue: locale-map unwrap edges", () => {
   it("picks the requested locale from a multi-locale map", () => {
     expect(coerceFieldValue(f("text"), { en: "a", nb: "b" }, "en")).toBe("a");

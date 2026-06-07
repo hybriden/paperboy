@@ -553,6 +553,25 @@ const LOCALE_KEY = /^[a-z]{2,3}(-[A-Za-z]{2,4})?$/;
 const NOT_LOCALE_KEYS = new Set(["url", "uri", "src", "alt", "ref", "rel", "img", "tag", "val", "raw"]);
 
 /**
+ * Single-key wrapper objects agents invent around a plain string. Observed
+ * verbatim in a 2026-06-04 production run (three rejects in a row):
+ * {type:'text', text:'X'} → {text:'X'} → {raw:'X'}. The inner string is
+ * unambiguous — unwrap it. Only an optional `type` tag (string) may accompany
+ * the single carrier key; anything else is NOT meaning-preserving and falls
+ * through to the validation error.
+ */
+const TEXT_CARRIER_KEYS = new Set(["text", "value", "raw", "content", "markdown"]);
+function unwrapTextCarrier(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const obj = value as Record<string, unknown>;
+  if ("type" in obj && typeof obj.type !== "string") return value;
+  const carriers = Object.keys(obj).filter((k) => k !== "type");
+  if (carriers.length !== 1) return value;
+  const k = carriers[0]!;
+  return TEXT_CARRIER_KEYS.has(k) && typeof obj[k] === "string" ? obj[k] : value;
+}
+
+/**
  * Be liberal in what we accept (Postel's law) for the field-shape mistakes an
  * LLM agent reliably makes — coerced BEFORE validation. Conservative: only
  * unambiguous fixes; genuinely broken input still falls through to the helpful
@@ -561,6 +580,8 @@ const NOT_LOCALE_KEYS = new Set(["url", "uri", "src", "alt", "ref", "rel", "img"
  *  - any field wrapped as { <locale>: inner }     → inner  (locale-map wrap —
  *    the locale is selected by the request's locale param, never by the value;
  *    a real MCP agent burned 12 attempts on this one)
+ *  - text/markdown given a single-key text carrier → the inner string
+ *    ({text}, {type:'text',text}, {value}, {raw}, {content}, {markdown})
  *  - text given a TipTap doc                      → plain text (blocks separated)
  *  - markdown given a TipTap doc                  → real Markdown (structure kept)
  *  - richtext given a plain string                → wrapped into a doc
@@ -587,11 +608,15 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
     }
   }
   switch (f.type) {
-    case "text":
-      return looksLikeTiptapDoc(value) ? tiptapToPlainText(value) : value;
-    case "markdown":
+    case "text": {
+      const v = unwrapTextCarrier(value);
+      return looksLikeTiptapDoc(v) ? tiptapToPlainText(v) : v;
+    }
+    case "markdown": {
+      const v = unwrapTextCarrier(value);
       // Structure-preserving: headings/lists/marks become Markdown syntax.
-      return looksLikeTiptapDoc(value) ? tiptapToMarkdown(value) : value;
+      return looksLikeTiptapDoc(v) ? tiptapToMarkdown(v) : v;
+    }
     case "richtext": {
       const doc = typeof value === "string" ? stringToTiptapDoc(value) : value;
       return looksLikeTiptapDoc(doc) ? sanitizeRichTextDoc(doc) : doc;
