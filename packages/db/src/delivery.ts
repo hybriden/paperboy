@@ -115,6 +115,15 @@ class DeliveryCtx {
     }
     return chain;
   }
+
+  /** Every enabled locale code in stable (sortIndex) order. */
+  async enabledLocaleCodes(): Promise<string[]> {
+    if (!this.locales) this.locales = await this.db.select().from(locale);
+    return [...this.locales]
+      .filter((l) => l.enabled)
+      .sort((a, b) => a.sortIndex - b.sortIndex)
+      .map((l) => l.code);
+  }
 }
 
 function selectRow(
@@ -149,6 +158,20 @@ function publishWindowOpen(r: typeof contentVersion.$inferSelect, now: Date): bo
   return true;
 }
 
+/** The visible row for ONE specific locale code (perspective + window rules). */
+function rowForLocale(
+  all: (typeof contentVersion.$inferSelect)[],
+  perspective: Perspective,
+  code: string,
+  now: Date,
+): (typeof contentVersion.$inferSelect) | null {
+  let candidates = all.filter((r) => r.locale === code);
+  // Public perspective also enforces the scheduled-publish window; preview
+  // (privileged editors) ignores it so editors can preview anytime.
+  if (perspective === "published") candidates = candidates.filter((r) => publishWindowOpen(r, now));
+  return selectRow(candidates, perspective);
+}
+
 async function variantRow(
   ctx: DeliveryCtx,
   perspective: Perspective,
@@ -157,14 +180,56 @@ async function variantRow(
 ): Promise<{ row: typeof contentVersion.$inferSelect; usedLocale: string } | null> {
   const all = await ctx.docVersions(documentId);
   for (const code of await ctx.localeChain(loc)) {
-    let candidates = all.filter((r) => r.locale === code);
-    // Public perspective also enforces the scheduled-publish window; preview
-    // (privileged editors) ignores it so editors can preview anytime.
-    if (perspective === "published") candidates = candidates.filter((r) => publishWindowOpen(r, ctx.now));
-    const row = selectRow(candidates, perspective);
+    const row = rowForLocale(all, perspective, code, ctx.now);
     if (row) return { row, usedLocale: code };
   }
   return null;
+}
+
+/**
+ * Enforce the `localized:false` contract at the read chokepoint: a
+ * non-localized field holds ONE value across every language branch, but values
+ * are stored per locale-version. When the resolved variant lacks such a field,
+ * fill it from the next visible variant along the fallback chain — under the
+ * SAME perspective/window rules, so a draft-only value never leaks publicly.
+ * (2026-06-07: tags/publishDate written in en never reached the published nb
+ * article — defined as shared, served as locale-private.)
+ */
+async function fillNonLocalizedFields(
+  ctx: DeliveryCtx,
+  perspective: Perspective,
+  documentId: string,
+  typeName: string,
+  data: Record<string, unknown>,
+  usedLocale: string,
+  loc: string,
+): Promise<Record<string, unknown>> {
+  const def = await ctx.type(typeName);
+  if (!def) return data;
+  const missing = def.fields.filter((f) => !f.localized && data[f.name] === undefined);
+  if (!missing.length) return data;
+  // Priority: the rest of the fallback chain first, then every other enabled
+  // locale (stable order) — sharing is bidirectional (an en request must also
+  // see a value published only in nb), the chain just decides precedence.
+  const chain = await ctx.localeChain(loc);
+  const others = (await ctx.enabledLocaleCodes()).filter((c) => !chain.includes(c));
+  const rest = [...chain.slice(chain.indexOf(usedLocale) + 1), ...others];
+  if (!rest.length) return data;
+  const all = await ctx.docVersions(documentId);
+  const out = { ...data };
+  let open = missing.map((f) => f.name);
+  for (const code of rest) {
+    if (!open.length) break;
+    const row = rowForLocale(all, perspective, code, ctx.now);
+    if (!row) continue;
+    const rowData = row.data as Record<string, unknown>;
+    open = open.filter((name) => {
+      if (rowData[name] === undefined) return true;
+      out[name] = rowData[name];
+      return false;
+    });
+  }
+  return out;
 }
 
 /** Absolutize the src of every image node in a TipTap doc (non-mutating). */
@@ -295,14 +360,18 @@ export async function resolveContent(
   if (!found) return null;
   const item = await ctx.item(documentId);
   if (!item) return null;
-  const sanitized = await sanitize(
+  // localized:false fields are SHARED across language branches — fill gaps
+  // from other visible variants before sanitizing (same chokepoint rules).
+  const data = await fillNonLocalizedFields(
     ctx,
     perspective,
+    documentId,
     item.type,
     found.row.data as Record<string, unknown>,
     found.usedLocale,
-    depth,
+    loc,
   );
+  const sanitized = await sanitize(ctx, perspective, item.type, data, found.usedLocale, depth);
   return {
     documentId,
     type: item.type,

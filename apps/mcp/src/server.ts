@@ -29,6 +29,7 @@ import {
   discardDraft,
   getAccessContext,
   getContent,
+  resolveRequestedLocale,
   getContentType,
   getSiteConfig,
   getTree,
@@ -127,6 +128,11 @@ function need(perm: Permission): void {
 }
 const persp = (preview?: boolean): "preview" | "published" => (preview ? "preview" : "published");
 
+/** Omitted locale → the document's safe locale (default-locale variant, else
+ *  its sole locale, else a self-teaching error) — never a silent fork of a
+ *  phantom 'en' branch on a nb-only document (rule 5; 2026-06-07 incident). */
+const locFor = (documentId: string, locale?: string) => resolveRequestedLocale(db, documentId, locale);
+
 /** Fire-and-forget audit entry — MCP writes leave the same trail as API routes. */
 function mcpAudit(action: string, documentId?: string | null, locale?: string | null, detail?: object): void {
   void audit(db, { actorUserId: ctx.userId, action, documentId: documentId ?? null, locale: locale ?? null, ip: "mcp", detail }).catch(() => undefined);
@@ -179,7 +185,7 @@ const docId = z.string().describe("Content documentId");
 tool("tree", "List the page tree under a parent (omit parentId for top level).", { parentId: z.string().optional() },
   ({ parentId }) => getTree(db, ctx, parentId ?? null));
 tool("get_content", "Get a content item's working version (draft else published) for a locale.", { documentId: docId, locale: loc },
-  ({ documentId, locale }) => getContent(db, ctx, documentId, locale ?? "en"));
+  async ({ documentId, locale }) => getContent(db, ctx, documentId, await locFor(documentId, locale)));
 tool(
   "create_content",
   [
@@ -228,8 +234,9 @@ tool(
   // validation but bricks every subsequent publish — the worst failure mode
   // an agent can hit. Replace semantics stay available via merge:false.
   async ({ documentId, locale, name, slug, displayInNav, data, merge }) => {
-    const updated = await updateContent(db, ctx, documentId, locale ?? "en", { name, slug, displayInNav, data, merge: merge ?? true });
-    mcpAudit("content.update", documentId, locale ?? "en");
+    const l = await locFor(documentId, locale);
+    const updated = await updateContent(db, ctx, documentId, l, { name, slug, displayInNav, data, merge: merge ?? true });
+    mcpAudit("content.update", documentId, l);
     return updated;
   });
 tool(
@@ -243,33 +250,36 @@ tool(
   ].join(" "),
   { documentId: docId, locale: loc, field: z.string().describe("Field name from the content type (or 'name')"), value: z.string().describe("The plain string value") },
   async ({ documentId, locale, field, value }) => {
+    const l = await locFor(documentId, locale);
     const updated =
       field === "name"
-        ? await updateContent(db, ctx, documentId, locale ?? "en", { name: value, data: {}, merge: true })
-        : await updateContent(db, ctx, documentId, locale ?? "en", { data: { [field]: value }, merge: true });
-    mcpAudit("content.update", documentId, locale ?? "en", { field });
+        ? await updateContent(db, ctx, documentId, l, { name: value, data: {}, merge: true })
+        : await updateContent(db, ctx, documentId, l, { data: { [field]: value }, merge: true });
+    mcpAudit("content.update", documentId, l, { field });
     return updated;
   });
 tool("publish", "Publish the working draft of a content item for a locale.", { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {
-    const published = await publishContent(db, ctx, documentId, locale ?? "en");
-    mcpAudit("content.publish", documentId, locale ?? "en");
+    const l = await locFor(documentId, locale);
+    const published = await publishContent(db, ctx, documentId, l);
+    mcpAudit("content.publish", documentId, l);
     return published;
   });
 tool("unpublish", "Unpublish (take down) a content item for a locale.", { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {
-    const result = await unpublishContent(db, ctx, documentId, locale ?? "en");
-    mcpAudit("content.unpublish", documentId, locale ?? "en");
+    const l = await locFor(documentId, locale);
+    const result = await unpublishContent(db, ctx, documentId, l);
+    mcpAudit("content.unpublish", documentId, l);
     return result;
   });
 tool("discard_draft", "Discard unpublished draft changes for a locale.", { documentId: docId, locale: loc },
-  async ({ documentId, locale }) => { await discardDraft(db, ctx, documentId, locale ?? "en"); mcpAudit("content.discard_draft", documentId, locale ?? "en"); return { ok: true }; });
+  async ({ documentId, locale }) => { const l = await locFor(documentId, locale); await discardDraft(db, ctx, documentId, l); mcpAudit("content.discard_draft", documentId, l); return { ok: true }; });
 tool("move_content", "Reorder (beforeId/afterId) or re-parent (parentId) a page.",
   { documentId: docId, parentId: z.string().nullable().optional(), beforeId: z.string().nullable().optional(), afterId: z.string().nullable().optional() },
   async ({ documentId, parentId, beforeId, afterId }) => { await moveContent(db, ctx, documentId, { parentId, beforeId, afterId }); mcpAudit("content.move", documentId); return { ok: true }; });
 tool("duplicate_content", "Duplicate a content item as a new draft sibling.", { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {
-    const copy = await cloneContent(db, ctx, documentId, locale ?? "en");
+    const copy = await cloneContent(db, ctx, documentId, await locFor(documentId, locale));
     mcpAudit("content.duplicate", copy.documentId, copy.locale, { source: documentId });
     return copy;
   });
@@ -279,11 +289,12 @@ tool("restore_content", "Restore a content item from the trash.", { documentId: 
   async ({ documentId }) => { const r = await restoreContent(db, ctx, documentId); mcpAudit("content.restore", documentId); return r; });
 tool("list_trash", "List soft-deleted content in scope.", {}, () => listTrash(db, ctx));
 tool("list_versions", "List the version history of a content item for a locale.", { documentId: docId, locale: loc },
-  ({ documentId, locale }) => listVersions(db, ctx, documentId, locale ?? "en"));
+  async ({ documentId, locale }) => listVersions(db, ctx, documentId, await locFor(documentId, locale)));
 tool("restore_version", "Restore a historical version into a new draft.", { documentId: docId, locale: loc, versionId: z.number() },
   async ({ documentId, locale, versionId }) => {
-    const restored = await restoreVersion(db, ctx, documentId, locale ?? "en", versionId);
-    mcpAudit("content.version_restore", documentId, locale ?? "en", { versionId });
+    const l = await locFor(documentId, locale);
+    const restored = await restoreVersion(db, ctx, documentId, l, versionId);
+    mcpAudit("content.version_restore", documentId, l, { versionId });
     return restored;
   });
 tool("list_blocks", "List shared blocks (the assets pane).", {}, () => listBlocks(db, ctx));

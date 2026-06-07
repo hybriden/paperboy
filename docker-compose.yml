@@ -133,6 +133,13 @@ services:
       DATABASE_URL: postgresql://paperboy:paperboy@db:5432/paperboy
       MCP_HTTP_PORT: "8093"
       MCP_TOKEN: ${MCP_TOKEN:-} # mint one in Settings → MCP; the server refuses to start in HTTP mode without it
+      # Settings stored via the admin (stock-image key, AI key) are encrypted at
+      # rest with MFA_SECRET ?? SESSION_SECRET by the api service. The MCP reads
+      # the SAME rows — without the same secrets here it silently treats every
+      # stored key as unset (found 2026-06-07: Settings → Stock images had a key,
+      # MCP still reported "No stock image provider is configured").
+      SESSION_SECRET: ${SESSION_SECRET:-prod-session-secret-please-override-32+chars}
+      MFA_SECRET: ${MFA_SECRET:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-haiku-4-5-20251001}
       # Same as the api service: media URLs in MCP delivery reads (preview_content

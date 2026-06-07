@@ -299,6 +299,41 @@ describe("MCP agent journeys (real production sequences)", () => {
   });
 
   // ------------------------------------------------------------------
+  // J8 — the locale-omission trap (2026-06-07 article run)
+  // ------------------------------------------------------------------
+  describe("J8: set_field without locale on a single-locale document targets THAT locale", () => {
+    it("never silently forks a phantom variant in the static default locale", async () => {
+      // The exact incident: the agent created the article in nb, then wrote
+      // tags/publishDate WITHOUT a locale (they're localized:false — "not
+      // language-specific" was a perfectly reasonable read). The MCP defaulted
+      // to 'en' and silently forked a near-empty en draft; the nb article
+      // shipped without tags or date.
+      const created = await mcp.call("create_content", {
+        type: "BlogPost",
+        locale: "nb",
+        name: "Norsk-eneste dokument",
+        parentId: s.ids.blogId,
+      });
+      expect(created.isError).toBe(false);
+      const docId = (created.json as { documentId: string }).documentId;
+
+      const r = await mcp.call("set_field", { documentId: docId, field: "tags", value: "Interiør, Japan" });
+      expect(r.isError, r.text.slice(0, 300)).toBe(false);
+
+      // The write must land in nb (the document's only locale)…
+      const nb = await mcp.call("get_content", { documentId: docId, locale: "nb" });
+      expect((nb.json as { data: { tags?: string } }).data.tags).toBe("Interiør, Japan");
+
+      // …and NO en variant may exist: reading en explicitly returns the
+      // non-persisted scaffold (versionNumber 0, empty data), not a fork.
+      const en = await mcp.call("get_content", { documentId: docId, locale: "en" });
+      const enBody = en.json as { versionNumber: number; data: Record<string, unknown> };
+      expect(enBody.versionNumber).toBe(0);
+      expect(enBody.data).toEqual({});
+    });
+  });
+
+  // ------------------------------------------------------------------
   // J7 — publish before required fields (2026-06-04 run)
   // ------------------------------------------------------------------
   describe("J7: premature publish self-teaches and recovers in one step", () => {

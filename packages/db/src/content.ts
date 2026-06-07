@@ -392,6 +392,75 @@ async function workingSlug(db: Database, documentId: string, loc: string): Promi
   return row?.slug ?? null;
 }
 
+/** The locale fallback chain (e.g. nb → en), mirroring delivery's localeChain. */
+async function localeFallbackChain(db: Database, loc: string): Promise<string[]> {
+  const locales = await db.select().from(locale);
+  const byCode = new Map(locales.map((l) => [l.code, l]));
+  const chain: string[] = [];
+  let cur: string | null = loc;
+  const guard = new Set<string>();
+  while (cur && !guard.has(cur)) {
+    guard.add(cur);
+    chain.push(cur);
+    cur = byCode.get(cur)?.fallbackLocaleCode ?? null;
+  }
+  return chain;
+}
+
+/**
+ * Like workingSlug, but mirrors delivery's per-node semantics: pick the FIRST
+ * locale in the fallback chain that has any version of this document, then use
+ * THAT variant's slug (null slug stays null — no skipping). Without the chain,
+ * a nb page under an en-only parent was live on the site while the editor
+ * claimed "No URL yet" (2026-06-07).
+ */
+async function workingSlugAlongChain(db: Database, documentId: string, chain: string[]): Promise<string | null> {
+  for (const code of chain) {
+    const rows = await db
+      .select()
+      .from(contentVersion)
+      .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, code)))
+      .orderBy(desc(contentVersion.versionNumber));
+    if (!rows.length) continue;
+    const row = rows.find((r) => r.status === "draft") ?? rows.find((r) => r.isCurrentPublished) ?? rows[0];
+    return row?.slug ?? null;
+  }
+  return null;
+}
+
+/**
+ * Resolve an OMITTED locale for a document-scoped operation (rule 5: safe
+ * defaults). The static default ('en') silently FORKED a phantom variant when
+ * an agent worked on a nb-only document and skipped the locale param
+ * (2026-06-07: tags/publishDate landed in a near-empty en draft; the nb
+ * article shipped without them). Resolution:
+ *  - explicit locale → as given;
+ *  - the site default locale, when the document has a variant there (or has
+ *    no variants at all yet);
+ *  - otherwise the document's SOLE locale;
+ *  - otherwise (multiple locales, none the default) → self-teaching error.
+ */
+export async function resolveRequestedLocale(
+  db: Database,
+  documentId: string,
+  requested?: string,
+): Promise<string> {
+  if (requested) return requested;
+  const rows = await db
+    .selectDistinct({ locale: contentVersion.locale })
+    .from(contentVersion)
+    .where(eq(contentVersion.documentId, documentId));
+  const codes = rows.map((r) => r.locale);
+  const defaults = await db.select().from(locale).where(eq(locale.isDefault, true)).limit(1);
+  const def = defaults[0]?.code ?? "en";
+  if (codes.length === 0 || codes.includes(def)) return def;
+  if (codes.length === 1) return codes[0]!;
+  throw Errors.badRequest(
+    `This document has no '${def}' variant — it exists in: ${codes.join(", ")}. ` +
+      `Pass locale explicitly (e.g. locale: "${codes[0]}") so the write doesn't fork a new language branch by accident.`,
+  );
+}
+
 /**
  * Hierarchical URL for a page built from the chain of ancestor slugs (root→leaf),
  * e.g. /home/about/team. Pages only; returns null for blocks/globals. Cycle-safe.
@@ -399,6 +468,7 @@ async function workingSlug(db: Database, documentId: string, loc: string): Promi
 export async function computePath(db: Database, documentId: string, loc: string): Promise<string | null> {
   const segments: string[] = [];
   const guard = new Set<string>();
+  const chain = await localeFallbackChain(db, loc);
   let cur: string | null = documentId;
   while (cur && !guard.has(cur)) {
     guard.add(cur);
@@ -409,7 +479,9 @@ export async function computePath(db: Database, documentId: string, loc: string)
       .limit(1);
     const item = rows[0];
     if (!item || item.kind !== "page") return null;
-    const slug = await workingSlug(db, cur, loc);
+    // Resolve each segment along the locale fallback chain — PARITY with
+    // delivery's urlPathOf. A nb page under an en-only parent has a real URL.
+    const slug = await workingSlugAlongChain(db, cur, chain);
     // No slug → NO URL (null), matching delivery's urlPathOf. Skipping the
     // segment instead made a slugless child claim its PARENT's path — a fresh
     // draft post "previewed" as the blog list page.
