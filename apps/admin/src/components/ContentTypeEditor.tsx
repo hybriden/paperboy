@@ -32,6 +32,21 @@ interface DraftField {
 
 const SEO_ROLES = ["title", "description", "image", "datePublished", "dateModified", "author", "keywords"] as const;
 
+// Common page-level schema.org @types for the dropdown. The stored value stays
+// a free string (MCP can set any @type); this is just discoverable admin UX.
+const SCHEMA_TYPES = [
+  "WebPage",
+  "Article",
+  "BlogPosting",
+  "NewsArticle",
+  "CollectionPage",
+  "AboutPage",
+  "ContactPage",
+  "FAQPage",
+  "Product",
+  "Event",
+] as const;
+
 let uid = 0;
 const newField = (): DraftField => ({
   _key: `nf${uid++}`,
@@ -279,8 +294,13 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
           {kind === "page" && (
             <div>
               <label className="field-label" htmlFor="ct-schema">schema.org type</label>
-              <input id="ct-schema" className="field-input" value={schemaType} placeholder="auto (WebPage / Article / …)"
-                onChange={(e) => setSchemaType(e.target.value)} aria-label="schema.org type" />
+              <select id="ct-schema" className="field-input" value={schemaType}
+                onChange={(e) => setSchemaType(e.target.value)} aria-label="schema.org type">
+                <option value="">Auto (derived from the type)</option>
+                {/* Preserve an existing custom value that isn't in the curated list. */}
+                {schemaType && !(SCHEMA_TYPES as readonly string[]).includes(schemaType) && <option value={schemaType}>{schemaType} (custom)</option>}
+                {SCHEMA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
             </div>
           )}
           <div className="col-span-2">
