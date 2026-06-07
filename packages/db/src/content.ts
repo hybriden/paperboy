@@ -81,7 +81,12 @@ export async function contentTypeUsage(db: Database): Promise<Record<string, Con
 
 export async function getContentType(db: Database, name: string): Promise<ContentTypeDef> {
   const rows = await db.select().from(contentType).where(eq(contentType.name, name)).limit(1);
-  if (!rows[0]) throw Errors.notFound(`Content type '${name}'`);
+  if (!rows[0]) {
+    // Self-teaching (rule 2): agents guess casings ("blog-post" for BlogPost —
+    // real 2026-06-07 run). Hand them the actual names so one retry lands.
+    const all = await db.select({ name: contentType.name }).from(contentType).orderBy(asc(contentType.name));
+    throw Errors.notFound(`Content type '${name}' (available: ${all.map((t) => t.name).join(", ")})`);
+  }
   return rows[0].definition as ContentTypeDef;
 }
 
@@ -661,7 +666,7 @@ function formatDataValidation(
 ): string {
   const issues = err.issues ?? [];
   if (!issues.length) return "Some fields are invalid";
-  return issues
+  const lines = issues
     .slice(0, 6)
     .map((i) => {
       const path = i.path.filter((p) => typeof p === "string") as string[];
@@ -673,6 +678,22 @@ function formatDataValidation(
       return `${field}: ${base} — '${def.name}' is a ${def.type} field; send ${format} (example: ${JSON.stringify(example)})`;
     })
     .join("; ");
+  // Steer to the transport-safe tool (rule 4): when a long-content field got an
+  // OBJECT, the most common real cause is the CLIENT mangling a long nested
+  // string to {} in transit (a 2026-06-05 agent retried that 9 times — it could
+  // never learn the content was destroyed before it reached us). A flat
+  // top-level string parameter survives.
+  const longContentGotObject = issues.some((i) => {
+    const def = type.fields.find((f) => f.name === i.path.find((p) => typeof p === "string"));
+    return (
+      def != null &&
+      (def.type === "text" || def.type === "markdown" || def.type === "richtext") &&
+      /received object/i.test(i.message)
+    );
+  });
+  return longContentGotObject
+    ? `${lines}. If you SENT a string and it arrived as an object/{}, your client mangled the nested value in transit — write long text with set_field {documentId, field, value} (a flat top-level string survives serialization).`
+    : lines;
 }
 
 /** The current working data for a variant: the draft's, else the published version's, else {}. */
@@ -1556,6 +1577,11 @@ export async function markReviewed(
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.update");
   await loadAuthorized(db, ctx, documentId);
+  // Clear the flag on the WORKING version: the draft when one exists, but ALSO
+  // the current published row — an agent that publishes directly leaves no
+  // draft behind, and a draft-only update made Approve a silent no-op on such
+  // documents (2026-06-07: the editor badge sat on the published version and
+  // the button "did nothing" — 200 OK, zero rows touched).
   await db
     .update(contentVersion)
     .set({ needsReview: false })
@@ -1563,7 +1589,7 @@ export async function markReviewed(
       and(
         eq(contentVersion.documentId, documentId),
         eq(contentVersion.locale, loc),
-        eq(contentVersion.status, "draft"),
+        or(eq(contentVersion.status, "draft"), eq(contentVersion.isCurrentPublished, true)),
       ),
     );
   return getContent(db, ctx, documentId, loc);
