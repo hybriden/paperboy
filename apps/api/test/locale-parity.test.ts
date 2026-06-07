@@ -151,6 +151,20 @@ describe("locale parity: management URL vs delivery + non-localized field sharin
     expect(r.statusCode, r.body).toBe(200);
   });
 
+  it("D: a HUMAN may create a deliberate off-type sub-page under a list page (never blocked)", async () => {
+    // The type-mismatch guard is agent-only — an editor who genuinely wants an
+    // ArticlePage under the BlogPost list (e.g. an "About this blog" sub-page)
+    // is not second-guessed.
+    const r = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: authHeaders(ed),
+      payload: { type: "ArticlePage", locale: "en", name: "About this blog", parentId: s.ids.blogId },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json().type).toBe("ArticlePage");
+  });
+
   it("B (no-leak): a non-localized value that exists only in an UNPUBLISHED draft never reaches public delivery", async () => {
     const post = await create("BlogPost", "Draft leak check");
     // nb published WITHOUT author; en has author only in a DRAFT (never published).
