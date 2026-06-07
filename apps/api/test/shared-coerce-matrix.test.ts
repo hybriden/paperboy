@@ -327,6 +327,45 @@ describe("coerceFieldValue: richtext from plain string + out-of-schema normaliza
     // looksLikeTiptapDoc is false for a number → returned as-is (Zod rejects later).
     expect(coerceFieldValue(f("richtext"), 5)).toBe(5);
   });
+
+  // Agents send MARKDOWN to richtext fields (set_field is a string). Wrapping
+  // it as literal plaintext rendered "#", "**", "-" verbatim (2026-06-07).
+  // The coercion now PARSES the markdown into structured TipTap nodes.
+  it("parses markdown structure (headings, bold, lists) into TipTap nodes", () => {
+    const md = "## Title\n\nA **bold** word.\n\n- one\n- two";
+    const doc = coerceFieldValue(f("richtext"), md) as {
+      content: Array<{ type: string; attrs?: { level?: number }; content?: unknown[] }>;
+    };
+    const types = doc.content.map((n) => n.type);
+    expect(types).toEqual(["heading", "paragraph", "bulletList"]);
+
+    const heading = doc.content[0]!;
+    expect(heading.attrs?.level).toBe(2);
+    expect((heading.content as Array<{ text: string }>)[0]!.text).toBe("Title");
+
+    // The bold word carries a bold mark — not literal asterisks.
+    const para = JSON.stringify(doc.content[1]);
+    expect(para).toContain('"bold"');
+    expect(para).toContain('"bold"');
+    expect(para).not.toContain("**");
+
+    const list = doc.content[2]!;
+    expect((list.content as unknown[]).length).toBe(2); // two listItems
+  });
+
+  it("maps a markdown link to a link mark with href", () => {
+    const doc = coerceFieldValue(f("richtext"), "See [the docs](https://example.com/x).") as {
+      content: Array<{ content?: Array<{ text?: string; marks?: Array<{ type: string; attrs?: { href?: string } }> }> }>;
+    };
+    const linkNode = doc.content[0]!.content!.find((n) => n.marks?.some((m) => m.type === "link"));
+    expect(linkNode?.text).toBe("the docs");
+    expect(linkNode?.marks?.find((m) => m.type === "link")?.attrs?.href).toBe("https://example.com/x");
+  });
+
+  it("clamps heading level to the editor schema (2–3): a single # becomes level 2", () => {
+    const doc = coerceFieldValue(f("richtext"), "# Top") as { content: Array<{ attrs?: { level?: number } }> };
+    expect(doc.content[0]!.attrs?.level).toBe(2);
+  });
 });
 
 describe("coerceData: applies per-field coercion across a content type, only to present fields", () => {

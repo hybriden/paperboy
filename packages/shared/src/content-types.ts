@@ -333,12 +333,113 @@ function tiptapToPlainText(doc: unknown): string {
   return ttBlocks(Array.isArray(d?.content) ? d.content : [d as TtNode], false).join("\n").trim();
 }
 // Wrap a plain (possibly multi-paragraph) string into a TipTap doc.
-function stringToTiptapDoc(s: string): unknown {
-  const paras = s.split(/\n{2,}/).map((para) => ({
-    type: "paragraph",
-    content: para ? [{ type: "text", text: para }] : [],
-  }));
-  return { type: "doc", content: paras.length ? paras : [{ type: "paragraph" }] };
+/**
+ * Parse inline Markdown (code, links, bold, italic) into TipTap text nodes
+ * with marks. Pragmatic, single-level: unmatched/over-nested markers fall
+ * through as literal text. Precedence: code span → link → bold → italic.
+ */
+function mdInline(text: string): Array<Record<string, unknown>> {
+  const nodes: Array<Record<string, unknown>> = [];
+  const pushText = (t: string, marks?: Array<Record<string, unknown>>) => {
+    if (!t) return;
+    nodes.push(marks && marks.length ? { type: "text", text: t, marks } : { type: "text", text: t });
+  };
+  const re = /(`[^`]+`)|(\[[^\]]+\]\([^)\s]+\))|(\*\*[^*]+\*\*|__[^_]+__)|(\*[^*\n]+\*|_[^_\n]+_)/;
+  let rest = text;
+  while (rest.length) {
+    const m = re.exec(rest);
+    if (!m) {
+      pushText(rest);
+      break;
+    }
+    if (m.index > 0) pushText(rest.slice(0, m.index));
+    const tok = m[0];
+    if (m[1]) {
+      pushText(tok.slice(1, -1), [{ type: "code" }]);
+    } else if (m[2]) {
+      const lm = /\[([^\]]+)\]\(([^)\s]+)\)/.exec(tok)!;
+      pushText(lm[1]!, [{ type: "link", attrs: { href: lm[2] } }]);
+    } else if (m[3]) {
+      pushText(tok.replace(/^(\*\*|__)/, "").replace(/(\*\*|__)$/, ""), [{ type: "bold" }]);
+    } else if (m[4]) {
+      pushText(tok.replace(/^[*_]/, "").replace(/[*_]$/, ""), [{ type: "italic" }]);
+    }
+    rest = rest.slice(m.index + tok.length);
+  }
+  return nodes;
+}
+
+const MD_BLOCK_START = /^(#{1,6}\s|```|>\s?|\s*[-*+]\s+|\s*\d+\.\s+)/;
+const MD_HR = /^(\s*[-*_]\s*){3,}$/;
+
+/**
+ * Markdown → TipTap doc, constrained to the richtext editor schema (StarterKit
+ * heading 2/3 + lists/quote/code + Link). Agents send Markdown to richtext
+ * fields (set_field is a plain string); wrapping it as literal plaintext
+ * rendered "#", "**", "-" verbatim (2026-06-07). Pragmatic — common Markdown,
+ * not full CommonMark — and the sanitizer normalises whatever this produces.
+ */
+function markdownToTiptapDoc(src: string): unknown {
+  const lines = String(src).replace(/\r\n?/g, "\n").split("\n");
+  const out: Array<Record<string, unknown>> = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i]!;
+    if (line.trim() === "") {
+      i++;
+      continue;
+    }
+    if (/^```/.test(line.trim())) {
+      i++;
+      const buf: string[] = [];
+      while (i < lines.length && !/^```/.test(lines[i]!.trim())) buf.push(lines[i++]!);
+      i++; // closing fence
+      out.push({ type: "codeBlock", content: buf.length ? [{ type: "text", text: buf.join("\n") }] : [] });
+      continue;
+    }
+    if (MD_HR.test(line)) {
+      out.push({ type: "horizontalRule" });
+      i++;
+      continue;
+    }
+    const h = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (h) {
+      const level = Math.min(Math.max(h[1]!.length, 2), 3); // editor schema: heading 2/3
+      out.push({ type: "heading", attrs: { level }, content: mdInline(h[2]!.trim()) });
+      i++;
+      continue;
+    }
+    if (/^>\s?/.test(line)) {
+      const buf: string[] = [];
+      while (i < lines.length && /^>\s?/.test(lines[i]!)) buf.push(lines[i++]!.replace(/^>\s?/, ""));
+      out.push({ type: "blockquote", content: [{ type: "paragraph", content: mdInline(buf.join("\n")) }] });
+      continue;
+    }
+    if (/^\s*[-*+]\s+/.test(line)) {
+      const items: Array<Record<string, unknown>> = [];
+      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i]!)) {
+        items.push({ type: "listItem", content: [{ type: "paragraph", content: mdInline(lines[i++]!.replace(/^\s*[-*+]\s+/, "")) }] });
+      }
+      out.push({ type: "bulletList", content: items });
+      continue;
+    }
+    if (/^\s*\d+\.\s+/.test(line)) {
+      const items: Array<Record<string, unknown>> = [];
+      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i]!)) {
+        items.push({ type: "listItem", content: [{ type: "paragraph", content: mdInline(lines[i++]!.replace(/^\s*\d+\.\s+/, "")) }] });
+      }
+      out.push({ type: "orderedList", content: items });
+      continue;
+    }
+    // Paragraph: gather consecutive lines until a blank line or a block start.
+    const buf = [line];
+    i++;
+    while (i < lines.length && lines[i]!.trim() !== "" && !MD_BLOCK_START.test(lines[i]!) && !MD_HR.test(lines[i]!)) {
+      buf.push(lines[i++]!);
+    }
+    out.push({ type: "paragraph", content: mdInline(buf.join("\n")) });
+  }
+  return { type: "doc", content: out.length ? out : [{ type: "paragraph", content: [] }] };
 }
 function looksLikeTiptapDoc(v: unknown): boolean {
   if (!v || typeof v !== "object") return false;
@@ -632,7 +733,9 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
       return looksLikeTiptapDoc(v) ? tiptapToMarkdown(v) : v;
     }
     case "richtext": {
-      const doc = typeof value === "string" ? stringToTiptapDoc(value) : value;
+      // A string is Markdown (agents send set_field strings) — parse its
+      // structure into TipTap, don't wrap it as literal plaintext.
+      const doc = typeof value === "string" ? markdownToTiptapDoc(value) : value;
       return looksLikeTiptapDoc(doc) ? sanitizeRichTextDoc(doc) : doc;
     }
     case "contentArea":
