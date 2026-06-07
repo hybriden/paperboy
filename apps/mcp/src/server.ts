@@ -28,6 +28,7 @@ import {
   deliveryStartPage,
   discardDraft,
   getAccessContext,
+  copyVariant,
   getContent,
   resolveRequestedLocale,
   getContentType,
@@ -271,6 +272,21 @@ tool(
     const published = await publishContent(db, ctx, documentId, l, { allowLanguageMismatch });
     mcpAudit("content.publish", documentId, l);
     return published;
+  });
+tool(
+  "copy_variant",
+  [
+    "Copy a document's working version (name, slug and EVERY field) from one locale",
+    "to another, server-side and atomically. USE THIS to move content that landed in",
+    "the wrong language branch — never re-type the data field by field (a real agent",
+    "moved 4 of 9 fields by hand and published an article without its body).",
+    "The target locale gets a draft; publish it separately.",
+  ].join(" "),
+  { documentId: docId, fromLocale: z.string().describe("Locale to copy FROM"), toLocale: z.string().describe("Locale to copy TO") },
+  async ({ documentId, fromLocale, toLocale }) => {
+    const copied = await copyVariant(db, ctx, documentId, fromLocale, toLocale);
+    mcpAudit("content.copy_variant", documentId, toLocale, { fromLocale });
+    return copied;
   });
 tool("unpublish", "Unpublish (take down) a content item for a locale.", { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {

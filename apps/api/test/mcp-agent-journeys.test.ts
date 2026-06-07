@@ -373,15 +373,54 @@ describe("MCP agent journeys (real production sequences)", () => {
 
       const pub = await mcp.call("publish", { documentId: docId, locale: "en" });
       expect(pub.isError).toBe(true);
-      // Names the detected language, the branch, AND the recovery path.
+      // Names the detected language, the branch, AND the atomic recovery path.
       expect(pub.text).toContain("nb");
-      expect(pub.text).toContain("update_content");
+      expect(pub.text).toContain("copy_variant");
       expect(pub.text).toContain("allowLanguageMismatch");
     });
 
     it("the explicit override publishes when the mismatch is intended", async () => {
       const pub = await mcp.call("publish", { documentId: docId, locale: "en", allowLanguageMismatch: true });
       expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
+    });
+
+    it("the recovery is ONE atomic call: copy_variant moves the whole draft to the right branch", async () => {
+      // The 12:46 retry run proved the failure mode of "re-send the data
+      // yourself": the agent moved only 4 of 9 fields to nb and published an
+      // article WITHOUT its body. Moving a draft between branches must not
+      // require re-transmitting 10 kB through the LLM.
+      const created = await mcp.call("create_content", {
+        type: "BlogPost",
+        locale: "en",
+        name: "Atomisk flytting",
+        parentId: s.ids.blogId,
+      });
+      const id = (created.json as { documentId: string }).documentId;
+      await mcp.call("set_field", { documentId: id, locale: "en", field: "title", value: "Atomisk flytting" });
+      await mcp.call("set_field", { documentId: id, locale: "en", field: "body", value: NORSK_BODY });
+      await mcp.call("set_field", { documentId: id, locale: "en", field: "tags", value: "Interiør, Japan" });
+
+      const refused = await mcp.call("publish", { documentId: id, locale: "en" });
+      expect(refused.isError).toBe(true);
+      // The error steers to the atomic move.
+      expect(refused.text).toContain("copy_variant");
+
+      const moved = await mcp.call("copy_variant", { documentId: id, fromLocale: "en", toLocale: "nb" });
+      expect(moved.isError, moved.text.slice(0, 300)).toBe(false);
+      const nb = moved.json as { name: string; data: Record<string, unknown> };
+      expect(nb.name).toBe("Atomisk flytting");
+      expect(nb.data.body).toBe(NORSK_BODY); // byte-identical, EVERY field came along
+      expect(nb.data.title).toBe("Atomisk flytting");
+      expect(nb.data.tags).toBe("Interiør, Japan");
+
+      const pub = await mcp.call("publish", { documentId: id, locale: "nb" });
+      expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
+
+      // …and the mistaken en draft can be dropped, leaving nb as the only branch.
+      const drop = await mcp.call("discard_draft", { documentId: id, locale: "en" });
+      expect(drop.isError).toBe(false);
+      const en = await mcp.call("get_content", { documentId: id, locale: "en" });
+      expect((en.json as { versionNumber: number }).versionNumber).toBe(0);
     });
 
     it("English content in the en branch is untouched by the guard", async () => {

@@ -3,6 +3,7 @@
 exports[`MCP parity: real stdio server vs the API > locks the tool surface (any added/removed/renamed tool is a visible diff) 1`] = `
 [
   "ai_assist",
+  "copy_variant",
   "create_content",
   "create_content_type",
   "create_delivery_key",

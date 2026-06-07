@@ -1107,6 +1107,54 @@ async function promoteDraft(
 }
 
 /**
+ * Copy a document's working variant (draft, else live published, else latest)
+ * from one locale to another, server-side and atomically — name, slug and the
+ * ENTIRE data map. Exists because "re-send the data yourself" recovery is how
+ * content gets lost: after a language-guard refusal, a real agent re-typed
+ * only 4 of 9 fields into the right branch and published an article without
+ * its body (2026-06-07). Goes through updateContent, so coercion, validation
+ * and the single-draft invariant all apply; slug collisions in the target
+ * locale fall back to auto-derivation from the name.
+ */
+export async function copyVariant(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  fromLocale: string,
+  toLocale: string,
+): Promise<ContentDetail> {
+  requirePermission(ctx, "content.update");
+  if (fromLocale === toLocale) throw Errors.badRequest("fromLocale and toLocale are the same — nothing to copy");
+  const item = await loadAuthorized(db, ctx, documentId);
+  const src =
+    (await db
+      .select()
+      .from(contentVersion)
+      .where(
+        and(
+          eq(contentVersion.documentId, documentId),
+          eq(contentVersion.locale, fromLocale),
+          eq(contentVersion.status, "draft"),
+        ),
+      )
+      .limit(1))[0] ??
+    (await currentPublished(db, documentId, fromLocale)) ??
+    (await latestVersion(db, documentId, fromLocale));
+  if (!src) throw Errors.notFound(`No '${fromLocale}' version of this document`);
+  // Keep the source slug when it is free among the target locale's siblings;
+  // otherwise let updateContent derive a unique one from the name.
+  const slugFree =
+    src.slug == null || !(await slugTakenBySibling(db, documentId, item.parentId, toLocale, src.slug));
+  return updateContent(db, ctx, documentId, toLocale, {
+    name: src.name,
+    ...(slugFree && src.slug != null ? { slug: src.slug } : {}),
+    displayInNav: src.displayInNav,
+    data: src.data as Record<string, unknown>,
+    merge: false,
+  });
+}
+
+/**
  * Agent-publish language/branch guard (2026-06-07: an agent wrote a Norwegian
  * article and published it into 'en' — a Norwegian post went live on the
  * English blog). Only fires for agent provenance (via mcp/agent); a HUMAN
@@ -1132,9 +1180,9 @@ async function assertLanguageMatchesBranch(
   if (detected === "unknown" || detected === expected) return;
   throw Errors.validation(
     `This draft's text is ${detected === "nb" ? "Norwegian (nb)" : "English (en)"}, but you are publishing the '${loc}' language branch — ` +
-      `it would go live on the wrong site language. Put the content in the right branch instead: ` +
-      `update_content {documentId, locale: "${detected}", data: <the same data>} then publish {locale: "${detected}"} ` +
-      `(discard this branch's draft with discard_draft if it was created by mistake). ` +
+      `it would go live on the wrong site language. Move the WHOLE draft in one call: ` +
+      `copy_variant {documentId, fromLocale: "${loc}", toLocale: "${detected}"} (copies name, slug and EVERY field — do not re-type the data), ` +
+      `then publish {locale: "${detected}"}, then discard_draft {locale: "${loc}"} if this branch was created by mistake. ` +
       `If publishing ${detected} text in '${loc}' is INTENDED, repeat publish with allowLanguageMismatch: true.`,
   );
 }
