@@ -195,12 +195,16 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const canEdit = user.permissions.includes("content.update");
   const canPublish = user.permissions.includes("content.publish");
 
-  // Untranslated variant: this locale has no saved version yet (the server returns
-  // a blank scaffold with versionNumber 0). Offer to seed it from ANY locale that
-  // has content — preferring the default — in either direction (2026-06-07: an
-  // nb-only article opened in en got no offer because the old logic was one-way).
+  // A variant is "empty" when it has no saved version (scaffold, versionNumber
+  // 0) OR a version with no field values yet (e.g. a page just created in the
+  // default locale carries name+slug but data {}). Offer to seed THIS locale
+  // from any OTHER locale that has real content — preferring the default — in
+  // either direction (2026-06-07: an nb-only article opened in en got no offer
+  // because the old logic was one-way AND only checked versionNumber 0).
   const defaultLocale = useMemo(() => locales.find((l) => l.isDefault)?.code ?? "en", [locales]);
-  const untranslated = !!detail.data && detail.data.versionNumber === 0;
+  const isEmptyVariant = (d?: ContentDetail) =>
+    !d || d.versionNumber === 0 || Object.keys(d.data ?? {}).length === 0;
+  const untranslated = !!detail.data && isEmptyVariant(detail.data);
   const otherLocales = useMemo(() => locales.filter((l) => l.code !== locale).map((l) => l.code), [locales, locale]);
   const probes = useQueries({
     queries: otherLocales.map((code) => ({
@@ -209,7 +213,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       enabled: untranslated,
     })),
   });
-  const localesWithContent = otherLocales.filter((_, i) => (probes[i]?.data?.versionNumber ?? 0) > 0);
+  // A locale "has content" only when its variant is NOT empty (an empty draft
+  // is nothing to translate from).
+  const localesWithContent = otherLocales.filter((_, i) => !isEmptyVariant(probes[i]?.data));
   const sourceLocale = untranslated
     ? pickTranslateSource({ currentLocale: locale, defaultLocale, localesWithContent })
     : null;
