@@ -70,7 +70,9 @@ class HttpMcp {
 
 // Long markdown body — over HTTP this exercises the exact byte path harmonix's
 // drafters use for their ~2 500-word posts.
-const LONG_BODY = `# HTTP transport roundtrip\n\n${"Avsnitt med æøå, «sitater» og kode: `pnpm -r typecheck`.\n\n".repeat(60)}`;
+// English prose (the J9 language guard would refuse Norwegian in 'en'), but
+// with æøå + «smart quotes» kept — the byte-integrity contract is the point.
+const LONG_BODY = `# HTTP transport roundtrip\n\n${"A paragraph holding æøå, «smart quotes» and code: `pnpm -r typecheck`.\n\n".repeat(60)}`;
 
 describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
   let s: Suite;

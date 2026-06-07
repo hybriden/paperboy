@@ -199,7 +199,7 @@ tool(
   {
     type: z.string(),
     parentId: z.string().nullable().optional().describe("documentId of the parent page. Required in practice for pages — find it with `tree`. Omit only for top-level pages."),
-    locale: loc,
+    locale: z.string().optional().describe("The LANGUAGE BRANCH for this content — MATCH the language you are writing (Norwegian content → 'nb', English → 'en'). Call list_locales to see the site's branches. Defaults to the site default locale, which is usually English."),
     name: z.string(),
   },
   async ({ type, parentId, locale, name }) => {
@@ -258,10 +258,17 @@ tool(
     mcpAudit("content.update", documentId, l, { field });
     return updated;
   });
-tool("publish", "Publish the working draft of a content item for a locale.", { documentId: docId, locale: loc },
-  async ({ documentId, locale }) => {
+tool(
+  "publish",
+  [
+    "Publish the working draft of a content item for a locale. The locale is a",
+    "LANGUAGE BRANCH — publishing Norwegian text into 'en' puts it on the English",
+    "site; a strong language/branch mismatch is refused unless allowLanguageMismatch is true.",
+  ].join(" "),
+  { documentId: docId, locale: loc, allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY when publishing content whose language deliberately differs from the locale branch") },
+  async ({ documentId, locale, allowLanguageMismatch }) => {
     const l = await locFor(documentId, locale);
-    const published = await publishContent(db, ctx, documentId, l);
+    const published = await publishContent(db, ctx, documentId, l, { allowLanguageMismatch });
     mcpAudit("content.publish", documentId, l);
     return published;
   });
