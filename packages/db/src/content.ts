@@ -12,6 +12,8 @@ import {
   detectContentLanguage,
   expectedLanguageForLocale,
   fieldFormatHint,
+  stripSeoGroup,
+  withSeoGroup,
 } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
@@ -28,7 +30,8 @@ import { dispatchWebhooks } from "./webhooks.js";
 
 export async function listContentTypes(db: Database): Promise<ContentTypeDef[]> {
   const rows = await db.select().from(contentType).orderBy(asc(contentType.name));
-  return rows.map((r) => r.definition as ContentTypeDef);
+  // Inject the reserved SEO group into every page kind (single read chokepoint).
+  return rows.map((r) => withSeoGroup(r.definition as ContentTypeDef));
 }
 
 /** Per-type usage: standalone items of that type, plus pages/blocks that embed
@@ -89,7 +92,9 @@ export async function getContentType(db: Database, name: string): Promise<Conten
     const all = await db.select({ name: contentType.name }).from(contentType).orderBy(asc(contentType.name));
     throw Errors.notFound(`Content type '${name}' (available: ${all.map((t) => t.name).join(", ")})`);
   }
-  return rows[0].definition as ContentTypeDef;
+  // Inject the reserved SEO group (page kinds) — every consumer (validation,
+  // coercion, delivery writes, MCP get) sees SEO automatically.
+  return withSeoGroup(rows[0].definition as ContentTypeDef);
 }
 
 /** Admin-only: create a new content type. The body must already be schema-valid. */
@@ -101,15 +106,18 @@ export async function createContentType(
   requirePermission(ctx, "contenttype.manage");
   const existing = await db.select().from(contentType).where(eq(contentType.name, def.name)).limit(1);
   if (existing[0]) throw Errors.conflict(`Content type '${def.name}' already exists`);
+  // The reserved SEO group is system-managed: strip it from what we store so
+  // it's defined once (in shared) and injected on read — never duplicated/stale.
+  const stored = stripSeoGroup(def);
   await db.insert(contentType).values({
-    name: def.name,
-    displayName: def.displayName,
-    kind: def.kind,
-    description: def.description,
-    icon: def.icon,
-    definition: def,
+    name: stored.name,
+    displayName: stored.displayName,
+    kind: stored.kind,
+    description: stored.description,
+    icon: stored.icon,
+    definition: stored,
   });
-  return def;
+  return withSeoGroup(stored);
 }
 
 /**
@@ -146,13 +154,15 @@ export async function updateContentType(
   if (def.name !== name) throw Errors.badRequest("Content type name is immutable");
   const rows = await db.select().from(contentType).where(eq(contentType.name, name)).limit(1);
   if (!rows[0]) throw Errors.notFound(`Content type '${name}'`);
-  const prev = rows[0].definition as ContentTypeDef;
+  const prev = withSeoGroup(rows[0].definition as ContentTypeDef);
   if (def.kind !== prev.kind) throw Errors.conflict("Content type kind is immutable");
+  // Strip the reserved SEO group before storing (system-managed, injected on read).
+  const stored = stripSeoGroup(def);
   await db
     .update(contentType)
-    .set({ displayName: def.displayName, description: def.description, icon: def.icon, definition: def })
+    .set({ displayName: stored.displayName, description: stored.description, icon: stored.icon, definition: stored })
     .where(eq(contentType.name, name));
-  return { next: def, prev };
+  return { next: withSeoGroup(stored), prev };
 }
 
 /** Which public/private exposure flags changed between two type versions (for audit). */

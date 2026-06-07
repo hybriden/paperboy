@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import type { ContentTypeDef, DeliveryContent } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, withSeoGroup } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import type { Database } from "./client.js";
 import { asset, contentItem, contentType, contentVersion, locale, siteSetting } from "./schema.js";
@@ -100,7 +100,9 @@ class DeliveryCtx {
       .where(eq(contentType.name, name))
       .limit(1);
     if (!rows[0]) return null;
-    const def = rows[0].definition as ContentTypeDef;
+    // Inject the reserved SEO group (page kinds) so delivery's sanitize +
+    // computeSeo see the SEO fields even for types that don't store them.
+    const def = withSeoGroup(rows[0].definition as ContentTypeDef);
     this.types.set(name, def);
     return def;
   }
