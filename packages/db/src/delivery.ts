@@ -411,6 +411,45 @@ function roleValue(def: ContentTypeDef, role: string, data: Record<string, unkno
   const f = def.fields.find((x) => x.seoRole === role);
   return f ? data[f.name] : undefined;
 }
+
+/**
+ * Conventional field names per SEO role — the safety net when a type hasn't
+ * tagged a field with an explicit seoRole. Keeps EVERY type's SEO useful
+ * (present + future, prod types edited before roles existed) without manual
+ * tagging. Explicit seoRole / metaTitle / ogImage always win over this.
+ */
+const SEO_CONVENTION: Record<string, string[]> = {
+  title: ["title", "heading", "headline", "name"],
+  description: ["summary", "excerpt", "description", "lead", "subtitle", "intro"],
+  image: ["image", "heroimage", "leadimage", "coverimage", "featuredimage", "thumbnail"],
+  datePublished: ["publishdate", "publisheddate", "publishedat", "datepublished", "date"],
+  author: ["author", "byline", "writtenby"],
+  keywords: ["tags", "keywords", "topics"],
+};
+/** First conventionally-named field whose sanitized value passes `usable`. */
+function conventionValue(
+  def: ContentTypeDef,
+  role: string,
+  data: Record<string, unknown>,
+  usable: (v: unknown) => boolean,
+): unknown {
+  const names = SEO_CONVENTION[role] ?? [];
+  for (const f of def.fields) {
+    if (names.includes(f.name.toLowerCase()) && usable(data[f.name])) return data[f.name];
+  }
+  return undefined;
+}
+/** role value, else conventional-name value, validated by `usable`. */
+function roleOrConvention(
+  def: ContentTypeDef,
+  role: string,
+  data: Record<string, unknown>,
+  usable: (v: unknown) => boolean,
+): unknown {
+  const r = roleValue(def, role, data);
+  if (usable(r)) return r;
+  return conventionValue(def, role, data, usable);
+}
 function asText(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
 }
@@ -439,9 +478,11 @@ async function computeSeo(
   data: Record<string, unknown>,
   loc: string,
 ): Promise<DeliveryContent["seo"]> {
-  const title = asText(data.metaTitle) ?? asText(roleValue(def, "title", data)) ?? name;
-  const description = asText(data.metaDescription) ?? asText(roleValue(def, "description", data));
-  const image = asImage(data.ogImage) ?? asImage(roleValue(def, "image", data));
+  const isStr = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+  const isImg = (v: unknown) => asImage(v) != null;
+  const title = asText(data.metaTitle) ?? asText(roleOrConvention(def, "title", data, isStr)) ?? name;
+  const description = asText(data.metaDescription) ?? asText(roleOrConvention(def, "description", data, isStr));
+  const image = asImage(data.ogImage) ?? asImage(roleOrConvention(def, "image", data, isImg));
   const canonicalField = asText(data.canonicalUrl);
   const canonicalPath = canonicalField ?? urlPath;
 
@@ -460,10 +501,10 @@ async function computeSeo(
     perspective === "preview" ? "noindex, nofollow" : data.noIndex ? "noindex, follow" : "index, follow";
 
   const siteName = await ctx.siteName(perspective, loc);
-  const datePublished = asText(roleValue(def, "datePublished", data));
-  const dateModified = asText(roleValue(def, "dateModified", data));
-  const author = asText(roleValue(def, "author", data));
-  const keywords = asText(roleValue(def, "keywords", data));
+  const datePublished = asText(roleOrConvention(def, "datePublished", data, isStr));
+  const dateModified = asText(roleValue(def, "dateModified", data)); // no convention (rarely a distinct field)
+  const author = asText(roleOrConvention(def, "author", data, isStr));
+  const keywords = asText(roleOrConvention(def, "keywords", data, isStr));
 
   const jsonLd: Record<string, unknown> = {
     "@context": "https://schema.org",
