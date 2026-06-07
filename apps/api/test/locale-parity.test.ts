@@ -133,6 +133,24 @@ describe("locale parity: management URL vs delivery + non-localized field sharin
     expect(data.publishDate).toBe("2026-06-07T09:00:00.000Z");
   });
 
+  it("C: a HUMAN publishing Norwegian text in the en branch is never blocked by the language guard", async () => {
+    // The agent-publish gate (J9 in mcp-agent-journeys) must not second-guess
+    // an editor: a human pressing Publish in the admin has seen the content.
+    const post = await create("BlogPost", "Norsk i en-gren med vilje");
+    await put(post.documentId, "en", {
+      data: {
+        title: "Norsk i en-gren med vilje",
+        body: "Dette er en norsk tekst som en redaktør helt bevisst publiserer i den engelske grenen. Det er ikke systemets jobb å overprøve et menneske som har sett innholdet og vet hva det gjør med språk og grener på nettstedet sitt.",
+      },
+    });
+    const r = await s.app.inject({
+      method: "POST",
+      url: `/api/v1/manage/content/${post.documentId}/publish?locale=en`,
+      headers: authHeaders(ed),
+    });
+    expect(r.statusCode, r.body).toBe(200);
+  });
+
   it("B (no-leak): a non-localized value that exists only in an UNPUBLISHED draft never reaches public delivery", async () => {
     const post = await create("BlogPost", "Draft leak check");
     // nb published WITHOUT author; en has author only in a DRAFT (never published).

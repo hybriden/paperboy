@@ -29,20 +29,22 @@ import { McpClient } from "./mcp-stdio-client.js";
  *      self-teaching error → one corrective write → publish succeeds.
  */
 
-// ~3k chars of realistic Norwegian markdown — code fences, headings, lists,
-// special chars. The drafters write bodies of this size; byte-identical
-// round-trip through MCP → DB → delivery is the contract.
+// ~3k chars of realistic markdown — code fences, headings, lists, special
+// chars (æøå, «smart quotes», emoji). The drafters write bodies of this size
+// into the ENGLISH blog; byte-identical round-trip through MCP → DB →
+// delivery is the contract. (English prose on purpose: the J9 language guard
+// would — correctly — refuse a Norwegian body published into 'en'.)
 const LONG_BODY = [
-  "# Maskinvarenytt: GPU-prisene stiger igjen\n",
-  "Prisene på skjermkort har økt **23 %** siden årsskiftet — drevet av DRAM-mangel og økt etterspørsel etter AI-akseleratorer.\n",
-  "## Hva skjer i markedet?\n",
-  "- HBM-kapasiteten er utsolgt til 2027\n- Hyperscalerne støvsuger markedet for `H200`-kort\n- Forbrukerkort nedprioriteres i produksjonen\n",
-  "## Teknisk bakgrunn\n",
-  "```python\n# Eksempel: måling av tokens/sekund\nimport time\nstart = time.time()\ntokens = run_inference(model, prompt)\nprint(f\"{len(tokens) / (time.time() - start):.1f} tok/s\")\n```\n",
-  "> «Vi ser en strukturell underkapasitet i minnemarkedet», sier analytiker Kari Nordmann i Tek-analyse AS.\n",
-  "## Hva betyr det for deg?\n",
-  "1. Vent med oppgradering hvis du kan — prisene normaliseres trolig i Q3\n2. Brukte kort fra forrige generasjon er nå et reelt alternativ\n3. Skytjenester blir relativt billigere når egen maskinvare blir dyr\n",
-  "Husk: æ, ø og å skal overleve hele veien — og det skal «smarte anførselstegn», em-dashes — og emoji 🚀 også.\n",
+  "# Hardware news: GPU prices are climbing again\n",
+  "Graphics card prices are up **23%** since New Year — driven by the DRAM shortage and surging demand for AI accelerators.\n",
+  "## What is happening in the market?\n",
+  "- HBM capacity is sold out through 2027\n- Hyperscalers are vacuuming up the market for `H200` cards\n- Consumer cards are deprioritised in production\n",
+  "## Technical background\n",
+  "```python\n# Eksempel: måling av tokens/sekund (æøå survives code fences)\nimport time\nstart = time.time()\ntokens = run_inference(model, prompt)\nprint(f\"{len(tokens) / (time.time() - start):.1f} tok/s\")\n```\n",
+  "> «We are seeing structural under-capacity in the memory market», says analyst Kari Nordmann of Tek-analyse AS.\n",
+  "## What does it mean for you?\n",
+  "1. Hold off upgrading if you can — prices likely normalise in Q3\n2. Used previous-generation cards are now a real alternative\n3. Cloud compute gets relatively cheaper as owning hardware gets expensive\n",
+  "Remember: special characters like æ, ø and å must survive end to end — as must «smart quotes», em-dashes — and emoji 🚀 too.\n",
 ].join("\n").repeat(2);
 
 describe("MCP agent journeys (real production sequences)", () => {
@@ -330,6 +332,76 @@ describe("MCP agent journeys (real production sequences)", () => {
       const enBody = en.json as { versionNumber: number; data: Record<string, unknown> };
       expect(enBody.versionNumber).toBe(0);
       expect(enBody.data).toEqual({});
+    });
+  });
+
+  // ------------------------------------------------------------------
+  // J9 — the Norwegian-article-on-the-English-blog incident (2026-06-07)
+  // ------------------------------------------------------------------
+  describe("J9: language/branch mismatch guard at agent publish", () => {
+    let docId: string;
+    const NORSK_BODY = [
+      "# Japansk interiør – En reise gjennom tid og estetikk\n",
+      "Japansk interiørdesign har fascinert verden i generasjoner. Med sin dypt rotfestede",
+      "filosofi om enkelhet, naturlighet og harmoni representerer japansk design noe unikt –",
+      "ikke bare estetiske valg, men en hel livsfilosofi manifestert i rom og gjenstander.\n",
+      "## Røttene\n",
+      "For å forstå japansk interiør må vi først forstå wabi-sabi – en japansk verdensoppfatning",
+      "som anerkjenner skjønnhet i det ufullkomne, det midlertidige og det enkle. Den oppstod",
+      "fra zen-buddhismen og lærte at skjønnhet finnes i naturmaterialenes råhet, i en skjevt",
+      "brent keramikkbolle og i patinaen som tiden legger på alt vi omgir oss med hjemme.\n",
+    ].join("\n");
+
+    it("publishing clearly-Norwegian content into the 'en' branch is refused self-teachingly", async () => {
+      // The exact incident: agent omitted locale on create (new doc → 'en'),
+      // wrote a Norwegian article, published — and the Norwegian post went
+      // live on the ENGLISH blog.
+      const created = await mcp.call("create_content", {
+        type: "BlogPost",
+        locale: "en",
+        name: "Japansk interiør – tidsreisen",
+        parentId: s.ids.blogId,
+      });
+      docId = (created.json as { documentId: string }).documentId;
+      for (const [field, value] of [
+        ["title", "Japansk interiør – tidsreisen"],
+        ["body", NORSK_BODY],
+      ] as const) {
+        const r = await mcp.call("set_field", { documentId: docId, locale: "en", field, value });
+        expect(r.isError).toBe(false);
+      }
+
+      const pub = await mcp.call("publish", { documentId: docId, locale: "en" });
+      expect(pub.isError).toBe(true);
+      // Names the detected language, the branch, AND the recovery path.
+      expect(pub.text).toContain("nb");
+      expect(pub.text).toContain("update_content");
+      expect(pub.text).toContain("allowLanguageMismatch");
+    });
+
+    it("the explicit override publishes when the mismatch is intended", async () => {
+      const pub = await mcp.call("publish", { documentId: docId, locale: "en", allowLanguageMismatch: true });
+      expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
+    });
+
+    it("English content in the en branch is untouched by the guard", async () => {
+      const created = await mcp.call("create_content", {
+        type: "BlogPost",
+        locale: "en",
+        name: "English post stays english",
+        parentId: s.ids.blogId,
+      });
+      const id = (created.json as { documentId: string }).documentId;
+      await mcp.call("set_field", { documentId: id, locale: "en", field: "title", value: "English post stays english" });
+      await mcp.call("set_field", {
+        documentId: id,
+        locale: "en",
+        field: "body",
+        value:
+          "# English post\n\nThis is a perfectly ordinary English article about hardware prices and the things we have seen in the market this year. It should publish without any language guard getting in the way of the agent doing its job.",
+      });
+      const pub = await mcp.call("publish", { documentId: id, locale: "en" });
+      expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
     });
   });
 

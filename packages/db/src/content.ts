@@ -9,6 +9,8 @@ import {
   type UpdateContentRequest,
   coerceData,
   dataSchemaFor,
+  detectContentLanguage,
+  expectedLanguageForLocale,
   fieldFormatHint,
 } from "@paperboy/shared";
 import type { Database } from "./client.js";
@@ -1104,11 +1106,45 @@ async function promoteDraft(
   });
 }
 
+/**
+ * Agent-publish language/branch guard (2026-06-07: an agent wrote a Norwegian
+ * article and published it into 'en' — a Norwegian post went live on the
+ * English blog). Only fires for agent provenance (via mcp/agent); a HUMAN
+ * pressing Publish has seen the content and is never second-guessed. Only
+ * fires on a STRONG signal (see detectContentLanguage) — "unknown" passes.
+ */
+async function assertLanguageMatchesBranch(
+  db: Database,
+  item: typeof contentItem.$inferSelect,
+  loc: string,
+  draft: typeof contentVersion.$inferSelect,
+): Promise<void> {
+  const expected = expectedLanguageForLocale(loc);
+  if (!expected) return; // branch language outside the detector's vocabulary
+  const type = await getContentType(db, item.type);
+  const data = draft.data as Record<string, unknown>;
+  const text = type.fields
+    .filter((f) => f.localized && (f.type === "text" || f.type === "markdown"))
+    .map((f) => data[f.name])
+    .filter((v): v is string => typeof v === "string")
+    .join("\n\n");
+  const detected = detectContentLanguage(text);
+  if (detected === "unknown" || detected === expected) return;
+  throw Errors.validation(
+    `This draft's text is ${detected === "nb" ? "Norwegian (nb)" : "English (en)"}, but you are publishing the '${loc}' language branch — ` +
+      `it would go live on the wrong site language. Put the content in the right branch instead: ` +
+      `update_content {documentId, locale: "${detected}", data: <the same data>} then publish {locale: "${detected}"} ` +
+      `(discard this branch's draft with discard_draft if it was created by mistake). ` +
+      `If publishing ${detected} text in '${loc}' is INTENDED, repeat publish with allowLanguageMismatch: true.`,
+  );
+}
+
 export async function publishContent(
   db: Database,
   ctx: AccessContext,
   documentId: string,
   loc: string,
+  opts?: { allowLanguageMismatch?: boolean },
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.publish");
   const item = await loadAuthorized(db, ctx, documentId);
@@ -1152,6 +1188,10 @@ export async function publishContent(
   }
 
   await assertDraftPublishable(db, item, loc, draft);
+  // Agent provenance only — never second-guess a human editor.
+  if ((ctx.via === "mcp" || ctx.via === "agent") && !opts?.allowLanguageMismatch) {
+    await assertLanguageMatchesBranch(db, item, loc, draft);
+  }
   await promoteDraft(db, documentId, loc, draft.id, ctx.userId);
   return getContent(db, ctx, documentId, loc);
 }
