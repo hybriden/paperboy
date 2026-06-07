@@ -1,78 +1,92 @@
-# MCP usability eval
+# MCP outcome-invariant eval
 
-A small, scheduled eval that drives the Paperboy MCP server with a **real
-model** through a realistic editorial task, then verifies the outcome
-programmatically.
+Drives the Paperboy MCP server with a **real model** through several realistic
+editorial **scenarios**, then asserts **outcome invariants** on every document
+the model produced — the things a human would otherwise have to eyeball in
+production.
+
+## Why this exists
+
+Every content incident this project hit was the same shape: the system accepted
+a write into a state that is *technically valid* but *defeats the author's
+intent*, and a **human in production** was the one who noticed. Regression tests
+prevent each exact bug from returning — but they don't find the **next** one.
+This eval moves detection left: a real model runs the real workflows, and the
+harness checks intent, so CI becomes the detector instead of you.
 
 ## What this measures (vs the parity suite)
 
 | | `apps/api/test/mcp-parity.test.ts` | `evals/mcp-eval.mjs` (this) |
 |---|---|---|
-| Locks the | **contract** | **usability** |
-| Question | Given exact arguments, do the tools behave identically to the REST API? | Can a real model, reading only the tool descriptions + schemas, get the job done? |
+| Locks the | **contract** | **outcome** |
+| Question | Given exact arguments, do the tools behave like the REST API? | Can a real model, reading only the tool descriptions, land a GOOD OUTCOME? |
 | Driver | Hardcoded calls (deterministic) | The Anthropic Messages API (a real model loop) |
-| Fails when | A tool's behavior or surface changes | A tool **description** silently stops steering the model (model drift) |
+| Fails when | A tool's behavior/surface changes | A model produces content that is unreachable / invisible / wrong-branch / placeholder-named / empty |
 
-The parity tests can stay green while this goes red: that's the point. When it
-fails, the **scorecard prints the tool errors the model hit verbatim, with the
-tool name** — that is the signal showing exactly which tool description stopped
-working.
+The parity tests can stay green while this goes red: that's the point.
 
-## What it does
+## The outcome invariants (run on EVERY produced document)
 
-1. Spawns the real stdio MCP server (`apps/mcp`, `tsx src/server.ts`) against
-   the DB at `DATABASE_URL`, authenticated as the seed admin.
-2. `tools/list` → converts the MCP tools to Anthropic tool-use format.
-3. Runs a real agent loop (up to 15 iterations): model → execute each
-   `tool_use` via the MCP client → return `tool_result` → until the model stops.
-   The task: *create a blog post under the Blog list page, write a short
-   markdown body, set a summary, and publish it* (it must find the Blog page via
-   the `tree` tool — no seed ids are hardcoded).
-4. **Verifies outcomes programmatically** (never trusting the model): using the
-   MCP client directly, it asserts the post exists under the Blog parent
-   (`tree`), is published (`delivery_get_by_id` with `preview:false` returns it
-   only if a published variant exists), and has a non-empty markdown body and
-   summary.
-5. Prints a scorecard and exits **0 only if all assertions pass**, non-zero
-   otherwise.
+| Invariant | Catches the incident |
+|---|---|
+| **reachable** — `urlPath ≠ null` | "No URL yet" / empty after translate |
+| **real name** — not `Untitled` | the post published at `/untitled` titled "Untitled" |
+| **published** — a published variant exists | drafts the model thought it published |
+| **visible where meant** — child type === parent list page `listedType` | BlogPosts created under the ArticlePage `Projects` list (published but invisible) |
+| **complete** — at least one non-empty field | the article published without its body |
+| **right branch** (per scenario) — published in the intended locale | a Norwegian article published on the English blog |
+
+Because the universal checks run on *every* doc a scenario produces, the net
+also catches failures nobody wrote a specific assertion for.
+
+## Scenarios
+
+| id | Workflow | Key invariant exercised |
+|---|---|---|
+| `blog-post` | create a blog post under Blog, body + summary, publish | reachable / published / complete |
+| `projects` | create an article under the `Projects` list page (created in setup, lists `ArticlePage`) | **visible where meant** (type must match listedType) |
+| `norwegian` | lag en norsk artikkel under Blog | **right branch** (published on `nb`, not `en`) |
+
+Each scenario: snapshot page ids → run setup (deterministic, not the model) →
+run the model loop → discover the docs the model produced → assert invariants.
 
 Dependency-free beyond Node built-ins + global `fetch`. No SDK installs.
 
 ## ⚠️ This eval MUTATES whatever DB you point it at
 
 `DATABASE_URL` is the database the MCP server (and this eval) **write to** — it
-creates and publishes a blog post there. Point it at a throwaway/test DB, never
-production. In CI it runs against a dedicated `paperboy_eval` service container.
+creates and publishes content and a `Projects` list page there. Point it at a
+throwaway/test DB, never production. In CI it runs against a dedicated
+`paperboy_eval` service container.
 
 ## Run locally
 
 ```bash
-# 1. Make sure a test DB is seeded (the test DB the API suite uses):
 export PATH="$HOME/.npm-global/bin:$PATH"
-DATABASE_URL=postgresql://paperboy:paperboy@localhost:5433/paperboy_test \
+
+# 1. Seed an ISOLATED eval DB (never your prod/live DB):
+DATABASE_URL=postgresql://paperboy:paperboy@localhost:5433/paperboy_eval_local \
 SEED_ADMIN_EMAIL=admin@paperboy.test SEED_ADMIN_PASSWORD='Admin!Passw0rd' \
 PAPERBOY_PUBLIC_KEY=pk_live_test_public PAPERBOY_PREVIEW_KEY=prv_test_preview \
   pnpm --filter @paperboy/db seed
 
 # 2. Run the eval (real model loop — needs an API key):
-DATABASE_URL=postgresql://paperboy:paperboy@localhost:5433/paperboy_test \
+DATABASE_URL=postgresql://paperboy:paperboy@localhost:5433/paperboy_eval_local \
 ANTHROPIC_API_KEY=sk-ant-... \
   node evals/mcp-eval.mjs
-```
 
-> Point `DATABASE_URL` at the **already-seeded** test DB
-> (`postgresql://paperboy:paperboy@localhost:5433/paperboy_test`). The local
-> api/admin/web dev servers also use this DB; the eval adding one published post
-> to it is harmless.
+# One scenario only:
+ANTHROPIC_API_KEY=sk-ant-... DATABASE_URL=... node evals/mcp-eval.mjs --only=projects
+```
 
 ### Dry run (no API key)
 
-Validates everything except the model loop — spawns the MCP server, lists the
-tools, prints the converted Anthropic tool schemas, and runs the outcome
-assertions against a non-existent post so they fail cleanly:
+Validates the harness without the model: spawns the MCP server, lists tools,
+detects locales, and runs each scenario's setup (e.g. creates the `Projects`
+list page) so you can confirm the plumbing.
 
 ```bash
-DATABASE_URL=postgresql://paperboy:paperboy@localhost:5433/paperboy_test \
+DATABASE_URL=postgresql://paperboy:paperboy@localhost:5433/paperboy_eval_local \
   node evals/mcp-eval.mjs --dry-run
 ```
 
@@ -88,37 +102,15 @@ DATABASE_URL=postgresql://paperboy:paperboy@localhost:5433/paperboy_test \
 
 ## Reading the scorecard
 
-```
-  Assertions:
-    PASS  Blog parent page found via tree  (NFcNg87iKfokn-Hqn8BYIPe0)
-    PASS  post exists under Blog parent  (documentId=…)
-    PASS  post is PUBLISHED (delivery, preview=false)  (delivered on the published perspective)
-    PASS  post has a non-empty markdown body  (412 chars)
-    PASS  post has a non-empty summary  (67 chars)
-
-  Model loop: stop_reason=end_turn, iterations=6
-  Tool calls made:
-      2x  set_field
-      1x  tree
-      ...
-  Tool errors the model hit (THE SIGNAL — which description stopped working):
-    (none — every tool call the model made succeeded)
-
-  RESULT: PASS (5/5 assertions)
-```
-
-- **Assertions** — the programmatic outcome checks. All must pass for exit 0.
-- **Tool calls made** — names + counts. A spike (e.g. 9× `set_field`) usually
-  means the model got stuck in a retry loop on a tool that stopped steering it.
-- **Tool errors** — the most important section. Each error is printed with its
-  tool name and (truncated) args. If the model hit errors but still recovered,
-  the assertions may pass — but the errors tell you a description is degrading.
-  If the assertions fail, these errors are where to look first.
+Each scenario prints the model's stop reason, the tool errors it hit (the
+steering signal — which description degraded), and per-document PASS/FAIL for
+every invariant. A scenario fails if it produced nothing, or any produced doc
+fails any invariant. `OVERALL: PASS` only if every scenario passed.
 
 ## CI
 
-`.github/workflows/eval.yml` runs this weekly (Mondays 06:00 UTC) and on
-`workflow_dispatch`. It seeds a dedicated Postgres `paperboy_eval` service and
-runs the eval. If the `ANTHROPIC_API_KEY` secret is not configured the job exits
-green with a notice (so forks / unconfigured repos don't show a red failure).
-It is intentionally **not** on every push — it calls the paid Anthropic API.
+`.github/workflows/eval.yml` runs this **on every push/PR to `main`**, weekly
+(Mondays 06:00 UTC), and on `workflow_dispatch` — it is the proactive net, so it
+gates changes. It calls the paid Anthropic API; if the `ANTHROPIC_API_KEY`
+secret is not configured the job exits green with a notice (so forks /
+unconfigured repos and the push gate never block on a missing key).

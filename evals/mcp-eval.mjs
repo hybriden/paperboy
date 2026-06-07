@@ -1,18 +1,32 @@
 #!/usr/bin/env node
 // @ts-check
 /**
- * MCP usability eval — a REAL model drives the Paperboy MCP server end-to-end.
+ * MCP outcome-invariant eval — a REAL model drives the Paperboy MCP server
+ * through several realistic editorial SCENARIOS, and after each one the harness
+ * asserts OUTCOME INVARIANTS on every document the model produced: the things a
+ * human would otherwise have to eyeball in production.
  *
- * The parity suite (apps/api/test/mcp-parity.test.ts) locks the *contract*:
- * given exact arguments, the tools behave identically to the REST API. This
- * eval locks the *usability*: can a real model, reading only the tool
- * descriptions and schemas, accomplish a realistic editorial task? When a tool
- * description silently stops steering the model, the parity suite stays green
- * but this eval goes red — and the scorecard prints the tool errors the model
- * hit verbatim, so you can see exactly which description stopped working.
+ *   reachable          — the page resolves to a URL (computePath ≠ null)
+ *   real name          — not the "Untitled" placeholder
+ *   published          — a published variant exists (delivery perspective)
+ *   visible where meant — under a list page, the child's type === listedType
+ *                          (else it publishes but never appears on the list)
+ *   complete           — at least one non-empty content field (no empty body)
+ *   right branch        — a published variant exists in the locale the scenario
+ *                          intended (catches "Norwegian on the English blog")
+ *
+ * Each incident this project hit in production maps to one of these. The net
+ * runs the universal checks on EVERY produced doc, so it also catches failures
+ * nobody wrote a specific assertion for — that is the point of a net.
+ *
+ * The parity suite (apps/api/test/mcp-parity.test.ts) locks the contract; this
+ * locks whether a real model, reading only tool descriptions + schemas, lands a
+ * GOOD OUTCOME. The two are complementary: parity can stay green while this
+ * goes red (a tool description silently stopped steering the model).
  *
  * Run from the repo root:  node evals/mcp-eval.mjs
  * Dry run (no model loop):  node evals/mcp-eval.mjs --dry-run
+ * One scenario:             node evals/mcp-eval.mjs --only=projects
  *
  * Env:
  *   DATABASE_URL       (required) — the DB the MCP server (and this eval) mutate.
@@ -30,6 +44,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DRY_RUN = process.argv.includes("--dry-run");
+const ONLY = (process.argv.find((a) => a.startsWith("--only=")) ?? "").slice("--only=".length) || null;
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const MCP_DIR = join(REPO, "apps", "mcp");
 
@@ -161,17 +176,8 @@ class McpClient {
 }
 
 /* ------------------------------------------------------------------ *
- * MCP tool (JSON Schema) -> Anthropic tool-use format.
- *
- * The MCP SDK already converts each tool's Zod shape to JSON Schema and
- * returns it as `inputSchema`, which is exactly the shape Anthropic's
- * `tools[].input_schema` wants (type: "object", properties, required). So
- * conversion is mostly a passthrough; we only defensively normalize:
- *   - ensure top-level type is "object" (Anthropic requires it),
- *   - ensure `properties` exists (a no-arg tool's schema may omit it; the
- *     API rejects an object schema without properties),
- *   - strip the JSON Schema `$schema` / `additionalProperties` noise the SDK
- *     may emit, which the API tolerates but doesn't need.
+ * MCP tool (JSON Schema) -> Anthropic tool-use format. Mostly a
+ * passthrough; we only normalize what the Messages API strictly needs.
  * ------------------------------------------------------------------ */
 function toAnthropicTool(mcpTool) {
   const schema = mcpTool.inputSchema ?? { type: "object", properties: {} };
@@ -180,11 +186,7 @@ function toAnthropicTool(mcpTool) {
     properties: schema.properties ?? {},
     ...(Array.isArray(schema.required) && schema.required.length ? { required: schema.required } : {}),
   };
-  return {
-    name: mcpTool.name,
-    description: mcpTool.description ?? "",
-    input_schema,
-  };
+  return { name: mcpTool.name, description: mcpTool.description ?? "", input_schema };
 }
 
 /* ------------------------------------------------------------------ *
@@ -218,8 +220,7 @@ const SYSTEM_PROMPT = [
 ].join(" ");
 
 /**
- * Run the model loop. Returns telemetry: { toolCalls: Map<name,count>,
- * toolErrors: [{name,args,text}], iterations, stopReason }.
+ * Run the model loop for one task. Returns telemetry.
  * @param {McpClient} mcp
  * @param {{name:string,description:string,input_schema:object}[]} tools
  * @param {string} task
@@ -231,12 +232,12 @@ async function runAgent(mcp, tools, task) {
   /** @type {{name:string,args:unknown,text:string}[]} */
   const toolErrors = [];
   let stopReason = "max_iterations";
-  const MAX_ITERS = 15;
+  const MAX_ITERS = 24;
   let i = 0;
   for (; i < MAX_ITERS; i++) {
     const resp = await callAnthropic({
       model: EVAL_MODEL,
-      max_tokens: 2048,
+      max_tokens: 4096,
       system: SYSTEM_PROMPT,
       tools,
       messages,
@@ -277,166 +278,295 @@ async function runAgent(mcp, tools, task) {
 }
 
 /* ------------------------------------------------------------------ *
- * Programmatic outcome verification — never trust the model's word.
- * Uses the MCP client directly (delivery tools need no key over MCP).
+ * CMS reads used by setup + invariants (via the MCP client directly).
  * ------------------------------------------------------------------ */
+/** Flat set of every page documentId currently in scope. */
+async function pageIdSet(mcp) {
+  const res = await mcp.call("list_pages");
+  const pages = Array.isArray(res.json) ? res.json : [];
+  return new Set(pages.map((p) => p.documentId).filter(Boolean));
+}
+
+/** Enabled locale codes + the default code. */
+async function localeInfo(mcp) {
+  const res = await mcp.call("list_locales");
+  const list = Array.isArray(res.json) ? res.json : [];
+  const enabled = list.filter((l) => l.enabled !== false).map((l) => l.code);
+  const def = (list.find((l) => l.isDefault) ?? list[0])?.code ?? "en";
+  return { enabled: enabled.length ? enabled : ["en"], def };
+}
+
 /**
- * @param {McpClient} mcp
- * @param {string|null} blogId
- * @param {string} title
+ * Inspect a document across locales: type, parentId, and per-locale
+ * {status,name,urlPath,data}. Uses management get_content (returns the working
+ * version with urlPath + type), one call per locale.
+ * @returns {Promise<{type:string|null,parentId:string|null,variants:Record<string,any>}>}
  */
-async function verifyOutcomes(mcp, blogId, title) {
+async function inspectDoc(mcp, documentId, localeCodes) {
+  let type = null;
+  let parentId = null;
+  /** @type {Record<string, any>} */
+  const variants = {};
+  for (const code of localeCodes) {
+    const r = await mcp.call("get_content", { documentId, locale: code });
+    const d = r.json;
+    if (!d || typeof d !== "object") continue;
+    if (typeof d.type === "string") type = d.type;
+    if (d.parentId !== undefined) parentId = d.parentId;
+    if ((d.versionNumber ?? 0) > 0) variants[code] = d;
+  }
+  return { type, parentId, variants };
+}
+
+/** find-or-create a list page (by name) that lists `listedType`. Setup only. */
+async function findOrCreateListPage(mcp, name, listedType, locale) {
+  const pages = await mcp.call("list_pages");
+  const existing = (Array.isArray(pages.json) ? pages.json : []).find(
+    (p) => typeof p?.name === "string" && p.name.trim().toLowerCase() === name.toLowerCase(),
+  );
+  if (existing) return existing.documentId;
+  const created = await mcp.call("create_content", { type: "ListPage", locale, name });
+  if (created.isError) throw new Error(`setup: could not create '${name}' list page: ${created.text}`);
+  const id = created.json.documentId;
+  await mcp.call("set_field", { documentId: id, locale, field: "heading", value: name });
+  await mcp.call("update_content", { documentId: id, locale, data: { listedType }, merge: true });
+  await mcp.call("publish", { documentId: id, locale });
+  return id;
+}
+
+/* ------------------------------------------------------------------ *
+ * Universal outcome invariants — run on EVERY produced document.
+ * `parents` caches inspected list-page parents (documentId -> info).
+ * ------------------------------------------------------------------ */
+async function universalInvariants(mcp, info, parents) {
   /** @type {{label:string,pass:boolean,detail:string}[]} */
   const checks = [];
   const add = (label, pass, detail = "") => checks.push({ label, pass, detail });
 
-  if (!blogId) {
-    add("Blog parent page found via tree", false, "no top-level page named 'Blog'");
-    add("post exists under Blog parent", false, "skipped: no Blog parent");
-    add("post is PUBLISHED (delivery, preview=false)", false, "skipped: no Blog parent");
-    add("post has a non-empty markdown body", false, "skipped");
-    add("post has a non-empty summary", false, "skipped");
-    return checks;
-  }
-  add("Blog parent page found via tree", true, blogId);
+  const present = Object.values(info.variants);
+  const publishedVariants = present.filter((v) => v.status === "published");
+  const anyVariant = publishedVariants[0] ?? present[0];
 
-  // Children of the Blog page (page tree) — proves parent placement without
-  // relying on delivery output (DeliveryContent omits parentId).
-  const children = await mcp.call("tree", { parentId: blogId });
-  const childList = Array.isArray(children.json) ? children.json : [];
-  const match = childList.find(
-    (c) => typeof c?.name === "string" && c.name.trim() === title.trim(),
-  );
+  // real name — not the "Untitled" placeholder, not empty.
+  const name = anyVariant?.name ?? "";
+  add("real name (not 'Untitled')", !!name && !/^Untitled\b/i.test(name), name || "(empty)");
+
+  // published — a published variant exists.
   add(
-    "post exists under Blog parent",
-    Boolean(match),
-    match ? `documentId=${match.documentId}` : `no child named "${title}" among ${childList.length} children`,
+    "published",
+    publishedVariants.length > 0,
+    publishedVariants.length ? `locales: ${publishedVariants.map((v) => v.locale).join(",")}` : "no published variant",
   );
 
-  if (!match) {
-    add("post is PUBLISHED (delivery, preview=false)", false, "skipped: post not found under Blog");
-    add("post has a non-empty markdown body", false, "skipped");
-    add("post has a non-empty summary", false, "skipped");
-    return checks;
+  // reachable — the published page resolves to a URL.
+  const urlPath = publishedVariants.map((v) => v.urlPath).find((u) => typeof u === "string" && u.length > 0);
+  add("reachable (urlPath ≠ null)", Boolean(urlPath), urlPath || "no urlPath on any published variant");
+
+  // complete — at least one non-empty content field.
+  const data = anyVariant?.data ?? {};
+  const hasContent = Object.values(data).some((v) =>
+    typeof v === "string" ? v.trim().length > 0 : Array.isArray(v) ? v.length > 0 : v != null && typeof v === "object",
+  );
+  add("complete (has content)", hasContent, hasContent ? `${Object.keys(data).length} fields` : "all fields empty");
+
+  // visible where intended — under a list page, type must equal listedType.
+  if (info.parentId) {
+    if (!parents.has(info.parentId)) {
+      const p = await inspectDoc(mcp, info.parentId, [anyVariant?.locale ?? "en"]);
+      const pv = Object.values(p.variants)[0];
+      parents.set(info.parentId, { listedType: pv?.data?.listedType ?? null });
+    }
+    const parent = parents.get(info.parentId);
+    if (parent?.listedType) {
+      add(
+        "visible on parent list (type === listedType)",
+        info.type === parent.listedType,
+        info.type === parent.listedType ? `${info.type}` : `is ${info.type}, list shows ${parent.listedType}`,
+      );
+    }
   }
-
-  // Published perspective: delivery_get_by_id with preview=false returns the
-  // item ONLY if a published variant exists — so a non-null result IS the
-  // published assertion.
-  const delivered = await mcp.call("delivery_get_by_id", { documentId: match.documentId, preview: false });
-  const doc = delivered.json;
-  const isPublished = Boolean(doc && doc.documentId);
-  add(
-    "post is PUBLISHED (delivery, preview=false)",
-    isPublished,
-    isPublished ? "delivered on the published perspective" : "not returned on published perspective (still draft?)",
-  );
-
-  const data = (doc && doc.data) || {};
-  const body = typeof data.body === "string" ? data.body : "";
-  const summary = typeof data.summary === "string" ? data.summary : "";
-  add("post has a non-empty markdown body", body.trim().length > 0, body ? `${body.length} chars` : "empty/missing 'body'");
-  add("post has a non-empty summary", summary.trim().length > 0, summary ? `${summary.length} chars` : "empty/missing 'summary'");
   return checks;
+}
+
+/* ------------------------------------------------------------------ *
+ * Scenarios — each maps to a real workflow this project has run.
+ * `expect` adds scenario-specific assertions on top of the universal net.
+ * ------------------------------------------------------------------ */
+function scenarios(stamp) {
+  return [
+    {
+      id: "blog-post",
+      title: `Eval blog ${stamp}`,
+      setup: async () => ({}),
+      task: (title) =>
+        [
+          `Create a new blog post under the Blog list page titled "${title}".`,
+          'Find the Blog page with the tree tool (it is named "Blog"), then create the',
+          "post as its child. Write a short markdown body (a couple of paragraphs with at",
+          "least one heading) about running AI models locally, set a one-sentence summary,",
+          "and publish it.",
+        ].join(" "),
+      expect: { parentName: "Blog", locale: "en", minDocs: 1 },
+    },
+    {
+      id: "projects",
+      title: `Eval project ${stamp}`,
+      // The 2026-06-07 incident: "an article per repo under Projects". Projects
+      // lists ArticlePage; the agent must NOT leave BlogPosts that never appear.
+      setup: async (mcp, loc) => ({ projectsId: await findOrCreateListPage(mcp, "Projects", "ArticlePage", loc.def) }),
+      task: (title) =>
+        [
+          `Create an article under the Projects list page titled "${title}", describing a`,
+          "small open-source project. Find the Projects page with the tree tool, create the",
+          "article as its child with a markdown body and a one-sentence summary, and publish it.",
+        ].join(" "),
+      expect: { parentName: "Projects", locale: "en", minDocs: 1 },
+    },
+    {
+      id: "norwegian",
+      title: `Eval norsk ${stamp}`,
+      // The 2026-06-07 incident: Norwegian content must land on the nb branch,
+      // not the English (default) one.
+      setup: async () => ({}),
+      task: (title) =>
+        [
+          `Lag en artikkel under Blog-listesiden med tittelen "${title}".`,
+          "Skriv HELE innholdet på NORSK (bokmål): en markdown-body på et par avsnitt med",
+          "minst én overskrift, om japansk interiørdesign, og en sammendrags-setning.",
+          "Finn Blog-siden med tree-verktøyet, opprett artikkelen under den, og publiser den.",
+        ].join(" "),
+      expect: { parentName: "Blog", locale: "nb", minDocs: 1 },
+    },
+  ];
+}
+
+/* ------------------------------------------------------------------ *
+ * Run one scenario: snapshot → setup → agent → discover → invariants.
+ * ------------------------------------------------------------------ */
+async function runScenario(mcp, tools, scenario, loc) {
+  await scenario.setup(mcp, loc);
+  // setup may have created the parent list page — snapshot AFTER setup so it
+  // is excluded from "produced by the model".
+  const afterSetup = await pageIdSet(mcp);
+
+  const task = scenario.task(scenario.title);
+  const telemetry = await runAgent(mcp, tools, task);
+
+  const after = await pageIdSet(mcp);
+  const produced = [...after].filter((id) => !afterSetup.has(id));
+
+  /** @type {{documentId:string,checks:any[]}[]} */
+  const docResults = [];
+  const parents = new Map();
+  for (const id of produced) {
+    const info = await inspectDoc(mcp, id, loc.enabled);
+    const checks = await universalInvariants(mcp, info, parents);
+
+    // Scenario-specific assertions.
+    if (scenario.expect?.parentName) {
+      const p = info.parentId ? await inspectDoc(mcp, info.parentId, [loc.def]) : { variants: {} };
+      const pName = Object.values(p.variants)[0]?.name ?? "";
+      checks.push({
+        label: `under '${scenario.expect.parentName}'`,
+        pass: pName.trim().toLowerCase() === scenario.expect.parentName.toLowerCase(),
+        detail: pName || "(no parent)",
+      });
+    }
+    if (scenario.expect?.locale) {
+      const v = info.variants[scenario.expect.locale];
+      checks.push({
+        label: `published on the '${scenario.expect.locale}' branch`,
+        pass: Boolean(v && v.status === "published"),
+        detail: v ? v.status : "no variant in that locale",
+      });
+    }
+    docResults.push({ documentId: id, checks });
+  }
+
+  const producedEnough = produced.length >= (scenario.expect?.minDocs ?? 1);
+  return { scenario, telemetry, docResults, produced, producedEnough };
 }
 
 /* ------------------------------------------------------------------ *
  * Scorecard
  * ------------------------------------------------------------------ */
-function printScorecard({ checks, toolCalls, toolErrors, iterations, stopReason, dryRun }) {
-  const line = "─".repeat(64);
+function printScenario(result, dryRun) {
+  const { scenario, telemetry, docResults, produced, producedEnough } = result;
+  const line = "─".repeat(70);
   console.log(`\n${line}`);
-  console.log("  MCP EVAL SCORECARD" + (dryRun ? "  (DRY RUN — model loop skipped)" : ""));
+  console.log(`  SCENARIO: ${scenario.id}`);
   console.log(line);
 
-  console.log("\n  Assertions:");
-  for (const c of checks) {
-    console.log(`    ${c.pass ? "PASS" : "FAIL"}  ${c.label}${c.detail ? `  (${c.detail})` : ""}`);
-  }
-
   if (!dryRun) {
-    console.log(`\n  Model loop: stop_reason=${stopReason}, iterations=${iterations}`);
-    console.log("\n  Tool calls made:");
-    if (toolCalls.size === 0) console.log("    (none)");
-    for (const [name, count] of [...toolCalls.entries()].sort((a, b) => b[1] - a[1])) {
-      console.log(`    ${String(count).padStart(3)}x  ${name}`);
-    }
-
-    console.log("\n  Tool errors the model hit (THE SIGNAL — which description stopped working):");
-    if (toolErrors.length === 0) {
-      console.log("    (none — every tool call the model made succeeded)");
-    } else {
-      for (const e of toolErrors) {
-        const args = JSON.stringify(e.args)?.slice(0, 300) ?? "";
-        console.log(`    [${e.name}]  args=${args}`);
-        console.log(`        ${e.text.replace(/\n/g, "\n        ")}`);
+    console.log(`  model: stop_reason=${telemetry.stopReason}, iterations=${telemetry.iterations}`);
+    console.log(`  produced ${produced.length} document(s)${producedEnough ? "" : "  ✗ EXPECTED ≥ " + (scenario.expect?.minDocs ?? 1)}`);
+    if (telemetry.toolErrors.length) {
+      console.log("  tool errors hit (the steering signal):");
+      for (const e of telemetry.toolErrors) {
+        console.log(`    [${e.name}] ${JSON.stringify(e.args)?.slice(0, 200)}`);
+        console.log(`        ${e.text.replace(/\n/g, "\n        ").slice(0, 600)}`);
       }
     }
   }
 
-  const allPass = checks.every((c) => c.pass);
-  console.log(`\n  RESULT: ${allPass ? "PASS" : "FAIL"} (${checks.filter((c) => c.pass).length}/${checks.length} assertions)`);
-  console.log(`${line}\n`);
-  return allPass;
+  let pass = producedEnough;
+  for (const d of docResults) {
+    console.log(`\n  doc ${d.documentId}:`);
+    for (const c of d.checks) {
+      if (!c.pass) pass = false;
+      console.log(`    ${c.pass ? "PASS" : "FAIL"}  ${c.label}${c.detail ? `  (${c.detail})` : ""}`);
+    }
+  }
+  if (docResults.length === 0) console.log("  (no documents produced to check)");
+  console.log(`\n  → scenario ${pass ? "PASS" : "FAIL"}`);
+  return pass;
 }
 
 /* ------------------------------------------------------------------ *
  * Main
  * ------------------------------------------------------------------ */
 async function main() {
-  const timestamp = new Date().toISOString();
-  const title = `Eval: ${timestamp}`;
-  const task = [
-    `Create a new blog post under the Blog list page titled "${title}".`,
-    "Use the tree tool to find the Blog page first (it is the page named \"Blog\"),",
-    "then create the post as its child. Write a short markdown body (a couple of",
-    "paragraphs, with at least one markdown heading) about running AI models locally.",
-    "Set the post's summary to a one-sentence description. Finally, publish the post.",
-  ].join(" ");
-
-  const mcp = new McpClient({
-    DATABASE_URL,
-    MCP_EMAIL,
-    MCP_PASSWORD,
-    MCP_HTTP_PORT: "",
-    MCP_TOKEN: "",
-  });
-
-  let blogId = null;
-  let agentTelemetry = { toolCalls: new Map(), toolErrors: [], iterations: 0, stopReason: "n/a" };
+  const stamp = new Date().toISOString().slice(0, 19);
+  const mcp = new McpClient({ DATABASE_URL, MCP_EMAIL, MCP_PASSWORD, MCP_HTTP_PORT: "", MCP_TOKEN: "" });
 
   try {
     await mcp.initialize();
-    const mcpTools = await mcp.listTools();
-    const tools = mcpTools.map(toAnthropicTool);
-
-    // Resolve the Blog page documentId dynamically — never hardcode seed ids.
-    const treeRes = await mcp.call("tree");
-    const topLevel = Array.isArray(treeRes.json) ? treeRes.json : [];
-    const blog = topLevel.find((n) => typeof n?.name === "string" && n.name.trim().toLowerCase() === "blog");
-    blogId = blog?.documentId ?? null;
-
-    if (DRY_RUN) {
-      console.log(`[eval] DRY RUN — spawned MCP, ${tools.length} tools listed.`);
-      console.log(`[eval] Resolved Blog page documentId via tree: ${blogId ?? "(not found)"}`);
-      console.log("\n[eval] Converted Anthropic tool schemas:");
-      console.log(JSON.stringify(tools, null, 2));
-      // Run the assertions against a title that does not exist so they fail
-      // cleanly (proves the verification path works without a model).
-      const checks = await verifyOutcomes(mcp, blogId, `__nonexistent_${timestamp}__`);
-      const allPass = printScorecard({ checks, ...agentTelemetry, dryRun: true });
+    const tools = (await mcp.listTools()).map(toAnthropicTool);
+    const loc = await localeInfo(mcp);
+    let all = scenarios(stamp);
+    if (ONLY) all = all.filter((s) => s.id === ONLY);
+    if (!all.length) {
+      console.error(`[eval] no scenario matches --only=${ONLY}`);
       mcp.kill();
-      process.exit(allPass ? 0 : 1);
+      process.exit(2);
     }
 
-    console.log(`[eval] model=${EVAL_MODEL}`);
-    console.log(`[eval] Blog page documentId: ${blogId ?? "(not found — the model must still try)"}`);
-    console.log(`[eval] Task: ${task}\n`);
+    if (DRY_RUN) {
+      console.log(`[eval] DRY RUN — ${tools.length} tools, locales=${loc.enabled.join(",")} (default ${loc.def}).`);
+      console.log(`[eval] scenarios: ${all.map((s) => s.id).join(", ")}`);
+      // Prove setup + plumbing without the model.
+      for (const s of all) {
+        const ctx = (await s.setup(mcp, loc)) ?? {};
+        console.log(`  setup[${s.id}] -> ${JSON.stringify(ctx)}`);
+      }
+      mcp.kill();
+      process.exit(0);
+    }
 
-    agentTelemetry = await runAgent(mcp, tools, task);
+    console.log(`[eval] model=${EVAL_MODEL}  locales=${loc.enabled.join(",")} (default ${loc.def})`);
+    const results = [];
+    for (const s of all) {
+      console.log(`\n[eval] running scenario: ${s.id}`);
+      results.push(await runScenario(mcp, tools, s, loc));
+    }
 
-    const checks = await verifyOutcomes(mcp, blogId, title);
-    const allPass = printScorecard({ checks, ...agentTelemetry, dryRun: false });
+    let allPass = true;
+    for (const r of results) if (!printScenario(r, false)) allPass = false;
+
+    const line = "═".repeat(70);
+    console.log(`\n${line}`);
+    console.log(`  OVERALL: ${allPass ? "PASS" : "FAIL"} — ${results.length} scenario(s)`);
+    console.log(line + "\n");
     mcp.kill();
     process.exit(allPass ? 0 : 1);
   } catch (err) {
