@@ -112,6 +112,38 @@ export const UpdateContentRequest = z.object({
 });
 export type UpdateContentRequest = z.infer<typeof UpdateContentRequest>;
 
+/**
+ * Normalized SEO + schema.org contract, computed server-side and delivered on
+ * every PAGE item (null for blocks/globals). One source of truth across page
+ * types AND frontends: a consumer renders the meta tags + `jsonLd` directly.
+ * Origin-dependent URLs are RELATIVE (`canonicalPath`, breadcrumb `urlPath`) —
+ * the frontend absolutizes them against its own public origin and adds the
+ * site-identity nodes (WebSite/Organization/publisher) + the @id/url on jsonLd.
+ */
+export const DeliverySeo = z.object({
+  /** metaTitle → field(role:title) → name. */
+  title: z.string(),
+  /** metaDescription → field(role:description) → null. */
+  description: z.string().nullable(),
+  /** canonicalUrl field (absolute, passed through) → urlPath (relative). */
+  canonicalPath: z.string().nullable(),
+  /** "index, follow" / "noindex, follow"; always "noindex, nofollow" in preview. */
+  robots: z.string(),
+  og: z.object({
+    title: z.string(),
+    description: z.string().nullable(),
+    type: z.string(),
+    image: z.object({ url: z.string(), alt: z.string() }).nullable(),
+    siteName: z.string().nullable(),
+  }),
+  twitter: z.object({ card: z.string() }),
+  /** schema.org page-entity node; @id/url/publisher are added by the frontend. */
+  jsonLd: z.record(z.unknown()),
+  /** Ancestor trail incl. self, root→leaf; urlPath null when not yet addressable. */
+  breadcrumb: z.array(z.object({ name: z.string(), urlPath: z.string().nullable() })),
+});
+export type DeliverySeo = z.infer<typeof DeliverySeo>;
+
 /** Delivery API content shape (public). References are shallow unless populated. */
 export const DeliveryContent = z.object({
   documentId: z.string(),
@@ -128,6 +160,8 @@ export const DeliveryContent = z.object({
   /** cache-version: bumped on publish, used for ETag / cache busting. */
   cv: z.number(),
   data: z.record(z.unknown()),
+  /** Normalized SEO/schema.org contract — present on pages, null otherwise. */
+  seo: DeliverySeo.nullable(),
 });
 export type DeliveryContent = z.infer<typeof DeliveryContent>;
 

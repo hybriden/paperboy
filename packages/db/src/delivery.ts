@@ -70,6 +70,28 @@ class DeliveryCtx {
     for (const [id, rs] of grouped) this.versionsByDoc.set(id, rs);
   }
 
+  // Site name from the SiteSettings global (public field), for og:siteName /
+  // jsonLd publisher. Cached per request; resolved through the same perspective
+  // so a draft sitename never leaks into a published seo block.
+  private _siteName: string | null | undefined;
+  async siteName(perspective: Perspective, loc: string): Promise<string | null> {
+    if (this._siteName !== undefined) return this._siteName;
+    const rows = await this.db
+      .select({ documentId: contentItem.documentId })
+      .from(contentItem)
+      .where(and(eq(contentItem.type, "SiteSettings"), eq(contentItem.kind, "global"), isNull(contentItem.deletedAt)))
+      .orderBy(asc(contentItem.id))
+      .limit(1);
+    let name: string | null = null;
+    if (rows[0]) {
+      const found = await variantRow(this, perspective, rows[0].documentId, loc);
+      const sn = found ? (found.row.data as Record<string, unknown>).siteName : null;
+      name = typeof sn === "string" && sn.trim() ? sn : null;
+    }
+    this._siteName = name;
+    return name;
+  }
+
   async type(name: string): Promise<ContentTypeDef | null> {
     if (this.types.has(name)) return this.types.get(name)!;
     const rows = await this.db
@@ -349,6 +371,129 @@ async function urlPathOf(
   return `/${segments.join("/")}`;
 }
 
+/**
+ * Ancestor trail (root→leaf, incl. self) for the breadcrumb. Same perspective
+ * walk as urlPathOf: once an ancestor lacks a visible slug the cumulative path
+ * is null from there on (a draft ancestor's path is never exposed).
+ */
+async function breadcrumbOf(
+  ctx: DeliveryCtx,
+  perspective: Perspective,
+  documentId: string,
+  loc: string,
+): Promise<Array<{ name: string; urlPath: string | null }>> {
+  const chain: Array<{ name: string; slug: string | null }> = [];
+  let cur: string | null = documentId;
+  const guard = new Set<string>();
+  while (cur && !guard.has(cur)) {
+    guard.add(cur);
+    const row = await ctx.item(cur);
+    if (!row || row.kind !== "page") break;
+    const variant = await variantRow(ctx, perspective, cur, loc);
+    chain.unshift({ name: variant?.row.name ?? "", slug: variant?.row.slug ?? null });
+    cur = row.parentId;
+  }
+  const out: Array<{ name: string; urlPath: string | null }> = [];
+  const segs: string[] = [];
+  let broken = false;
+  for (const c of chain) {
+    if (c.slug == null) broken = true;
+    if (!broken) segs.push(c.slug as string);
+    out.push({ name: c.name, urlPath: broken ? null : `/${segs.join("/")}` });
+  }
+  return out;
+}
+
+/** The sanitized value of the field carrying a given seoRole (or undefined). */
+function roleValue(def: ContentTypeDef, role: string, data: Record<string, unknown>): unknown {
+  const f = def.fields.find((x) => x.seoRole === role);
+  return f ? data[f.name] : undefined;
+}
+function asText(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v : null;
+}
+/** An image field is sanitized to {url, alt, …}; normalize to {url, alt}. */
+function asImage(v: unknown): { url: string; alt: string } | null {
+  if (v && typeof v === "object" && typeof (v as { url?: unknown }).url === "string") {
+    const o = v as { url: string; alt?: unknown };
+    return { url: o.url, alt: typeof o.alt === "string" ? o.alt : "" };
+  }
+  return null;
+}
+
+/**
+ * Compute the normalized SEO + schema.org block for a PAGE. Reads ONLY the
+ * already-sanitized (public) data, so a private field — even one tagged with a
+ * seoRole — can never feed it (no-leak preserved). URLs that depend on the
+ * public origin stay relative; the frontend absolutizes them.
+ */
+async function computeSeo(
+  ctx: DeliveryCtx,
+  perspective: Perspective,
+  documentId: string,
+  def: ContentTypeDef,
+  name: string,
+  urlPath: string | null,
+  data: Record<string, unknown>,
+  loc: string,
+): Promise<DeliveryContent["seo"]> {
+  const title = asText(data.metaTitle) ?? asText(roleValue(def, "title", data)) ?? name;
+  const description = asText(data.metaDescription) ?? asText(roleValue(def, "description", data));
+  const image = asImage(data.ogImage) ?? asImage(roleValue(def, "image", data));
+  const canonicalField = asText(data.canonicalUrl);
+  const canonicalPath = canonicalField ?? urlPath;
+
+  // schema.org @type: explicit schemaType, else derived from the type's shape.
+  const hasDate = def.fields.some((f) => f.seoRole === "datePublished");
+  const isList = def.fields.some((f) => f.name === "listedType");
+  const schemaType =
+    def.schemaType ?? (isList ? "CollectionPage" : hasDate ? "Article" : "WebPage");
+
+  const ogTypeField = asText(data.ogType);
+  const ogType =
+    ogTypeField ?? (schemaType === "Article" || schemaType === "BlogPosting" ? "article" : "website");
+
+  // Preview is NEVER indexable; otherwise honor the noIndex field.
+  const robots =
+    perspective === "preview" ? "noindex, nofollow" : data.noIndex ? "noindex, follow" : "index, follow";
+
+  const siteName = await ctx.siteName(perspective, loc);
+  const datePublished = asText(roleValue(def, "datePublished", data));
+  const dateModified = asText(roleValue(def, "dateModified", data));
+  const author = asText(roleValue(def, "author", data));
+  const keywords = asText(roleValue(def, "keywords", data));
+
+  const jsonLd: Record<string, unknown> = {
+    "@context": "https://schema.org",
+    "@type": schemaType,
+    headline: title,
+    inLanguage: loc,
+  };
+  if (description) jsonLd.description = description;
+  if (image) jsonLd.image = image.url;
+  if (datePublished) jsonLd.datePublished = datePublished;
+  if (dateModified) jsonLd.dateModified = dateModified;
+  if (author) jsonLd.author = { "@type": "Person", name: author };
+  if (keywords) jsonLd.keywords = keywords;
+
+  return {
+    title,
+    description,
+    canonicalPath,
+    robots,
+    og: {
+      title: asText(data.ogTitle) ?? title,
+      description: asText(data.ogDescription) ?? description,
+      type: ogType,
+      image,
+      siteName,
+    },
+    twitter: { card: asText(data.twitterCard) ?? (image ? "summary_large_image" : "summary") },
+    jsonLd,
+    breadcrumb: await breadcrumbOf(ctx, perspective, documentId, loc),
+  };
+}
+
 export async function resolveContent(
   ctx: DeliveryCtx,
   perspective: Perspective,
@@ -372,6 +517,15 @@ export async function resolveContent(
     loc,
   );
   const sanitized = await sanitize(ctx, perspective, item.type, data, found.usedLocale, depth);
+  const urlPath = await urlPathOf(ctx, perspective, documentId, loc);
+  // SEO/schema.org contract — pages only, computed from SANITIZED (public) data.
+  let seo: DeliveryContent["seo"] = null;
+  if (item.kind === "page") {
+    const def = await ctx.type(item.type);
+    if (def) {
+      seo = await computeSeo(ctx, perspective, documentId, def, found.row.name, urlPath, sanitized, found.usedLocale);
+    }
+  }
   return {
     documentId,
     type: item.type,
@@ -381,9 +535,10 @@ export async function resolveContent(
     locale: found.usedLocale,
     name: found.row.name,
     slug: found.row.slug,
-    urlPath: await urlPathOf(ctx, perspective, documentId, loc),
+    urlPath,
     cv: found.row.cv,
     data: sanitized,
+    seo,
   };
 }
 
