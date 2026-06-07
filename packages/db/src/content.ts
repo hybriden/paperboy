@@ -842,9 +842,31 @@ export async function updateContent(
     // unpublished page (no current-published row) from losing its name/slug on
     // the next edit.
     const maxV = await nextVersionNumber(db, documentId, loc);
-    const base = (await currentPublished(db, documentId, loc)) ?? (await latestVersion(db, documentId, loc));
+    const sameLocale = (await currentPublished(db, documentId, loc)) ?? (await latestVersion(db, documentId, loc));
+    // First write in a NEW locale: fork identity (name/slug/nav) from the newest
+    // version in any other locale — never the "Untitled" placeholder. An agent
+    // that writes fields without addressing the name otherwise publishes a
+    // placeholder (2026-06-06 incident: nb forked as "Untitled", went live at
+    // /untitled while the en draft held the real name).
+    const fork = sameLocale ? null : await latestVersionAnyLocale(db, documentId);
+    const base = sameLocale ?? fork;
     const name = req.name ?? base?.name ?? "Untitled";
-    const slug = req.slug !== undefined ? req.slug : await backfillSlug(base?.slug ?? null, name);
+    let slug: string | null;
+    if (req.slug !== undefined) {
+      slug = req.slug;
+    } else if (sameLocale || !fork) {
+      slug = await backfillSlug(sameLocale?.slug ?? null, name);
+    } else if (req.name !== undefined || !fork.slug) {
+      // Forking with an explicit name (or no source slug): the URL follows the
+      // name the caller chose for THIS locale, not the source locale's slug.
+      slug = item.kind === "page" ? await autoSlug(db, documentId, item.parentId, loc, name) : null;
+    } else {
+      // Inherit the source locale's slug (it may be editor-customised), unless a
+      // sibling in this locale already uses it — then re-derive from the name.
+      slug = (await slugTakenBySibling(db, documentId, item.parentId, loc, fork.slug))
+        ? await autoSlug(db, documentId, item.parentId, loc, name)
+        : fork.slug;
+    }
     await db.insert(contentVersion).values({
       documentId,
       locale: loc,
@@ -871,6 +893,21 @@ async function nextVersionNumber(db: Database, documentId: string, loc: string):
     .from(contentVersion)
     .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)));
   return (rows[0]?.m ?? 0) + 1;
+}
+
+/**
+ * The newest version row across ALL locales — the fork base when the target
+ * locale has no version yet, so a new locale inherits name/slug instead of
+ * materialising as "Untitled".
+ */
+async function latestVersionAnyLocale(db: Database, documentId: string) {
+  const rows = await db
+    .select()
+    .from(contentVersion)
+    .where(eq(contentVersion.documentId, documentId))
+    .orderBy(desc(contentVersion.createdAt), desc(contentVersion.id))
+    .limit(1);
+  return rows[0] ?? null;
 }
 
 /** The highest-versionNumber row for a variant, regardless of status. */
@@ -920,6 +957,17 @@ async function assertDraftPublishable(
     );
   }
   await assertAllowedTypes(db, type, draft.data as Record<string, unknown>);
+  // Placeholder names are never publishable (agent-API rule 1: no
+  // garbage-in-success-out). "Untitled" is the auto-default a version gets when
+  // nobody ever set its name — publishing one put a live page at /untitled
+  // titled "Untitled" (2026-06-06 incident). Self-teaching per rule 2.
+  if (/^Untitled( \(copy\))?$/.test(draft.name)) {
+    throw Errors.validation(
+      `This ${loc} version is still named "${draft.name}" — the auto-placeholder, not a real name. ` +
+        `Set the real name first via update_content {documentId, locale: "${loc}", name: "<the title>"} ` +
+        `(or set_field {field: "name"}), then publish again.`,
+    );
+  }
   // Defence-in-depth: sibling URL segments stay unique at publish time too.
   if (item.kind === "page" && draft.slug) {
     await assertSlugUnique(db, item.documentId, item.parentId, loc, draft.slug);

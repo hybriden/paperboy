@@ -52,6 +52,9 @@ Every rule below traces to a real agent run that broke. Do not regress them.
 6. **Every failed agent run must leave a trail.** MCP tool errors log to stdout WITH truncated args (`docker logs`); every MCP write audit-logs like the API routes (`ip='mcp'`). Two incidents were undiagnosable because errors only travelled in-band and the client swallowed them.
 7. **Annotate the schema for agents.** `get_content_type` returns `valueFormat` + `valueExample` per field — the contract is discoverable, not tribal knowledge.
 
+## ⚖️ Bugfix law: failing test first
+Every bugfix STARTS with a test that reproduces the exact reported failure — same flow, same surface (API/MCP), same inputs; not a lookalike. Run it and confirm it FAILS on the unfixed code: that red run is the proof you understood the issue and are patching the right place. Only then implement, and the same test must go green in the same change. No repro, no fix — no guesswork.
+
 ## Testing
 - API: `pnpm --filter @paperboy/api test` (Vitest + a real Postgres test DB; isolated).
 - **Contract-freeze layers** (all in `apps/api/test/`): `shared-*.test.ts` are pure unit/property tests of packages/shared (no DB — richtext sanitizer fixpoint, coercion matrix); `delivery-contract` + `openapi-snapshot` pin delivered JSON shapes and the API surface as snapshots — a failing snapshot means you changed a PUBLIC CONTRACT: review the diff and update the snapshot deliberately in the same commit, never blind `--update`; `mcp-parity` spawns the real stdio MCP server and locks the tool surface, write parity, and self-teaching error shapes.
