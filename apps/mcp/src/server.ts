@@ -196,15 +196,19 @@ tool(
     "at root gets a generic layout and looks empty when published). Call `tree` first and",
     "pass the right parentId (e.g. blog posts/articles go under their blog/list page).",
     "Omit parentId ONLY for genuinely top-level pages like the site's main sections.",
+    "Under a LIST PAGE, the type must match what that page lists (its listedType):",
+    "OMIT type to inherit it, or a mismatch is refused (the content would publish",
+    "but never appear on the list).",
   ].join(" "),
   {
-    type: z.string(),
+    type: z.string().optional().describe("Content type name. Under a list-page parent, OMIT to inherit the type that page lists; a mismatch is refused unless allowTypeMismatch."),
     parentId: z.string().nullable().optional().describe("documentId of the parent page. Required in practice for pages — find it with `tree`. Omit only for top-level pages."),
     locale: z.string().optional().describe("The LANGUAGE BRANCH for this content — MATCH the language you are writing (Norwegian content → 'nb', English → 'en'). Call list_locales to see the site's branches. Defaults to the site default locale, which is usually English."),
     name: z.string(),
+    allowTypeMismatch: z.boolean().optional().describe("Set true ONLY for a deliberate sub-page whose type differs from the parent list page's listedType"),
   },
-  async ({ type, parentId, locale, name }) => {
-    const created = await createContent(db, ctx, { type, parentId: parentId ?? null, locale: locale ?? "en", name });
+  async ({ type, parentId, locale, name, allowTypeMismatch }) => {
+    const created = await createContent(db, ctx, { type, parentId: parentId ?? null, locale: locale ?? "en", name, allowTypeMismatch });
     mcpAudit("content.create", created.documentId, created.locale);
     // A page created at root is usually an agent forgetting parentId (real incident:
     // a blog post at root rendered "empty" on the live site). Surface a hint the

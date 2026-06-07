@@ -89,10 +89,14 @@ export type Asset = z.infer<typeof Asset>;
 
 /** Create-content request. */
 export const CreateContentRequest = z.object({
-  type: z.string(),
+  // Optional: under a ListPage parent, an omitted type inherits the parent's
+  // listedType (the type that page actually lists).
+  type: z.string().optional(),
   parentId: z.string().nullable().default(null),
   locale: z.string(),
   name: z.string().min(1),
+  // Escape hatch for a deliberate off-type sub-page under a list page.
+  allowTypeMismatch: z.boolean().optional(),
 });
 export type CreateContentRequest = z.infer<typeof CreateContentRequest>;
 

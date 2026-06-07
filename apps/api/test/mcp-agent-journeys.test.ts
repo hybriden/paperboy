@@ -445,6 +445,61 @@ describe("MCP agent journeys (real production sequences)", () => {
   });
 
   // ------------------------------------------------------------------
+  // J10 — wrong content type under a list page (2026-06-07 "article per repo")
+  // ------------------------------------------------------------------
+  describe("J10: content type must match the parent list page's listedType", () => {
+    it("creating a mismatched type under a ListPage is refused, naming the listed type", async () => {
+      // The incident: "lag en artikkel … under listesiden Projects" — Projects
+      // lists ArticlePage, the agent created BlogPosts, and they never appeared
+      // on the list page (published but invisible). The seeded Blog lists
+      // BlogPost, so an ArticlePage under it is the same mismatch.
+      const r = await mcp.call("create_content", {
+        type: "ArticlePage",
+        locale: "en",
+        name: "Wrong type under Blog",
+        parentId: s.ids.blogId,
+      });
+      expect(r.isError).toBe(true);
+      expect(r.text).toContain("BlogPost"); // names the type the list expects
+      expect(r.text).toMatch(/list/i);
+      expect(r.text).toContain("allowTypeMismatch");
+    });
+
+    it("omitting the type under a ListPage inherits its listedType", async () => {
+      const r = await mcp.call("create_content", {
+        locale: "en",
+        name: "Type inherited from Blog",
+        parentId: s.ids.blogId,
+      });
+      expect(r.isError, r.text.slice(0, 300)).toBe(false);
+      expect((r.json as { type: string }).type).toBe("BlogPost");
+    });
+
+    it("the matching type is created normally", async () => {
+      const r = await mcp.call("create_content", {
+        type: "BlogPost",
+        locale: "en",
+        name: "Right type under Blog",
+        parentId: s.ids.blogId,
+      });
+      expect(r.isError, r.text.slice(0, 300)).toBe(false);
+      expect((r.json as { type: string }).type).toBe("BlogPost");
+    });
+
+    it("the explicit override allows a deliberate sub-page of another type", async () => {
+      const r = await mcp.call("create_content", {
+        type: "ArticlePage",
+        locale: "en",
+        name: "Deliberate sub-page",
+        parentId: s.ids.blogId,
+        allowTypeMismatch: true,
+      });
+      expect(r.isError, r.text.slice(0, 300)).toBe(false);
+      expect((r.json as { type: string }).type).toBe("ArticlePage");
+    });
+  });
+
+  // ------------------------------------------------------------------
   // J7 — publish before required fields (2026-06-04 run)
   // ------------------------------------------------------------------
   describe("J7: premature publish self-teaches and recovers in one step", () => {

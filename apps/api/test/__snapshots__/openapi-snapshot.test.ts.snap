@@ -841,7 +841,6 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "requestBodyRequired": [
       "locale",
       "name",
-      "type",
     ],
     "requiredParams": [],
     "response200Props": [

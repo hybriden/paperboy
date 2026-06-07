@@ -573,13 +573,28 @@ async function autoSlug(
 
 /* ------------------------------- create ----------------------------------- */
 
+/**
+ * The `listedType` a ListPage declares (the content type it lists), or null
+ * when the parent isn't a list page / has no listedType set. Read from any
+ * version (listedType is non-localized).
+ */
+async function listedTypeOf(db: Database, parentDocumentId: string): Promise<string | null> {
+  const rows = await db
+    .select({ data: contentVersion.data })
+    .from(contentVersion)
+    .where(eq(contentVersion.documentId, parentDocumentId))
+    .orderBy(desc(contentVersion.versionNumber))
+    .limit(1);
+  const listed = (rows[0]?.data as Record<string, unknown> | undefined)?.listedType;
+  return typeof listed === "string" && listed ? listed : null;
+}
+
 export async function createContent(
   db: Database,
   ctx: AccessContext,
   req: CreateContentRequest,
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.create");
-  const type = await getContentType(db, req.type);
 
   let sectionId: string | null = null;
   let parent: typeof contentItem.$inferSelect | null = null;
@@ -587,6 +602,33 @@ export async function createContent(
     parent = await loadAuthorized(db, ctx, req.parentId);
     sectionId = parent.sectionId ?? parent.documentId;
   }
+
+  // A ListPage parent declares the type it lists (listedType). Children of a
+  // DIFFERENT type publish fine but never appear on the list page — invisible
+  // content (2026-06-07: "an article per repo under Projects" created BlogPosts
+  // under an ArticlePage list; none showed up). So the listed type is the
+  // source of truth here:
+  //  - type omitted    → inherit listedType (safe default, rule 5)
+  //  - type mismatched  → refuse for agent provenance with a self-teaching
+  //    error + an allowTypeMismatch escape hatch; humans (deliberate sub-pages)
+  //    are never blocked.
+  const listedType = req.parentId ? await listedTypeOf(db, req.parentId) : null;
+  let typeName = req.type ?? listedType;
+  if (!typeName) throw Errors.badRequest("A content type is required (no parent list page to infer it from)");
+  if (
+    req.type &&
+    listedType &&
+    req.type !== listedType &&
+    (ctx.via === "mcp" || ctx.via === "agent") &&
+    !req.allowTypeMismatch
+  ) {
+    throw Errors.validation(
+      `The parent list page lists '${listedType}', but you are creating a '${req.type}' — it would publish but NEVER appear on that list page. ` +
+        `Create a '${listedType}' instead (omit the type to inherit it), choose a different parent, ` +
+        `or pass allowTypeMismatch: true if a sub-page of another type is intended.`,
+    );
+  }
+  const type = await getContentType(db, typeName);
 
   const documentId = nanoid(24);
   // A new top-level item is its own section.
