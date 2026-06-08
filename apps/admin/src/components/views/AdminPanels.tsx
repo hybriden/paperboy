@@ -296,46 +296,118 @@ export function LanguagesPanel() {
 
 /* ------------------------------- Your account ----------------------------- */
 export function SitePanel() {
-  const toast = useToast();
-  const qc = useQueryClient();
   const { user } = useUser();
   const canManageSites = user.permissions.includes("user.manage");
   const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites() });
+  const [wizard, setWizard] = useState(false);
 
   const activeId = sites.data?.activeSiteId;
   const activeDefaultLocale = sites.data?.sites.find((x) => x.id === activeId)?.defaultLocale ?? "en";
 
-  // New-site form (admins only). Create then leave it for the user to configure.
-  const [newName, setNewName] = useState("");
-  const slug = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-  const create = useMutation({
-    mutationFn: () => api.createSite({ slug, name: newName.trim(), defaultLocale: activeDefaultLocale }),
-    onSuccess: (created) => {
-      qc.invalidateQueries({ queryKey: ["sites"] });
-      setNewName("");
-      toast.success("Site created", `“${created.name}” — set its preview URL below, or make it active to add content.`);
-    },
-    onError: (e) => toast.error("Couldn’t create site", (e as Error).message),
-  });
-
   return (
-    <PanelShell title="Sites" hint="Each site has its own preview URL and delivery keys. Edit any site here; “active” is the site the content editor works in.">
+    <PanelShell
+      title="Sites"
+      hint="Each site has its own preview URL and delivery keys. Edit any site here; “active” is the site the content editor works in."
+      action={canManageSites ? (
+        <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setWizard(true)}><Icon.Plus width={14} height={14} /> Add site</button>
+      ) : undefined}
+    >
       <div className="flex flex-col divide-y divide-line">
         {sites.data?.sites.map((s) => (
           <SiteCard key={s.id} site={s} active={s.id === activeId} canManage={canManageSites} />
         ))}
       </div>
-      {canManageSites && (
-        <form className="flex flex-wrap items-end gap-3 border-t border-line p-4" onSubmit={(e) => { e.preventDefault(); if (slug) create.mutate(); }}>
-          <label className="text-sm" style={{ minWidth: 240 }}>
-            <span className="field-label">Add a site</span>
-            <input className="field-input" placeholder="Brand B" value={newName} onChange={(e) => setNewName(e.target.value)} />
-            {newName.trim() && <span className="mt-1 block text-xs text-muted">slug: <code>/{slug || "—"}</code></span>}
-          </label>
-          <button className="btn-primary" disabled={create.isPending || !slug}>{create.isPending ? "Creating…" : "Create site"}</button>
-        </form>
-      )}
+      {wizard && <CreateSiteWizard defaultLocale={activeDefaultLocale} onClose={() => setWizard(false)} />}
     </PanelShell>
+  );
+}
+
+/** Two-step "Add a site" wizard: name + slug, then default language (+ optional
+ *  preview URL). Keeps creation guided instead of a single bare name field. */
+function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; onClose: () => void }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const locales = useQuery({ queryKey: ["locales"], queryFn: ({ signal }) => api.locales(signal) });
+
+  const [step, setStep] = useState<1 | 2>(1);
+  const [name, setName] = useState("");
+  const [slugEdited, setSlugEdited] = useState<string | null>(null);
+  const autoSlug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const slug = slugEdited ?? autoSlug;
+  const [locale, setLocale] = useState(defaultLocale);
+  const [previewUrl, setPreviewUrl] = useState("");
+
+  const slugValid = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug);
+  const canNext = name.trim().length > 0 && slugValid;
+
+  const create = useMutation({
+    mutationFn: async () => {
+      const site = await api.createSite({ slug, name: name.trim(), defaultLocale: locale });
+      const url = previewUrl.trim();
+      if (url) await api.setPreviewUrl(url, site.id);
+      return site;
+    },
+    onSuccess: (site) => {
+      qc.invalidateQueries({ queryKey: ["sites"] });
+      toast.success("Site created", `“${site.name}” is ready — make it active to add content.`);
+      onClose();
+    },
+    onError: (e) => toast.error("Couldn’t create site", (e as Error).message),
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        title="Add a site"
+        description={step === 1 ? "Step 1 of 2 — name your site." : "Step 2 of 2 — choose its default language."}
+        className="w-[min(520px,94vw)]"
+      >
+        {step === 1 ? (
+          <div className="flex flex-col gap-3">
+            <label className="text-sm">
+              <span className="field-label">Site name</span>
+              <input className="field-input" autoFocus placeholder="Brand B" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && canNext) setStep(2); }} />
+            </label>
+            <label className="text-sm">
+              <span className="field-label">URL slug</span>
+              <input className="field-input" value={slug} onChange={(e) => setSlugEdited(e.target.value.toLowerCase())} />
+              {slug.length > 0 && !slugValid ? (
+                <span className="mt-1 block text-xs text-danger">Lowercase letters, numbers and single hyphens only (e.g. “brand-b”).</span>
+              ) : (
+                <span className="mt-1 block text-xs text-muted">Identifies the site internally — not part of public URLs.</span>
+              )}
+            </label>
+            <div className="mt-2 flex justify-end gap-2">
+              <button className="btn-subtle" onClick={onClose}>Cancel</button>
+              <button className="btn-primary" disabled={!canNext} onClick={() => setStep(2)}>Next</button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <label className="text-sm">
+              <span className="field-label">Default language</span>
+              <select className="field-input" value={locale} onChange={(e) => setLocale(e.target.value)}>
+                {locales.data?.map((l) => (
+                  <option key={l.code} value={l.code}>{l.displayName} ({l.code})</option>
+                ))}
+              </select>
+            </label>
+            <label className="text-sm">
+              <span className="field-label">Preview URL <span className="text-muted">(optional)</span></span>
+              <input className="field-input" type="url" inputMode="url" placeholder="https://brand-b.example" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} />
+              <span className="mt-1 block text-xs text-muted">The front-end origin previews load from. You can set this later.</span>
+            </label>
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <button className="btn-subtle" onClick={() => setStep(1)}>Back</button>
+              <div className="flex gap-2">
+                <button className="btn-subtle" onClick={onClose}>Cancel</button>
+                <button className="btn-primary" disabled={create.isPending} onClick={() => create.mutate()}>{create.isPending ? "Creating…" : "Create site"}</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
