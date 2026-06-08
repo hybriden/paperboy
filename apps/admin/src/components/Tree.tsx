@@ -304,7 +304,17 @@ const EMPTY_ANCESTORS: Set<string> = new Set();
 function Level(props: LevelProps) {
   const { parentId, depth, filter } = props;
   const parentKey = parentId ?? "root";
-  const q = useQuery({ queryKey: ["tree", parentKey], queryFn: ({ signal }) => api.tree(parentId ?? undefined, signal) });
+  // Keep the tree "live": refresh when the tab regains focus and poll on a slow
+  // cadence WHILE focused, so a publish/translate from another tab — or from the
+  // MCP agent — updates each node's status without a manual reload. Same-tab
+  // edits update instantly via the editor's ["tree"] invalidation.
+  const q = useQuery({
+    queryKey: ["tree", parentKey],
+    queryFn: ({ signal }) => api.tree(parentId ?? undefined, signal),
+    refetchOnWindowFocus: true,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false, // don't poll a backgrounded tab
+  });
 
   if (q.isLoading) {
     return (
