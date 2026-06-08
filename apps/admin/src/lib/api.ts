@@ -133,12 +133,16 @@ async function request<T>(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
+  // Override the active site for THIS call only (lets Settings → Site read/write
+  // any site's config without switching the whole admin's working context).
+  siteOverride?: string,
 ): Promise<T> {
   const headers: Record<string, string> = {};
   const isMutation = method !== "GET" && method !== "HEAD";
   if (body !== undefined) headers["content-type"] = "application/json";
   if (isMutation && csrfToken) headers["x-csrf-token"] = csrfToken;
-  if (activeSiteId) headers["x-paperboy-site"] = activeSiteId;
+  const site = siteOverride ?? activeSiteId;
+  if (site) headers["x-paperboy-site"] = site;
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
@@ -223,8 +227,8 @@ export const api = {
   site: (signal?: AbortSignal) => request<{ startPageId: string | null; previewBaseUrl: string }>("GET", "/manage/site", undefined, signal),
   setStartPage: (documentId: string | null) =>
     request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }),
-  setPreviewUrl: (url: string) =>
-    request<{ ok: boolean }>("POST", "/manage/site/preview-url", { url }),
+  setPreviewUrl: (url: string, siteOverride?: string) =>
+    request<{ ok: boolean }>("POST", "/manage/site/preview-url", { url }, undefined, siteOverride),
   aiConfig: (signal?: AbortSignal) =>
     request<AiConfigStatus>("GET", "/manage/site/ai", undefined, signal),
   setAiConfig: (body: { apiKey?: string | null; model?: string | null }) =>
@@ -399,6 +403,8 @@ export interface SiteRow {
   defaultLocale: string;
   active: boolean;
   createdAt: string;
+  previewBaseUrl: string | null;
+  startPageId: string | null;
 }
 
 export interface AgentEvent {
