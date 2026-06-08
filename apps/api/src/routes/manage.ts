@@ -908,6 +908,8 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     defaultLocale: z.string(),
     active: z.boolean(),
     createdAt: z.string(),
+    previewBaseUrl: z.string().nullable(),
+    startPageId: z.string().nullable(),
   });
 
   // List all sites + which one is active for this request (the site switcher).
