@@ -504,7 +504,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/delivery-keys",
     { preHandler: [requireCsrf, requirePermission("deliverykey.manage")], schema: { tags: ["manage"], body: z.object({ name: z.string(), type: z.enum(["public", "preview"]) }), response: { 200: z.object({ key: z.string() }) } } },
     async (req) => {
-      const r = await createDeliveryKey(app.db, req.body.name, req.body.type);
+      const r = await createDeliveryKey(app.db, req.accessCtx!.siteId, req.body.name, req.body.type);
       await audit(app.db, { actorUserId: req.user!.id, action: "deliverykey.create", ip: req.ip, detail: { type: req.body.type } });
       return r;
     },

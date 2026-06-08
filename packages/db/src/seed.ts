@@ -13,9 +13,8 @@ import {
   deliveryKey,
   locale,
   site,
-  siteSetting,
 } from "./schema.js";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -296,8 +295,8 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
     { name: "Default preview key", keyHash: sha256(previewKey), keyPrefix: "prv_", type: "preview" },
   ]);
 
-  // Default start page (served at "/") = Home.
-  await db.insert(siteSetting).values({ key: "startPage", value: { documentId: homeId } });
+  // Default start page (served at "/") = Home. Per-site, on the site entity.
+  await db.update(site).set({ startPageId: homeId }).where(eq(site.id, DEFAULT_SITE_ID));
 
   console.log("Seed complete:");
   console.log(`  Home (EN+NB)   documentId=${homeId}`);

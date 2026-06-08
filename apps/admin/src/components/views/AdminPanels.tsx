@@ -298,7 +298,10 @@ export function LanguagesPanel() {
 export function SitePanel() {
   const toast = useToast();
   const qc = useQueryClient();
+  const { user } = useUser();
+  const canManageSites = user.permissions.includes("user.manage");
   const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
+  const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites() });
   const [edited, setEdited] = useState<string | null>(null);
   const value = edited ?? site.data?.previewBaseUrl ?? "";
   const save = useMutation({
@@ -306,15 +309,29 @@ export function SitePanel() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["site"] });
       setEdited(null);
-      toast.success("Preview URL saved", "The editor preview now loads from here.");
+      toast.success("Preview URL saved", "The editor preview for this site now loads from here.");
     },
     onError: (e) => toast.error("Couldn’t save", (e as Error).message),
   });
+
+  const activeId = sites.data?.activeSiteId;
+  const activeName = sites.data?.sites.find((x) => x.id === activeId)?.name ?? "Default site";
+  const activeDefaultLocale = sites.data?.sites.find((x) => x.id === activeId)?.defaultLocale ?? "en";
+
+  // New-site form (admins only).
+  const [newName, setNewName] = useState("");
+  const slug = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const create = useMutation({
+    mutationFn: () => api.createSite({ slug, name: newName.trim(), defaultLocale: activeDefaultLocale }),
+    onSuccess: (created) => switchSite(created.id),
+    onError: (e) => toast.error("Couldn’t create site", (e as Error).message),
+  });
+
   return (
-    <PanelShell title="Site" hint="Where the editor preview loads from — your front-end origin (the published site or a staging host).">
+    <PanelShell title="Site" hint={`Per-site setup for “${activeName}”. Switch the active site with the header dropdown.`}>
       <form className="flex flex-wrap items-end gap-3 p-4" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
         <label className="grow text-sm" style={{ minWidth: 320 }}>
-          <span className="field-label">Preview base URL</span>
+          <span className="field-label">Preview base URL — {activeName}</span>
           <input
             className="field-input"
             type="url"
@@ -324,13 +341,47 @@ export function SitePanel() {
             onChange={(e) => setEdited(e.target.value)}
           />
           <span className="mt-1 block text-xs text-muted">
-            Preview opens <code>{(value || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Empty = fall back to the admin host on :8092.
+            Preview opens <code>{(value || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Each site has its own origin. Empty = fall back to the admin host on :8092.
           </span>
         </label>
         <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
       </form>
+
+      <div className="border-t border-line p-4">
+        <h3 className="field-label mb-2">Sites</h3>
+        <ul className="mb-3 flex flex-col gap-1">
+          {sites.data?.sites.map((s) => (
+            <li key={s.id} className="flex items-center gap-3 text-sm">
+              <span className="font-medium">{s.name}</span>
+              <code className="text-xs text-muted">/{s.slug}</code>
+              {s.id === activeId ? (
+                <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent">active</span>
+              ) : (
+                <button type="button" className="text-xs text-accent hover:underline" onClick={() => switchSite(s.id)}>Switch</button>
+              )}
+            </li>
+          ))}
+        </ul>
+        {canManageSites && (
+          <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); if (slug) create.mutate(); }}>
+            <label className="text-sm" style={{ minWidth: 240 }}>
+              <span className="field-label">New site name</span>
+              <input className="field-input" placeholder="Brand B" value={newName} onChange={(e) => setNewName(e.target.value)} />
+              {newName.trim() && <span className="mt-1 block text-xs text-muted">slug: <code>/{slug || "—"}</code></span>}
+            </label>
+            <button className="btn-primary" disabled={create.isPending || !slug}>{create.isPending ? "Creating…" : "Create site"}</button>
+          </form>
+        )}
+      </div>
     </PanelShell>
   );
+}
+
+/** Persist the active site and reload from the content root so every query
+ *  refetches under the new site's x-paperboy-site header. */
+function switchSite(id: string): void {
+  localStorage.setItem("paperboy.activeSite", id);
+  window.location.href = "/edit";
 }
 
 /* ----------------------------- AI assistant ------------------------------- */

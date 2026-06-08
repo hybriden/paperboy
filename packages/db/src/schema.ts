@@ -52,6 +52,10 @@ export const site = pgTable("site", {
   defaultLocale: text("default_locale").notNull(),
   active: boolean("active").notNull().default(true),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // Per-site setup (migration 0013): the editor preview origin + the page served
+  // at "/" for this site. NULL = unset (preview falls back; no start page).
+  previewBaseUrl: text("preview_base_url"),
+  startPageId: text("start_page_id"),
 });
 
 export const contentItem = pgTable(
