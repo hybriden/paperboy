@@ -5,7 +5,7 @@ import { Login } from "./components/Login.js";
 import { Shell } from "./components/Shell.js";
 import { DashboardView, SettingsView } from "./components/views/Views.js";
 import { EditView } from "./components/views/EditView.js";
-import { api, setCsrf, setUnauthorizedHandler } from "./lib/api.js";
+import { ACTIVE_SITE_KEY, api, setActiveSite, setCsrf, setUnauthorizedHandler } from "./lib/api.js";
 import { UserContext } from "./lib/user.js";
 
 export function App() {
@@ -13,6 +13,8 @@ export function App() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Restore the active site (multisite) before any content query runs.
+    setActiveSite(localStorage.getItem(ACTIVE_SITE_KEY));
     setUnauthorizedHandler(() => {
       setCsrf(null);
       setUser(null);

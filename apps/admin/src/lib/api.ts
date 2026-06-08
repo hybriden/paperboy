@@ -99,6 +99,19 @@ export function setCsrf(token: string | null) {
   csrfToken = token;
 }
 
+/** localStorage key for the persisted active site. */
+export const ACTIVE_SITE_KEY = "paperboy.activeSite";
+
+/** The active site (multisite). Sent as x-paperboy-site on every request so the
+ *  whole management surface is scoped to it. null = the server's Default site. */
+let activeSiteId: string | null = null;
+export function setActiveSite(id: string | null) {
+  activeSiteId = id;
+}
+export function getActiveSite(): string | null {
+  return activeSiteId;
+}
+
 let onUnauthorized: (() => void) | null = null;
 /** Registered by App so any mid-session 401 resets to the login screen. */
 export function setUnauthorizedHandler(fn: (() => void) | null) {
@@ -125,6 +138,7 @@ async function request<T>(
   const isMutation = method !== "GET" && method !== "HEAD";
   if (body !== undefined) headers["content-type"] = "application/json";
   if (isMutation && csrfToken) headers["x-csrf-token"] = csrfToken;
+  if (activeSiteId) headers["x-paperboy-site"] = activeSiteId;
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers,
@@ -233,10 +247,13 @@ export const api = {
   uploadAsset: async (file: File): Promise<Asset> => {
     const fd = new FormData();
     fd.append("file", file);
+    const uploadHeaders: Record<string, string> = {};
+    if (csrfToken) uploadHeaders["x-csrf-token"] = csrfToken; // browser sets the multipart content-type/boundary
+    if (activeSiteId) uploadHeaders["x-paperboy-site"] = activeSiteId;
     const res = await fetch(`${BASE}/manage/assets`, {
       method: "POST",
       credentials: "include",
-      headers: csrfToken ? { "x-csrf-token": csrfToken } : {}, // browser sets the multipart content-type/boundary
+      headers: uploadHeaders,
       body: fd,
     });
     if (res.status === 401) onUnauthorized?.();
@@ -336,6 +353,7 @@ export const api = {
   ): Promise<void> => {
     const headers: Record<string, string> = { "content-type": "application/json" };
     if (csrfToken) headers["x-csrf-token"] = csrfToken;
+    if (activeSiteId) headers["x-paperboy-site"] = activeSiteId;
     const res = await fetch(`${BASE}/ai/agent`, {
       method: "POST",
       headers,
@@ -368,7 +386,20 @@ export const api = {
       }
     }
   },
+
+  // multisite
+  sites: () => request<{ sites: SiteRow[]; activeSiteId: string }>("GET", "/manage/sites"),
+  createSite: (body: { slug: string; name: string; defaultLocale: string }) => request<SiteRow>("POST", "/manage/sites", body),
 };
+
+export interface SiteRow {
+  id: string;
+  slug: string;
+  name: string;
+  defaultLocale: string;
+  active: boolean;
+  createdAt: string;
+}
 
 export interface AgentEvent {
   type: "status" | "tool" | "tool_done" | "done" | "error";

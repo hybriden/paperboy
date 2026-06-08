@@ -6,7 +6,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import swagger from "@fastify/swagger";
 import swaggerUI from "@fastify/swagger-ui";
-import { AppError, createDb, getAccessContext, getSessionUser, readSession, runScheduledPublish } from "@paperboy/db";
+import { AppError, createDb, getAccessContext, getSessionUser, getSiteById, readSession, runScheduledPublish } from "@paperboy/db";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
   type ZodTypeProvider,
@@ -111,9 +111,17 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     req.sessionToken = token;
     req.sessionCsrf = sess.csrfToken;
     req.user = await getSessionUser(db, sess.userId);
+    // Active site (multisite): the admin site switcher sends x-paperboy-site.
+    // Validate it exists; an unknown/absent header falls back to the Default site.
+    const siteHeader = req.headers["x-paperboy-site"];
+    let activeSiteId: string | undefined;
+    if (typeof siteHeader === "string" && siteHeader) {
+      const site = await getSiteById(db, siteHeader);
+      if (site) activeSiteId = site.id;
+    }
     // via:"web" — session writes are human; the MCP server tags its ctx "mcp".
     // Drives provenance (content_version.created_via) + the agent-review flag.
-    req.accessCtx = { ...(await getAccessContext(db, sess.userId)), via: "web" };
+    req.accessCtx = { ...(await getAccessContext(db, sess.userId, activeSiteId)), via: "web" };
   });
 
   // Unified error handling.
