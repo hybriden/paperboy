@@ -85,6 +85,23 @@ describe("multisite phase 3 — site routes + active-site header", () => {
     }
   });
 
+  it("PATCH /manage/sites/:id renames a site (admin only); slug stays unique", async () => {
+    const created = (await s.app.inject({ method: "POST", url: "/api/v1/manage/sites", headers: authHeaders(admin), payload: { slug: "brand-r", name: "Brand R", defaultLocale: "en" } })).json();
+
+    // Editor (no user.manage) is forbidden.
+    const forbidden = await s.app.inject({ method: "PATCH", url: `/api/v1/manage/sites/${created.id}`, headers: authHeaders(ed), payload: { name: "Hacked" } });
+    expect(forbidden.statusCode).toBe(403);
+
+    // Rename name + slug.
+    const renamed = await s.app.inject({ method: "PATCH", url: `/api/v1/manage/sites/${created.id}`, headers: authHeaders(admin), payload: { name: "Brand Renamed", slug: "brand-renamed" } });
+    expect(renamed.statusCode, renamed.body).toBe(200);
+    expect(renamed.json()).toMatchObject({ id: created.id, name: "Brand Renamed", slug: "brand-renamed" });
+
+    // Slug collision with an existing site is rejected.
+    const clash = await s.app.inject({ method: "PATCH", url: `/api/v1/manage/sites/${created.id}`, headers: authHeaders(admin), payload: { slug: "default" } });
+    expect(clash.statusCode).toBe(409);
+  });
+
   it("an unknown x-paperboy-site header falls back to the Default site (never 500)", async () => {
     const r = await s.app.inject({
       method: "GET",

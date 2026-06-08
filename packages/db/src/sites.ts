@@ -65,3 +65,38 @@ export async function createSite(
   await db.insert(site).values({ id, slug, name, defaultLocale: input.defaultLocale, active: true });
   return (await getSiteById(db, id))!;
 }
+
+/**
+ * Rename a site (display name and/or slug). Cross-site admin (user.manage).
+ * Targets an explicit siteId so any site can be renamed from the Sites panel
+ * without switching the active site. Slug stays unique + URL-safe.
+ */
+export async function renameSite(
+  db: Database,
+  ctx: AccessContext,
+  siteId: string,
+  input: { name?: string; slug?: string },
+): Promise<Site> {
+  requirePermission(ctx, "user.manage");
+  const existing = await getSiteById(db, siteId);
+  if (!existing) throw Errors.notFound("Site");
+
+  const patch: Partial<typeof site.$inferInsert> = {};
+  if (input.name !== undefined) {
+    const name = input.name.trim();
+    if (!name) throw Errors.badRequest("Site name is required");
+    patch.name = name;
+  }
+  if (input.slug !== undefined) {
+    const slug = input.slug.trim().toLowerCase();
+    if (!SLUG_RE.test(slug)) {
+      throw Errors.badRequest("Site slug must be lowercase letters, numbers and single hyphens (e.g. 'brand-a')");
+    }
+    const clash = await getSiteBySlug(db, slug);
+    if (clash && clash.id !== siteId) throw Errors.conflict(`A site with slug '${slug}' already exists`);
+    patch.slug = slug;
+  }
+  if (Object.keys(patch).length === 0) return existing; // nothing to change
+  await db.update(site).set(patch).where(eq(site.id, siteId));
+  return (await getSiteById(db, siteId))!;
+}
