@@ -11,6 +11,7 @@ import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
+import { getDefaultSite } from "./sites.js";
 import { auditLog, deliveryKey, session, userRole, userScope, users } from "./schema.js";
 import {
   decryptSecret,
@@ -232,16 +233,28 @@ export async function getRoles(db: Database, userId: string): Promise<RoleName[]
   return rows.map((r) => r.role as RoleName);
 }
 
-export async function getAccessContext(db: Database, userId: string): Promise<AccessContext> {
+export async function getAccessContext(
+  db: Database,
+  userId: string,
+  activeSiteId?: string,
+): Promise<AccessContext> {
   const roles = await getRoles(db, userId);
   const permissions = new Set<Permission>();
   for (const role of roles) for (const p of ROLE_PERMISSIONS[role] ?? []) permissions.add(p);
-  // Admin/Editor/Viewer operate site-wide; Author is restricted to its sections.
+  // Admin/Editor/Viewer operate site-wide (within the active site); Author is
+  // restricted to its sections.
   const siteWide = roles.some((r) => r === "Admin" || r === "Editor" || r === "Viewer");
-  const scopeRows = await db.select().from(userScope).where(eq(userScope.userId, userId));
+  // The active site: an explicit choice (admin site switcher, Phase 3) or the
+  // Default site. Section scopes are per-site, so only this site's scopes apply.
+  const siteId = activeSiteId ?? (await getDefaultSite(db)).id;
+  const scopeRows = await db
+    .select()
+    .from(userScope)
+    .where(and(eq(userScope.userId, userId), eq(userScope.siteId, siteId)));
   return {
     userId,
     permissions: [...permissions],
+    siteId,
     siteWide,
     sections: scopeRows.map((s) => s.sectionId),
   };
