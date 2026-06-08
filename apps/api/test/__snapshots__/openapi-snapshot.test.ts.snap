@@ -589,6 +589,18 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "GET /api/v1/manage/sites": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "activeSiteId",
+      "sites",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "GET /api/v1/manage/stock/config": {
     "requestBodyRequired": [],
     "requiredParams": [],
@@ -1262,6 +1274,26 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "requiredParams": [],
     "response200Props": [
       "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/sites": {
+    "requestBodyRequired": [
+      "defaultLocale",
+      "name",
+      "slug",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "active",
+      "createdAt",
+      "defaultLocale",
+      "id",
+      "name",
+      "slug",
     ],
     "summary": null,
     "tags": [
