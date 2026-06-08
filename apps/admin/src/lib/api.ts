@@ -220,13 +220,13 @@ export const api = {
   blocks: (signal?: AbortSignal) => request<BlockSummary[]>("GET", "/manage/blocks", undefined, signal),
   search: (q: string, signal?: AbortSignal) =>
     request<SearchResult[]>("GET", `/manage/content/search?q=${encodeURIComponent(q)}`, undefined, signal),
-  pages: (signal?: AbortSignal) =>
-    request<{ documentId: string; name: string; parentId: string | null; type: string }[]>("GET", "/manage/pages", undefined, signal),
+  pages: (signal?: AbortSignal, siteOverride?: string) =>
+    request<{ documentId: string; name: string; parentId: string | null; type: string }[]>("GET", "/manage/pages", undefined, signal, siteOverride),
 
   // site config (start page)
   site: (signal?: AbortSignal) => request<{ startPageId: string | null; previewBaseUrl: string }>("GET", "/manage/site", undefined, signal),
-  setStartPage: (documentId: string | null) =>
-    request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }),
+  setStartPage: (documentId: string | null, siteOverride?: string) =>
+    request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }, undefined, siteOverride),
   setPreviewUrl: (url: string, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/preview-url", { url }, undefined, siteOverride),
   aiConfig: (signal?: AbortSignal) =>
@@ -394,6 +394,7 @@ export const api = {
   // multisite
   sites: () => request<{ sites: SiteRow[]; activeSiteId: string }>("GET", "/manage/sites"),
   createSite: (body: { slug: string; name: string; defaultLocale: string }) => request<SiteRow>("POST", "/manage/sites", body),
+  renameSite: (id: string, body: { name?: string; slug?: string }) => request<SiteRow>("PATCH", `/manage/sites/${id}`, body),
 };
 
 export interface SiteRow {

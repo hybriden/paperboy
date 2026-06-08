@@ -708,6 +708,26 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "PATCH /api/v1/manage/sites/{id}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [
+      "active",
+      "createdAt",
+      "defaultLocale",
+      "id",
+      "name",
+      "previewBaseUrl",
+      "slug",
+      "startPageId",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "POST /api/v1/ai/agent": {
     "requestBodyRequired": [
       "brief",
