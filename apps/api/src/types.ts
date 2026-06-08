@@ -19,6 +19,8 @@ declare module "fastify" {
     sessionToken: string | null;
     sessionCsrf: string | null;
     perspective: Perspective | null;
+    /** The site a delivery request is scoped to (from its per-site key). */
+    deliverySiteId: string | null;
   }
 }
 

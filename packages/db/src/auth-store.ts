@@ -439,11 +439,15 @@ export async function renameDeliveryKey(db: Database, ctx: AccessContext, id: nu
   if (!updated[0]) throw Errors.notFound("Delivery key");
 }
 
-/** Returns the key's perspective-bearing type, or null if invalid/revoked. */
+/**
+ * Returns the key's perspective-bearing type AND the site it's scoped to (D1:
+ * per-site delivery keys), or null if invalid/revoked. The site narrows EVERY
+ * delivery read to that key's site — the structural no-leak boundary across sites.
+ */
 export async function verifyDeliveryKey(
   db: Database,
   key: string,
-): Promise<"public" | "preview" | null> {
+): Promise<{ type: "public" | "preview"; siteId: string } | null> {
   if (!key) return null;
   const rows = await db
     .select()
@@ -452,7 +456,7 @@ export async function verifyDeliveryKey(
     .limit(1);
   const row = rows[0];
   if (!row || row.revokedAt) return null;
-  return row.type as "public" | "preview";
+  return { type: row.type as "public" | "preview", siteId: row.siteId };
 }
 
 /* --------------------------------- audit ---------------------------------- */
