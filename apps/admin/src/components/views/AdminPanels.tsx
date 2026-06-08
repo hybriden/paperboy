@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import type { ContentTypeDef, RoleName } from "@paperboy/shared";
-import { api, type ManagedUser } from "../../lib/api.js";
+import { api, type ManagedUser, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
@@ -300,38 +300,78 @@ export function SitePanel() {
   const qc = useQueryClient();
   const { user } = useUser();
   const canManageSites = user.permissions.includes("user.manage");
-  const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
   const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites() });
-  const [edited, setEdited] = useState<string | null>(null);
-  const value = edited ?? site.data?.previewBaseUrl ?? "";
-  const save = useMutation({
-    mutationFn: () => api.setPreviewUrl(value.trim()),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["site"] });
-      setEdited(null);
-      toast.success("Preview URL saved", "The editor preview for this site now loads from here.");
-    },
-    onError: (e) => toast.error("Couldn’t save", (e as Error).message),
-  });
 
   const activeId = sites.data?.activeSiteId;
-  const activeName = sites.data?.sites.find((x) => x.id === activeId)?.name ?? "Default site";
   const activeDefaultLocale = sites.data?.sites.find((x) => x.id === activeId)?.defaultLocale ?? "en";
 
-  // New-site form (admins only).
+  // New-site form (admins only). Create then leave it for the user to configure.
   const [newName, setNewName] = useState("");
   const slug = newName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   const create = useMutation({
     mutationFn: () => api.createSite({ slug, name: newName.trim(), defaultLocale: activeDefaultLocale }),
-    onSuccess: (created) => switchSite(created.id),
+    onSuccess: (created) => {
+      qc.invalidateQueries({ queryKey: ["sites"] });
+      setNewName("");
+      toast.success("Site created", `“${created.name}” — set its preview URL below, or make it active to add content.`);
+    },
     onError: (e) => toast.error("Couldn’t create site", (e as Error).message),
   });
 
   return (
-    <PanelShell title="Site" hint={`Per-site setup for “${activeName}”. Switch the active site with the header dropdown.`}>
-      <form className="flex flex-wrap items-end gap-3 p-4" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+    <PanelShell title="Sites" hint="Each site has its own preview URL and delivery keys. Edit any site here; “active” is the site the content editor works in.">
+      <div className="flex flex-col divide-y divide-line">
+        {sites.data?.sites.map((s) => (
+          <SiteCard key={s.id} site={s} active={s.id === activeId} />
+        ))}
+      </div>
+      {canManageSites && (
+        <form className="flex flex-wrap items-end gap-3 border-t border-line p-4" onSubmit={(e) => { e.preventDefault(); if (slug) create.mutate(); }}>
+          <label className="text-sm" style={{ minWidth: 240 }}>
+            <span className="field-label">Add a site</span>
+            <input className="field-input" placeholder="Brand B" value={newName} onChange={(e) => setNewName(e.target.value)} />
+            {newName.trim() && <span className="mt-1 block text-xs text-muted">slug: <code>/{slug || "—"}</code></span>}
+          </label>
+          <button className="btn-primary" disabled={create.isPending || !slug}>{create.isPending ? "Creating…" : "Create site"}</button>
+        </form>
+      )}
+    </PanelShell>
+  );
+}
+
+/** One site row in the Sites panel: identity + active/switch + inline preview URL
+ *  editor that saves to THIS site (per-call x-paperboy-site override), without
+ *  changing the admin's working site. */
+function SiteCard({ site, active }: { site: SiteRow; active: boolean }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [edited, setEdited] = useState<string | null>(null);
+  const value = edited ?? site.previewBaseUrl ?? "";
+  const dirty = value.trim() !== (site.previewBaseUrl ?? "");
+  const save = useMutation({
+    mutationFn: () => api.setPreviewUrl(value.trim(), site.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sites"] });
+      qc.invalidateQueries({ queryKey: ["site"] });
+      setEdited(null);
+      toast.success("Preview URL saved", site.name);
+    },
+    onError: (e) => toast.error("Couldn’t save", (e as Error).message),
+  });
+  return (
+    <div className="p-4">
+      <div className="flex items-center gap-2">
+        <span className="font-medium">{site.name}</span>
+        <code className="text-xs text-muted">/{site.slug}</code>
+        {active ? (
+          <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent">active</span>
+        ) : (
+          <button type="button" className="text-xs text-accent hover:underline" onClick={() => switchSite(site.id)}>Make active</button>
+        )}
+      </div>
+      <form className="mt-2 flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); if (dirty) save.mutate(); }}>
         <label className="grow text-sm" style={{ minWidth: 320 }}>
-          <span className="field-label">Preview base URL — {activeName}</span>
+          <span className="field-label">Preview base URL</span>
           <input
             className="field-input"
             type="url"
@@ -341,39 +381,12 @@ export function SitePanel() {
             onChange={(e) => setEdited(e.target.value)}
           />
           <span className="mt-1 block text-xs text-muted">
-            Preview opens <code>{(value || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Each site has its own origin. Empty = fall back to the admin host on :8092.
+            Preview opens <code>{(value || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Empty = fall back to the admin host on :8092.
           </span>
         </label>
-        <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
+        <button className="btn-primary" disabled={save.isPending || !dirty}>{save.isPending ? "Saving…" : "Save"}</button>
       </form>
-
-      <div className="border-t border-line p-4">
-        <h3 className="field-label mb-2">Sites</h3>
-        <ul className="mb-3 flex flex-col gap-1">
-          {sites.data?.sites.map((s) => (
-            <li key={s.id} className="flex items-center gap-3 text-sm">
-              <span className="font-medium">{s.name}</span>
-              <code className="text-xs text-muted">/{s.slug}</code>
-              {s.id === activeId ? (
-                <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent">active</span>
-              ) : (
-                <button type="button" className="text-xs text-accent hover:underline" onClick={() => switchSite(s.id)}>Switch</button>
-              )}
-            </li>
-          ))}
-        </ul>
-        {canManageSites && (
-          <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); if (slug) create.mutate(); }}>
-            <label className="text-sm" style={{ minWidth: 240 }}>
-              <span className="field-label">New site name</span>
-              <input className="field-input" placeholder="Brand B" value={newName} onChange={(e) => setNewName(e.target.value)} />
-              {newName.trim() && <span className="mt-1 block text-xs text-muted">slug: <code>/{slug || "—"}</code></span>}
-            </label>
-            <button className="btn-primary" disabled={create.isPending || !slug}>{create.isPending ? "Creating…" : "Create site"}</button>
-          </form>
-        )}
-      </div>
-    </PanelShell>
+    </div>
   );
 }
 
