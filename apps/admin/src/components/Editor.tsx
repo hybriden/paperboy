@@ -12,6 +12,7 @@ import { Panel, PanelGroup } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { postCaret } from "../lib/caret.js";
+import { applyRichTextStrings, collectRichTextStrings } from "../lib/richtext-strings.js";
 import { pickTranslateSource } from "../lib/translate-offer.js";
 import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
@@ -413,35 +414,52 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     mutationFn: async () => {
       const src = sourceData;
       if (!src) throw new Error("No source content to translate from");
-      // Collect all translatable strings (name + text/markdown fields) and send
-      // them in ONE request — one /assist call per field would trip the rate limit
-      // on a large page (e.g. the Frontpage's ~34 fields).
-      const keys: string[] = [];
+      // Collect all translatable strings — name + text/markdown fields AND the
+      // text inside richtext fields (an article's `body` lives there; copying it
+      // verbatim left the page untranslated, 2026-06-08) — and send them in ONE
+      // request (one call per field would trip the rate limit on a large page).
+      // Each segment records how many strings it owns so the batch slices back.
+      type Seg = { kind: "name" } | { kind: "text"; field: string } | { kind: "rich"; field: string; count: number };
+      const segs: Seg[] = [];
       const texts: string[] = [];
       if (src.name?.trim()) {
-        keys.push("__name");
+        segs.push({ kind: "name" });
         texts.push(src.name);
       }
       for (const f of type?.fields ?? []) {
         const v = src.data[f.name];
         if ((f.type === "text" || f.type === "markdown") && typeof v === "string" && v.trim()) {
-          keys.push(f.name);
+          segs.push({ kind: "text", field: f.name });
           texts.push(v);
+        } else if (f.type === "richtext" && v && typeof v === "object") {
+          const strings = collectRichTextStrings(v);
+          if (strings.length) {
+            segs.push({ kind: "rich", field: f.name, count: strings.length });
+            texts.push(...strings);
+          }
         }
       }
       const { results, provider } = texts.length
         ? await api.aiTranslate(texts, locale)
         : { results: [] as string[], provider: "fallback" as const };
-      const translated = new Map<string, string>();
-      keys.forEach((k, i) => translated.set(k, results[i] ?? texts[i]!));
-      // Translated text fields; every other field copied from the source as a start.
+      // Start from a verbatim copy (untranslatable fields: contentArea, refs,
+      // images, booleans…), then overwrite each translated segment in order.
       const data: Record<string, unknown> = {};
-      for (const f of type?.fields ?? []) {
-        const v = src.data[f.name];
-        if (v === undefined) continue;
-        data[f.name] = translated.has(f.name) ? translated.get(f.name)! : v;
+      for (const f of type?.fields ?? []) if (src.data[f.name] !== undefined) data[f.name] = src.data[f.name];
+      let name = src.name;
+      let i = 0;
+      for (const seg of segs) {
+        if (seg.kind === "name") {
+          name = results[i] ?? texts[i]!;
+          i += 1;
+        } else if (seg.kind === "text") {
+          data[seg.field] = results[i] ?? texts[i]!;
+          i += 1;
+        } else {
+          data[seg.field] = applyRichTextStrings(src.data[seg.field], results.slice(i, i + seg.count));
+          i += seg.count;
+        }
       }
-      const name = translated.get("__name") ?? src.name;
       return { name, slug: src.slug, data, usedFallback: provider === "fallback" };
     },
     onSuccess: (res) => {
