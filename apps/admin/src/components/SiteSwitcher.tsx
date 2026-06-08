@@ -29,26 +29,14 @@ export function SiteSwitcher() {
     window.location.href = "/edit";
   }
 
-  async function createSite() {
-    const name = window.prompt("New site name (e.g. \"Brand B\"):")?.trim();
-    if (!name) return;
-    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-    const defaultLocale = data!.activeSiteId ? (sites.find((s) => s.id === active)?.defaultLocale ?? "en") : "en";
-    try {
-      const site = await api.createSite({ slug, name, defaultLocale });
-      switchTo(site.id);
-    } catch (e) {
-      window.alert(`Could not create site: ${e instanceof Error ? e.message : "unknown error"}`);
-    }
-  }
-
   return (
     <label className="flex items-center gap-1.5" title="Active site">
       <span className="sr-only">Active site</span>
       <select
         value={active}
         onChange={(e) => {
-          if (e.target.value === NEW_SITE) void createSite();
+          // Creation lives in Settings → Site (name + slug + default locale).
+          if (e.target.value === NEW_SITE) window.location.href = "/settings#site";
           else if (e.target.value !== active) switchTo(e.target.value);
         }}
         className="max-w-[160px] truncate rounded-[var(--radius)] border border-chrome-border bg-chrome-light/60 px-2 py-1.5 text-sm text-chrome-fg hover:bg-chrome-light focus:outline-none"
