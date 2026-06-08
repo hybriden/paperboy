@@ -219,6 +219,23 @@ export const ReferenceValue = z.object({
 export type ReferenceValue = z.infer<typeof ReferenceValue>;
 
 /**
+ * A TipTap richtext document. The coercion chokepoint guarantees this exact
+ * top-level shape for EVERY richtext write — a plain string is parsed into a doc
+ * (markdownToTiptapDoc) and any doc-ish value is normalized to the editor schema
+ * (sanitizeRichTextDoc), both of which return `{type:"doc", content:[…]}`. So a
+ * value that arrives here NOT shaped like a doc never went through that path: it
+ * is a foreign richtext dialect (Editor.js/Slate/ProseMirror-state) or scalar
+ * garbage that the TipTap editor renders BLANK. Validating it as `z.record`
+ * (any object) is what let the 2026-06-08 "malformed body" class persist
+ * silently; require the real doc shape so it is REJECTED with the format hint
+ * instead. Node-level validity is the sanitizer's job (and is test-pinned); this
+ * only fences the top-level contract. */
+export const RichTextDoc = z
+  .object({ type: z.literal("doc"), content: z.array(z.record(z.unknown())) })
+  .passthrough();
+export type RichTextDoc = z.infer<typeof RichTextDoc>;
+
+/**
  * Build a Zod object schema for a content type's `data` payload from its field
  * defs. `strict` = enforce required fields (used at publish time); when false,
  * required fields may be missing (draft save).
@@ -235,7 +252,7 @@ export function dataSchemaFor(type: ContentTypeDef, strict: boolean): z.ZodTypeA
         s = applyStringValidation(z.string(), f, strict);
         break;
       case "richtext":
-        s = z.record(z.unknown()); // TipTap JSON document
+        s = RichTextDoc; // a real TipTap doc, not just any object — see RichTextDoc
         break;
       case "boolean":
         s = z.boolean();
@@ -399,7 +416,7 @@ function tiptapToMarkdown(doc: unknown): string {
 }
 
 /** TipTap doc → plain text, blocks separated (single-line `text` fields). */
-function tiptapToPlainText(doc: unknown): string {
+export function tiptapToPlainText(doc: unknown): string {
   const d = doc as TtNode;
   return ttBlocks(Array.isArray(d?.content) ? d.content : [d as TtNode], false).join("\n").trim();
 }
