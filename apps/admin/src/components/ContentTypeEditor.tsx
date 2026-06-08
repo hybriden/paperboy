@@ -31,6 +31,21 @@ interface DraftField {
 }
 
 const SEO_ROLES = ["title", "description", "image", "datePublished", "dateModified", "author", "keywords"] as const;
+const SEO_ROLE_LABELS: Record<(typeof SEO_ROLES)[number], string> = {
+  title: "Title",
+  description: "Description",
+  image: "Image (Open Graph)",
+  datePublished: "Published date",
+  dateModified: "Modified date",
+  author: "Author",
+  keywords: "Keywords",
+};
+/** Field types that can sensibly fill each SEO role (keeps the picker focused). */
+function seoEligible(role: (typeof SEO_ROLES)[number], t: FieldType): boolean {
+  if (role === "image") return t === "image";
+  if (role === "datePublished" || role === "dateModified") return t === "datetime";
+  return t === "text" || t === "markdown" || t === "richtext" || t === "select";
+}
 
 // Common page-level schema.org @types for the dropdown. The stored value stays
 // a free string (MCP can set any @type); this is just discoverable admin UX.
@@ -197,6 +212,11 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
   const patchField = (key: string, patch: Partial<DraftField>) =>
     setFields((prev) => prev.map((f) => (f._key === key ? { ...f, ...patch } : f)));
   const removeField = (key: string) => setFields((prev) => prev.filter((f) => f._key !== key));
+  // SEO mapping (one focused card): at most one field per role. Assigning a role
+  // to a field clears it from any other (the contract enforces one-per-role).
+  const fieldForRole = (role: NonNullable<DraftField["seoRole"]>) => fields.find((f) => f.seoRole === role)?._key ?? "";
+  const assignSeoRole = (role: NonNullable<DraftField["seoRole"]>, key: string) =>
+    setFields((prev) => prev.map((f) => (f._key === key ? { ...f, seoRole: role } : f.seoRole === role ? { ...f, seoRole: undefined } : f)));
   const moveField = (key: string, dir: -1 | 1) =>
     setFields((prev) => {
       const i = prev.findIndex((f) => f._key === key);
@@ -291,18 +311,6 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
             <label className="field-label" htmlFor="ct-icon">Icon</label>
             <IconPicker id="ct-icon" value={icon} onChange={setIcon} />
           </div>
-          {kind === "page" && (
-            <div>
-              <label className="field-label" htmlFor="ct-schema">schema.org type</label>
-              <select id="ct-schema" className="field-input" value={schemaType}
-                onChange={(e) => setSchemaType(e.target.value)} aria-label="schema.org type">
-                <option value="">Auto (derived from the type)</option>
-                {/* Preserve an existing custom value that isn't in the curated list. */}
-                {schemaType && !(SCHEMA_TYPES as readonly string[]).includes(schemaType) && <option value={schemaType}>{schemaType} (custom)</option>}
-                {SCHEMA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </div>
-          )}
           <div className="col-span-2">
             <label className="field-label" htmlFor="ct-desc">Description</label>
             <input id="ct-desc" className="field-input" value={description} onChange={(e) => setDescription(e.target.value)} />
@@ -349,14 +357,6 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                   </select>
                 </label>
                 {f.delivery === "public" && <span className="rounded bg-draft/10 px-1.5 py-0.5 text-[11px] text-draft">exposed to public API</span>}
-                <label className="inline-flex items-center gap-1.5 text-sm" title="Maps this field into the delivered SEO/JSON-LD contract">
-                  <span className="text-muted">SEO</span>
-                  <select className="rounded border border-line bg-panel px-1.5 py-0.5 text-xs text-fg" value={f.seoRole ?? ""} aria-label="Field SEO role"
-                    onChange={(e) => patchField(f._key, { seoRole: (e.target.value || undefined) as DraftField["seoRole"] })}>
-                    <option value="">—</option>
-                    {SEO_ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
-                  </select>
-                </label>
                 <div className="ml-auto flex items-center gap-0.5">
                   <button className="rounded p-1 text-muted hover:bg-line" aria-label="Move field up" onClick={() => moveField(f._key, -1)}><Icon.Up width={14} height={14} /></button>
                   <button className="rounded p-1 text-muted hover:bg-line" aria-label="Move field down" onClick={() => moveField(f._key, 1)}><Icon.Down width={14} height={14} /></button>
@@ -384,6 +384,40 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
             </div>
           ))}
         </div>
+
+        {kind === "page" && (
+          <div className="mt-4 rounded-[var(--radius)] border border-line bg-canvas/40 p-3">
+            <h4 className="text-[13px] font-bold uppercase tracking-wide text-muted">SEO &amp; schema.org</h4>
+            <p className="mb-3 mt-1 text-xs text-muted">
+              Optional. Delivery builds the SEO / JSON-LD block automatically from field-name conventions — set these only to
+              override that guess (e.g. force a schema.org type, or point a role at a differently-named field).
+            </p>
+            <label className="mb-3 block text-sm" style={{ maxWidth: 280 }}>
+              <span className="field-label">schema.org @type</span>
+              <select className="field-input" value={schemaType} onChange={(e) => setSchemaType(e.target.value)} aria-label="schema.org type">
+                <option value="">Auto (derived from the type)</option>
+                {schemaType && !(SCHEMA_TYPES as readonly string[]).includes(schemaType) && <option value={schemaType}>{schemaType} (custom)</option>}
+                {SCHEMA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </label>
+            <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+              {SEO_ROLES.map((role) => {
+                const current = fieldForRole(role);
+                const opts = fields.filter((f) => f.name.trim() && (seoEligible(role, f.type) || f._key === current));
+                return (
+                  <label key={role} className="flex items-center justify-between gap-2 text-sm">
+                    <span className="text-muted">{SEO_ROLE_LABELS[role]}</span>
+                    <select className="field-input py-1 text-xs" style={{ maxWidth: 200 }} value={current}
+                      onChange={(e) => assignSeoRole(role, e.target.value)} aria-label={`SEO ${role} field`}>
+                      <option value="">Auto (by field name)</option>
+                      {opts.map((f) => <option key={f._key} value={f._key}>{f.displayName || f.name}</option>)}
+                    </select>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         {errors.length > 0 && (
           <ul role="alert" className="mt-3 list-disc rounded border border-danger/40 bg-danger/10 px-5 py-2 text-xs text-danger">
