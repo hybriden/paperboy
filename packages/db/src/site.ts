@@ -1,14 +1,17 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, loadAuthorized, requirePermission } from "./scope.js";
-import { contentItem, siteSetting } from "./schema.js";
+import { contentItem, site, siteSetting } from "./schema.js";
 import { decryptSecret, encryptSecret } from "./totp.js";
 
-/** Site settings. First setting: the START PAGE served at "/". */
+/**
+ * Site settings. The preview origin + start page are PER-SITE (on the `site`
+ * entity, migration 0013) — scoped to the active site (ctx.siteId / a passed
+ * siteId). AI key/model + agentReview are instance-global (site_setting). Don't
+ * add a per-site path that ignores the active site.
+ */
 
-const START_PAGE_KEY = "startPage";
-const PREVIEW_URL_KEY = "previewBaseUrl";
 const AI_API_KEY = "aiApiKey";
 const AI_MODEL_KEY = "aiModel";
 
@@ -24,46 +27,51 @@ async function putSetting(db: Database, key: string, value: unknown): Promise<vo
     .onConflictDoUpdate({ target: siteSetting.key, set: { value: value as object, updatedAt: new Date() } });
 }
 
-/** The documentId of the page served at "/" (or null if unset/cleared). */
-export async function getStartPageId(db: Database): Promise<string | null> {
-  const v = await getSetting<{ documentId: string | null }>(db, START_PAGE_KEY);
-  return v?.documentId ?? null;
+/** The documentId of the page served at "/" for a site (or null if unset). */
+export async function getStartPageId(db: Database, siteId: string): Promise<string | null> {
+  const rows = await db.select({ id: site.startPageId }).from(site).where(eq(site.id, siteId)).limit(1);
+  return rows[0]?.id ?? null;
 }
 
-/** Set (or clear, with null) the start page. Must be an existing, in-scope page. */
+/** Set (or clear, with null) the ACTIVE site's start page. Must be an in-site page. */
 export async function setStartPage(db: Database, ctx: AccessContext, documentId: string | null): Promise<void> {
   requirePermission(ctx, "content.publish");
   if (documentId) {
-    const item = await loadAuthorized(db, ctx, documentId); // scope-checks + ensures it exists
+    const item = await loadAuthorized(db, ctx, documentId); // confines to the active site + scope
     if (item.kind !== "page") throw Errors.badRequest("Only a page can be the start page");
   }
-  await putSetting(db, START_PAGE_KEY, { documentId });
+  await db.update(site).set({ startPageId: documentId }).where(eq(site.id, ctx.siteId));
 }
 
-/** The base URL of the front end used to build preview links (or "" if unset). */
-export async function getPreviewBaseUrl(db: Database): Promise<string> {
-  const v = await getSetting<{ url: string }>(db, PREVIEW_URL_KEY);
-  return v?.url ?? "";
+/** The front-end origin used to build preview links for a site (or "" if unset). */
+export async function getPreviewBaseUrl(db: Database, siteId: string): Promise<string> {
+  const rows = await db.select({ url: site.previewBaseUrl }).from(site).where(eq(site.id, siteId)).limit(1);
+  return rows[0]?.url ?? "";
 }
 
-/** Set (or clear, with "") the preview base URL (the front-end origin). */
+/** Set (or clear, with "") the ACTIVE site's preview base URL. */
 export async function setPreviewBaseUrl(db: Database, ctx: AccessContext, url: string): Promise<void> {
   requirePermission(ctx, "content.publish");
   const trimmed = url.trim().replace(/\/+$/, ""); // drop trailing slash
   if (trimmed && !/^https?:\/\/[^\s]+$/i.test(trimmed)) {
     throw Errors.badRequest("Preview URL must be a full http(s):// URL");
   }
-  await putSetting(db, PREVIEW_URL_KEY, { url: trimmed });
+  await db.update(site).set({ previewBaseUrl: trimmed || null }).where(eq(site.id, ctx.siteId));
 }
 
-/** Read-only site config surface for the admin (start page id + preview URL). */
+/** Read-only site config surface for the admin (the ACTIVE site's start page + preview URL). */
 export async function getSiteConfig(db: Database, ctx: AccessContext): Promise<{ startPageId: string | null; previewBaseUrl: string }> {
   requirePermission(ctx, "content.read");
-  const previewBaseUrl = await getPreviewBaseUrl(db);
-  // If the configured start page was trashed/deleted, report null so the UI/web fall back.
-  const id = await getStartPageId(db);
+  const previewBaseUrl = await getPreviewBaseUrl(db, ctx.siteId);
+  // If the configured start page was trashed/deleted/moved out of the site, report
+  // null so the UI/web fall back.
+  const id = await getStartPageId(db, ctx.siteId);
   if (!id) return { startPageId: null, previewBaseUrl };
-  const rows = await db.select({ id: contentItem.id }).from(contentItem).where(eq(contentItem.documentId, id)).limit(1);
+  const rows = await db
+    .select({ id: contentItem.id })
+    .from(contentItem)
+    .where(and(eq(contentItem.documentId, id), eq(contentItem.siteId, ctx.siteId)))
+    .limit(1);
   return { startPageId: rows[0] ? id : null, previewBaseUrl };
 }
 

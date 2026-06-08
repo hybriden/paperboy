@@ -427,7 +427,7 @@ tool("delete_user", "Delete a user (admin).", { id: z.string() },
   async ({ id }) => { await adminDeleteUser(db, ctx, id); return { ok: true }; });
 tool("list_delivery_keys", "List delivery API keys (admin).", {}, () => listDeliveryKeys(db, ctx));
 tool("create_delivery_key", "Create a delivery API key (admin). Returns the secret once.", { name: z.string(), type: z.enum(["public", "preview"]) },
-  ({ name, type }) => { need("deliverykey.manage"); return createDeliveryKey(db, name, type); });
+  ({ name, type }) => { need("deliverykey.manage"); return createDeliveryKey(db, ctx.siteId, name, type); });
 tool("rename_delivery_key", "Rename a delivery API key (admin).", { id: z.number(), name: z.string().min(1) },
   async ({ id, name }) => { await renameDeliveryKey(db, ctx, id, name); return { ok: true }; });
 tool("revoke_delivery_key", "Revoke a delivery API key by id (admin).", { id: z.number() },
