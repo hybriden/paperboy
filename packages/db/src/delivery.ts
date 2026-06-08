@@ -43,7 +43,8 @@ class DeliveryCtx {
 
   async asset(documentId: string): Promise<typeof asset.$inferSelect | null> {
     if (this.assets.has(documentId)) return this.assets.get(documentId)!;
-    const row = await getAssetRow(this.db, documentId);
+    // Per-site media (D2): an image referencing a cross-site asset resolves to null.
+    const row = await getAssetRow(this.db, documentId, this.siteId);
     this.assets.set(documentId, row);
     return row;
   }
