@@ -354,7 +354,7 @@ async function inspectDoc(mcp, documentId, localeCodes) {
     if (d.parentId !== undefined) parentId = d.parentId;
     if ((d.versionNumber ?? 0) > 0) variants[code] = d;
   }
-  return { type, parentId, variants };
+  return { documentId, type, parentId, variants };
 }
 
 /** find-or-create a list page (by name) that lists `listedType`. Setup only. */
@@ -407,6 +407,17 @@ async function universalInvariants(mcp, info, parents) {
     typeof v === "string" ? v.trim().length > 0 : Array.isArray(v) ? v.length > 0 : v != null && typeof v === "object",
   );
   add("complete (has content)", hasContent, hasContent ? `${Object.keys(data).length} fields` : "all fields empty");
+
+  // SEO contract — a published page must deliver a complete seo block (real
+  // title + a schema.org @type). Read from DELIVERY (where seo is computed),
+  // published perspective.
+  if (publishedVariants.length > 0) {
+    const loc = publishedVariants[0].locale;
+    const delivered = await mcp.call("delivery_get_by_id", { documentId: info.documentId, locale: loc, preview: false });
+    const seo = delivered.json && typeof delivered.json === "object" ? delivered.json.seo : null;
+    const ok = Boolean(seo && typeof seo.title === "string" && seo.title.length > 0 && seo.jsonLd && seo.jsonLd["@type"]);
+    add("delivers a complete SEO block (title + schema.org @type)", ok, ok ? `@type=${seo.jsonLd["@type"]}` : "missing/empty seo");
+  }
 
   // visible where intended — under a list page, type must equal listedType.
   if (info.parentId) {
