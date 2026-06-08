@@ -6,11 +6,13 @@ import { createDb } from "./client.js";
 import { migrate } from "./migrate.js";
 import { createUser } from "./auth-store.js";
 import {
+  DEFAULT_SITE_ID,
   contentItem,
   contentType,
   contentVersion,
   deliveryKey,
   locale,
+  site,
   siteSetting,
 } from "./schema.js";
 import { sql } from "drizzle-orm";
@@ -152,7 +154,7 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
   // Clean slate (MVP seed). Webhooks included: stale subscriptions surviving a
   // reseed would fire at long-dead URLs (and pile up across test runs).
   await db.execute(
-    sql`TRUNCATE content_item, content_version, content_reference, content_type, locale, users, user_role, user_scope, session, delivery_key, audit_log, asset, site_setting, webhook, webhook_delivery RESTART IDENTITY CASCADE`,
+    sql`TRUNCATE site, content_item, content_version, content_reference, content_type, locale, users, user_role, user_scope, session, delivery_key, audit_log, asset, site_setting, webhook, webhook_delivery RESTART IDENTITY CASCADE`,
   );
 
   // Locales: English (default), Norwegian (falls back to English).
@@ -160,6 +162,10 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
     { code: "en", displayName: "English", isDefault: true, enabled: true, fallbackLocaleCode: null, sortIndex: 0 },
     { code: "nb", displayName: "Norsk bokmål", isDefault: false, enabled: true, fallbackLocaleCode: "en", sortIndex: 1 },
   ]);
+
+  // The Default site (multisite). All seeded content/keys/assets/scopes belong
+  // to it via the column DEFAULT; the FK needs this row to exist first.
+  await db.insert(site).values({ id: DEFAULT_SITE_ID, slug: "default", name: "Default site", defaultLocale: "en", active: true });
 
   // Content types.
   for (const t of TYPES) {

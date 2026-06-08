@@ -37,6 +37,23 @@ export const locale = pgTable("locale", {
   sortIndex: integer("sort_index").notNull().default(0),
 });
 
+/**
+ * A first-class site (multisite). Content, delivery keys, media and user scopes
+ * are partitioned by `site_id`. Migration 0012 backfills all existing data into
+ * the fixed 'site_default' site (D3), which is also the column DEFAULT so the
+ * single-site write paths keep working untouched. Content types, locales and
+ * users are SHARED across sites (D2); each site has its own default locale.
+ */
+export const DEFAULT_SITE_ID = "site_default";
+export const site = pgTable("site", {
+  id: text("id").primaryKey(), // nanoid (or the fixed 'site_default')
+  slug: text("slug").notNull().unique(), // "default", "brand-a"
+  name: text("name").notNull(),
+  defaultLocale: text("default_locale").notNull(),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const contentItem = pgTable(
   "content_item",
   {
@@ -48,6 +65,8 @@ export const contentItem = pgTable(
     sortIndex: integer("sort_index").notNull().default(0),
     /** Top-level section this item belongs to (for object-level scope/RBAC). */
     sectionId: text("section_id"),
+    /** Owning site (multisite partition). Children inherit the parent's site. */
+    siteId: text("site_id").notNull().default(DEFAULT_SITE_ID),
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -56,6 +75,7 @@ export const contentItem = pgTable(
     parentIdx: index("content_item_parent_idx").on(t.parentId),
     typeIdx: index("content_item_type_idx").on(t.type),
     sectionIdx: index("content_item_section_idx").on(t.sectionId),
+    siteIdx: index("content_item_site_idx").on(t.siteId),
   }),
 );
 
@@ -120,6 +140,8 @@ export const asset = pgTable("asset", {
   sourceMeta: jsonb("source_meta"),
   createdBy: text("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  // Per-site media (D2): assets belong to one site, no cross-brand leakage.
+  siteId: text("site_id").notNull().default(DEFAULT_SITE_ID),
 });
 
 export const users = pgTable("users", {
@@ -155,9 +177,10 @@ export const userScope = pgTable(
     id: serial("id").primaryKey(),
     userId: text("user_id").notNull(),
     sectionId: text("section_id").notNull(), // a top-level content_item.document_id
+    siteId: text("site_id").notNull().default(DEFAULT_SITE_ID), // scope is per-site
   },
   (t) => ({
-    uq: uniqueIndex("user_scope_uq").on(t.userId, t.sectionId),
+    uq: uniqueIndex("user_scope_uq").on(t.userId, t.siteId, t.sectionId),
   }),
 );
 
@@ -178,6 +201,8 @@ export const deliveryKey = pgTable("delivery_key", {
   type: text("type").notNull(), // public | preview
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  // Per-site keys (D1): a delivery key sees only its own site's content.
+  siteId: text("site_id").notNull().default(DEFAULT_SITE_ID),
 });
 
 export const mcpToken = pgTable("mcp_token", {

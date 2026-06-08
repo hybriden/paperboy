@@ -1,5 +1,5 @@
 import type { AssetSourceMeta } from "@paperboy/shared";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
@@ -69,13 +69,19 @@ export async function insertAsset(
     alt: input.alt ?? "",
     sourceMeta: input.sourceMeta ?? null,
     createdBy: ctx.userId,
+    siteId: ctx.siteId, // per-site media (D2)
   });
   return getAssetRecord(db, input.documentId);
 }
 
 export async function listAssets(db: Database, ctx: AccessContext): Promise<AssetRecord[]> {
   requirePermission(ctx, "content.read");
-  const rows = await db.select().from(asset).orderBy(desc(asset.createdAt), desc(asset.id));
+  // Per-site media (D2): only the active site's library.
+  const rows = await db
+    .select()
+    .from(asset)
+    .where(eq(asset.siteId, ctx.siteId))
+    .orderBy(desc(asset.createdAt), desc(asset.id));
   return rows.map(toRecord);
 }
 
@@ -85,9 +91,11 @@ export async function getAssetRecord(db: Database, documentId: string): Promise<
   return toRecord(rows[0]);
 }
 
-/** Raw row (or null) for delivery resolution — no throw, used per-image. */
-export async function getAssetRow(db: Database, documentId: string) {
-  const rows = await db.select().from(asset).where(eq(asset.documentId, documentId)).limit(1);
+/** Raw row (or null) for delivery resolution — no throw, used per-image. When a
+ *  siteId is given (delivery), a cross-site asset resolves to null (D2). */
+export async function getAssetRow(db: Database, documentId: string, siteId?: string) {
+  const where = siteId ? and(eq(asset.documentId, documentId), eq(asset.siteId, siteId)) : eq(asset.documentId, documentId);
+  const rows = await db.select().from(asset).where(where).limit(1);
   return rows[0] ?? null;
 }
 
@@ -98,7 +106,7 @@ export async function updateAssetAlt(
   alt: string,
 ): Promise<AssetRecord> {
   requirePermission(ctx, "content.update");
-  const res = await db.update(asset).set({ alt }).where(eq(asset.documentId, documentId)).returning();
+  const res = await db.update(asset).set({ alt }).where(and(eq(asset.documentId, documentId), eq(asset.siteId, ctx.siteId))).returning();
   if (!res[0]) throw Errors.notFound("Asset");
   return toRecord(res[0]);
 }
@@ -114,7 +122,7 @@ export async function deleteAsset(
   documentId: string,
 ): Promise<{ relativePath: string }> {
   requirePermission(ctx, "content.delete");
-  const res = await db.delete(asset).where(eq(asset.documentId, documentId)).returning({ url: asset.url });
+  const res = await db.delete(asset).where(and(eq(asset.documentId, documentId), eq(asset.siteId, ctx.siteId))).returning({ url: asset.url });
   if (!res[0]) throw Errors.notFound("Asset");
   return { relativePath: res[0].url };
 }

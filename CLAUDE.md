@@ -41,6 +41,14 @@ The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds
 - Content areas hold ordered block instances — inline (page-local) or shared (reference). Fields: text, markdown, richtext (TipTap JSON), boolean, number, datetime, select, link, image, reference, contentArea.
 - Delivery is a **single read chokepoint** with a `perspective` (published | preview). Public key → published only; preview key → drafts. Private fields never reach delivery output. Don't add read paths that bypass it.
 
+## Multisite
+Multiple sites/brands live in one instance, partitioned by `content_item.site_id` (migration `0012_sites.sql`; all pre-multisite data was backfilled losslessly into the fixed `'site_default'` site, which is also the column DEFAULT so single-site write paths keep working). Decisions: **D1** per-site delivery keys (`delivery_key.site_id`; `verifyDeliveryKey` → `{type, siteId}`); **D2** media is per-site (`asset.site_id`) while **content types, locales and users are SHARED**; **D3** one lossless Default site.
+
+- **The partition is enforced in the two chokepoints, deny-by-default — don't add a path that skips it.** Management: `AccessContext.siteId` (the active site) gates `loadAuthorized`/`loadAnyState` (a cross-site doc reads as not-found, even for a site-wide admin) and every broad scan (`getTree`, `listBlocks`, `listPages`, `searchContent`, `listTrash`, `emptyTrash`, `listAssets`). Delivery: `DeliveryCtx.siteId` confines `ctx.item()` (so the whole reference/contentArea graph stays in-site) plus the direct `content_item` scans (list/by-path/global/search/siteName) and asset resolution.
+- **Active site** (management) comes from the `x-paperboy-site` request header (the admin site switcher); unknown/absent → Default. Slug uniqueness is per-site, so two sites can each own a root `/about`. `createContent` children inherit the parent's site; roots take the active site.
+- **Known gaps (NOT yet closed — flag before relying on them):** (1) **roles are still global** — an Admin/Editor is one in every site; per-site role membership + a cross-site super-admin is deferred (Phase 5). Section *scopes* are already per-site. (2) **cross-site references aren't blocked at write** — an editor can set a reference/contentArea ref to another site's documentId; it's harmless at delivery (resolves to null, never leaks) but is a write-time integrity gap. (3) **the start page + site settings are still global** — `deliveryStartPage` confines the configured page to the requesting site (a site that doesn't own it gets null), but there's no per-site start page yet.
+- **Deploy:** `0012` is additive/idempotent and runs on api boot like any migration — no reseed. Status: on branch `feat/multisite`, fully tested, **not yet merged/deployed** (it touches the live delivery path).
+
 ## Agent-API design rules (MCP & write endpoints — learned from real failures)
 Every rule below traces to a real agent run that broke. Do not regress them.
 

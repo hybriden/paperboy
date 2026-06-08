@@ -12,8 +12,15 @@ import { contentItem } from "./schema.js";
 export interface AccessContext {
   userId: string;
   permissions: Permission[];
+  /**
+   * The ACTIVE site for this request (multisite partition). Every object-level
+   * check and every list/tree/search query is confined to it — deny-by-default
+   * across sites. Resolved in `getAccessContext` (default site until the admin
+   * site switcher overrides it); never client-trusted beyond membership checks.
+   */
+  siteId: string;
   siteWide: boolean;
-  sections: string[]; // allowed top-level section document_ids
+  sections: string[]; // allowed top-level section document_ids (within siteId)
   /**
    * Which surface this request came through — "mcp" for MCP agent writes,
    * "agent" for the in-product content agent (Build from brief), "web" for the
@@ -49,6 +56,11 @@ export async function loadAuthorized(
     .limit(1);
   const item = rows[0];
   if (!item) throw Errors.notFound("Content");
+  // Site partition first (multisite): an item in another site is invisible to
+  // this request — even to a site-wide user. Reported as not-found so a caller
+  // can't probe which documentIds exist in other sites. Cross-site access is a
+  // separate (super-admin) concept layered on later, not a siteWide bypass.
+  if (item.siteId !== ctx.siteId) throw Errors.notFound("Content");
   if (!ctx.siteWide) {
     const section = item.sectionId ?? item.documentId;
     if (!ctx.sections.includes(section)) {
