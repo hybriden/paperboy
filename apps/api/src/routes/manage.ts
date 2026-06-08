@@ -69,6 +69,7 @@ import {
   updateContentType,
   listSites,
   createSite,
+  renameSite,
 } from "@paperboy/db";
 import { unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -939,6 +940,25 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const site = await createSite(app.db, req.accessCtx!, req.body);
       await audit(app.db, { actorUserId: req.user!.id, action: "site.create", ip: req.ip, detail: { id: site.id, slug: site.slug } });
+      return { ...site, createdAt: site.createdAt.toISOString() };
+    },
+  );
+
+  // Rename a site (name and/or slug). Targets the :id, not the active site.
+  app.patch(
+    "/sites/:id",
+    {
+      preHandler: [requireCsrf, requirePermission("user.manage")],
+      schema: {
+        tags: ["manage"],
+        params: z.object({ id: z.string() }),
+        body: z.object({ name: z.string().min(1).max(120).optional(), slug: z.string().min(1).max(60).optional() }),
+        response: { 200: SiteOut },
+      },
+    },
+    async (req) => {
+      const site = await renameSite(app.db, req.accessCtx!, req.params.id, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "site.rename", ip: req.ip, detail: { id: site.id, name: site.name, slug: site.slug } });
       return { ...site, createdAt: site.createdAt.toISOString() };
     },
   );
