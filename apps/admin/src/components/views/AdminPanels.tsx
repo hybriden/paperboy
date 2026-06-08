@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import type { ContentTypeDef, RoleName } from "@paperboy/shared";
 import { api, type ManagedUser, type SiteRow } from "../../lib/api.js";
@@ -411,61 +411,70 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
   );
 }
 
-/** One site row in the Sites panel: identity (rename) + active/switch + inline
- *  preview URL + start-page picker. Every write targets THIS site (per-call
- *  x-paperboy-site override), without changing the admin's working site. */
+/** One site row in the Sites panel: name, slug, preview URL and start page, all
+ *  edited in place and persisted by a SINGLE Save button. Every write targets
+ *  THIS site (per-call x-paperboy-site override), without changing the admin's
+ *  working site. */
 function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean; canManage: boolean }) {
   const toast = useToast();
   const qc = useQueryClient();
-  const refresh = () => { qc.invalidateQueries({ queryKey: ["sites"] }); qc.invalidateQueries({ queryKey: ["site"] }); };
 
-  // Identity (rename name + slug) — admins only.
-  const [name, setName] = useState<string | null>(null);
-  const [slug, setSlug] = useState<string | null>(null);
-  const nameVal = name ?? site.name;
-  const slugVal = slug ?? site.slug;
-  const idDirty = nameVal.trim() !== site.name || slugVal.trim() !== site.slug;
-  const rename = useMutation({
-    mutationFn: () => api.renameSite(site.id, { name: nameVal.trim(), slug: slugVal.trim() }),
-    onSuccess: () => { refresh(); setName(null); setSlug(null); toast.success("Site updated", nameVal.trim()); },
-    onError: (e) => toast.error("Couldn’t rename", (e as Error).message),
-  });
+  // One editable draft per field, seeded from the site; resynced when the saved
+  // site changes (keyed by the values we last persisted).
+  const saved = `${site.name} ${site.slug} ${site.previewBaseUrl ?? ""} ${site.startPageId ?? ""}`;
+  const [name, setName] = useState(site.name);
+  const [slug, setSlug] = useState(site.slug);
+  const [previewUrl, setPreviewUrl] = useState(site.previewBaseUrl ?? "");
+  const [startPageId, setStartPageId] = useState(site.startPageId ?? "");
+  const lastSaved = useRef(saved);
+  if (lastSaved.current !== saved) {
+    // The site changed under us (after a save elsewhere) — resync the draft.
+    lastSaved.current = saved;
+    setName(site.name);
+    setSlug(site.slug);
+    setPreviewUrl(site.previewBaseUrl ?? "");
+    setStartPageId(site.startPageId ?? "");
+  }
 
-  // Preview URL.
-  const [url, setUrl] = useState<string | null>(null);
-  const value = url ?? site.previewBaseUrl ?? "";
-  const urlDirty = value.trim() !== (site.previewBaseUrl ?? "");
-  const savePreview = useMutation({
-    mutationFn: () => api.setPreviewUrl(value.trim(), site.id),
-    onSuccess: () => { refresh(); setUrl(null); toast.success("Preview URL saved", site.name); },
-    onError: (e) => toast.error("Couldn’t save", (e as Error).message),
-  });
-
-  // Start page — this site's pages (fetched with the per-site override).
   const pages = useQuery({ queryKey: ["pages", site.id], queryFn: ({ signal }) => api.pages(signal, site.id) });
-  const setStart = useMutation({
-    mutationFn: (documentId: string | null) => api.setStartPage(documentId, site.id),
-    onSuccess: () => { refresh(); toast.success("Start page updated", site.name); },
-    onError: (e) => toast.error("Couldn’t set start page", (e as Error).message),
+
+  const slugValid = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug.trim());
+  const nameChanged = canManage && (name.trim() !== site.name || slug.trim() !== site.slug);
+  const previewChanged = previewUrl.trim() !== (site.previewBaseUrl ?? "");
+  const startChanged = (startPageId || null) !== (site.startPageId ?? null);
+  const dirty = nameChanged || previewChanged || startChanged;
+  const invalid = canManage && (!name.trim() || !slugValid);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      // Persist only what changed, in one user action.
+      if (nameChanged) await api.renameSite(site.id, { name: name.trim(), slug: slug.trim() });
+      if (previewChanged) await api.setPreviewUrl(previewUrl.trim(), site.id);
+      if (startChanged) await api.setStartPage(startPageId || null, site.id);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["sites"] });
+      qc.invalidateQueries({ queryKey: ["site"] });
+      toast.success("Site saved", name.trim());
+    },
+    onError: (e) => toast.error("Couldn’t save site", (e as Error).message),
   });
 
   return (
-    <div className="flex flex-col gap-3 p-4">
-      {/* identity + active */}
+    <form className="flex flex-col gap-3 p-4" onSubmit={(e) => { e.preventDefault(); if (dirty && !invalid) save.mutate(); }}>
+      {/* name / slug / active */}
       <div className="flex flex-wrap items-end gap-3">
         {canManage ? (
           <>
             <label className="text-sm" style={{ minWidth: 180 }}>
               <span className="field-label">Name</span>
-              <input className="field-input" value={nameVal} onChange={(e) => setName(e.target.value)} />
+              <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} />
             </label>
             <label className="text-sm" style={{ minWidth: 140 }}>
               <span className="field-label">Slug</span>
-              <input className="field-input" value={slugVal} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
+              <input className="field-input" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
+              {slug.trim() && !slugValid && <span className="mt-1 block text-xs text-danger">Lowercase, numbers and single hyphens.</span>}
             </label>
-            <button className="btn-secondary" disabled={!idDirty || rename.isPending} onClick={() => rename.mutate()}>
-              {rename.isPending ? "Saving…" : "Rename"}
-            </button>
           </>
         ) : (
           <span className="text-sm font-medium">{site.name} <code className="text-xs text-muted">/{site.slug}</code></span>
@@ -478,33 +487,30 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
       </div>
 
       {/* preview URL */}
-      <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); if (urlDirty) savePreview.mutate(); }}>
-        <label className="grow text-sm" style={{ minWidth: 320 }}>
-          <span className="field-label">Preview base URL</span>
-          <input className="field-input" type="url" inputMode="url" placeholder="https://example.com" value={value} onChange={(e) => setUrl(e.target.value)} />
-          <span className="mt-1 block text-xs text-muted">
-            Preview opens <code>{(value || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Empty = fall back to the admin host on :8092.
-          </span>
-        </label>
-        <button className="btn-primary" disabled={savePreview.isPending || !urlDirty}>{savePreview.isPending ? "Saving…" : "Save"}</button>
-      </form>
+      <label className="text-sm">
+        <span className="field-label">Preview base URL</span>
+        <input className="field-input" type="url" inputMode="url" placeholder="https://example.com" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} />
+        <span className="mt-1 block text-xs text-muted">
+          Preview opens <code>{(previewUrl || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Empty = fall back to the admin host on :8092.
+        </span>
+      </label>
 
       {/* start page */}
       <label className="text-sm" style={{ maxWidth: 420 }}>
         <span className="field-label">Start page (served at “/”)</span>
-        <select
-          className="field-input"
-          value={site.startPageId ?? ""}
-          disabled={setStart.isPending}
-          onChange={(e) => setStart.mutate(e.target.value || null)}
-        >
+        <select className="field-input" value={startPageId} onChange={(e) => setStartPageId(e.target.value)}>
           <option value="">— none —</option>
           {pages.data?.map((p) => (
             <option key={p.documentId} value={p.documentId}>{p.name}</option>
           ))}
         </select>
       </label>
-    </div>
+
+      {/* one save for the whole site */}
+      <div className="flex justify-end">
+        <button className="btn-primary" disabled={!dirty || invalid || save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
+      </div>
+    </form>
   );
 }
 
