@@ -312,7 +312,7 @@ export function SitePanel() {
         <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setWizard(true)}><Icon.Plus width={14} height={14} /> Add site</button>
       ) : undefined}
     >
-      <div className="flex flex-col divide-y divide-line">
+      <div className="flex flex-col gap-4 p-4">
         {sites.data?.sites.map((s) => (
           <SiteCard key={s.id} site={s} active={s.id === activeId} canManage={canManageSites} />
         ))}
@@ -461,7 +461,7 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
   });
 
   return (
-    <form className="flex flex-col gap-3 p-4" onSubmit={(e) => { e.preventDefault(); if (dirty && !invalid) save.mutate(); }}>
+    <form className="flex flex-col gap-3 rounded-[var(--radius)] border border-line bg-canvas/40 p-4" onSubmit={(e) => { e.preventDefault(); if (dirty && !invalid) save.mutate(); }}>
       {/* name / slug / active */}
       <div className="flex flex-wrap items-end gap-3">
         {canManage ? (
