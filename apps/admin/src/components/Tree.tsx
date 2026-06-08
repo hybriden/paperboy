@@ -23,11 +23,13 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { ContentTypeDef, TreeNode } from "@paperboy/shared";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
+import { localeIndicator } from "../lib/locale-indicator.js";
 import { TypeIcon, useTypeIconName } from "../lib/typeIcons.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { useToast } from "./ui/toast.js";
 
 const EXPAND_KEY = "paperboy-tree-expanded";
+const ONLY_LOCALE_KEY = "paperboy-tree-only-locale";
 
 /**
  * Drag-and-drop spans the WHOLE tree from a single DndContext at the root (each
@@ -89,6 +91,23 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
   const [creating, setCreating] = useState<{ parentId: string | null } | null>(null);
   const [moving, setMoving] = useState<{ documentId: string; name: string } | null>(null);
   const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
+  // Locales (default first) so an untranslated node can show the code it DOES
+  // exist in, preferring the site default — mirrors Optimizely's tree.
+  const locales = useQuery({ queryKey: ["locales"], queryFn: ({ signal }) => api.locales(signal) });
+  const localeOrder = (locales.data ?? [])
+    .slice()
+    .sort((a, b) => Number(b.isDefault) - Number(a.isDefault))
+    .map((l) => l.code);
+
+  // "Show only the current language" — hides nodes with no version in the active
+  // locale (Optimizely's "Show content in current language only"). Persisted.
+  const [onlyCurrentLocale, setOnlyCurrentLocale] = useState<boolean>(
+    () => localStorage.getItem(ONLY_LOCALE_KEY) === "1",
+  );
+  const updateOnlyLocale = (v: boolean) => {
+    setOnlyCurrentLocale(v);
+    localStorage.setItem(ONLY_LOCALE_KEY, v ? "1" : "0");
+  };
 
   const toggle = (id: string) =>
     setExpanded((prev) => {
@@ -177,6 +196,20 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
             aria-label="Filter content tree"
           />
         </div>
+        {localeOrder.length > 1 && (
+          <label
+            className="mt-2 flex cursor-pointer select-none items-center gap-1.5 text-[11px] text-muted"
+            title="Hide content that isn’t translated to the current language"
+          >
+            <input
+              type="checkbox"
+              className="h-3 w-3 accent-accent"
+              checked={onlyCurrentLocale}
+              onChange={(e) => updateOnlyLocale(e.target.checked)}
+            />
+            Only ‘{locale}’
+          </label>
+        )}
       </div>
 
       <TreeDndContext.Provider value={dnd}>
@@ -211,6 +244,8 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
               onSelect={onSelect}
               filter={filter.toLowerCase()}
               locale={locale}
+              localeOrder={localeOrder}
+              onlyCurrentLocale={onlyCurrentLocale}
               canCreate={canCreate}
               canDelete={canDelete}
               onNewChild={(parentId) => setCreating({ parentId })}
@@ -247,6 +282,10 @@ interface LevelProps {
   onSelect: (id: string) => void;
   filter: string;
   locale: string;
+  /** Locale codes in display order (site default first) for the untranslated chip. */
+  localeOrder: string[];
+  /** Hide nodes with no version in the active locale (Optimizely's toggle). */
+  onlyCurrentLocale: boolean;
   canCreate: boolean;
   canDelete: boolean;
   onNewChild: (parentId: string) => void;
@@ -282,11 +321,14 @@ function Level(props: LevelProps) {
   // and because expand state is keyed by id, expanding one would toggle the
   // other. Filtering it out keeps every node unique in the rendered tree.
   const inScope = all.filter((n) => !props.ancestors.has(n.documentId));
-  const nodes = filter ? inScope.filter((n) => n.name.toLowerCase().includes(filter)) : inScope;
+  const byText = filter ? inScope.filter((n) => n.name.toLowerCase().includes(filter)) : inScope;
+  // "Only current language": drop nodes with no version in the active locale.
+  const nodes = props.onlyCurrentLocale ? byText.filter((n) => props.locale in n.locales) : byText;
   if (nodes.length === 0 && depth === 0) {
+    const empty = filter ? "No matches." : props.onlyCurrentLocale ? `No content in ‘${props.locale}’.` : "No content yet.";
     return (
       <div className="px-3 py-8 text-center">
-        <p className="text-sm text-muted">{filter ? "No matches." : "No content yet."}</p>
+        <p className="text-sm text-muted">{empty}</p>
       </div>
     );
   }
@@ -362,7 +404,11 @@ function Row(props: LevelProps & { node: TreeNode }) {
   // The type's configured icon; falls back to a generic kind icon while the
   // content-types query loads or for unknown types.
   const iconName = useTypeIconName(node.type);
-  const loc = node.locales[locale] ?? Object.values(node.locales)[0];
+  // Translation state vs the active locale: an untranslated node is shown
+  // italic/muted with the code it DOES exist in (Optimizely-style), instead of
+  // a status dot that would be meaningless for a locale it has no version in.
+  const ind = localeIndicator(node.locales, locale, props.localeOrder);
+  const loc = node.locales[locale];
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: node.documentId, disabled: !dragEnabled });
   const style = { transform: CSS.Transform.toString(transform), transition };
@@ -427,7 +473,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
               <span className="h-4 w-4 shrink-0" aria-hidden />
             )}
             <TypeIcon name={iconName} fallback={node.kind === "block" ? "blocks" : "file"} width={15} height={15} className="shrink-0 text-muted" />
-            <span className="truncate">{node.name}</span>
+            <span className={`truncate ${ind.translated ? "" : "italic text-muted"}`}>{node.name}</span>
             {isStartPage && (
               <span className="shrink-0 rounded bg-accent/15 px-1 text-[10px] font-semibold text-accent-700" title="Served at / (site start page)">/</span>
             )}
@@ -444,10 +490,19 @@ function Row(props: LevelProps & { node: TreeNode }) {
                 <Icon.Grip width={14} height={14} />
               </button>
             )}
-            <span
-              className={`${dragEnabled ? "" : "ml-auto"} h-2 w-2 shrink-0 rounded-full ${loc?.status === "published" ? "bg-published" : "bg-draft"}`}
-              title={loc?.status === "published" ? (loc.hasUnpublishedChanges ? "Published · unpublished changes" : "Published") : "Draft"}
-            />
+            {ind.translated ? (
+              <span
+                className={`${dragEnabled ? "" : "ml-auto"} h-2 w-2 shrink-0 rounded-full ${loc?.status === "published" ? "bg-published" : "bg-draft"}`}
+                title={loc?.status === "published" ? (loc.hasUnpublishedChanges ? "Published · unpublished changes" : "Published") : "Draft"}
+              />
+            ) : (
+              <span
+                className={`${dragEnabled ? "" : "ml-auto"} shrink-0 rounded bg-line/60 px-1 text-[10px] font-medium uppercase leading-tight text-muted`}
+                title={`Not translated to ‘${locale}’ — exists in ${ind.availableCodes.join(", ") || "no language"}`}
+              >
+                {ind.fallbackCode ?? "—"}
+              </span>
+            )}
           </div>
         </Ctx.Trigger>
         <Ctx.Portal>
