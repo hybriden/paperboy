@@ -5,6 +5,8 @@ import {
   createSite,
   getAccessContext,
   getTree,
+  insertAsset,
+  listAssets,
   loadAuthorized,
   searchContent,
 } from "@paperboy/db";
@@ -75,6 +77,14 @@ describe("multisite phase 2 — authz isolation across sites", () => {
     expect(await searchContent(s.app.db, ctxA, "B-only Secret")).toHaveLength(0);
     const hitsB = await searchContent(s.app.db, ctxB, "B-only Secret");
     expect(hitsB.map((h) => h.documentId)).toContain(bPageId);
+  });
+
+  it("media is per-site (D2): an asset uploaded in B never appears in A's library", async () => {
+    await insertAsset(s.app.db, ctxB, { documentId: "asset-b-only", filename: "b.png", mime: "image/png", size: 10, relativePath: "/uploads/b.png" });
+    const inA = (await listAssets(s.app.db, ctxA)).map((a) => a.documentId);
+    const inB = (await listAssets(s.app.db, ctxB)).map((a) => a.documentId);
+    expect(inB).toContain("asset-b-only");
+    expect(inA).not.toContain("asset-b-only");
   });
 
   it("a root slug '/about' is independent per site (no cross-site collision)", async () => {
