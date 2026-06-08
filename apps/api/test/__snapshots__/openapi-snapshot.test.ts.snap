@@ -1293,7 +1293,9 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "defaultLocale",
       "id",
       "name",
+      "previewBaseUrl",
       "slug",
+      "startPageId",
     ],
     "summary": null,
     "tags": [
