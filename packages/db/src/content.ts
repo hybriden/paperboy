@@ -13,6 +13,7 @@ import {
   expectedLanguageForLocale,
   fieldFormatHint,
   stripSeoGroup,
+  tiptapToPlainText,
   withSeoGroup,
 } from "@paperboy/shared";
 import type { Database } from "./client.js";
@@ -979,6 +980,33 @@ export async function updateContent(
   // Placement rules ARE enforced even on draft save (allowed blocks / ref types).
   await assertAllowedTypes(db, type, data);
 
+  // Agent write-time language guard: refuse strongly language-mismatched content
+  // BEFORE it lands on the wrong locale branch. A draft is never re-checked
+  // until publish, so without this an agent that forgets to switch locale leaves
+  // (e.g.) a Norwegian page sitting silently on the 'en' branch (2026-06-08).
+  // Agent provenance only — a human editor is never second-guessed; escape hatch
+  // for deliberate cross-language writes. Mirrors the publish guard.
+  if ((ctx.via === "mcp" || ctx.via === "agent") && !req.allowLanguageMismatch) {
+    const mm = branchLanguageMismatch(type, data, loc);
+    if (mm) {
+      throw Errors.validation(
+        `The text you're writing is ${mm.detected === "nb" ? "Norwegian (nb)" : "English (en)"}, but locale '${loc}' is the ${mm.expected === "nb" ? "Norwegian (nb)" : "English (en)"} branch — ` +
+          `agent writes must match the branch language so content doesn't land on the wrong site. ` +
+          `Write this into the '${mm.detected}' branch instead: pass locale: "${mm.detected}" to create_content / update_content / set_field (create the document in '${mm.detected}' first if it doesn't exist yet). ` +
+          `If writing ${mm.detected} text into '${loc}' is INTENDED, repeat with allowLanguageMismatch: true.`,
+      );
+    }
+  }
+
+  // Forensic trail (2026-06-08): a richtext "body" that arrives as a Markdown
+  // string (set_field) or as a doc-ish value gets transformed by the coercion
+  // chokepoint into the stored TipTap doc. If that transform is ever wrong, the
+  // bad draft is overwritten by the next save and the original input is lost —
+  // the incident becomes undiagnosable. Record a durable, truncated breadcrumb
+  // of the RAW input whenever coercion did real work on a richtext field, so a
+  // future "malformed body" report is reproducible from the audit log alone.
+  await recordRichTextCoercion(db, ctx, documentId, loc, type, merged, data);
+
   // URL segments must be unique among page siblings (per locale) so paths are unambiguous.
   if (item.kind === "page" && req.slug) {
     await assertSlugUnique(db, documentId, item.parentId, loc, req.slug);
@@ -1247,6 +1275,87 @@ export async function copyVariant(
 }
 
 /**
+ * The language of a draft's human-readable text vs the language its locale
+ * branch expects — the shared core of the agent language/branch guards. Returns
+ * the mismatch, or null when there's no strong signal (detectContentLanguage →
+ * "unknown") or the branch is outside the detector's vocabulary.
+ *
+ * Includes `richtext` bodies (flattened to plain text): the bulk of a page's
+ * language signal usually lives in the body, and omitting it (the original
+ * publish guard did) let a Norwegian article whose only text-field is a short
+ * title slip the check (2026-06-08).
+ */
+function branchLanguageMismatch(
+  type: ContentTypeDef,
+  data: Record<string, unknown>,
+  loc: string,
+): { detected: "en" | "nb"; expected: "en" | "nb" } | null {
+  const expected = expectedLanguageForLocale(loc);
+  if (!expected) return null; // branch language outside the detector's vocabulary
+  const parts: string[] = [];
+  for (const f of type.fields) {
+    if (!f.localized) continue;
+    const v = data[f.name];
+    if (f.type === "text" || f.type === "markdown") {
+      if (typeof v === "string") parts.push(v);
+    } else if (f.type === "richtext" && v && typeof v === "object") {
+      const t = tiptapToPlainText(v);
+      if (t) parts.push(t);
+    }
+  }
+  const detected = detectContentLanguage(parts.join("\n\n"));
+  if (detected === "unknown" || expected === "unknown" || detected === expected) return null;
+  return { detected: detected as "en" | "nb", expected: expected as "en" | "nb" };
+}
+
+/**
+ * Durable forensic breadcrumb for richtext coercion. Records the RAW (pre-
+ * coercion) input of any richtext field that the chokepoint actually
+ * transformed — a Markdown string parsed into a doc, or a doc-ish value
+ * normalized to the editor schema. A clean doc stored unchanged is NOT logged
+ * (no transform, no risk). Truncated so the audit row stays small. Append-only;
+ * best-effort (a logging failure must never fail the write).
+ */
+async function recordRichTextCoercion(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  loc: string,
+  type: ContentTypeDef,
+  rawData: Record<string, unknown>,
+  coercedData: Record<string, unknown>,
+): Promise<void> {
+  const fields = type.fields
+    .filter((f) => f.type === "richtext" && f.name in rawData)
+    .map((f) => {
+      const raw = rawData[f.name];
+      if (raw == null) return null;
+      const isString = typeof raw === "string";
+      const changed = JSON.stringify(raw) !== JSON.stringify(coercedData[f.name]);
+      if (!isString && !changed) return null; // already a clean doc, stored verbatim
+      return {
+        field: f.name,
+        inputKind: isString ? "markdown-string" : Array.isArray(raw) ? "array" : "doc-normalized",
+        input: JSON.stringify(raw).slice(0, 600),
+      };
+    })
+    .filter((x): x is { field: string; inputKind: string; input: string } => x != null);
+  if (!fields.length) return;
+  try {
+    await db.insert(auditLog).values({
+      actorUserId: ctx.userId ?? null,
+      action: "content.richtext_coerced",
+      documentId,
+      locale: loc,
+      ip: ctx.via === "mcp" ? "mcp" : (ctx.via ?? null),
+      detail: { fields },
+    });
+  } catch {
+    // forensics are best-effort — never break a content write to log one
+  }
+}
+
+/**
  * Agent-publish language/branch guard (2026-06-07: an agent wrote a Norwegian
  * article and published it into 'en' — a Norwegian post went live on the
  * English blog). Only fires for agent provenance (via mcp/agent); a HUMAN
@@ -1259,23 +1368,15 @@ async function assertLanguageMatchesBranch(
   loc: string,
   draft: typeof contentVersion.$inferSelect,
 ): Promise<void> {
-  const expected = expectedLanguageForLocale(loc);
-  if (!expected) return; // branch language outside the detector's vocabulary
   const type = await getContentType(db, item.type);
-  const data = draft.data as Record<string, unknown>;
-  const text = type.fields
-    .filter((f) => f.localized && (f.type === "text" || f.type === "markdown"))
-    .map((f) => data[f.name])
-    .filter((v): v is string => typeof v === "string")
-    .join("\n\n");
-  const detected = detectContentLanguage(text);
-  if (detected === "unknown" || detected === expected) return;
+  const mm = branchLanguageMismatch(type, draft.data as Record<string, unknown>, loc);
+  if (!mm) return;
   throw Errors.validation(
-    `This draft's text is ${detected === "nb" ? "Norwegian (nb)" : "English (en)"}, but you are publishing the '${loc}' language branch — ` +
+    `This draft's text is ${mm.detected === "nb" ? "Norwegian (nb)" : "English (en)"}, but you are publishing the '${loc}' language branch — ` +
       `it would go live on the wrong site language. Move the WHOLE draft in one call: ` +
-      `copy_variant {documentId, fromLocale: "${loc}", toLocale: "${detected}"} (copies name, slug and EVERY field — do not re-type the data), ` +
-      `then publish {locale: "${detected}"}, then discard_draft {locale: "${loc}"} if this branch was created by mistake. ` +
-      `If publishing ${detected} text in '${loc}' is INTENDED, repeat publish with allowLanguageMismatch: true.`,
+      `copy_variant {documentId, fromLocale: "${loc}", toLocale: "${mm.detected}"} (copies name, slug and EVERY field — do not re-type the data), ` +
+      `then publish {locale: "${mm.detected}"}, then discard_draft {locale: "${loc}"} if this branch was created by mistake. ` +
+      `If publishing ${mm.detected} text in '${loc}' is INTENDED, repeat publish with allowLanguageMismatch: true.`,
   );
 }
 

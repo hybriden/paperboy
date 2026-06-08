@@ -137,6 +137,75 @@ describe("richtext coercion (markdown→TipTap + sanitizer) — property", () =>
       { numRuns: 1000 },
     );
   });
+
+  // FIDELITY — the 2026-06-07 "feilutformet body" class, generically: an agent
+  // writes Markdown to a richtext field (set_field is a plain string) and the
+  // old code wrapped it as LITERAL plaintext, so "##", "**" and "- " rendered
+  // verbatim. This locks the whole class rather than one fixed example: for ANY
+  // Markdown assembled from plain letter-words, the doc's visible text must keep
+  // every word and contain NO leftover syntax markers. (Fails loudly on both the
+  // literal-plaintext bug and any future regression that drops/glues content.)
+  it("markdown→richtext preserves every word and leaves no literal syntax markers", () => {
+    // Letter-only words (incl. æøå) can never themselves be a markdown marker,
+    // so a marker in the rendered text can only be leaked syntax.
+    const word = fc
+      .array(fc.constantFrom(..."abcdefghijklmnopqrstuvwxyzæøå".split("")), { minLength: 2, maxLength: 7 })
+      .map((cs) => cs.join(""));
+    const words = (min: number, max: number) => fc.array(word, { minLength: min, maxLength: max });
+    const block = fc.oneof(
+      fc.record({ kind: fc.constant("h"), ws: words(1, 4) }),
+      fc.record({ kind: fc.constant("p"), ws: words(1, 8) }),
+      fc.record({ kind: fc.constant("ul"), items: fc.array(words(1, 4), { minLength: 1, maxLength: 4 }) }),
+      fc.record({ kind: fc.constant("ol"), items: fc.array(words(1, 4), { minLength: 1, maxLength: 4 }) }),
+    );
+
+    // Collect every text node's text, depth-first.
+    const renderText = (node: unknown): string => {
+      if (!node || typeof node !== "object") return "";
+      const n = node as { type?: string; text?: string; content?: unknown[] };
+      if (n.type === "text") return typeof n.text === "string" ? n.text : "";
+      return Array.isArray(n.content) ? n.content.map(renderText).join(" ") : "";
+    };
+
+    fc.assert(
+      fc.property(fc.array(block, { minLength: 1, maxLength: 6 }), (blocks) => {
+        const expected: string[] = [];
+        const md = blocks
+          .map((b) => {
+            if (b.kind === "h") {
+              expected.push(...b.ws);
+              return `## ${b.ws.join(" ")}`;
+            }
+            if (b.kind === "p") {
+              expected.push(...b.ws);
+              return b.ws.join(" ");
+            }
+            const bullet = b.kind === "ul";
+            return b.items
+              .map((it, i) => {
+                expected.push(...it);
+                return `${bullet ? "-" : `${i + 1}.`} ${it.join(" ")}`;
+              })
+              .join("\n");
+          })
+          .join("\n\n");
+
+        const doc = coerceFieldValue(f("richtext"), md);
+        if (!isDoc(doc)) return false;
+        const rendered = renderText(doc).toLowerCase();
+
+        // No markdown syntax leaked into the visible text.
+        if (/[#*`>]/.test(rendered)) return false; // headings/bold/code/quote markers
+        if (/(^|\s)[-+]\s/.test(rendered)) return false; // bullet markers
+        if (/(^|\s)\d+\.\s/.test(rendered)) return false; // ordered-list markers
+
+        // Every source word survives (no dropped or glued content).
+        const tokens = new Set(rendered.split(/\s+/).filter(Boolean));
+        return expected.every((w) => tokens.has(w));
+      }),
+      { numRuns: 1000 },
+    );
+  });
 });
 
 describe("detectContentLanguage — property: no false 'nb' (it gates the publish guard)", () => {

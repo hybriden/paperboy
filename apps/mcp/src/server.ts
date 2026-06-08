@@ -233,14 +233,14 @@ tool(
     "Pass merge:false to REPLACE the whole map (then you must send every required field,",
     "or the next publish will fail validation).",
   ].join(" "),
-  { documentId: docId, locale: loc, name: z.string().optional(), slug: z.string().nullable().optional(), displayInNav: z.boolean().optional(), data: z.record(z.unknown()), merge: z.boolean().optional().describe("Default true: shallow-merge data over the current draft. false = replace the whole field map") },
+  { documentId: docId, locale: loc, name: z.string().optional(), slug: z.string().nullable().optional(), displayInNav: z.boolean().optional(), data: z.record(z.unknown()), merge: z.boolean().optional().describe("Default true: shallow-merge data over the current draft. false = replace the whole field map"), allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately write text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)") },
   // merge defaults to TRUE here (agent-facing surface): a full replace that
   // silently drops required fields like `intro` passes the relaxed draft
   // validation but bricks every subsequent publish — the worst failure mode
   // an agent can hit. Replace semantics stay available via merge:false.
-  async ({ documentId, locale, name, slug, displayInNav, data, merge }) => {
+  async ({ documentId, locale, name, slug, displayInNav, data, merge, allowLanguageMismatch }) => {
     const l = await locFor(documentId, locale);
-    const updated = await updateContent(db, ctx, documentId, l, { name, slug, displayInNav, data, merge: merge ?? true });
+    const updated = await updateContent(db, ctx, documentId, l, { name, slug, displayInNav, data, merge: merge ?? true, allowLanguageMismatch });
     mcpAudit("content.update", documentId, l);
     return updated;
   });
@@ -253,13 +253,13 @@ tool(
     "strings nested inside `data` records. For text/markdown/select/datetime/image",
     "fields, and the special field name `name` (the item's display name).",
   ].join(" "),
-  { documentId: docId, locale: loc, field: z.string().describe("Field name from the content type (or 'name')"), value: z.string().describe("The plain string value") },
-  async ({ documentId, locale, field, value }) => {
+  { documentId: docId, locale: loc, field: z.string().describe("Field name from the content type (or 'name')"), value: z.string().describe("The plain string value"), allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately write text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)") },
+  async ({ documentId, locale, field, value, allowLanguageMismatch }) => {
     const l = await locFor(documentId, locale);
     const updated =
       field === "name"
-        ? await updateContent(db, ctx, documentId, l, { name: value, data: {}, merge: true })
-        : await updateContent(db, ctx, documentId, l, { data: { [field]: value }, merge: true });
+        ? await updateContent(db, ctx, documentId, l, { name: value, data: {}, merge: true, allowLanguageMismatch })
+        : await updateContent(db, ctx, documentId, l, { data: { [field]: value }, merge: true, allowLanguageMismatch });
     mcpAudit("content.update", documentId, l, { field });
     return updated;
   });

@@ -109,6 +109,11 @@ export const UpdateContentRequest = z.object({
   /** When true, `data` is shallow-merged over the current working draft instead
    *  of replacing it — so a caller can patch one field without resending all. */
   merge: z.boolean().optional(),
+  /** Escape hatch for the agent write-time language guard: when true, an agent
+   *  may write text whose language differs from the locale branch (the guard
+   *  otherwise refuses, so Norwegian content can't silently land on the 'en'
+   *  branch). A human editor is never guarded. Mirrors publish's option. */
+  allowLanguageMismatch: z.boolean().optional(),
 });
 export type UpdateContentRequest = z.infer<typeof UpdateContentRequest>;
 

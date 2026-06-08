@@ -56,6 +56,24 @@ describe("update_content ergonomics: helpful errors + merge mode", () => {
     expect(msg).toContain("ARRAY of block instances");
   });
 
+  it("rejects a non-TipTap rich-text dialect on a richtext field (would render blank, must not persist)", async () => {
+    // The 2026-06-08 "malformed body" class: a richtext value that is a valid
+    // OBJECT but not a TipTap doc (here an Editor.js-style {blocks,version})
+    // used to pass validation (z.record accepts any object) and persist — the
+    // TipTap editor then renders it blank. It must be REFUSED with the format
+    // hint so the agent sends a real doc (or a string, which coercion parses).
+    const res = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${pageId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: { name: "Ergo Page", merge: true, data: { intro: { blocks: [{ type: "paragraph", text: "Hello" }], version: "2.30" } } },
+    });
+    expect(res.statusCode).toBe(422);
+    const msg = res.json().message as string;
+    expect(msg).toContain("'intro' is a richtext field");
+    expect(msg).toContain("TipTap document");
+  });
+
   it("tolerantly coerces the field-shape mistakes agents make", async () => {
     const res = await s.app.inject({
       method: "PUT",

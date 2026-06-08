@@ -367,7 +367,10 @@ describe("MCP agent journeys (real production sequences)", () => {
         ["title", "Japansk interiør – tidsreisen"],
         ["body", NORSK_BODY],
       ] as const) {
-        const r = await mcp.call("set_field", { documentId: docId, locale: "en", field, value });
+        // The write-time guard now refuses Norwegian into 'en' too, so STAGING
+        // the mismatch for this publish-guard test uses the escape hatch. The
+        // publish guard below is the independent backstop.
+        const r = await mcp.call("set_field", { documentId: docId, locale: "en", field, value, allowLanguageMismatch: true });
         expect(r.isError).toBe(false);
       }
 
@@ -396,9 +399,10 @@ describe("MCP agent journeys (real production sequences)", () => {
         parentId: s.ids.blogId,
       });
       const id = (created.json as { documentId: string }).documentId;
-      await mcp.call("set_field", { documentId: id, locale: "en", field: "title", value: "Atomisk flytting" });
-      await mcp.call("set_field", { documentId: id, locale: "en", field: "body", value: NORSK_BODY });
-      await mcp.call("set_field", { documentId: id, locale: "en", field: "tags", value: "Interiør, Japan" });
+      // Stage the mismatch via the write-time escape hatch (see note above).
+      await mcp.call("set_field", { documentId: id, locale: "en", field: "title", value: "Atomisk flytting", allowLanguageMismatch: true });
+      await mcp.call("set_field", { documentId: id, locale: "en", field: "body", value: NORSK_BODY, allowLanguageMismatch: true });
+      await mcp.call("set_field", { documentId: id, locale: "en", field: "tags", value: "Interiør, Japan", allowLanguageMismatch: true });
 
       const refused = await mcp.call("publish", { documentId: id, locale: "en" });
       expect(refused.isError).toBe(true);
@@ -516,6 +520,82 @@ describe("MCP agent journeys (real production sequences)", () => {
       expect(fix.isError).toBe(false);
       const pub = await mcp.call("publish", { documentId: docId, locale: "en" });
       expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
+    });
+  });
+
+  // ------------------------------------------------------------------
+  // J8 — write-time language guard (the 2026-06-08 "wrong site" incident):
+  // an agent created Norwegian ArticlePages but, having forgotten to switch the
+  // locale, wrote the Norwegian BODY (a richtext field) into the 'en' branch. A
+  // draft is never re-checked until publish, so the content sat silently on the
+  // wrong site language. The guard now refuses the mismatched write at the
+  // moment it happens — and it reads the richtext body (the old publish guard
+  // looked only at text/markdown fields and would have missed an article whose
+  // only prose lives in a richtext body).
+  // ------------------------------------------------------------------
+  describe("J8: agent write-time language guard (Norwegian richtext body refused on 'en')", () => {
+    const NB_BODY =
+      "Skandinavisk interiørdesign er kjent for sin enkelhet og funksjonalitet. " +
+      "Møblene er ofte laget av lyst tre, og fargene er dempede og naturlige. " +
+      "Det handler om å skape et hjem som er både vakkert og praktisk å bo i, " +
+      "der lyset og rommet får komme til sin rett gjennom hele det lange året.";
+
+    it("refuses a Norwegian richtext body written into 'en', names the 'nb' branch, and the nb write succeeds", async () => {
+      const created = await mcp.call("create_content", { type: "ArticlePage", locale: "en", name: "skandinavisk interiør" });
+      expect(created.isError, created.text.slice(0, 200)).toBe(false);
+      const docId = (created.json as { documentId: string }).documentId;
+
+      // The exact mistake: write the Norwegian body into the 'en' branch.
+      const wrong = await mcp.call("set_field", { documentId: docId, locale: "en", field: "intro", value: NB_BODY });
+      expect(wrong.isError).toBe(true);
+      expect(wrong.text).toContain("nb"); // names the correct branch
+      expect(wrong.text).toContain("allowLanguageMismatch"); // and the escape hatch
+
+      // The corrective action the error teaches: write into the 'nb' branch.
+      const right = await mcp.call("set_field", { documentId: docId, locale: "nb", field: "intro", value: NB_BODY });
+      expect(right.isError, right.text.slice(0, 200)).toBe(false);
+    });
+
+    it("the escape hatch lets a deliberate cross-language write through", async () => {
+      const created = await mcp.call("create_content", { type: "ArticlePage", locale: "en", name: "deliberate mismatch" });
+      const docId = (created.json as { documentId: string }).documentId;
+      const forced = await mcp.call("set_field", { documentId: docId, locale: "en", field: "intro", value: NB_BODY, allowLanguageMismatch: true });
+      expect(forced.isError, forced.text.slice(0, 200)).toBe(false);
+    });
+  });
+
+  // ------------------------------------------------------------------
+  // Forensic trail — the missing-evidence half of the 2026-06-08 incident:
+  // a richtext body that arrives as a Markdown string is transformed by the
+  // coercion chokepoint, and the only-one-draft invariant means a bad result is
+  // overwritten by the next save and lost. A durable breadcrumb of the RAW input
+  // makes a future "malformed body" report reproducible from the audit log.
+  // ------------------------------------------------------------------
+  describe("forensic trail: richtext coercion records the raw input", () => {
+    it("a markdown-string write to a richtext field leaves a content.richtext_coerced audit row", async () => {
+      const created = await mcp.call("create_content", { type: "ArticlePage", locale: "en", name: "Forensic breadcrumb" });
+      const docId = (created.json as { documentId: string }).documentId;
+      // English + short → no language guard; richtext intro + string → coercion runs.
+      const MD = "## A heading\n\nA paragraph **with** structure and a [link](https://example.com).";
+      const w = await mcp.call("set_field", { documentId: docId, locale: "en", field: "intro", value: MD });
+      expect(w.isError, w.text.slice(0, 200)).toBe(false);
+
+      // NB: filter by documentId only — the /audit action filter strips `_` (a
+      // SQL LIKE wildcard) from its input, so an action with an underscore can't
+      // be matched by name. Match the action in JS instead.
+      const res = await s.app.inject({
+        method: "GET",
+        url: `/api/v1/manage/audit?documentId=${docId}`,
+        headers: authHeaders(admin),
+      });
+      expect(res.statusCode).toBe(200);
+      const all = res.json() as Array<{ action: string; detail: { fields?: Array<{ field: string; inputKind: string; input: string }> } }>;
+      const rows = all.filter((r) => r.action === "content.richtext_coerced");
+      expect(rows.length).toBeGreaterThanOrEqual(1);
+      const trail = rows[0]!.detail.fields!.find((f) => f.field === "intro");
+      expect(trail).toBeDefined();
+      expect(trail!.inputKind).toBe("markdown-string");
+      expect(trail!.input).toContain("## A heading"); // the raw input is captured verbatim (truncated)
     });
   });
 });
