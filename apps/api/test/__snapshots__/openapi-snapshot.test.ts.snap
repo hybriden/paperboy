@@ -42,6 +42,20 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "DELETE /api/v1/manage/content/{documentId}/variant": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "deleted",
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "DELETE /api/v1/manage/locales/{code}": {
     "requestBodyRequired": [],
     "requiredParams": [

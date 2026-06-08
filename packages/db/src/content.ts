@@ -1676,6 +1676,45 @@ export async function discardDraft(
     );
 }
 
+/**
+ * Delete ONE language variant of a document: every version of that doc in that
+ * locale (draft + published + history) plus its outgoing references. The locale
+ * becomes untranslated again (getContent → versionNumber 0), so the editor's
+ * "Translate from …" offer reappears — the way to re-translate a variant that
+ * was filled wrong. Distinct from discardDraft (keeps the published version) and
+ * trash (removes the WHOLE document). Refuses to delete the document's ONLY
+ * remaining locale — that would orphan the item; trash it instead.
+ */
+export async function deleteVariant(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  loc: string,
+): Promise<{ ok: true; deleted: number }> {
+  requirePermission(ctx, "content.delete");
+  await loadAuthorized(db, ctx, documentId); // not-found / cross-site guard
+  const rows = await db
+    .select({ locale: contentVersion.locale })
+    .from(contentVersion)
+    .where(eq(contentVersion.documentId, documentId));
+  const locales = new Set(rows.map((r) => r.locale));
+  if (!locales.has(loc)) throw Errors.badRequest(`No '${loc}' version exists to delete.`);
+  if (locales.size <= 1) {
+    throw Errors.badRequest(
+      `Cannot delete the only language version ('${loc}') of this content — move the whole page to trash instead.`,
+    );
+  }
+  // References are keyed (fromDocumentId, fromLocale) — drop this locale's first.
+  await db
+    .delete(contentReference)
+    .where(and(eq(contentReference.fromDocumentId, documentId), eq(contentReference.fromLocale, loc)));
+  const deleted = await db
+    .delete(contentVersion)
+    .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)))
+    .returning({ id: contentVersion.id });
+  return { ok: true, deleted: deleted.length };
+}
+
 /* --------------------------------- move ----------------------------------- */
 
 /**

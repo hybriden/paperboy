@@ -400,6 +400,20 @@ function Row(props: LevelProps & { node: TreeNode }) {
     },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
   });
+  // Delete just THIS language variant (not the whole document). Confirmed —
+  // it's permanent and not recoverable from Trash. Used to re-translate: delete
+  // the wrong variant, then the editor's "Translate from …" offer reappears.
+  const [confirmDelVariant, setConfirmDelVariant] = useState(false);
+  const deleteVariant = useMutation({
+    mutationFn: () => api.deleteVariant(node.documentId, locale),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tree"] });
+      qc.invalidateQueries({ queryKey: ["blocks"] });
+      qc.invalidateQueries({ queryKey: ["content", node.documentId] });
+      toast.success(`Deleted ${locale.toUpperCase()} version`, `“${node.name}” keeps its other languages.`);
+    },
+    onError: (e) => toast.error("Couldn’t delete version", (e as Error).message),
+  });
   const setStart = useMutation({
     mutationFn: (id: string | null) => api.setStartPage(id),
     onSuccess: (_r, id) => {
@@ -526,10 +540,35 @@ function Row(props: LevelProps & { node: TreeNode }) {
             {canDelete && node.kind === "page" && !isStartPage && <CtxItem onSelect={() => setStart.mutate(node.documentId)}>Set as start page</CtxItem>}
             {canDelete && node.kind === "page" && isStartPage && <CtxItem onSelect={() => setStart.mutate(null)}>Unset start page</CtxItem>}
             <CtxItem onSelect={() => { navigator.clipboard?.writeText(node.documentId); toast.success("Copied document ID"); }}>Copy document ID</CtxItem>
+            {/* Delete just the active-language version — only when another
+                language remains (deleting the last one is "Move to trash"). */}
+            {canDelete && ind.translated && Object.keys(node.locales).length > 1 && (
+              <CtxItem destructive onSelect={() => setConfirmDelVariant(true)}>Delete {locale.toUpperCase()} version</CtxItem>
+            )}
             {canDelete && <CtxItem destructive onSelect={() => trash.mutate()}>Move to trash</CtxItem>}
           </Ctx.Content>
         </Ctx.Portal>
       </Ctx.Root>
+      {confirmDelVariant && (
+        <Dialog open onOpenChange={(o) => !o && setConfirmDelVariant(false)}>
+          <DialogContent
+            title={`Delete ${locale.toUpperCase()} version?`}
+            description={`This permanently removes the ${locale.toUpperCase()} version of “${node.name}”. Its other languages are kept. This cannot be undone (it is not recoverable from Trash).`}
+            className="w-[460px]"
+          >
+            <div className="flex justify-end gap-2">
+              <button className="btn-ghost" onClick={() => setConfirmDelVariant(false)}>Cancel</button>
+              <button
+                className="btn-danger"
+                disabled={deleteVariant.isPending}
+                onClick={() => { deleteVariant.mutate(); setConfirmDelVariant(false); }}
+              >
+                {deleteVariant.isPending ? "Deleting…" : `Delete ${locale.toUpperCase()} version`}
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
       </div>
       {node.hasChildren && isOpen && depth < MAX_TREE_DEPTH && !props.ancestors.has(node.documentId) && (
         <Level
