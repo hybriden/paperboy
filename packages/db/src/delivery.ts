@@ -2,7 +2,7 @@ import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { type ContentTypeDef, type DeliveryContent, withSeoGroup } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import type { Database } from "./client.js";
-import { asset, contentItem, contentType, contentVersion, locale, siteSetting } from "./schema.js";
+import { asset, contentItem, contentType, contentVersion, locale, site } from "./schema.js";
 
 /**
  * The Delivery read chokepoint. EVERY public/preview read — including every
@@ -855,12 +855,9 @@ export async function deliveryStartPage(
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  // NOTE: the startPage setting is still global (per-site start pages land with
-  // per-site settings in a later phase). resolveContent confines it to the
-  // requesting site, so a key for a site that doesn't own the start page gets
-  // null rather than another site's home.
-  const rows = await db.select().from(siteSetting).where(eq(siteSetting.key, "startPage")).limit(1);
-  const id = (rows[0]?.value as { documentId?: string } | undefined)?.documentId;
+  // Per-site start page (migration 0013): the page served at "/" for THIS site.
+  const rows = await db.select({ id: site.startPageId }).from(site).where(eq(site.id, siteId)).limit(1);
+  const id = rows[0]?.id;
   if (!id) return null;
   const ctx = new DeliveryCtx(db, siteId);
   return resolveContent(ctx, perspective, id, loc, clampDepth(populate));

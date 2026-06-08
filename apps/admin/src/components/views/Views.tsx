@@ -101,7 +101,9 @@ export function SettingsView() {
   ];
   const tabs = allTabs.filter((t) => t.show);
 
-  const [active, setActive] = useState(tabs[0]?.key ?? "model");
+  // Deep-link a tab via the URL hash (e.g. /settings#site from the site switcher).
+  const hashTab = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
+  const [active, setActive] = useState(tabs.some((t) => t.key === hashTab) ? hashTab : (tabs[0]?.key ?? "model"));
   const current = tabs.find((t) => t.key === active) ?? tabs[0];
   const groups: SettingsTab["group"][] = ["Content", "Administration", "Account"];
 

@@ -392,20 +392,26 @@ export async function destroySession(db: Database, token: string): Promise<void>
 
 export async function createDeliveryKey(
   db: Database,
+  siteId: string,
   name: string,
   type: "public" | "preview",
 ): Promise<{ key: string }> {
   const prefix = type === "public" ? "pk_live_" : "prv_";
   const secret = randomBytes(32).toString("base64url"); // 256-bit
   const key = `${prefix}${secret}`;
-  await db.insert(deliveryKey).values({ name, keyHash: sha256(key), keyPrefix: prefix, type });
+  // D1: the key belongs to the active site — it will only ever see that site.
+  await db.insert(deliveryKey).values({ name, keyHash: sha256(key), keyPrefix: prefix, type, siteId });
   return { key };
 }
 
 /** List delivery keys (metadata only — never the secret). */
 export async function listDeliveryKeys(db: Database, ctx: AccessContext) {
   requirePermission(ctx, "deliverykey.manage");
-  const rows = await db.select().from(deliveryKey).orderBy(desc(deliveryKey.id));
+  const rows = await db
+    .select()
+    .from(deliveryKey)
+    .where(eq(deliveryKey.siteId, ctx.siteId)) // only the active site's keys
+    .orderBy(desc(deliveryKey.id));
   return rows.map((r) => ({
     id: r.id,
     name: r.name,
@@ -423,7 +429,7 @@ export async function revokeDeliveryKey(db: Database, ctx: AccessContext, id: nu
   const updated = await db
     .update(deliveryKey)
     .set({ revokedAt: new Date() })
-    .where(eq(deliveryKey.id, id))
+    .where(and(eq(deliveryKey.id, id), eq(deliveryKey.siteId, ctx.siteId))) // active site only
     .returning({ id: deliveryKey.id });
   if (!updated[0]) throw Errors.notFound("Delivery key");
 }
@@ -434,7 +440,7 @@ export async function renameDeliveryKey(db: Database, ctx: AccessContext, id: nu
   const updated = await db
     .update(deliveryKey)
     .set({ name })
-    .where(eq(deliveryKey.id, id))
+    .where(and(eq(deliveryKey.id, id), eq(deliveryKey.siteId, ctx.siteId))) // active site only
     .returning({ id: deliveryKey.id });
   if (!updated[0]) throw Errors.notFound("Delivery key");
 }
