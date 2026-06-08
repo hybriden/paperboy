@@ -11,6 +11,7 @@ import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
+import { getDefaultSite } from "./sites.js";
 import { auditLog, deliveryKey, session, userRole, userScope, users } from "./schema.js";
 import {
   decryptSecret,
@@ -232,16 +233,28 @@ export async function getRoles(db: Database, userId: string): Promise<RoleName[]
   return rows.map((r) => r.role as RoleName);
 }
 
-export async function getAccessContext(db: Database, userId: string): Promise<AccessContext> {
+export async function getAccessContext(
+  db: Database,
+  userId: string,
+  activeSiteId?: string,
+): Promise<AccessContext> {
   const roles = await getRoles(db, userId);
   const permissions = new Set<Permission>();
   for (const role of roles) for (const p of ROLE_PERMISSIONS[role] ?? []) permissions.add(p);
-  // Admin/Editor/Viewer operate site-wide; Author is restricted to its sections.
+  // Admin/Editor/Viewer operate site-wide (within the active site); Author is
+  // restricted to its sections.
   const siteWide = roles.some((r) => r === "Admin" || r === "Editor" || r === "Viewer");
-  const scopeRows = await db.select().from(userScope).where(eq(userScope.userId, userId));
+  // The active site: an explicit choice (admin site switcher, Phase 3) or the
+  // Default site. Section scopes are per-site, so only this site's scopes apply.
+  const siteId = activeSiteId ?? (await getDefaultSite(db)).id;
+  const scopeRows = await db
+    .select()
+    .from(userScope)
+    .where(and(eq(userScope.userId, userId), eq(userScope.siteId, siteId)));
   return {
     userId,
     permissions: [...permissions],
+    siteId,
     siteWide,
     sections: scopeRows.map((s) => s.sectionId),
   };
@@ -426,11 +439,15 @@ export async function renameDeliveryKey(db: Database, ctx: AccessContext, id: nu
   if (!updated[0]) throw Errors.notFound("Delivery key");
 }
 
-/** Returns the key's perspective-bearing type, or null if invalid/revoked. */
+/**
+ * Returns the key's perspective-bearing type AND the site it's scoped to (D1:
+ * per-site delivery keys), or null if invalid/revoked. The site narrows EVERY
+ * delivery read to that key's site — the structural no-leak boundary across sites.
+ */
 export async function verifyDeliveryKey(
   db: Database,
   key: string,
-): Promise<"public" | "preview" | null> {
+): Promise<{ type: "public" | "preview"; siteId: string } | null> {
   if (!key) return null;
   const rows = await db
     .select()
@@ -439,7 +456,7 @@ export async function verifyDeliveryKey(
     .limit(1);
   const row = rows[0];
   if (!row || row.revokedAt) return null;
-  return row.type as "public" | "preview";
+  return { type: row.type as "public" | "preview", siteId: row.siteId };
 }
 
 /* --------------------------------- audit ---------------------------------- */

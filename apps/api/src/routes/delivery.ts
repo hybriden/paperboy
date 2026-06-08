@@ -15,22 +15,23 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 
-/** Extract the bearer/x-api-key credential and resolve its perspective. */
-async function resolvePerspective(
+/** Extract the bearer/x-api-key credential and resolve its perspective + site. */
+async function resolveCredential(
   app: FastifyInstance,
   req: FastifyRequest,
-): Promise<Perspective> {
+): Promise<{ perspective: Perspective; siteId: string }> {
   const auth = req.headers.authorization;
   let key = "";
   if (auth?.startsWith("Bearer ")) key = auth.slice(7).trim();
   else if (typeof req.headers["x-api-key"] === "string") key = req.headers["x-api-key"];
   // SECURITY: never accept credentials from the query string.
-  const type = await verifyDeliveryKey(app.db, key);
-  if (!type) {
+  const resolved = await verifyDeliveryKey(app.db, key);
+  if (!resolved) {
     throw new AppError(401, "unauthorized", "Invalid or missing API key");
   }
-  // public key -> only published; preview key -> draft-aware working view.
-  return type === "public" ? "published" : "preview";
+  // public key -> only published; preview key -> draft-aware working view. The
+  // key also pins the site (D1) — delivery is confined to it.
+  return { perspective: resolved.type === "public" ? "published" : "preview", siteId: resolved.siteId };
 }
 
 function setCacheHeaders(reply: FastifyReply, perspective: Perspective, cv: number): void {
@@ -57,9 +58,11 @@ function notModified(req: FastifyRequest, perspective: Perspective, cv: number):
 export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<void> {
   const app = appBase.withTypeProvider<ZodTypeProvider>();
 
-  // Attach perspective early so a missing/invalid key fails before any DB read.
+  // Attach perspective + site early so a missing/invalid key fails before any DB read.
   app.addHook("onRequest", async (req) => {
-    req.perspective = await resolvePerspective(app, req);
+    const { perspective, siteId } = await resolveCredential(app, req);
+    req.perspective = perspective;
+    req.deliverySiteId = siteId;
   });
 
   app.get(
@@ -100,7 +103,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       for (const [k, v] of Object.entries(req.query)) {
         if (k.startsWith("data.") && typeof v === "string") filter[k.slice(5)] = v;
       }
-      const { items, total } = await deliveryList(app.db, perspective, req.query.type, locale, req.query.populate, req.query.parentId, {
+      const { items, total } = await deliveryList(app.db, perspective, req.deliverySiteId!, req.query.type, locale, req.query.populate, req.query.parentId, {
         limit: req.query.limit,
         offset: req.query.offset,
         sort: req.query.sort,
@@ -130,7 +133,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     },
     async (req, reply) => {
       const perspective = req.perspective!;
-      const { items, total } = await deliverySearch(app.db, perspective, req.query.q, req.query.locale ?? "en", req.query.type, req.query.limit);
+      const { items, total } = await deliverySearch(app.db, perspective, req.deliverySiteId!, req.query.q, req.query.locale ?? "en", req.query.type, req.query.limit);
       // Search results change with content — short public cache only.
       reply.header("Cache-Control", perspective === "preview" ? "private, no-store" : "public, max-age=30");
       return { items, total };
@@ -150,7 +153,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     async (req, reply) => {
       const perspective = req.perspective!;
       const locale = req.query.locale ?? "en";
-      const result = await deliveryStartPage(app.db, perspective, locale, req.query.populate);
+      const result = await deliveryStartPage(app.db, perspective, req.deliverySiteId!, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No start page configured" });
       if (notModified(req, perspective, result.cv)) {
         setCacheHeaders(reply, perspective, result.cv);
@@ -174,7 +177,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     async (req, reply) => {
       const perspective = req.perspective!;
       const locale = req.query.locale ?? "en";
-      const result = await deliveryGetBySlug(app.db, perspective, req.query.slug, locale, req.query.populate);
+      const result = await deliveryGetBySlug(app.db, perspective, req.deliverySiteId!, req.query.slug, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No published content for that slug" });
       if (notModified(req, perspective, result.cv)) {
         setCacheHeaders(reply, perspective, result.cv);
@@ -199,7 +202,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const perspective = req.perspective!;
       const locale = req.query.locale ?? "en";
       const segments = req.query.path.split("/").filter(Boolean);
-      const result = await deliveryGetByPath(app.db, perspective, segments, locale, req.query.populate);
+      const result = await deliveryGetByPath(app.db, perspective, req.deliverySiteId!, segments, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No content at that path" });
       if (notModified(req, perspective, result.cv)) {
         setCacheHeaders(reply, perspective, result.cv);
@@ -224,7 +227,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     async (req, reply) => {
       const perspective = req.perspective!;
       const locale = req.query.locale ?? "en";
-      const result = await deliveryGetById(app.db, perspective, req.params.documentId, locale, req.query.populate);
+      const result = await deliveryGetById(app.db, perspective, req.deliverySiteId!, req.params.documentId, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "Not found or not published" });
       // Conditional GET on published content (ETag keyed by cache-version).
       if (notModified(req, perspective, result.cv)) {
@@ -250,7 +253,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     async (req, reply) => {
       const perspective = req.perspective!;
       const locale = req.query.locale ?? "en";
-      const global = await deliveryGlobal(app.db, perspective, req.params.type, locale);
+      const global = await deliveryGlobal(app.db, perspective, req.deliverySiteId!, req.params.type, locale);
       if (!global) return reply.code(404).send({ error: "not_found", message: "No such global" });
       setCacheHeaders(reply, perspective, global.cv);
       return global;

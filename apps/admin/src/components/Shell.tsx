@@ -5,6 +5,7 @@ import { useTheme } from "../lib/theme.js";
 import { useIsMobile } from "../lib/useMediaQuery.js";
 import { useUser } from "../lib/user.js";
 import { CommandPalette } from "./CommandPalette.js";
+import { SiteSwitcher } from "./SiteSwitcher.js";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "./ui/menu.js";
 import { Tooltip } from "./ui/tooltip.js";
 
@@ -96,6 +97,7 @@ function TopBar({
           <span className="hidden md:inline">Search…</span>
           <kbd className="hidden rounded bg-chrome-border/60 px-1.5 py-0.5 font-mono text-[10px] text-chrome-fg/80 md:inline">⌘K</kbd>
         </button>
+        <SiteSwitcher />
         <ThemeToggle />
         {!compact && (
           <a

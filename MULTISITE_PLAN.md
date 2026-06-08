@@ -70,10 +70,11 @@ is what makes this tractable.
 | Webhooks | `webhook` | global |
 
 ### Migrations
-- Forward-only numbered SQL in `packages/db/migrations/`. Latest:
-  `0004_mcp_token.sql`. **Next: `0005_sites.sql`.** Tracked in `_migrations`,
-  idempotent, run on api boot. Separate from `seed` (which truncates — never run
-  seed for this).
+- Forward-only numbered SQL in `packages/db/migrations/`. Latest (2026-06-08):
+  `0011_seo_group_intrinsic.sql`. **Next: `0012_sites.sql`** (the plan body still
+  says `0005_sites.sql` from when it was drafted — use `0012`). Tracked in
+  `_migrations`, idempotent, run on api boot. Separate from `seed` (truncates —
+  never run seed for this). `asset` IS scoped per D2 (per-site media).
 
 ---
 
@@ -89,7 +90,7 @@ These fork the architecture. Recommended defaults in **bold**.
 - Both keys + hostname.
 - Explicit site id/slug in the delivery URL.
 
-**DECISION: _____ (undecided)**
+**DECISION: Per-site delivery keys (2026-06-08).** `verifyDeliveryKey` → `{ type, siteId }`; `delivery_key.site_id` NOT NULL. No hostname/domains table, no URL change.
 
 ### D2 — Shared vs per-site resources (multi-select; unchecked = per-site copy)
 - **(rec) Content types shared** — one content model across sites.
@@ -97,14 +98,14 @@ These fork the architecture. Recommended defaults in **bold**.
 - Media library: **shared pool** vs per-site (isolation / no cross-brand leakage).
 - **(rec) Users shared** — one login, roles/scope granted per site.
 
-**DECISION: shared = _____ ; per-site = _____ (undecided)**
+**DECISION (2026-06-08): per-site = MEDIA only; shared = content types, locales, users.** So `asset.site_id` is added + scoped; `content_type`/`locale`/`users` stay global. Per-site *default* locale lives on `site.default_locale`.
 
 ### D3 — Migration mapping of existing content
 - **(rec) One "Default site"** — all current content/keys/settings/sections →
   one site; fully lossless; split later in UI.
 - One site per existing top-level section (promote Home, Author Zone, … to sites).
 
-**DECISION: _____ (undecided)**
+**DECISION: One "Default site" (2026-06-08).** All current content/keys/settings/sections/assets → one Default site; lossless; split later in the UI.
 
 ---
 

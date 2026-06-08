@@ -34,12 +34,17 @@ class DeliveryCtx {
   // Clock for the scheduled-publish window check (published perspective only).
   constructor(
     public db: Database,
+    // The site this delivery request is scoped to (multisite). Every content_item
+    // lookup is confined to it — including the reference/contentArea graph (which
+    // flows through `item()`), so a cross-site reference resolves to null.
+    public siteId: string,
     public now: Date = new Date(),
   ) {}
 
   async asset(documentId: string): Promise<typeof asset.$inferSelect | null> {
     if (this.assets.has(documentId)) return this.assets.get(documentId)!;
-    const row = await getAssetRow(this.db, documentId);
+    // Per-site media (D2): an image referencing a cross-site asset resolves to null.
+    const row = await getAssetRow(this.db, documentId, this.siteId);
     this.assets.set(documentId, row);
     return row;
   }
@@ -79,7 +84,7 @@ class DeliveryCtx {
     const rows = await this.db
       .select({ documentId: contentItem.documentId })
       .from(contentItem)
-      .where(and(eq(contentItem.type, "SiteSettings"), eq(contentItem.kind, "global"), isNull(contentItem.deletedAt)))
+      .where(and(eq(contentItem.type, "SiteSettings"), eq(contentItem.kind, "global"), isNull(contentItem.deletedAt), eq(contentItem.siteId, this.siteId)))
       .orderBy(asc(contentItem.id))
       .limit(1);
     let name: string | null = null;
@@ -118,7 +123,7 @@ class DeliveryCtx {
     const rows = await this.db
       .select({ type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
       .from(contentItem)
-      .where(and(eq(contentItem.documentId, documentId), isNull(contentItem.deletedAt)))
+      .where(and(eq(contentItem.documentId, documentId), isNull(contentItem.deletedAt), eq(contentItem.siteId, this.siteId)))
       .limit(1);
     const row = rows[0] ?? null;
     this.items.set(documentId, row);
@@ -595,22 +600,24 @@ function clampDepth(populate: number | undefined): number {
 export async function deliveryGetById(
   db: Database,
   perspective: Perspective,
+  siteId: string,
   documentId: string,
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db);
+  const ctx = new DeliveryCtx(db, siteId);
   return resolveContent(ctx, perspective, documentId, loc, clampDepth(populate));
 }
 
 export async function deliveryGetBySlug(
   db: Database,
   perspective: Perspective,
+  siteId: string,
   slug: string,
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db);
+  const ctx = new DeliveryCtx(db, siteId);
   // Find candidate variants by slug, then re-resolve via the chokepoint so the
   // perspective filter (not the slug lookup) decides visibility.
   const rows = await db
@@ -651,6 +658,7 @@ function compareKeys(a: unknown, b: unknown): number {
 export async function deliveryList(
   db: Database,
   perspective: Perspective,
+  siteId: string,
   typeName: string | undefined,
   loc: string,
   populate?: number,
@@ -658,11 +666,11 @@ export async function deliveryList(
   opts: DeliveryListOptions = {},
 ): Promise<{ items: DeliveryContent[]; total: number }> {
   if (!typeName && !parentId) return { items: [], total: 0 }; // unbounded "everything" listing is not a thing
-  const ctx = new DeliveryCtx(db);
+  const ctx = new DeliveryCtx(db, siteId);
   // Optional hierarchy filter (a ListPage / teaser ListBlock listing a page's
   // children — with parentId the type may be omitted to list children of any
   // type). Visibility still comes from resolveContent — same chokepoint rules.
-  const conds = [isNull(contentItem.deletedAt)];
+  const conds = [isNull(contentItem.deletedAt), eq(contentItem.siteId, siteId)];
   if (typeName) conds.push(eq(contentItem.type, typeName));
   if (parentId) conds.push(eq(contentItem.parentId, parentId));
   const items = await db
@@ -740,6 +748,7 @@ export async function deliveryList(
 export async function deliverySearch(
   db: Database,
   perspective: Perspective,
+  siteId: string,
   query: string,
   loc: string,
   typeName?: string,
@@ -747,7 +756,7 @@ export async function deliverySearch(
 ): Promise<{ items: DeliveryContent[]; total: number }> {
   const q = query.trim();
   if (!q) return { items: [], total: 0 };
-  const ctx = new DeliveryCtx(db);
+  const ctx = new DeliveryCtx(db, siteId);
   const chain = await ctx.localeChain(loc);
   const max = Math.min(Math.max(limit, 1), 100);
   // Matches the expression GIN index in 0007_delivery_search.sql exactly.
@@ -756,7 +765,7 @@ export async function deliverySearch(
            MAX(ts_rank(to_tsvector('simple', coalesce(v.name,'') || ' ' || coalesce(v.data::text,'')),
                        websearch_to_tsquery('simple', ${q}))) AS rank
     FROM content_version v
-    JOIN content_item i ON i.document_id = v.document_id AND i.deleted_at IS NULL
+    JOIN content_item i ON i.document_id = v.document_id AND i.deleted_at IS NULL AND i.site_id = ${siteId}
     WHERE to_tsvector('simple', coalesce(v.name,'') || ' ' || coalesce(v.data::text,''))
           @@ websearch_to_tsquery('simple', ${q})
       AND v.locale IN (${sql.join(chain.map((c) => sql`${c}`), sql`, `)})
@@ -787,11 +796,12 @@ export async function deliverySearch(
 export async function deliveryGetByPath(
   db: Database,
   perspective: Perspective,
+  siteId: string,
   segments: string[],
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db);
+  const ctx = new DeliveryCtx(db, siteId);
   const cleaned = segments.filter((s) => s.length > 0);
   if (cleaned.length === 0) return null;
 
@@ -808,6 +818,7 @@ export async function deliveryGetByPath(
           parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
           eq(contentItem.kind, "page"),
           isNull(contentItem.deletedAt),
+          eq(contentItem.siteId, siteId), // multisite: only this site's pages match the path
         ),
       )
       .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
@@ -840,13 +851,18 @@ export async function deliveryGetByPath(
 export async function deliveryStartPage(
   db: Database,
   perspective: Perspective,
+  siteId: string,
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
+  // NOTE: the startPage setting is still global (per-site start pages land with
+  // per-site settings in a later phase). resolveContent confines it to the
+  // requesting site, so a key for a site that doesn't own the start page gets
+  // null rather than another site's home.
   const rows = await db.select().from(siteSetting).where(eq(siteSetting.key, "startPage")).limit(1);
   const id = (rows[0]?.value as { documentId?: string } | undefined)?.documentId;
   if (!id) return null;
-  const ctx = new DeliveryCtx(db);
+  const ctx = new DeliveryCtx(db, siteId);
   return resolveContent(ctx, perspective, id, loc, clampDepth(populate));
 }
 
@@ -854,10 +870,11 @@ export async function deliveryStartPage(
 export async function deliveryGlobal(
   db: Database,
   perspective: Perspective,
+  siteId: string,
   typeName: string,
   loc: string,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db);
+  const ctx = new DeliveryCtx(db, siteId);
   const items = await db
     .select({ documentId: contentItem.documentId })
     .from(contentItem)
@@ -866,6 +883,7 @@ export async function deliveryGlobal(
         eq(contentItem.type, typeName),
         eq(contentItem.kind, "global"),
         isNull(contentItem.deletedAt),
+        eq(contentItem.siteId, siteId),
       ),
     )
     .orderBy(asc(contentItem.id))

@@ -67,6 +67,8 @@ import {
   unpublishContent,
   updateContent,
   updateContentType,
+  listSites,
+  createSite,
 } from "@paperboy/db";
 import { unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -895,6 +897,47 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       await adminDeleteUser(app.db, req.accessCtx!, req.params.id);
       await audit(app.db, { actorUserId: req.user!.id, action: "user.delete", ip: req.ip, detail: { id: req.params.id } });
       return { ok: true };
+    },
+  );
+
+  /* --------------------------------- sites ---------------------------------- */
+  const SiteOut = z.object({
+    id: z.string(),
+    slug: z.string(),
+    name: z.string(),
+    defaultLocale: z.string(),
+    active: z.boolean(),
+    createdAt: z.string(),
+  });
+
+  // List all sites + which one is active for this request (the site switcher).
+  app.get(
+    "/sites",
+    { preHandler: [requirePermission("content.read")], schema: { tags: ["manage"], response: { 200: z.object({ sites: z.array(SiteOut), activeSiteId: z.string() }) } } },
+    async (req) => {
+      const sites = await listSites(app.db, req.accessCtx!);
+      return {
+        sites: sites.map((s) => ({ ...s, createdAt: s.createdAt.toISOString() })),
+        activeSiteId: req.accessCtx!.siteId,
+      };
+    },
+  );
+
+  // Create a site (cross-site admin: user.manage).
+  app.post(
+    "/sites",
+    {
+      preHandler: [requireCsrf, requirePermission("user.manage")],
+      schema: {
+        tags: ["manage"],
+        body: z.object({ slug: z.string().min(1).max(60), name: z.string().min(1).max(120), defaultLocale: z.string().min(2).max(35) }),
+        response: { 200: SiteOut },
+      },
+    },
+    async (req) => {
+      const site = await createSite(app.db, req.accessCtx!, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "site.create", ip: req.ip, detail: { id: site.id, slug: site.slug } });
+      return { ...site, createdAt: site.createdAt.toISOString() };
     },
   );
 }

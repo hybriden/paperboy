@@ -329,6 +329,7 @@ export async function getTree(
         parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
         eq(contentItem.kind, "page"),
         isNull(contentItem.deletedAt),
+        eq(contentItem.siteId, ctx.siteId), // multisite: only the active site's tree
       ),
     )
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
@@ -371,7 +372,7 @@ export async function listBlocks(db: Database, ctx: AccessContext): Promise<Bloc
   const items = await db
     .select()
     .from(contentItem)
-    .where(and(eq(contentItem.kind, "block"), isNull(contentItem.deletedAt)))
+    .where(and(eq(contentItem.kind, "block"), isNull(contentItem.deletedAt), eq(contentItem.siteId, ctx.siteId)))
     .orderBy(asc(contentItem.id));
   const visible = items.filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
   const out: BlockSummary[] = [];
@@ -512,6 +513,16 @@ async function slugTakenBySibling(
   loc: string,
   slug: string,
 ): Promise<boolean> {
+  // Scope siblings to the document's own site so two sites can each own a root
+  // "/about" (slug uniqueness is per-site + per-parent + locale). For non-root
+  // pages this is implied (siblings share a parent → a site); it matters for
+  // roots (parentId === null), which would otherwise collide across sites.
+  const own = await db
+    .select({ siteId: contentItem.siteId })
+    .from(contentItem)
+    .where(eq(contentItem.documentId, documentId))
+    .limit(1);
+  const siteId = own[0]?.siteId;
   const siblings = await db
     .select({ documentId: contentItem.documentId })
     .from(contentItem)
@@ -520,6 +531,7 @@ async function slugTakenBySibling(
         parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
         eq(contentItem.kind, "page"),
         isNull(contentItem.deletedAt),
+        ...(siteId ? [eq(contentItem.siteId, siteId)] : []),
       ),
     );
   for (const sib of siblings) {
@@ -654,6 +666,9 @@ export async function createContent(
     parentId: req.parentId,
     sortIndex: 0,
     sectionId: effectiveSection,
+    // Children inherit the parent's site (loadAuthorized already confirmed the
+    // parent is in the active site); a new root belongs to the active site.
+    siteId: parent ? parent.siteId : ctx.siteId,
     createdBy: ctx.userId,
   });
   await db.insert(contentVersion).values({
@@ -1685,7 +1700,7 @@ export async function listPages(
   const items = await db
     .select()
     .from(contentItem)
-    .where(and(eq(contentItem.kind, "page"), isNull(contentItem.deletedAt)))
+    .where(and(eq(contentItem.kind, "page"), isNull(contentItem.deletedAt), eq(contentItem.siteId, ctx.siteId)))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
   const visible = items.filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
   const out: { documentId: string; name: string; parentId: string | null; type: string }[] = [];
@@ -1740,6 +1755,7 @@ export async function searchContent(
     .where(
       and(
         isNull(contentItem.deletedAt),
+        eq(contentItem.siteId, ctx.siteId), // multisite: search is confined to the active site
         or(ilike(contentVersion.name, pattern), ilike(contentVersion.slug, pattern)),
       ),
     )
@@ -2034,6 +2050,7 @@ async function loadAnyState(
   const rows = await db.select().from(contentItem).where(eq(contentItem.documentId, documentId)).limit(1);
   const item = rows[0];
   if (!item) throw Errors.notFound("Content");
+  if (item.siteId !== ctx.siteId) throw Errors.notFound("Content"); // multisite: not in the active site
   if (!ctx.siteWide && !ctx.sections.includes(item.sectionId ?? item.documentId)) {
     throw Errors.forbidden("Out of scope for this content");
   }
@@ -2119,7 +2136,7 @@ export async function listTrash(
   const rows = await db
     .select()
     .from(contentItem)
-    .where(sql`${contentItem.deletedAt} is not null`)
+    .where(and(sql`${contentItem.deletedAt} is not null`, eq(contentItem.siteId, ctx.siteId)))
     .orderBy(desc(contentItem.deletedAt));
   const visible = rows.filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
   const out: { documentId: string; type: string; kind: string; name: string; deletedAt: string }[] = [];
@@ -2145,7 +2162,7 @@ export async function emptyTrash(
   const rows = await db
     .select({ documentId: contentItem.documentId, sectionId: contentItem.sectionId })
     .from(contentItem)
-    .where(sql`${contentItem.deletedAt} is not null`);
+    .where(and(sql`${contentItem.deletedAt} is not null`, eq(contentItem.siteId, ctx.siteId)));
   const ids = rows
     .filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId))
     .map((i) => i.documentId);
