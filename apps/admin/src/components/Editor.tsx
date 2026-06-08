@@ -249,7 +249,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       };
       setForm((prev) => (prev ? { ...prev, ...meta } : prev));
       formRef.current = formRef.current ? { ...formRef.current, ...meta } : formRef.current;
-      qc.invalidateQueries({ queryKey: ["tree", "root"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
       // Reload the preview with the saved draft — but NOT while an on-page
       // overlay is open (the reload would yank the page out from under the
@@ -310,7 +310,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       formRef.current = updated;
       setSaveState("idle");
       qc.setQueryData(["content", documentId, locale], updated);
-      qc.invalidateQueries({ queryKey: ["tree", "root"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
       toast.success("Published", `“${updated.name}” is live in ${locale.toUpperCase()}.`);
     },
@@ -323,7 +323,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       setForm(updated);
       formRef.current = updated;
       qc.setQueryData(["content", documentId, locale], updated);
-      qc.invalidateQueries({ queryKey: ["tree", "root"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
       toast.success("Unpublished", `Removed from the public delivery API.`);
     },
@@ -339,7 +339,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     onSuccess: () => {
       loadedKey.current = null; // force re-init from server
       qc.invalidateQueries({ queryKey: ["content", documentId, locale] });
-      qc.invalidateQueries({ queryKey: ["tree", "root"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
       toast.success("Draft discarded");
     },
@@ -352,7 +352,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const duplicate = useMutation({
     mutationFn: () => api.duplicate(documentId, locale),
     onSuccess: (created) => {
-      qc.invalidateQueries({ queryKey: ["tree", "root"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
       toast.success("Duplicated", `Created “${created.name}”.`);
       navigate(`/edit/${created.documentId}${locale !== "en" ? `?lang=${locale}` : ""}`);
@@ -376,7 +376,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const trash = useMutation({
     mutationFn: () => api.trash(documentId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tree", "root"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
       toast.success("Moved to trash", "Restore it from Settings → Trash.");
       navigate("/edit");
@@ -1020,7 +1020,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             loadedKey.current = variantKey;
             setSaveState("idle");
             qc.setQueryData(["content", documentId, locale], updated);
-            qc.invalidateQueries({ queryKey: ["tree", "root"] });
+            qc.invalidateQueries({ queryKey: ["tree"] });
           }}
         />
       )}
@@ -1048,7 +1048,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             formRef.current = updated;
             setSaveState("idle");
             qc.setQueryData(["content", documentId, locale], updated);
-            qc.invalidateQueries({ queryKey: ["tree", "root"] });
+            qc.invalidateQueries({ queryKey: ["tree"] });
             qc.invalidateQueries({ queryKey: ["versions", documentId, locale] });
           }}
         />
