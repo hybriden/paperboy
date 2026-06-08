@@ -654,6 +654,9 @@ export async function createContent(
     parentId: req.parentId,
     sortIndex: 0,
     sectionId: effectiveSection,
+    // Children inherit the parent's site; a new root falls to the column DEFAULT
+    // (the Default site) until the multisite UI passes an explicit active site.
+    ...(parent ? { siteId: parent.siteId } : {}),
     createdBy: ctx.userId,
   });
   await db.insert(contentVersion).values({
