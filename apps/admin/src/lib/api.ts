@@ -291,6 +291,8 @@ export const api = {
     request<ContentDetail>("POST", `/manage/content/${documentId}/unpublish?locale=${locale}`),
   discardDraft: (documentId: string, locale: string) =>
     request<{ ok: boolean }>("POST", `/manage/content/${documentId}/discard-draft?locale=${locale}`),
+  deleteVariant: (documentId: string, locale: string) =>
+    request<{ ok: boolean; deleted: number }>("DELETE", `/manage/content/${documentId}/variant?locale=${encodeURIComponent(locale)}`),
   move: (documentId: string, body: { parentId?: string | null; beforeId?: string | null; afterId?: string | null }) =>
     request<{ ok: boolean }>("POST", `/manage/content/${documentId}/move`, body),
   duplicate: (documentId: string, locale: string) =>

@@ -45,6 +45,7 @@ import {
   softDelete,
   MEDIA_PREFIX,
   deliveryFlagDelta,
+  deleteVariant,
   discardDraft,
   insertAsset,
   listAssets,
@@ -346,6 +347,19 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       await discardDraft(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.discard_draft", documentId: req.params.documentId, locale, ip: req.ip });
       return { ok: true };
+    },
+  );
+  // Delete ONE language variant of a document (every version in that locale).
+  // Distinct from discard-draft (keeps published) and trash (whole document);
+  // refuses the document's only remaining locale. Used to re-translate a variant.
+  app.delete(
+    "/content/:documentId/variant",
+    { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: z.object({ ok: z.boolean(), deleted: z.number() }) } } },
+    async (req) => {
+      const locale = req.query.locale ?? "en";
+      const r = await deleteVariant(app.db, req.accessCtx!, req.params.documentId, locale);
+      await audit(app.db, { actorUserId: req.user!.id, action: "content.delete_variant", documentId: req.params.documentId, locale, ip: req.ip });
+      return r;
     },
   );
 
