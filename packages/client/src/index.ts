@@ -252,3 +252,6 @@ export function createClient(options: PaperboyClientOptions) {
 }
 
 export type PaperboyClient = ReturnType<typeof createClient>;
+
+// Delivery-consumption render helpers (richtext→HTML, content-area utilities).
+export { renderRichText, isRichTextDoc, blockData, contentAreas, type AreaBlock } from "./render";

@@ -1,5 +1,6 @@
 import { Fragment, type ReactNode } from "react";
 import type { DeliveryContent } from "@paperboy/shared";
+import { blockData, contentAreas, type AreaBlock } from "@paperboycms/client";
 import DOMPurify from "isomorphic-dompurify";
 import { marked } from "marked";
 import { fetchList } from "../lib/delivery";
@@ -77,14 +78,8 @@ function Rich({ doc, className }: { doc: unknown; className?: string }) {
 }
 
 /* ----------------------------- blocks ----------------------------- */
-interface AreaBlock {
-  blockType: string;
-  display: string;
-  shared: boolean;
-  data?: Record<string, unknown>;
-  content?: DeliveryContent;
-}
-const blockData = (b: AreaBlock): Record<string, unknown> => (b.shared ? b.content?.data : b.data) ?? {};
+// AreaBlock / blockData / contentAreas come from @paperboycms/client (shared,
+// DOM-free delivery-consumption helpers).
 
 /** Newest-first by publishDate (fallback name) — the teaser/list ordering. */
 function newestFirst(items: DeliveryContent[]): DeliveryContent[] {
@@ -226,21 +221,13 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
   if (content.type === "BlogPost") return <BlogPostView content={content} />;
 
   const data = content.data as Record<string, unknown>;
-  // Content types are data, so user-created types name their fields freely. A
-  // non-empty array of blocks is an unambiguous content area (any name). An
-  // EMPTY array is shape-identical to any other empty list (e.g. `tags: []`),
-  // so we only treat it as an area when conventionally named (…Area) — else an
-  // empty tag list would render a stray placeholder.
-  const looksLikeBlocks = (v: unknown): v is AreaBlock[] =>
-    Array.isArray(v) && v.length > 0 && v.every((b) => b != null && typeof b === "object" && "blockType" in (b as object));
-  // Keep the content-area field NAME (not just its blocks) so an EMPTY area can
-  // still be marked for on-page editing. `mainArea` is the convention (and the
-  // bridge's fallback), so it wins; otherwise the first array-of-blocks field.
-  const areaEntries = (Object.entries(data) as [string, unknown][])
-    .filter(([field, v]) => looksLikeBlocks(v) || (Array.isArray(v) && v.length === 0 && /area$/i.test(field)))
-    .sort(([a], [b]) => (a === "mainArea" ? -1 : b === "mainArea" ? 1 : 0)) as [string, AreaBlock[]][];
-  const filled = areaEntries.find(([, a]) => a.length > 0);
-  const [areaField, area] = filled ?? areaEntries[0] ?? ["mainArea", [] as AreaBlock[]];
+  // Content areas (any field name; detection lives in the shared client).
+  // `mainArea` is preferred so an EMPTY area still surfaces a placeholder target
+  // in preview; otherwise the first non-empty area renders.
+  const areas = contentAreas(data).sort((a, b) => (a.field === "mainArea" ? -1 : b.field === "mainArea" ? 1 : 0));
+  const picked = areas.find((a) => a.blocks.length > 0) ?? areas[0] ?? { field: "mainArea", blocks: [] as AreaBlock[] };
+  const areaField = picked.field;
+  const area = picked.blocks;
   return (
     <main className="wrap" data-document-id={content.documentId}>
       <h1 className="page-heading" data-pb-field="heading">{String(data.heading ?? content.name)}</h1>
@@ -248,7 +235,7 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
       {data.body != null ? <div data-pb-field="body"><Rich doc={data.body} className="richtext" /></div> : null}
       {area.length > 0 ? (
         area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} />)
-      ) : preview && areaEntries.length > 0 ? (
+      ) : preview && areas.length > 0 ? (
         // Empty content area: render a visible, clickable target ONLY in preview
         // so on-page editing has somewhere to land. The data-pb-field marker lets
         // the bridge outline it and route the click to this field in the form

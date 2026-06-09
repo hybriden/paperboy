@@ -17,7 +17,7 @@
  * It injects its own minimal styles, so consumers ship NO bridge CSS. Returns a
  * teardown function (removes listeners, injected nodes, body class).
  */
-import { ATTR, DRAG_MIME, PROTOCOL_VERSION, parsePreviewMessage, type Rect } from "./protocol.js";
+import { ATTR, DRAG_MIME, PROTOCOL_VERSION, parsePreviewMessage, type Rect } from "./protocol";
 
 export interface PreviewBridgeOptions {
   /** Window to post messages to. Default: the parent window. */

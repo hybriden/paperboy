@@ -2,7 +2,7 @@
 const nextConfig = {
   reactStrictMode: true,
   output: "standalone",
-  transpilePackages: ["@paperboy/shared", "@paperboycms/preview"],
+  transpilePackages: ["@paperboy/shared", "@paperboycms/client", "@paperboycms/preview"],
   // jsdom (via isomorphic-dompurify) can't be webpack-bundled — it reads its
   // default stylesheet from disk at runtime. Load it from node_modules instead.
   serverExternalPackages: ["isomorphic-dompurify", "jsdom"],
