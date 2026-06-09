@@ -30,6 +30,8 @@ export interface AssetRecord {
   /** Stock-image imports carry provider attribution; null for normal uploads. */
   sourceMeta: AssetSourceMeta | null;
   createdAt: string;
+  /** Asset-pane folder (null = root/unfiled). */
+  folderId: string | null;
 }
 
 function toRecord(row: typeof asset.$inferSelect): AssetRecord {
@@ -42,6 +44,7 @@ function toRecord(row: typeof asset.$inferSelect): AssetRecord {
     alt: row.alt,
     sourceMeta: (row.sourceMeta as AssetSourceMeta | null) ?? null,
     createdAt: row.createdAt.toISOString(),
+    folderId: row.folderId ?? null,
   };
 }
 

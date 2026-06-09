@@ -70,6 +70,8 @@ export const BlockSummary = z.object({
   type: z.string(),
   name: z.string(),
   locales: z.record(z.object({ status: ContentStatus, hasUnpublishedChanges: z.boolean() })),
+  // Asset-pane folder (null = root/unfiled).
+  folderId: z.string().nullable(),
 });
 export type BlockSummary = z.infer<typeof BlockSummary>;
 
@@ -84,8 +86,42 @@ export const Asset = z.object({
   // Stock-image imports carry provider attribution; null for normal uploads.
   sourceMeta: AssetSourceMeta.nullable(),
   createdAt: z.string(),
+  // Asset-pane folder (null = root/unfiled).
+  folderId: z.string().nullable(),
 });
 export type Asset = z.infer<typeof Asset>;
+
+/** Which asset-pane library a folder organizes (two separate trees). */
+export const FolderKind = z.enum(["media", "block"]);
+export type FolderKind = z.infer<typeof FolderKind>;
+
+/** A nested asset-pane folder (Media or Shared-blocks library). */
+export const Folder = z.object({
+  documentId: z.string(),
+  kind: FolderKind,
+  parentId: z.string().nullable(), // null = root
+  name: z.string(),
+  createdAt: z.string(),
+});
+export type Folder = z.infer<typeof Folder>;
+
+export const CreateFolderRequest = z.object({
+  kind: FolderKind,
+  parentId: z.string().nullable().optional(),
+  name: z.string().min(1).max(120),
+});
+export type CreateFolderRequest = z.infer<typeof CreateFolderRequest>;
+
+/** Rename and/or move a folder. Omitted fields are left unchanged; `parentId: null` moves to root. */
+export const UpdateFolderRequest = z.object({
+  name: z.string().min(1).max(120).optional(),
+  parentId: z.string().nullable().optional(),
+});
+export type UpdateFolderRequest = z.infer<typeof UpdateFolderRequest>;
+
+/** Move an item (asset or block) into a folder. `folderId: null` = root/unfiled. */
+export const SetFolderRequest = z.object({ folderId: z.string().nullable() });
+export type SetFolderRequest = z.infer<typeof SetFolderRequest>;
 
 /** Create-content request. */
 export const CreateContentRequest = z.object({

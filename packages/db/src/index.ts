@@ -3,6 +3,7 @@ export * from "./errors.js";
 export * from "./scope.js";
 export * from "./content.js";
 export * from "./assets.js";
+export * from "./folders.js";
 export * from "./delivery.js";
 export * from "./auth-store.js";
 export * from "./webhooks.js";

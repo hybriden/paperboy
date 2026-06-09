@@ -388,6 +388,7 @@ export async function listBlocks(db: Database, ctx: AccessContext): Promise<Bloc
       type: item.type,
       name: Object.values(states)[0]?.name ?? item.documentId,
       locales,
+      folderId: item.folderId ?? null,
     });
   }
   return out;
