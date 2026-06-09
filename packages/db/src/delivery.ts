@@ -296,7 +296,14 @@ async function sanitize(
     // FAIL-CLOSED: private fields never reach delivery output.
     if (f.delivery !== "public") continue;
     const v = data[f.name];
-    if (v === undefined) continue;
+    if (v === undefined) {
+      // A DEFINED content area is ALWAYS present in output (as []), even when
+      // the instance never set it — so a frontend can tell "this type has a
+      // content area (empty)" from "this type has none". Other unset fields
+      // stay absent.
+      if (f.type === "contentArea") out[f.name] = [];
+      continue;
+    }
 
     if (f.type === "image") {
       // Resolve the asset documentId → {url, alt, mime}; missing asset → null.
