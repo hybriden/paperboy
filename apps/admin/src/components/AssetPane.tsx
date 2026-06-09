@@ -90,9 +90,14 @@ export function AssetPane({
                   key={b.documentId}
                   draggable
                   onDragStart={(e) => {
-                    e.dataTransfer.setData("application/x-paperboy", JSON.stringify({ kind: "block", documentId: b.documentId, blockType: b.type, name: b.name }));
+                    const payload = { kind: "block", documentId: b.documentId, blockType: b.type, name: b.name };
+                    e.dataTransfer.setData("application/x-paperboy", JSON.stringify(payload));
                     e.dataTransfer.effectAllowed = "copy";
+                    // Broadcast for the (cross-origin) preview iframe, where the
+                    // browser hides dataTransfer — PreviewPane relays it to the bridge.
+                    window.dispatchEvent(new CustomEvent("pb:dragsource", { detail: payload }));
                   }}
+                  onDragEnd={() => window.dispatchEvent(new CustomEvent("pb:dragend"))}
                   className={`group flex w-full cursor-grab items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-left text-sm active:cursor-grabbing ${selected ? "bg-accent/15 font-medium text-fg" : "text-fg hover:bg-line/50"}`}
                   title={`${b.name} · ${b.type} — open, or drag into a content area / folder`}
                 >

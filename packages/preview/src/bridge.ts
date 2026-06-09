@@ -113,8 +113,11 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   };
 
   // ---- preview → admin: drag a shared block / page onto a content area ----
-  // The MIME type is visible during dragover (so we opt in); the payload is
-  // readable on drop, even cross-origin. A preventDefault'd dragover permits it.
+  // Same-origin: the MIME type is visible on dragover and the payload readable
+  // on drop. CROSS-ORIGIN (admin and preview on different hosts): the browser
+  // hides drag data from this iframe, so we rely on `dragPayload` — broadcast by
+  // the admin via paperboy:dragsource on dragstart (see onMessage below).
+  let dragPayload: unknown = null;
   let dropZone: HTMLElement | null = null;
   const setDropZone = (z: HTMLElement | null) => {
     if (dropZone === z) return;
@@ -123,11 +126,13 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     dropZone?.classList.add("pb-drop-active");
   };
   const onDragOver = (e: DragEvent) => {
-    if (!e.dataTransfer?.types.includes(DRAG_MIME)) return;
+    // Opt in when the drag carries our MIME (same-origin) OR the admin told us a
+    // drag is in progress (cross-origin, where types/data are hidden here).
+    if (!e.dataTransfer?.types.includes(DRAG_MIME) && dragPayload == null) return;
     const zone = (e.target as HTMLElement | null)?.closest?.(`[${ATTR.area}]`) as HTMLElement | null;
     if (!zone) { setDropZone(null); return; }
     e.preventDefault();
-    e.dataTransfer.dropEffect = "copy";
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     setDropZone(zone);
   };
   const onDragLeave = (e: DragEvent) => {
@@ -136,12 +141,17 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   const onDragEnd = () => setDropZone(null);
   const onDrop = (e: DragEvent) => {
     const zone = (e.target as HTMLElement | null)?.closest?.(`[${ATTR.area}]`) as HTMLElement | null;
-    const raw = e.dataTransfer?.getData(DRAG_MIME);
+    // Prefer the admin-broadcast payload (works cross-origin); fall back to
+    // dataTransfer for same-origin drags.
+    let payload: unknown = dragPayload;
+    if (payload == null) {
+      const raw = e.dataTransfer?.getData(DRAG_MIME);
+      if (raw) { try { payload = JSON.parse(raw); } catch { /* ignore */ } }
+    }
+    dragPayload = null;
     setDropZone(null);
-    if (!zone || !raw) return;
+    if (!zone || payload == null) return;
     e.preventDefault();
-    let payload: unknown;
-    try { payload = JSON.parse(raw); } catch { return; }
     target?.postMessage({ type: "paperboy:drop", field: zone.getAttribute(ATTR.area), payload }, "*");
   };
 
@@ -180,6 +190,13 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       el.classList.add("pb-focus");
       clearTimeout(focusTimer);
       focusTimer = setTimeout(() => el.classList.remove("pb-focus"), 1600);
+    } else if (msg.type === "paperboy:dragsource") {
+      // The admin started dragging an Assets-pane item — remember the payload so
+      // a drop on a content area works even cross-origin (dataTransfer is hidden).
+      dragPayload = msg.payload;
+    } else if (msg.type === "paperboy:dragend") {
+      dragPayload = null;
+      setDropZone(null);
     }
   };
 

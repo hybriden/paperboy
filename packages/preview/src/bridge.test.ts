@@ -45,6 +45,22 @@ describe("initPreviewBridge", () => {
     teardown();
   });
 
+  it("drops using the admin-broadcast payload when dataTransfer is empty (cross-origin)", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="contentarea"><p>empty</p></div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc9", blockType: "HeroBlock" };
+    // Admin broadcasts the drag source (cross-origin: dataTransfer would be hidden).
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:dragsource", payload } }));
+    // Drop with NO readable dataTransfer data (getData returns "").
+    const dt = { types: [] as string[], dropEffect: "", getData: () => "" };
+    const ev = new Event("drop", { bubbles: true });
+    Object.defineProperty(ev, "dataTransfer", { value: dt });
+    document.querySelector("[data-pb-area] p")!.dispatchEvent(ev);
+    expect(target.postMessage).toHaveBeenCalledWith({ type: "paperboy:drop", field: "contentarea", payload }, "*");
+    teardown();
+  });
+
   it("applies paperboy:patch from the parent (live content swap, no reload)", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-field="body">old</div>`;

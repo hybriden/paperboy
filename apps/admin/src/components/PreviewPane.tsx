@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { focusMessage, patchMessage } from "@paperboycms/preview/protocol";
+import { dragEndMessage, dragSourceMessage, focusMessage, patchMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 
 const PREVIEW_SECRET = (import.meta.env.VITE_PREVIEW_SECRET as string) ?? "dev-preview-secret-change-me";
@@ -80,6 +80,19 @@ export function PreviewPane({
   useEffect(() => {
     if (focusField?.field) iframeRef.current?.contentWindow?.postMessage(focusMessage(focusField.field), "*");
   }, [focusField]);
+  // Assets-pane drag → relay the payload to the preview iframe, so a block can be
+  // dropped onto a content area even when the iframe is a different origin (the
+  // browser hides dataTransfer from a cross-origin iframe). See AssetPane.
+  useEffect(() => {
+    const onStart = (e: Event) => iframeRef.current?.contentWindow?.postMessage(dragSourceMessage((e as CustomEvent).detail), "*");
+    const onEnd = () => iframeRef.current?.contentWindow?.postMessage(dragEndMessage(), "*");
+    window.addEventListener("pb:dragsource", onStart);
+    window.addEventListener("pb:dragend", onEnd);
+    return () => {
+      window.removeEventListener("pb:dragsource", onStart);
+      window.removeEventListener("pb:dragend", onEnd);
+    };
+  }, []);
   // Editor → preview: live-update the clicked field's rendered content so the
   // page reflects overlay typing WITHOUT a full iframe reload.
   useEffect(() => {

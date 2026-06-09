@@ -90,8 +90,21 @@ export interface FocusMessage {
   field: string;
 }
 
+/** A drag started in the admin (Assets pane). Broadcast to the iframe so the
+ *  bridge can accept the drop WITHOUT reading dataTransfer — browsers hide drag
+ *  data from a cross-origin preview iframe, so postMessage is the reliable path. */
+export interface DragSourceMessage {
+  type: "paperboy:dragsource";
+  /** The same payload the Assets pane puts on dataTransfer (e.g. { kind, documentId, blockType, name }). */
+  payload: unknown;
+}
+
+export interface DragEndMessage {
+  type: "paperboy:dragend";
+}
+
 export type FromPreview = ReadyMessage | EditMessage | RectMessage | DropMessage;
-export type ToPreview = PatchMessage | FocusMessage;
+export type ToPreview = PatchMessage | FocusMessage | DragSourceMessage | DragEndMessage;
 export type PaperboyMessage = FromPreview | ToPreview;
 
 const KNOWN_TYPES = new Set<string>([
@@ -101,6 +114,8 @@ const KNOWN_TYPES = new Set<string>([
   "paperboy:drop",
   "paperboy:patch",
   "paperboy:focus",
+  "paperboy:dragsource",
+  "paperboy:dragend",
 ]);
 
 /**
@@ -124,3 +139,7 @@ export const patchMessage = (field: string, content: { text?: string; html?: str
 });
 
 export const focusMessage = (field: string): FocusMessage => ({ type: "paperboy:focus", field });
+
+export const dragSourceMessage = (payload: unknown): DragSourceMessage => ({ type: "paperboy:dragsource", payload });
+
+export const dragEndMessage = (): DragEndMessage => ({ type: "paperboy:dragend" });
