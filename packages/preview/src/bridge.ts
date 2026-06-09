@@ -192,11 +192,22 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       focusTimer = setTimeout(() => el.classList.remove("pb-focus"), 1600);
     } else if (msg.type === "paperboy:dragsource") {
       // The admin started dragging an Assets-pane item — remember the payload so
-      // a drop on a content area works even cross-origin (dataTransfer is hidden).
+      // a same-origin drop on a content area works (dataTransfer is hidden
+      // cross-origin; the cross-origin path uses drop-at below).
       dragPayload = msg.payload;
     } else if (msg.type === "paperboy:dragend") {
       dragPayload = null;
       setDropZone(null);
+    } else if (msg.type === "paperboy:drag-at") {
+      // Cross-origin: the admin caught the drag over its overlay and forwarded
+      // the pointer (in our viewport coords). Highlight the content area under it.
+      const el = doc.elementFromPoint(msg.x, msg.y) as HTMLElement | null;
+      setDropZone((el?.closest(`[${ATTR.area}]`) as HTMLElement | null) ?? null);
+    } else if (msg.type === "paperboy:drop-at") {
+      const el = doc.elementFromPoint(msg.x, msg.y) as HTMLElement | null;
+      const zone = el?.closest(`[${ATTR.area}]`) as HTMLElement | null;
+      setDropZone(null);
+      if (zone) target?.postMessage({ type: "paperboy:drop", field: zone.getAttribute(ATTR.area), payload: msg.payload }, "*");
     }
   };
 

@@ -61,6 +61,19 @@ describe("initPreviewBridge", () => {
     teardown();
   });
 
+  it("drops via paperboy:drop-at — hit-tests the content area under the pointer (cross-origin overlay path)", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="contentarea"><p id="inner">empty</p></div>`;
+    const inner = document.getElementById("inner")!;
+    // happy-dom doesn't implement elementFromPoint; stub it to the area's child.
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => inner;
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc7", blockType: "CardBlock" };
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 50, y: 60, payload } }));
+    expect(target.postMessage).toHaveBeenCalledWith({ type: "paperboy:drop", field: "contentarea", payload }, "*");
+    teardown();
+  });
+
   it("applies paperboy:patch from the parent (live content swap, no reload)", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-field="body">old</div>`;

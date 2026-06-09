@@ -103,8 +103,25 @@ export interface DragEndMessage {
   type: "paperboy:dragend";
 }
 
+/** Cross-origin iframes don't receive the parent's drag events, so the admin
+ *  catches the drag over an overlay and forwards the pointer position (in the
+ *  iframe's own viewport coords) here; the bridge hit-tests which content area
+ *  is under it. `drag-at` highlights it; `drop-at` carries the payload to drop. */
+export interface DragAtMessage {
+  type: "paperboy:drag-at";
+  x: number;
+  y: number;
+}
+
+export interface DropAtMessage {
+  type: "paperboy:drop-at";
+  x: number;
+  y: number;
+  payload: unknown;
+}
+
 export type FromPreview = ReadyMessage | EditMessage | RectMessage | DropMessage;
-export type ToPreview = PatchMessage | FocusMessage | DragSourceMessage | DragEndMessage;
+export type ToPreview = PatchMessage | FocusMessage | DragSourceMessage | DragEndMessage | DragAtMessage | DropAtMessage;
 export type PaperboyMessage = FromPreview | ToPreview;
 
 const KNOWN_TYPES = new Set<string>([
@@ -116,6 +133,8 @@ const KNOWN_TYPES = new Set<string>([
   "paperboy:focus",
   "paperboy:dragsource",
   "paperboy:dragend",
+  "paperboy:drag-at",
+  "paperboy:drop-at",
 ]);
 
 /**
@@ -143,3 +162,7 @@ export const focusMessage = (field: string): FocusMessage => ({ type: "paperboy:
 export const dragSourceMessage = (payload: unknown): DragSourceMessage => ({ type: "paperboy:dragsource", payload });
 
 export const dragEndMessage = (): DragEndMessage => ({ type: "paperboy:dragend" });
+
+export const dragAtMessage = (x: number, y: number): DragAtMessage => ({ type: "paperboy:drag-at", x, y });
+
+export const dropAtMessage = (x: number, y: number, payload: unknown): DropAtMessage => ({ type: "paperboy:drop-at", x, y, payload });
