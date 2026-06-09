@@ -7,10 +7,12 @@
     "build": "next build",
     "start": "next start -p 8092",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'lint: web (typecheck covers it)'"
+    "lint": "echo 'lint: web (typecheck covers it)'",
+    "test": "vitest run"
   },
   "dependencies": {
     "@paperboycms/client": "workspace:^",
+    "@paperboycms/preview": "workspace:*",
     "@paperboy/shared": "workspace:*",
     "isomorphic-dompurify": "^2",
     "marked": "^18.0.4",
@@ -22,6 +24,7 @@
     "@types/node": "^22",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
   }
 }
