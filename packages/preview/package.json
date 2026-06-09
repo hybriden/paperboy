@@ -1,0 +1,48 @@
+{
+  "name": "@paperboycms/preview",
+  "version": "0.1.0",
+  "description": "Framework-agnostic on-page-editing bridge for the Paperboy headless CMS preview iframe — click-to-edit, drag-drop blocks, live patch. Zero runtime dependencies.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hybriden/paperboy.git",
+    "directory": "packages/preview"
+  },
+  "homepage": "https://github.com/hybriden/paperboy/tree/main/packages/preview#readme",
+  "keywords": ["paperboy", "cms", "headless-cms", "preview", "on-page-editing", "visual-editing"],
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./protocol": "./src/protocol.ts"
+  },
+  "files": ["dist", "README.md"],
+  "publishConfig": {
+    "access": "public",
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./protocol": {
+        "types": "./dist/protocol.d.ts",
+        "import": "./dist/protocol.js"
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepublishOnly": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "lint": "echo 'lint: preview (typecheck covers it)'"
+  },
+  "devDependencies": {
+    "happy-dom": "^15.11.7",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  }
+}

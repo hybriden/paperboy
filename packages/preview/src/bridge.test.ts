@@ -1,0 +1,65 @@
+// @vitest-environment happy-dom
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { initPreviewBridge } from "./bridge.js";
+
+const makeTarget = () => ({ postMessage: vi.fn() }) as unknown as Window;
+
+beforeEach(() => {
+  document.head.innerHTML = "";
+  document.body.innerHTML = "";
+  document.body.className = "";
+});
+
+describe("initPreviewBridge", () => {
+  it("activates editing chrome, announces ready, and tears down cleanly", () => {
+    const target = makeTarget();
+    const teardown = initPreviewBridge({ target });
+    expect(document.body.classList.contains("pb-editing")).toBe(true);
+    expect(document.querySelector("style[data-pb-bridge]")).not.toBeNull();
+    expect(target.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "paperboy:preview-ready" }), "*");
+    teardown();
+    expect(document.body.classList.contains("pb-editing")).toBe(false);
+    expect(document.querySelector("style[data-pb-bridge]")).toBeNull();
+  });
+
+  it("posts paperboy:edit when an editable region is clicked", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-field="heading">Hi</div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    (target.postMessage as ReturnType<typeof vi.fn>).mockClear();
+    document.querySelector("[data-pb-field]")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(target.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "paperboy:edit", field: "heading" }), "*");
+    teardown();
+  });
+
+  it("posts paperboy:drop with the area's field + parsed payload on drop", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="contentarea"><p>empty</p></div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc1", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+    const ev = new Event("drop", { bubbles: true });
+    Object.defineProperty(ev, "dataTransfer", { value: dt });
+    document.querySelector("[data-pb-area] p")!.dispatchEvent(ev);
+    expect(target.postMessage).toHaveBeenCalledWith({ type: "paperboy:drop", field: "contentarea", payload }, "*");
+    teardown();
+  });
+
+  it("applies paperboy:patch from the parent (live content swap, no reload)", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-field="body">old</div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:patch", field: "body", html: "<p>new</p>" } }));
+    expect(document.querySelector("[data-pb-field='body']")!.innerHTML).toBe("<p>new</p>");
+    teardown();
+  });
+
+  it("ignores unknown messages from the parent", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-field="body">keep</div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:bogus", field: "body", html: "x" } }));
+    expect(document.querySelector("[data-pb-field='body']")!.innerHTML).toBe("keep");
+    teardown();
+  });
+});
