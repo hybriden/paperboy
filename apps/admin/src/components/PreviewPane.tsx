@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { dragEndMessage, dragSourceMessage, focusMessage, patchMessage } from "@paperboycms/preview/protocol";
+import { dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 
 const PREVIEW_SECRET = (import.meta.env.VITE_PREVIEW_SECRET as string) ?? "dev-preview-secret-change-me";
@@ -80,12 +80,21 @@ export function PreviewPane({
   useEffect(() => {
     if (focusField?.field) iframeRef.current?.contentWindow?.postMessage(focusMessage(focusField.field), "*");
   }, [focusField]);
-  // Assets-pane drag → relay the payload to the preview iframe, so a block can be
-  // dropped onto a content area even when the iframe is a different origin (the
-  // browser hides dataTransfer from a cross-origin iframe). See AssetPane.
+  // Dragging a shared block from the Assets pane: a CROSS-ORIGIN preview iframe
+  // never receives the parent's drag events, so we show an overlay over the
+  // preview that catches the drag in the admin, then forward the pointer (in the
+  // iframe's own coords) so the bridge can hit-test the content area under it.
+  const [drag, setDrag] = useState<{ payload: unknown } | null>(null);
   useEffect(() => {
-    const onStart = (e: Event) => iframeRef.current?.contentWindow?.postMessage(dragSourceMessage((e as CustomEvent).detail), "*");
-    const onEnd = () => iframeRef.current?.contentWindow?.postMessage(dragEndMessage(), "*");
+    const onStart = (e: Event) => {
+      const payload = (e as CustomEvent).detail;
+      setDrag({ payload });
+      iframeRef.current?.contentWindow?.postMessage(dragSourceMessage(payload), "*");
+    };
+    const onEnd = () => {
+      setDrag(null);
+      iframeRef.current?.contentWindow?.postMessage(dragEndMessage(), "*");
+    };
     window.addEventListener("pb:dragsource", onStart);
     window.addEventListener("pb:dragend", onEnd);
     return () => {
@@ -222,6 +231,35 @@ export function PreviewPane({
             style={{ width: "100%", height: "100%", border: 0 }}
           />
         </div>
+        )}
+        {/* Drop catcher: a cross-origin preview iframe can't receive the parent's
+            drag events, so while a block is being dragged we overlay the stage,
+            accept the drop here, and forward the pointer (in iframe coords) to
+            the bridge to hit-test + insert. Only present during a drag. */}
+        {drag && (
+          <div
+            className="absolute inset-0 z-20"
+            style={{ cursor: "copy" }}
+            onDragOver={(e) => {
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+              const r = stageRef.current?.getBoundingClientRect();
+              if (r) iframeRef.current?.contentWindow?.postMessage(dragAtMessage((e.clientX - r.left - tx) / scale, (e.clientY - r.top) / scale), "*");
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const r = stageRef.current?.getBoundingClientRect();
+              let payload: unknown = drag.payload;
+              const raw = e.dataTransfer.getData("application/x-paperboy");
+              if (raw) { try { payload = JSON.parse(raw); } catch { /* fall back to broadcast payload */ } }
+              if (r) iframeRef.current?.contentWindow?.postMessage(dropAtMessage((e.clientX - r.left - tx) / scale, (e.clientY - r.top) / scale, payload), "*");
+              setDrag(null);
+            }}
+          >
+            <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-accent px-3 py-1 text-xs font-medium text-white shadow-panel">
+              Drop onto a content area to add the block
+            </div>
+          </div>
         )}
         {anchor && overlay && (
           <>
