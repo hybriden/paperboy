@@ -3,6 +3,8 @@ import type {
   BlockSummary,
   ContentDetail,
   ContentTypeDef,
+  Folder,
+  FolderKind,
   Locale,
   RoleName,
   SessionUser,
@@ -248,6 +250,19 @@ export const api = {
   assets: (signal?: AbortSignal) => request<Asset[]>("GET", "/manage/assets", undefined, signal),
   updateAssetAlt: (documentId: string, alt: string) => request<Asset>("PUT", `/manage/assets/${documentId}`, { alt }),
   deleteAsset: (documentId: string) => request<{ ok: boolean }>("DELETE", `/manage/assets/${documentId}`),
+  setAssetFolder: (documentId: string, folderId: string | null) =>
+    request<{ ok: boolean }>("PUT", `/manage/assets/${documentId}/folder`, { folderId }),
+
+  // asset-pane folders (two trees: "media" + "block")
+  folders: (kind: FolderKind, signal?: AbortSignal) =>
+    request<Folder[]>("GET", `/manage/folders?kind=${kind}`, undefined, signal),
+  createFolder: (body: { kind: FolderKind; parentId?: string | null; name: string }) =>
+    request<Folder>("POST", "/manage/folders", body),
+  updateFolder: (documentId: string, body: { name?: string; parentId?: string | null }) =>
+    request<Folder>("PUT", `/manage/folders/${documentId}`, body),
+  deleteFolder: (documentId: string) => request<{ ok: boolean }>("DELETE", `/manage/folders/${documentId}`),
+  setBlockFolder: (documentId: string, folderId: string | null) =>
+    request<{ ok: boolean }>("PUT", `/manage/blocks/${documentId}/folder`, { folderId }),
   uploadAsset: async (file: File): Promise<Asset> => {
     const fd = new FormData();
     fd.append("file", file);

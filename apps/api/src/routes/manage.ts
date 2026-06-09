@@ -50,6 +50,12 @@ import {
   insertAsset,
   listAssets,
   listBlocks,
+  listFolders,
+  createFolder,
+  renameFolder,
+  deleteFolder,
+  setAssetFolder,
+  setBlockFolder,
   listPages,
   updateAssetAlt,
   getContent,
@@ -80,12 +86,17 @@ import {
   ContentDetail,
   ContentTypeDef,
   CreateContentRequest,
+  CreateFolderRequest,
+  Folder,
+  FolderKind,
   Locale,
   RoleName,
   STOCK_PROVIDERS,
+  SetFolderRequest,
   StockSearchResult,
   TreeNode,
   UpdateContentRequest,
+  UpdateFolderRequest,
   sniffUpload,
 } from "@paperboy/shared";
 import type { FastifyInstance } from "fastify";
@@ -239,6 +250,16 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/blocks",
     { schema: { tags: ["manage"], response: { 200: z.array(BlockSummary) } } },
     async (req) => listBlocks(app.db, req.accessCtx!),
+  );
+
+  // Move a shared block into a block folder (null = root/unfiled).
+  app.put(
+    "/blocks/:documentId/folder",
+    { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, body: SetFolderRequest, response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await setBlockFolder(app.db, req.accessCtx!, req.params.documentId, req.body.folderId);
+      return { ok: true };
+    },
   );
 
   /* ---------------------------- create/read ----------------------------- */
@@ -439,6 +460,55 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         await unlink(join(app.uploadsDir, fileName)).catch(() => undefined);
       }
       await audit(app.db, { actorUserId: req.user!.id, action: "asset.delete", documentId: req.params.documentId, ip: req.ip });
+      return { ok: true };
+    },
+  );
+
+  // Move an asset into a media folder (null = root/unfiled).
+  app.put(
+    "/assets/:documentId/folder",
+    { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, body: SetFolderRequest, response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await setAssetFolder(app.db, req.accessCtx!, req.params.documentId, req.body.folderId);
+      return { ok: true };
+    },
+  );
+
+  /* ----------------------------- asset-pane folders --------------------- */
+  // Nested, per-site folders organizing the Media ('media') and Shared-blocks
+  // ('block') libraries — two separate trees discriminated by `kind`.
+  app.get(
+    "/folders",
+    { schema: { tags: ["manage"], querystring: z.object({ kind: FolderKind }), response: { 200: z.array(Folder) } } },
+    async (req) => listFolders(app.db, req.accessCtx!, req.query.kind),
+  );
+
+  app.post(
+    "/folders",
+    { preHandler: [requireCsrf, requirePermission("content.create")], schema: { tags: ["manage"], body: CreateFolderRequest, response: { 200: Folder } } },
+    async (req) => {
+      const f = await createFolder(app.db, req.accessCtx!, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "folder.create", documentId: f.documentId, ip: req.ip, detail: { kind: f.kind } });
+      return f;
+    },
+  );
+
+  app.put(
+    "/folders/:documentId",
+    { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, body: UpdateFolderRequest, response: { 200: Folder } } },
+    async (req) => {
+      const f = await renameFolder(app.db, req.accessCtx!, req.params.documentId, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "folder.update", documentId: req.params.documentId, ip: req.ip });
+      return f;
+    },
+  );
+
+  app.delete(
+    "/folders/:documentId",
+    { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], params: DocParams, response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await deleteFolder(app.db, req.accessCtx!, req.params.documentId);
+      await audit(app.db, { actorUserId: req.user!.id, action: "folder.delete", documentId: req.params.documentId, ip: req.ip });
       return { ok: true };
     },
   );

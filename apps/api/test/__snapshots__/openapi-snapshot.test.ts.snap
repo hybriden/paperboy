@@ -56,6 +56,19 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "DELETE /api/v1/manage/folders/{documentId}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "DELETE /api/v1/manage/locales/{code}": {
     "requestBodyRequired": [],
     "requiredParams": [
@@ -274,6 +287,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "[]createdAt",
       "[]documentId",
       "[]filename",
+      "[]folderId",
       "[]mime",
       "[]size",
       "[]sourceMeta",
@@ -308,6 +322,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "requiredParams": [],
     "response200Props": [
       "[]documentId",
+      "[]folderId",
       "[]locales",
       "[]name",
       "[]type",
@@ -499,6 +514,23 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "[]name",
       "[]revokedAt",
       "[]type",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/folders": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "query:kind",
+    ],
+    "response200Props": [
+      "[]createdAt",
+      "[]documentId",
+      "[]kind",
+      "[]name",
+      "[]parentId",
     ],
     "summary": null,
     "tags": [
@@ -880,6 +912,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "createdAt",
       "documentId",
       "filename",
+      "folderId",
       "mime",
       "size",
       "sourceMeta",
@@ -1220,6 +1253,24 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "POST /api/v1/manage/folders": {
+    "requestBodyRequired": [
+      "kind",
+      "name",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "createdAt",
+      "documentId",
+      "kind",
+      "name",
+      "parentId",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "POST /api/v1/manage/locales": {
     "requestBodyRequired": [
       "code",
@@ -1360,6 +1411,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "createdAt",
       "documentId",
       "filename",
+      "folderId",
       "mime",
       "size",
       "sourceMeta",
@@ -1413,10 +1465,41 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "createdAt",
       "documentId",
       "filename",
+      "folderId",
       "mime",
       "size",
       "sourceMeta",
       "url",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "PUT /api/v1/manage/assets/{documentId}/folder": {
+    "requestBodyRequired": [
+      "folderId",
+    ],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "PUT /api/v1/manage/blocks/{documentId}/folder": {
+    "requestBodyRequired": [
+      "folderId",
+    ],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "ok",
     ],
     "summary": null,
     "tags": [
@@ -1490,6 +1573,23 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     ],
     "response200Props": [
       "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "PUT /api/v1/manage/folders/{documentId}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "createdAt",
+      "documentId",
+      "kind",
+      "name",
+      "parentId",
     ],
     "summary": null,
     "tags": [

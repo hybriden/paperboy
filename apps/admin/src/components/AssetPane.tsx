@@ -4,8 +4,10 @@ import type { ContentTypeDef } from "@paperboy/shared";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
+import { FolderNav } from "./FolderNav.js";
 import { MediaTab } from "./MediaLibrary.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
+import { useToast } from "./ui/toast.js";
 
 /**
  * Assets pane: Shared Blocks (reusable, own lifecycle) + Media.
@@ -27,7 +29,29 @@ export function AssetPane({
 }) {
   const [tab, setTab] = useState<"blocks" | "media">("blocks");
   const [creating, setCreating] = useState(false);
+  const [folderId, setFolderId] = useState<string | null>(null);
+  const qc = useQueryClient();
+  const toast = useToast();
   const blocks = useQuery({ queryKey: ["blocks"], queryFn: ({ signal }) => api.blocks(signal) });
+
+  const move = useMutation({
+    mutationFn: (v: { id: string; folderId: string | null }) => api.setBlockFolder(v.id, v.folderId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["blocks"] }),
+    onError: (e) => toast.error("Couldn’t move block", (e as Error).message),
+  });
+  const trash = useMutation({
+    mutationFn: (id: string) => api.trash(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["blocks"] });
+      qc.invalidateQueries({ queryKey: ["tree"] });
+      qc.invalidateQueries({ queryKey: ["trash"] });
+      toast.success("Moved to trash", "Restore it from Settings → Trash.");
+    },
+    onError: (e) => toast.error("Couldn’t delete block", (e as Error).message),
+  });
+
+  // Only the shared blocks in the current folder (null = root/unfiled).
+  const visibleBlocks = blocks.data?.filter((b) => (b.folderId ?? null) === folderId);
 
   return (
     <aside className="flex h-full w-full flex-col border-l border-line bg-panel">
@@ -55,28 +79,39 @@ export function AssetPane({
       <div className="min-h-0 flex-1 overflow-auto p-1.5">
         {tab === "blocks" && (
           <>
+            <FolderNav kind="block" currentFolderId={folderId} onNavigate={setFolderId} onMoveItem={(id, target) => move.mutate({ id, folderId: target })} />
             {blocks.isLoading && [0, 1].map((i) => <div key={i} className="mb-1 h-9 animate-pulse rounded bg-line/50" />)}
-            {blocks.data?.length === 0 && <p className="px-2 py-6 text-center text-xs text-muted">No shared blocks yet.</p>}
-            {blocks.data?.map((b) => {
+            {visibleBlocks?.length === 0 && <p className="px-2 py-6 text-center text-xs text-muted">{folderId ? "This folder is empty. Drag blocks here." : "No shared blocks yet."}</p>}
+            {visibleBlocks?.map((b) => {
               const loc = Object.values(b.locales)[0];
               const selected = selectedId === b.documentId;
               return (
-                <button
+                <div
                   key={b.documentId}
                   draggable
                   onDragStart={(e) => {
                     e.dataTransfer.setData("application/x-paperboy", JSON.stringify({ kind: "block", documentId: b.documentId, blockType: b.type, name: b.name }));
                     e.dataTransfer.effectAllowed = "copy";
                   }}
-                  onClick={() => onSelect(b.documentId)}
-                  className={`flex w-full cursor-grab items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-left text-sm active:cursor-grabbing ${selected ? "bg-accent/15 font-medium text-fg" : "text-fg hover:bg-line/50"}`}
-                  title={`${b.name} · ${b.type} — open, or drag into a content area`}
+                  className={`group flex w-full cursor-grab items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-left text-sm active:cursor-grabbing ${selected ? "bg-accent/15 font-medium text-fg" : "text-fg hover:bg-line/50"}`}
+                  title={`${b.name} · ${b.type} — open, or drag into a content area / folder`}
                 >
                   <Icon.Grip width={13} height={13} className="shrink-0 text-muted/60" />
                   <TypeIcon name={blockTypes.find((t) => t.name === b.type)?.icon} fallback="blocks" width={15} height={15} className="shrink-0 text-muted" />
-                  <span className="truncate">{b.name}</span>
-                  <span className={`ml-auto h-2 w-2 shrink-0 rounded-full ${loc?.status === "published" ? "bg-published" : "bg-draft"}`} />
-                </button>
+                  <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => onSelect(b.documentId)}>{b.name}</button>
+                  <span className={`h-2 w-2 shrink-0 rounded-full ${loc?.status === "published" ? "bg-published" : "bg-draft"}`} />
+                  {canCreate && (
+                    <button
+                      type="button"
+                      className="invisible shrink-0 px-0.5 text-muted hover:text-danger group-hover:visible"
+                      title="Move block to trash"
+                      disabled={trash.isPending}
+                      onClick={() => { if (window.confirm(`Move “${b.name}” to trash? Restore it later from Settings → Trash.`)) trash.mutate(b.documentId); }}
+                    >
+                      <Icon.Trash width={13} height={13} />
+                    </button>
+                  )}
+                </div>
               );
             })}
           </>
@@ -84,17 +119,20 @@ export function AssetPane({
         {tab === "media" && <MediaTab />}
       </div>
 
-      {creating && <CreateBlockDialog blockTypes={blockTypes} onClose={() => setCreating(false)} onCreated={onSelect} />}
+      {creating && <CreateBlockDialog blockTypes={blockTypes} folderId={folderId} onClose={() => setCreating(false)} onCreated={onSelect} />}
     </aside>
   );
 }
 
 function CreateBlockDialog({
   blockTypes,
+  folderId,
   onClose,
   onCreated,
 }: {
   blockTypes: ContentTypeDef[];
+  /** File the new block into this folder (null = root). */
+  folderId: string | null;
   onClose: () => void;
   onCreated: (id: string) => void;
 }) {
@@ -102,7 +140,11 @@ function CreateBlockDialog({
   const [type, setType] = useState(blockTypes[0]?.name ?? "");
   const [name, setName] = useState("");
   const create = useMutation({
-    mutationFn: () => api.create({ type, parentId: null, locale: "en", name }),
+    mutationFn: async () => {
+      const created = await api.create({ type, parentId: null, locale: "en", name });
+      if (folderId) await api.setBlockFolder(created.documentId, folderId);
+      return created;
+    },
     onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ["blocks"] });
       onClose();

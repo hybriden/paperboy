@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Asset, StockSearchResult } from "@paperboy/shared";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
+import { FolderNav } from "./FolderNav.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { useToast } from "./ui/toast.js";
 
@@ -19,13 +20,18 @@ function useAssets() {
   return useQuery({ queryKey: ["assets"], queryFn: ({ signal }) => api.assets(signal) });
 }
 
-/** Hidden file input + button that uploads and refreshes the ["assets"] cache. */
-function UploadButton({ onUploaded, label = "Upload" }: { onUploaded?: (a: Asset) => void; label?: string }) {
+/** Hidden file input + button that uploads and refreshes the ["assets"] cache.
+ *  When `folderId` is set, the new image is filed into that media folder. */
+function UploadButton({ onUploaded, label = "Upload", folderId }: { onUploaded?: (a: Asset) => void; label?: string; folderId?: string | null }) {
   const qc = useQueryClient();
   const toast = useToast();
   const ref = useRef<HTMLInputElement>(null);
   const upload = useMutation({
-    mutationFn: (file: File) => api.uploadAsset(file),
+    mutationFn: async (file: File) => {
+      const asset = await api.uploadAsset(file);
+      if (folderId) await api.setAssetFolder(asset.documentId, folderId);
+      return asset;
+    },
     onSuccess: (asset) => {
       qc.invalidateQueries({ queryKey: ["assets"] });
       toast.success("Image uploaded", asset.filename);
@@ -77,8 +83,14 @@ export function MediaTab() {
   const qc = useQueryClient();
   const toast = useToast();
   const [mode, setMode] = useState<"library" | "stock">("library");
+  const [folderId, setFolderId] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
   const [alt, setAlt] = useState("");
+  const move = useMutation({
+    mutationFn: (v: { id: string; folderId: string | null }) => api.setAssetFolder(v.id, v.folderId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["assets"] }),
+    onError: (e) => toast.error("Couldn’t move image", (e as Error).message),
+  });
   const saveAlt = useMutation({
     mutationFn: (v: { id: string; alt: string }) => api.updateAssetAlt(v.id, v.alt),
     onSuccess: () => {
@@ -105,11 +117,14 @@ export function MediaTab() {
     onError: (e) => toast.error("AI request failed", (e as Error).message),
   });
 
+  // Only the images in the current folder (null = root/unfiled).
+  const visible = assets.data?.filter((a) => (a.folderId ?? null) === folderId);
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between px-1.5 pb-2">
         <div className="flex gap-1" role="tablist" aria-label="Image source">
-          {([["library", `${assets.data?.length ?? 0} images`], ["stock", "Stock"]] as const).map(([key, label]) => (
+          {([["library", `${visible?.length ?? 0} images`], ["stock", "Stock"]] as const).map(([key, label]) => (
             <button key={key} type="button" role="tab" aria-selected={mode === key}
               className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${mode === key ? "bg-accent/15 text-accent-700" : "text-muted hover:bg-line/60"}`}
               onClick={() => setMode(key)}>
@@ -117,8 +132,11 @@ export function MediaTab() {
             </button>
           ))}
         </div>
-        {mode === "library" && <UploadButton label="Upload" />}
+        {mode === "library" && <UploadButton label="Upload" folderId={folderId} />}
       </div>
+      {mode === "library" && (
+        <FolderNav kind="media" currentFolderId={folderId} onNavigate={setFolderId} onMoveItem={(id, target) => move.mutate({ id, folderId: target })} />
+      )}
       {mode === "stock" && (
         <div className="overflow-auto px-1.5">
           {/* Imported photos land in the library — drag them into richtext/image fields. */}
@@ -126,10 +144,10 @@ export function MediaTab() {
         </div>
       )}
       {mode === "library" && assets.isLoading && <div className="grid grid-cols-2 gap-1.5 px-1.5">{[0, 1, 2, 3].map((i) => <div key={i} className="aspect-square animate-pulse rounded bg-line/50" />)}</div>}
-      {mode === "library" && assets.data?.length === 0 && <p className="px-2 py-8 text-center text-xs text-muted">No images yet. Upload one.</p>}
+      {mode === "library" && visible?.length === 0 && <p className="px-2 py-8 text-center text-xs text-muted">{folderId ? "This folder is empty. Upload or drag images here." : "No images yet. Upload one."}</p>}
       {mode === "library" && (
         <div className="grid grid-cols-2 gap-1.5 overflow-auto px-1.5">
-          {assets.data?.map((a) => (
+          {visible?.map((a) => (
             <div key={a.documentId}>
               <AssetThumb asset={a} onClick={() => { setEditing(a.documentId); setAlt(a.alt); }} />
             </div>

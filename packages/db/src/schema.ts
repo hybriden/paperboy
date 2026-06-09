@@ -71,6 +71,8 @@ export const contentItem = pgTable(
     sectionId: text("section_id"),
     /** Owning site (multisite partition). Children inherit the parent's site. */
     siteId: text("site_id").notNull().default(DEFAULT_SITE_ID),
+    /** Asset-pane folder for shared blocks (null = root/unfiled). Pages/globals stay null. */
+    folderId: text("folder_id"),
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     deletedAt: timestamp("deleted_at", { withTimezone: true }),
@@ -80,6 +82,7 @@ export const contentItem = pgTable(
     typeIdx: index("content_item_type_idx").on(t.type),
     sectionIdx: index("content_item_section_idx").on(t.sectionId),
     siteIdx: index("content_item_site_idx").on(t.siteId),
+    folderIdx: index("content_item_folder_idx").on(t.folderId),
   }),
 );
 
@@ -146,7 +149,32 @@ export const asset = pgTable("asset", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   // Per-site media (D2): assets belong to one site, no cross-brand leakage.
   siteId: text("site_id").notNull().default(DEFAULT_SITE_ID),
+  // Asset-pane folder (null = root/unfiled). References a kind='media' folder.
+  folderId: text("folder_id"),
 });
+
+/**
+ * Asset-pane folders — nested, per-site organization for the Media and
+ * Shared-blocks libraries (migration 0014). `kind` ('media' | 'block') keeps the
+ * two trees separate; `parentId` (null = root) nests folders like the page tree.
+ * Items point back via `asset.folderId` / `contentItem.folderId`.
+ */
+export const folder = pgTable(
+  "folder",
+  {
+    id: serial("id").primaryKey(),
+    documentId: text("document_id").notNull().unique(),
+    kind: text("kind").notNull(), // media | block
+    parentId: text("parent_id"), // -> folder.document_id (null = root)
+    name: text("name").notNull(),
+    siteId: text("site_id").notNull().default(DEFAULT_SITE_ID),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    siteKindParentIdx: index("folder_site_kind_parent_idx").on(t.siteId, t.kind, t.parentId),
+  }),
+);
 
 export const users = pgTable("users", {
   id: text("id").primaryKey(), // nanoid
