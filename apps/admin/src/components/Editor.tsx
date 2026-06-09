@@ -14,6 +14,8 @@ import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { postCaret } from "../lib/caret.js";
 import { applyRichTextStrings, collectRichTextStrings } from "../lib/richtext-strings.js";
 import { pickTranslateSource } from "../lib/translate-offer.js";
+import { blockInstanceFromDrop, type DropPayload } from "../lib/block-drop.js";
+import { parsePreviewMessage } from "@paperboycms/preview/protocol";
 import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
@@ -30,6 +32,10 @@ import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
 import { useToast } from "./ui/toast.js";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+
+// Unique keys for blocks dropped onto the preview (matches fields/ContentArea).
+let blockKeyCounter = 0;
+const newBlockKey = () => `b_${Date.now().toString(36)}_${blockKeyCounter++}`;
 /** The Episerver-style editor views: form only / side-by-side / on-page edit. */
 type EditorView = "props" | "split" | "onpage";
 
@@ -493,16 +499,38 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // (paperboy:rect keeps the anchor tracking page scroll/resize).
   useEffect(() => {
     function onMessage(e: MessageEvent) {
-      const d = e.data as { type?: string; field?: string | null; blockIndex?: number | null; rect?: PbRect } | null;
-      if (!d) return;
-      if (d.type === "paperboy:rect") {
+      const msg = parsePreviewMessage(e.data);
+      if (!msg) return; // unknown/garbage (and forward-compat: future message types)
+      if (msg.type === "paperboy:rect") {
         // Anchor update for the open overlay (same field only).
-        if (d.rect && opeRef.current && d.field === opeRef.current.field && d.blockIndex == null) {
-          setOpe((prev) => (prev ? { ...prev, rect: d.rect! } : prev));
+        if (msg.rect && opeRef.current && msg.field === opeRef.current.field && msg.blockIndex == null) {
+          setOpe((prev) => (prev ? { ...prev, rect: msg.rect } : prev));
         }
         return;
       }
-      if (d.type !== "paperboy:edit") return;
+      if (msg.type === "paperboy:drop") {
+        // A shared block (or page → teaser) was dragged from the Assets pane and
+        // dropped onto a content area in the rendered preview. Append it to that
+        // field; autosave + the preview reload then show it in place.
+        const fieldName = typeof msg.field === "string" ? msg.field : null;
+        const def = fieldName ? type?.fields.find((f) => f.name === fieldName) : undefined;
+        if (!fieldName || !def) return;
+        const payload = (msg.payload ?? {}) as DropPayload;
+        const res = blockInstanceFromDrop(payload, def, newBlockKey());
+        if (!res.ok) {
+          if (res.reason === "not-allowed") {
+            toast.error("Block not allowed here", `This area doesn’t accept ${payload.blockType ?? "that"} blocks.`);
+          }
+          return;
+        }
+        const cur = formRef.current?.data?.[fieldName];
+        const current = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
+        setField(fieldName, [...current, res.block]);
+        toast.success("Block added", payload.name ? `Added “${payload.name}”.` : "Added to the content area.");
+        return;
+      }
+      if (msg.type !== "paperboy:edit") return;
+      const d = msg;
       const fieldName = typeof d.field === "string" ? d.field : null;
       const def = fieldName ? type?.fields.find((f) => f.name === fieldName) : undefined;
 

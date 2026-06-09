@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { focusMessage, patchMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 
 const PREVIEW_SECRET = (import.meta.env.VITE_PREVIEW_SECRET as string) ?? "dev-preview-secret-change-me";
@@ -77,14 +78,14 @@ export function PreviewPane({
   useEffect(() => { if (refreshSignal > 0) setNonce((n) => n + 1); }, [refreshSignal]);
   // Editor → preview: when a property is focused, scroll to + highlight its region.
   useEffect(() => {
-    if (focusField?.field) iframeRef.current?.contentWindow?.postMessage({ type: "paperboy:focus", field: focusField.field }, "*");
+    if (focusField?.field) iframeRef.current?.contentWindow?.postMessage(focusMessage(focusField.field), "*");
   }, [focusField]);
   // Editor → preview: live-update the clicked field's rendered content so the
   // page reflects overlay typing WITHOUT a full iframe reload.
   useEffect(() => {
     if (livePatch?.field) {
       iframeRef.current?.contentWindow?.postMessage(
-        { type: "paperboy:patch", field: livePatch.field, text: livePatch.text, html: livePatch.html },
+        patchMessage(livePatch.field, { text: livePatch.text, html: livePatch.html }),
         "*",
       );
     }
