@@ -226,17 +226,41 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
   if (content.type === "BlogPost") return <BlogPostView content={content} />;
 
   const data = content.data as Record<string, unknown>;
-  // Content types are data, so user-created types name their fields freely:
-  // accept `mainArea` or the first array that looks like a content area.
-  const isArea = (v: unknown): v is AreaBlock[] =>
-    Array.isArray(v) && v.every((b) => b != null && typeof b === "object" && "blockType" in (b as object));
-  const area = [data.mainArea, ...Object.values(data)].filter(isArea).find((a) => a.length > 0) ?? [];
+  // Content types are data, so user-created types name their fields freely. A
+  // non-empty array of blocks is an unambiguous content area (any name). An
+  // EMPTY array is shape-identical to any other empty list (e.g. `tags: []`),
+  // so we only treat it as an area when conventionally named (…Area) — else an
+  // empty tag list would render a stray placeholder.
+  const looksLikeBlocks = (v: unknown): v is AreaBlock[] =>
+    Array.isArray(v) && v.length > 0 && v.every((b) => b != null && typeof b === "object" && "blockType" in (b as object));
+  // Keep the content-area field NAME (not just its blocks) so an EMPTY area can
+  // still be marked for on-page editing. `mainArea` is the convention (and the
+  // bridge's fallback), so it wins; otherwise the first array-of-blocks field.
+  const areaEntries = (Object.entries(data) as [string, unknown][])
+    .filter(([field, v]) => looksLikeBlocks(v) || (Array.isArray(v) && v.length === 0 && /area$/i.test(field)))
+    .sort(([a], [b]) => (a === "mainArea" ? -1 : b === "mainArea" ? 1 : 0)) as [string, AreaBlock[]][];
+  const filled = areaEntries.find(([, a]) => a.length > 0);
+  const [areaField, area] = filled ?? areaEntries[0] ?? ["mainArea", [] as AreaBlock[]];
   return (
     <main className="wrap" data-document-id={content.documentId}>
       <h1 className="page-heading" data-pb-field="heading">{String(data.heading ?? content.name)}</h1>
       <div data-pb-field="intro"><Rich doc={data.intro} className="intro richtext" /></div>
       {data.body != null ? <div data-pb-field="body"><Rich doc={data.body} className="richtext" /></div> : null}
-      {area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} />)}
+      {area.length > 0 ? (
+        area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} />)
+      ) : preview && areaEntries.length > 0 ? (
+        // Empty content area: render a visible, clickable target ONLY in preview
+        // so on-page editing has somewhere to land. The data-pb-field marker lets
+        // the bridge outline it and route the click to this field in the form
+        // (where blocks are added / dropped). Never shown on the public page.
+        <div
+          data-pb-area="true"
+          data-pb-field={areaField}
+          style={{ border: "2px dashed var(--pb-edit, #c8362f)", borderRadius: 8, padding: "2.5rem 1rem", textAlign: "center", opacity: 0.7, cursor: "pointer" }}
+        >
+          <p className="post-meta" style={{ margin: 0 }}>This area is empty — click to add blocks.</p>
+        </div>
+      ) : null}
       {posts && posts.length > 0 ? <PostList posts={posts} locale={locale} basePath={basePath} /> : null}
     </main>
   );
