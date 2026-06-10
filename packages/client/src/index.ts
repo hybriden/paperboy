@@ -390,3 +390,19 @@ export function contentAreas(data: Record<string, unknown>): { field: string; bl
     .filter(([field, v]) => looksLikeBlocks(v) || (Array.isArray(v) && v.length === 0 && /area$/i.test(field)))
     .map(([field, v]) => ({ field, blocks: v as AreaBlock[] }));
 }
+
+/**
+ * The drop-zone attribute a content-area element must carry so the Paperboy
+ * preview bridge can target it when a shared block / page is dragged onto the
+ * page. The attribute VALUE is the field name — the bridge posts it back to
+ * the editor as `paperboy:drop {field}`, which maps the drop to the form
+ * field. Spread it instead of hand-writing the attribute: a wrong value (e.g.
+ * a literal "true") makes every drop fail silently because the editor looks
+ * up a field by that name. Outside preview it returns {} so public pages stay
+ * marker-free:
+ *
+ *   <div {...pbAreaAttrs(area.field, preview)}>{area.blocks.map(...)}</div>
+ */
+export function pbAreaAttrs(field: string, preview: boolean): { "data-pb-area"?: string } {
+  return preview ? { "data-pb-area": field } : {};
+}

@@ -74,6 +74,40 @@ describe("initPreviewBridge", () => {
     teardown();
   });
 
+  it("warns once when a drop zone's data-pb-area is a boolean-ish marker instead of a field name", () => {
+    const target = makeTarget();
+    // The classic frontend mistake: data-pb-area="true" — the editor would
+    // look up a field literally named "true" and silently ignore the drop.
+    document.body.innerHTML = `<div data-pb-area="true"><p id="inner">empty</p></div>`;
+    const inner = document.getElementById("inner")!;
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => inner;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc7", blockType: "CardBlock" };
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 50, y: 60, payload } }));
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 50, y: 60, payload } }));
+    const areaWarnings = warn.mock.calls.filter((c) => String(c[0]).includes("FIELD NAME"));
+    expect(areaWarnings).toHaveLength(1); // once per bad value, not per drop
+    expect(String(areaWarnings[0][0])).toContain('data-pb-area="true"');
+    // The drop still posts (the admin surfaces its own error toast for unknown fields).
+    expect(target.postMessage).toHaveBeenCalledWith({ type: "paperboy:drop", field: "true", payload }, "*");
+    warn.mockRestore();
+    teardown();
+  });
+
+  it("does NOT warn for a proper field-name area value", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="mainArea"><p id="inner">empty</p></div>`;
+    const inner = document.getElementById("inner")!;
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => inner;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const teardown = initPreviewBridge({ target, badge: false });
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 1, y: 1, payload: { kind: "block", documentId: "d", blockType: "CardBlock" } } }));
+    expect(warn.mock.calls.filter((c) => String(c[0]).includes("FIELD NAME"))).toHaveLength(0);
+    warn.mockRestore();
+    teardown();
+  });
+
   it("applies paperboy:patch from the parent (live content swap, no reload)", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-field="body">old</div>`;

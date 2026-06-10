@@ -119,6 +119,22 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   // the admin via paperboy:dragsource on dragstart (see onMessage below).
   let dragPayload: unknown = null;
   let dropZone: HTMLElement | null = null;
+  // data-pb-area's VALUE must be the contentArea FIELD NAME (it is posted back
+  // as paperboy:drop {field} and looked up on the content type). A boolean-ish
+  // marker is the classic mistake and makes every drop fail silently in the
+  // editor — call it out in the frontend dev's own console.
+  const warnedAreas = new Set<string>();
+  const checkAreaValue = (zone: HTMLElement): string | null => {
+    const field = zone.getAttribute(ATTR.area);
+    if (field && /^(true|false|1|0|yes)$/i.test(field) && !warnedAreas.has(field)) {
+      warnedAreas.add(field);
+      console.warn(
+        `[paperboy] ${ATTR.area}="${field}" looks like a boolean marker, but its value must be the contentArea FIELD NAME ` +
+          `(e.g. ${ATTR.area}="mainArea") — the editor maps drops to the form field by this value. Use pbAreaAttrs() from @paperboycms/client.`,
+      );
+    }
+    return field;
+  };
   const setDropZone = (z: HTMLElement | null) => {
     if (dropZone === z) return;
     dropZone?.classList.remove("pb-drop-active");
@@ -152,7 +168,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     setDropZone(null);
     if (!zone || payload == null) return;
     e.preventDefault();
-    target?.postMessage({ type: "paperboy:drop", field: zone.getAttribute(ATTR.area), payload }, "*");
+    target?.postMessage({ type: "paperboy:drop", field: checkAreaValue(zone), payload }, "*");
   };
 
   // ---- track the picked element's rect on scroll/resize; persist scroll ----
@@ -207,7 +223,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       const el = doc.elementFromPoint(msg.x, msg.y) as HTMLElement | null;
       const zone = el?.closest(`[${ATTR.area}]`) as HTMLElement | null;
       setDropZone(null);
-      if (zone) target?.postMessage({ type: "paperboy:drop", field: zone.getAttribute(ATTR.area), payload: msg.payload }, "*");
+      if (zone) target?.postMessage({ type: "paperboy:drop", field: checkAreaValue(zone), payload: msg.payload }, "*");
     }
   };
 
