@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockData, contentAreas, isRichTextDoc, renderRichText } from "./index.js";
+import { blockData, contentAreas, isRichTextDoc, pbAreaAttrs, renderRichText } from "./index.js";
 
 // XSS regression guard for renderRichText — its output is injected via
 // innerHTML/set:html, and CMS content (incl. agent-written via MCP) is untrusted.
@@ -57,5 +57,12 @@ describe("blockData / contentAreas", () => {
       heading: "x",
     };
     expect(contentAreas(data).map((a) => `${a.field}(${a.blocks.length})`)).toEqual(["mainArea(0)", "stuff(1)"]);
+  });
+
+  // The drop-zone contract: data-pb-area's VALUE is the FIELD NAME the bridge
+  // posts back as paperboy:drop {field}. A boolean-ish marker breaks every drop.
+  it("pbAreaAttrs emits data-pb-area=<field name> in preview, nothing on public pages", () => {
+    expect(pbAreaAttrs("mainArea", true)).toEqual({ "data-pb-area": "mainArea" });
+    expect(pbAreaAttrs("mainArea", false)).toEqual({});
   });
 });
