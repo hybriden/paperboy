@@ -622,10 +622,10 @@ export function AiPanel() {
       ? `Key configured in the CMS (ending ••${status.last4})`
       : status?.source === "env"
         ? `Using the ANTHROPIC_API_KEY environment value (ending ••${status.last4})`
-        : "No key configured — the assistant runs in basic (offline) mode.";
+        : "No key configured — the copy desk is offline (only basic SEO truncation works).";
 
   return (
-    <PanelShell title="AI assistant" hint="Connect an Anthropic API key so the editor’s ✨ AI features (SEO text, summaries, translation) use Claude. The key is stored encrypted and never shown again; it overrides the server environment value.">
+    <PanelShell title="AI provider" hint="Connect an Anthropic API key so the copy desk (SEO text, copy improvement, translation, image descriptions) uses Claude. The key is stored encrypted and never shown again; it overrides the server environment value.">
       <div className="space-y-4 p-4">
         <div className="flex items-center gap-2 text-sm">
           <span className={`h-2 w-2 rounded-full ${status?.configured ? "bg-published" : "bg-draft"}`} />

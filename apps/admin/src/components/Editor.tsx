@@ -403,10 +403,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     mutationFn: (v: { task: AiTask; field: string }) => api.aiAssist(v.task, pageText()).then((r) => ({ ...r, field: v.field })),
     onSuccess: (r) => {
       setField(r.field, r.result);
-      if (r.provider === "fallback") toast.success("Draft suggestion added", "Basic mode — set ANTHROPIC_API_KEY for full AI.");
-      else toast.success("AI suggestion applied");
+      if (r.provider === "fallback") toast.success("Draft suggestion added", "Basic mode — add an AI key in Settings → AI for real suggestions.");
+      else toast.success("Suggestion applied");
     },
-    onError: (e) => toast.error("AI request failed", (e as Error).message),
+    onError: (e) => toast.error("Copy desk failed", (e as Error).message),
   });
   async function aiSeoBoth() {
     if (hasField("metaTitle")) await ai.mutateAsync({ task: "meta_title", field: "metaTitle" });
@@ -482,7 +482,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       toast.success(
         res.usedFallback ? "Draft seeded from source" : "Translated draft created",
         res.usedFallback
-          ? "AI is offline — text was copied for manual translation. Review and publish."
+          ? "The copy desk is offline — text was copied for manual translation. Review and publish."
           : "Review the AI translation, then publish.",
       );
     },
@@ -767,8 +767,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         <div className="ml-auto flex items-center gap-2">
           {(showAi || canCreate) && !mobile && (
             <Menu>
-              <MenuTrigger className="btn-subtle" aria-label="AI assistant" disabled={ai.isPending}>
-                <span aria-hidden>✨</span> {ai.isPending ? "Thinking…" : "AI"}
+              {/* The newsroom name for what this does: the copy desk polishes
+                  copy, writes headlines and standfirsts, and drafts on a brief. */}
+              <MenuTrigger className="btn-subtle" aria-label="Copy desk" disabled={ai.isPending}>
+                <Icon.Edit width={14} height={14} aria-hidden /> {ai.isPending ? "Working…" : "Copy desk"}
               </MenuTrigger>
               <MenuContent>
                 {canCreate && (
@@ -878,7 +880,6 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           <div className="ml-auto flex items-center gap-2">
             {canEdit && (
               <button className="btn-primary px-3 py-1 text-xs" disabled={translate.isPending} onClick={() => translate.mutate()}>
-                <span aria-hidden>✨</span>{" "}
                 {translate.isPending
                   ? "Translating…"
                   : `Translate from ${locales.find((l) => l.code === sourceLocale)?.displayName ?? sourceLocale}`}
@@ -1512,10 +1513,10 @@ function SaveIndicator({ state }: { state: SaveState }) {
 }
 
 /**
- * ✨ AI inside the on-page overlay (text/markdown fields): quick improve, a
- * free-form instruction ("shorten to 8 words"), and TRY-ON VARIANTS — hovering
- * a suggestion live-patches it into the real page so you see it in the actual
- * design before committing; click applies it. Module-level component (see Btn).
+ * The copy desk inside the on-page overlay (text/markdown fields): quick
+ * improve, a free-form instruction ("shorten to 8 words"), and TRY-ON VARIANTS
+ * — hovering a suggestion live-patches it into the real page so you see it in
+ * the actual design before committing; click applies it. Module-level (see Btn).
  */
 function OverlayAi({
   current,
@@ -1564,7 +1565,7 @@ function OverlayAi({
         if (r.provider === "fallback") toast.success("Basic mode", "Set an AI key in Settings → Site for full AI.");
       }
     } catch (e) {
-      toast.error("AI failed", (e as Error).message);
+      toast.error("Copy desk failed", (e as Error).message);
     } finally {
       setBusy(null);
     }
@@ -1573,7 +1574,7 @@ function OverlayAi({
   if (!aiEnabled) {
     return (
       <div className="mt-3 border-t border-line pt-2.5">
-        <p className="text-xs text-muted"><span aria-hidden>✨</span> {AI_OFF_HINT}</p>
+        <p className="text-xs text-muted">{AI_OFF_HINT}</p>
       </div>
     );
   }
@@ -1581,7 +1582,7 @@ function OverlayAi({
   return (
     <div className="mt-3 border-t border-line pt-2.5">
       <div className="flex items-center gap-1.5">
-        <span className="text-xs text-muted" aria-hidden>✨</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">Copy desk</span>
         <button type="button" className="btn-subtle px-2 py-0.5 text-xs" disabled={!!busy || !current.trim()} onClick={() => void run("improve")}>
           {busy === "improve" ? "Improving…" : "Improve"}
         </button>
@@ -1598,17 +1599,17 @@ function OverlayAi({
       >
         <input
           className="field-input min-w-0 flex-1 py-1 text-xs"
-          placeholder="Tell the AI… e.g. shorten to 8 words"
+          placeholder="Ask the desk… e.g. shorten to 8 words"
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
-          aria-label="AI instruction"
+          aria-label="Copy desk instruction"
         />
         <button type="submit" className="btn-subtle px-2 py-0.5 text-xs" disabled={!!busy || !instruction.trim() || !current.trim()}>
           {busy === "rewrite" ? "…" : "Go"}
         </button>
       </form>
       {variants && (
-        <ul className="m-0 mt-2 list-none space-y-1 p-0" aria-label="AI suggestions — hover to try on the page">
+        <ul className="m-0 mt-2 list-none space-y-1 p-0" aria-label="Suggestions — hover to try on the page">
           {variants.map((v, i) => (
             <li key={i}>
               <button

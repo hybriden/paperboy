@@ -17,7 +17,7 @@ exactly the slice you need.
 | --- | --- |
 | `content-lifecycle.debug.spec.ts` | create/edit every field type, autosave, publish/unpublish, schedule, discard, duplicate, trash+restore, version history + compare |
 | `content-types.debug.spec.ts` | content-type editor: every field type + validation, use on a page, delete-while-in-use guard |
-| `media.debug.spec.ts` | upload, alt text + ✨ AI fallback, image field choose/replace/clear, picker tabs, delete-while-referenced |
+| `media.debug.spec.ts` | upload, alt text + the no-key Describe-image disabled state, image field choose/replace/clear, picker tabs, delete-while-referenced |
 | `richtext-markdown.debug.spec.ts` | every TipTap toolbar control, link prompt, image insert + drag-resize, markdown toolbar + Write/Preview |
 | `settings.debug.spec.ts` | languages, site preview URL, AI/stock panels, delivery keys, MCP tokens, webhooks, users, audit log |
 | `rbac.debug.spec.ts` | Editor/Author/Viewer scoping and read-only enforcement |
