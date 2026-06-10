@@ -514,7 +514,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         // field; autosave + the preview reload then show it in place.
         const fieldName = typeof msg.field === "string" ? msg.field : null;
         const def = fieldName ? type?.fields.find((f) => f.name === fieldName) : undefined;
-        if (!fieldName || !def) return;
+        if (!fieldName || !def) {
+          // A drop zone whose data-pb-area doesn't name a real field is a
+          // frontend annotation bug — surface it instead of swallowing the drop.
+          toast.error("Couldn’t drop here", `The preview marks this area as “${fieldName ?? "?"}”, which isn’t a field of ${type?.name ?? "this type"}. data-pb-area must name the contentArea field.`);
+          return;
+        }
         const payload = (msg.payload ?? {}) as DropPayload;
         const res = blockInstanceFromDrop(payload, def, newBlockKey());
         if (!res.ok) {
@@ -659,8 +664,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const isPage = form.kind === "page";
   // Live preview is a desktop-only split pane; never open it on phones.
   const previewOpen = view !== "props" && !mobile;
-  const setField = (name: string, value: unknown) =>
+  // Hoisted on purpose: the preview message handler (registered while the
+  // editor may still be loading) closes over this — a `const` here would stay
+  // un-initialized in that closure (TDZ) and crash the first drop.
+  function setField(name: string, value: unknown) {
     patch((prev) => ({ ...prev, data: { ...prev.data, [name]: value } }));
+  }
 
   // Tabs + property fields. Shared between the desktop split pane and the
   // full-width phone column.
