@@ -414,7 +414,18 @@ export const api = {
   renameSite: (id: string, body: { name?: string; slug?: string }) => request<SiteRow>("PATCH", `/manage/sites/${id}`, body),
   deleteSite: (id: string, confirmSlug: string) =>
     request<{ ok: boolean; contentItems: number; assets: number; deliveryKeys: number }>("DELETE", `/manage/sites/${id}?confirm=${encodeURIComponent(confirmSlug)}`),
+
+  // dashboard
+  dashboard: (signal?: AbortSignal) => request<DashboardData>("GET", "/manage/dashboard", undefined, signal),
 };
+
+export interface DashboardData {
+  wip: { documentId: string; name: string; type: string; kind: string; locale: string; change: "new" | "updated"; at: string }[];
+  wipTotal: number;
+  scheduled: { documentId: string; name: string; locale: string; action: "publish" | "unpublish"; at: string }[];
+  translation: { locale: string; displayName: string; missing: number }[];
+  housekeeping: { trash: number; unusedBlocks: number; emptyTypes: number; failingWebhooks: number | null };
+}
 
 export interface SiteRow {
   id: string;

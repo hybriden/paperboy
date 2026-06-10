@@ -16,6 +16,35 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
   );
 }
 
+/** "2h ago" / "in 3 days" — coarse on purpose; the dashboard is a glance. */
+function relativeTime(iso: string): string {
+  const diff = new Date(iso).getTime() - Date.now();
+  const abs = Math.abs(diff);
+  const fmt = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (abs < 60_000) return fmt.format(Math.round(diff / 1000), "second");
+  if (abs < 3_600_000) return fmt.format(Math.round(diff / 60_000), "minute");
+  if (abs < 86_400_000) return fmt.format(Math.round(diff / 3_600_000), "hour");
+  return fmt.format(Math.round(diff / 86_400_000), "day");
+}
+
+function scheduleTime(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function DashSection({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <section>
+      <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">{title}</h2>
+      {hint && <p className="-mt-1 mb-2 text-xs text-muted/80">{hint}</p>}
+      <div className="overflow-hidden rounded-lg border border-line bg-panel shadow-panel">{children}</div>
+    </section>
+  );
+}
+
+function EmptyRow({ children }: { children: React.ReactNode }) {
+  return <p className="p-5 text-sm text-muted">{children}</p>;
+}
+
 export function DashboardView() {
   const { setCrumb } = useOutletContext<ShellOutlet>();
   const navigate = useNavigate();
@@ -24,10 +53,27 @@ export function DashboardView() {
   const tree = useQuery({ queryKey: ["tree", "root"], queryFn: ({ signal }) => api.tree(undefined, signal) });
   const types = useQuery({ queryKey: ["content-types"], queryFn: ({ signal }) => api.contentTypes(signal) });
   const locales = useQuery({ queryKey: ["locales"], queryFn: ({ signal }) => api.locales(signal) });
+  const dash = useQuery({ queryKey: ["dashboard"], queryFn: ({ signal }) => api.dashboard(signal) });
 
   const nodes = tree.data ?? [];
   const pages = nodes.filter((n) => n.kind === "page");
   const blocks = nodes.filter((n) => n.kind === "block");
+  const d = dash.data;
+  const gaps = (d?.translation ?? []).filter((t) => t.missing > 0);
+  const hk = d?.housekeeping;
+  const housekeepingItems = hk
+    ? ([
+        { label: hk.trash === 1 ? "item in trash" : "items in trash", count: hk.trash, to: "/settings#trash" },
+        { label: hk.unusedBlocks === 1 ? "unused shared block" : "unused shared blocks", count: hk.unusedBlocks, to: "/edit" },
+        { label: hk.emptyTypes === 1 ? "content type without content" : "content types without content", count: hk.emptyTypes, to: "/settings#model" },
+        ...(hk.failingWebhooks != null
+          ? [{ label: hk.failingWebhooks === 1 ? "failing webhook" : "failing webhooks", count: hk.failingWebhooks, to: "/settings#webhooks", alarm: true }]
+          : []),
+      ] as { label: string; count: number; to: string; alarm?: boolean }[])
+    : [];
+  const attention = housekeepingItems.filter((i) => i.count > 0);
+
+  const skeleton = (n: number) => [...Array(n)].map((_, i) => <div key={i} className="h-12 animate-pulse border-b border-line bg-line/30 last:border-0" />);
 
   return (
     <div className="h-full overflow-auto">
@@ -42,29 +88,82 @@ export function DashboardView() {
           <StatCard label="Languages" value={locales.data?.length ?? 0} />
         </div>
 
-        <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Recent content</h2>
-        <div className="overflow-hidden rounded-lg border border-line bg-panel shadow-panel">
-          {tree.isLoading && [0, 1, 2].map((i) => <div key={i} className="h-12 animate-pulse border-b border-line bg-line/30 last:border-0" />)}
-          {!tree.isLoading && nodes.length === 0 && <p className="p-5 text-sm text-muted">No content yet.</p>}
-          {nodes.map((n) => {
-            const loc = Object.values(n.locales)[0];
-            return (
+        <div className="mb-8 grid gap-8 lg:grid-cols-2">
+          {/* What was I doing? Unpublished drafts, newest edits first. */}
+          <DashSection title="In progress" hint="Drafts with unpublished changes — click to resume.">
+            {dash.isLoading && skeleton(3)}
+            {d && d.wip.length === 0 && <EmptyRow>Nothing in progress — every change is published.</EmptyRow>}
+            {d?.wip.map((w) => (
               <button
-                key={n.documentId}
-                onClick={() => navigate(`/edit/${n.documentId}`)}
+                key={`${w.documentId}:${w.locale}`}
+                onClick={() => navigate(`/edit/${w.documentId}`)}
                 className="flex w-full items-center gap-3 border-b border-line px-4 py-3 text-left text-sm transition-colors last:border-0 hover:bg-canvas"
               >
-                {n.kind === "block" ? <Icon.Block width={16} height={16} className="text-muted" /> : <Icon.File width={16} height={16} className="text-muted" />}
-                <span className="font-medium text-fg">{n.name}</span>
-                <span className="font-mono text-xs text-muted">{n.type}</span>
-                {loc && (
-                  <span className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-semibold ${loc.status === "published" ? "bg-published/10 text-published" : "bg-draft/10 text-draft"}`}>
-                    {loc.status}
-                  </span>
-                )}
+                {w.kind === "block" ? <Icon.Block width={16} height={16} className="shrink-0 text-muted" /> : <Icon.File width={16} height={16} className="shrink-0 text-muted" />}
+                <span className="min-w-0 flex-1 truncate font-medium text-fg">{w.name}</span>
+                <span className="hidden font-mono text-xs text-muted sm:inline">{w.locale}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${w.change === "new" ? "bg-draft/10 text-draft" : "bg-accent/10 text-accent-700"}`}>
+                  {w.change === "new" ? "draft" : "edited"}
+                </span>
+                <span className="tnum w-20 shrink-0 text-right text-xs text-muted">{relativeTime(w.at)}</span>
               </button>
-            );
-          })}
+            ))}
+            {d && d.wipTotal > d.wip.length && (
+              <p className="border-t border-line px-4 py-2 text-xs text-muted">+ {d.wipTotal - d.wip.length} more drafts</p>
+            )}
+          </DashSection>
+
+          {/* Timed go-lives and expiries — the invisible queue, made visible. */}
+          <DashSection title="Scheduled publishing" hint="Upcoming timed go-lives and expiries.">
+            {dash.isLoading && skeleton(3)}
+            {d && d.scheduled.length === 0 && <EmptyRow>Nothing scheduled.</EmptyRow>}
+            {d?.scheduled.map((sch) => (
+              <button
+                key={`${sch.documentId}:${sch.locale}:${sch.action}`}
+                onClick={() => navigate(`/edit/${sch.documentId}`)}
+                className="flex w-full items-center gap-3 border-b border-line px-4 py-3 text-left text-sm transition-colors last:border-0 hover:bg-canvas"
+              >
+                <Icon.File width={16} height={16} className="shrink-0 text-muted" />
+                <span className="min-w-0 flex-1 truncate font-medium text-fg">{sch.name}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${sch.action === "publish" ? "bg-published/10 text-published" : "bg-danger/10 text-danger"}`}>
+                  {sch.action === "publish" ? "goes live" : "expires"}
+                </span>
+                <span className="tnum shrink-0 text-xs text-muted">{scheduleTime(sch.at)}</span>
+              </button>
+            ))}
+          </DashSection>
+        </div>
+
+        <div className="grid gap-8 lg:grid-cols-2">
+          {/* Per-language coverage: pages that don't exist in a locale yet. */}
+          <DashSection title="Translations">
+            {dash.isLoading && skeleton(2)}
+            {d && gaps.length === 0 && <EmptyRow>Every page exists in all languages.</EmptyRow>}
+            {gaps.map((t) => (
+              <div key={t.locale} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
+                <span className="font-mono text-xs text-muted">{t.locale}</span>
+                <span className="min-w-0 flex-1 truncate font-medium text-fg">{t.displayName}</span>
+                <span className="tnum text-xs text-muted">{t.missing} {t.missing === 1 ? "page" : "pages"} not translated</span>
+              </div>
+            ))}
+          </DashSection>
+
+          {/* Tidy-up signals: trash, orphans, dead webhooks. */}
+          <DashSection title="Housekeeping">
+            {dash.isLoading && skeleton(2)}
+            {d && attention.length === 0 && <EmptyRow>All tidy — nothing needs attention.</EmptyRow>}
+            {attention.map((item) => (
+              <button
+                key={item.label}
+                onClick={() => navigate(item.to)}
+                className="flex w-full items-center gap-3 border-b border-line px-4 py-3 text-left text-sm transition-colors last:border-0 hover:bg-canvas"
+              >
+                <span className={`tnum text-base font-semibold ${item.alarm ? "text-danger" : "text-fg"}`}>{item.count}</span>
+                <span className="min-w-0 flex-1 truncate text-fg">{item.label}</span>
+                <Icon.Chevron width={14} height={14} className="shrink-0 text-muted" />
+              </button>
+            ))}
+          </DashSection>
         </div>
       </div>
     </div>

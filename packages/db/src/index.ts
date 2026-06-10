@@ -2,6 +2,7 @@ export * from "./client.js";
 export * from "./errors.js";
 export * from "./scope.js";
 export * from "./content.js";
+export * from "./dashboard.js";
 export * from "./assets.js";
 export * from "./folders.js";
 export * from "./delivery.js";

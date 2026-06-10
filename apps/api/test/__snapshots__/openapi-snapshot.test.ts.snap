@@ -520,6 +520,21 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "GET /api/v1/manage/dashboard": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "housekeeping",
+      "scheduled",
+      "translation",
+      "wip",
+      "wipTotal",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "GET /api/v1/manage/delivery-keys": {
     "requestBodyRequired": [],
     "requiredParams": [],
