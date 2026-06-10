@@ -1,9 +1,9 @@
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
-import { DEFAULT_SITE_ID, locale, site } from "./schema.js";
+import { DEFAULT_SITE_ID, asset, contentItem, contentReference, contentVersion, deliveryKey, folder, locale, site, userScope } from "./schema.js";
 
 /**
  * The `site` entity (multisite). Content, delivery keys, media and user scopes
@@ -99,4 +99,49 @@ export async function renameSite(
   if (Object.keys(patch).length === 0) return existing; // nothing to change
   await db.update(site).set(patch).where(eq(site.id, siteId));
   return (await getSiteById(db, siteId))!;
+}
+
+/**
+ * Delete a site AND everything partitioned to it: content (incl. trash and all
+ * versions/references), media assets, folders, delivery keys and user scopes.
+ * Cross-site admin (user.manage). Irreversible, so the caller must echo the
+ * site's slug in `confirmSlug` — a mismatch is rejected with the expected value
+ * so a mistaken caller can self-correct. The Default site can never be deleted.
+ */
+export async function deleteSite(
+  db: Database,
+  ctx: AccessContext,
+  siteId: string,
+  confirmSlug: string | undefined,
+): Promise<{ site: Site; contentItems: number; assets: number; deliveryKeys: number }> {
+  requirePermission(ctx, "user.manage");
+  const existing = await getSiteById(db, siteId);
+  if (!existing) throw Errors.notFound("Site");
+  if (siteId === DEFAULT_SITE_ID) {
+    throw Errors.badRequest("The Default site cannot be deleted — it anchors single-site write paths");
+  }
+  if (confirmSlug !== existing.slug) {
+    throw Errors.badRequest(
+      `Deleting a site is irreversible and removes all of its content, media and delivery keys. ` +
+        `Pass confirm='${existing.slug}' (the site's slug) to proceed.`,
+    );
+  }
+
+  const docs = await db.select({ documentId: contentItem.documentId }).from(contentItem).where(eq(contentItem.siteId, siteId));
+  const docIds = docs.map((d) => d.documentId);
+  let assets = 0;
+  let keys = 0;
+  await db.transaction(async (tx) => {
+    if (docIds.length > 0) {
+      await tx.delete(contentReference).where(inArray(contentReference.fromDocumentId, docIds));
+      await tx.delete(contentVersion).where(inArray(contentVersion.documentId, docIds));
+      await tx.delete(contentItem).where(eq(contentItem.siteId, siteId));
+    }
+    assets = (await tx.delete(asset).where(eq(asset.siteId, siteId)).returning({ id: asset.documentId })).length;
+    await tx.delete(folder).where(eq(folder.siteId, siteId));
+    keys = (await tx.delete(deliveryKey).where(eq(deliveryKey.siteId, siteId)).returning({ id: deliveryKey.id })).length;
+    await tx.delete(userScope).where(eq(userScope.siteId, siteId));
+    await tx.delete(site).where(eq(site.id, siteId));
+  });
+  return { site: existing, contentItems: docIds.length, assets, deliveryKeys: keys };
 }

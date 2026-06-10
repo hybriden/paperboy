@@ -102,6 +102,52 @@ describe("multisite phase 3 — site routes + active-site header", () => {
     expect(clash.statusCode).toBe(409);
   });
 
+  it("DELETE /manage/sites/:id deletes a site and everything bound to it (admin only, confirm required)", async () => {
+    const created = (
+      await s.app.inject({ method: "POST", url: "/api/v1/manage/sites", headers: authHeaders(admin), payload: { slug: "brand-del", name: "Brand Del", defaultLocale: "en" } })
+    ).json();
+    const siteHeaders = { ...authHeaders(admin), "x-paperboy-site": created.id };
+
+    // Populate the site so the cascade is actually exercised: content + a delivery key.
+    const page = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: siteHeaders, payload: { type: "LandingPage", locale: "en", name: "Del Root" } });
+    expect(page.statusCode, page.body).toBe(200);
+    const docId = page.json().documentId as string;
+    const key = await s.app.inject({ method: "POST", url: "/api/v1/manage/delivery-keys", headers: siteHeaders, payload: { name: "del-key", type: "public" } });
+    expect(key.statusCode, key.body).toBe(200);
+
+    // Editor (no user.manage) is forbidden.
+    const forbidden = await s.app.inject({ method: "DELETE", url: `/api/v1/manage/sites/${created.id}?confirm=brand-del`, headers: authHeaders(ed) });
+    expect(forbidden.statusCode).toBe(403);
+
+    // Missing or wrong confirm is rejected with a self-teaching error naming the expected slug.
+    const noConfirm = await s.app.inject({ method: "DELETE", url: `/api/v1/manage/sites/${created.id}`, headers: authHeaders(admin) });
+    expect(noConfirm.statusCode).toBe(400);
+    const wrongConfirm = await s.app.inject({ method: "DELETE", url: `/api/v1/manage/sites/${created.id}?confirm=nope`, headers: authHeaders(admin) });
+    expect(wrongConfirm.statusCode).toBe(400);
+    expect(wrongConfirm.body).toContain("brand-del");
+
+    // Correct confirm deletes the site and cascades.
+    const deleted = await s.app.inject({ method: "DELETE", url: `/api/v1/manage/sites/${created.id}?confirm=brand-del`, headers: authHeaders(admin) });
+    expect(deleted.statusCode, deleted.body).toBe(200);
+    expect(deleted.json().ok).toBe(true);
+
+    const sites = (await s.app.inject({ method: "GET", url: "/api/v1/manage/sites", headers: authHeaders(admin) })).json();
+    expect(sites.sites.map((x: { id: string }) => x.id)).not.toContain(created.id);
+    const items = (await raw.sql`SELECT 1 FROM content_item WHERE site_id = ${created.id}`) as unknown[];
+    expect(items.length).toBe(0);
+    const versions = (await raw.sql`SELECT 1 FROM content_version WHERE document_id = ${docId}`) as unknown[];
+    expect(versions.length).toBe(0);
+    const keys = (await raw.sql`SELECT 1 FROM delivery_key WHERE site_id = ${created.id}`) as unknown[];
+    expect(keys.length).toBe(0);
+    const auditRows = (await raw.sql`SELECT detail FROM audit_log WHERE action = 'site.delete'`) as Array<{ detail: { id: string } }>;
+    expect(auditRows.some((a) => a.detail.id === created.id)).toBe(true);
+  });
+
+  it("DELETE /manage/sites/:id refuses to delete the Default site", async () => {
+    const r = await s.app.inject({ method: "DELETE", url: "/api/v1/manage/sites/site_default?confirm=default", headers: authHeaders(admin) });
+    expect(r.statusCode).toBe(400);
+  });
+
   it("an unknown x-paperboy-site header falls back to the Default site (never 500)", async () => {
     const r = await s.app.inject({
       method: "GET",
