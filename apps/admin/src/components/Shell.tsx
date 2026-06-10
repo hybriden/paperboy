@@ -13,6 +13,9 @@ export interface ShellOutlet {
   setCrumb: (text: string | null) => void;
 }
 
+/** Show the native modifier in the shortcut hint (⌘ on macOS, Ctrl elsewhere). */
+const IS_MAC = /Mac|iP(hone|ad|od)/.test(navigator.platform);
+
 const RAIL = [
   { to: "/dashboard", icon: Icon.Dashboard, label: "Dashboard" },
   { to: "/edit", icon: Icon.Edit, label: "Edit" },
@@ -90,12 +93,14 @@ function TopBar({
       <div className="ml-auto flex items-center gap-1.5">
         <button
           onClick={onOpenPalette}
-          className="group flex items-center gap-2 rounded-[var(--radius)] border border-chrome-border bg-chrome-light/60 px-2.5 py-1.5 text-sm text-chrome-fg/70 hover:bg-chrome-light"
+          className="flex h-9 items-center gap-2 rounded-[var(--radius)] px-2.5 text-sm text-chrome-fg/60 transition-colors hover:bg-chrome-light hover:text-chrome-fg/90"
           aria-label="Open command palette"
         >
-          <Icon.Search width={15} height={15} />
-          <span className="hidden md:inline">Search…</span>
-          <kbd className="hidden rounded bg-chrome-border/60 px-1.5 py-0.5 font-mono text-[10px] text-chrome-fg/80 md:inline">⌘K</kbd>
+          <Icon.Search width={15} height={15} className="shrink-0" />
+          <span className="hidden font-display text-[13.5px] italic leading-none md:inline">Search…</span>
+          <kbd className="hidden rounded border border-chrome-border/80 px-1.5 py-0.5 font-mono text-[10px] leading-none text-chrome-fg/55 md:inline">
+            {IS_MAC ? "⌘K" : "Ctrl K"}
+          </kbd>
         </button>
         <SiteSwitcher />
         <ThemeToggle />
