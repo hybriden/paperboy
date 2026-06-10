@@ -443,7 +443,7 @@ tool("list_audit", "Read the append-only audit log (admin). Filter by action pre
 tool("list_locales", "List enabled locales.", {}, async () => { need("content.read"); return listLocales(db); });
 
 /* ---------------------------------- AI --------------------------------- */
-tool("ai_assist", "AI editorial help: meta_title, meta_description, summarize, improve, alt_text, translate.",
+tool("ai_assist", "AI editorial help: meta_title, meta_description, summarize, improve, translate, rewrite, variants, write (draft prose about a topic). Tasks needing a model error clearly when no AI key is configured.",
   { task: z.enum(AI_TASKS), input: z.string().min(1), targetLocale: z.string().optional() },
   async (a) => { need("content.update"); return aiAssist(a, AI_CONFIG); });
 

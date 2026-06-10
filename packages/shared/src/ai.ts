@@ -11,11 +11,11 @@
  * translate call with no key returned the untranslated source as success).
  */
 
-export const AI_TASKS = ["meta_title", "meta_description", "summarize", "improve", "alt_text", "translate", "rewrite", "variants"] as const;
+export const AI_TASKS = ["meta_title", "meta_description", "summarize", "improve", "alt_text", "translate", "rewrite", "variants", "write"] as const;
 export type AiTask = (typeof AI_TASKS)[number];
 
 /** Tasks with no honest offline approximation — a model is required. */
-const REQUIRES_MODEL: ReadonlySet<AiTask> = new Set(["improve", "rewrite", "translate", "variants", "alt_text"]);
+const REQUIRES_MODEL: ReadonlySet<AiTask> = new Set(["improve", "rewrite", "translate", "variants", "alt_text", "write"]);
 
 /** Thrown when a model-requiring task is asked for and no provider is usable. */
 export class AiUnavailableError extends Error {
@@ -72,6 +72,11 @@ function instruction(req: AiRequest): string {
       return `Rewrite the following text according to this instruction: "${req.instruction ?? "improve it"}". Keep the same language as the input. Return ONLY the rewritten text.\n\n${req.input}${ctx}`;
     case "variants":
       return `Write exactly 3 alternative versions of the following text — same language, same intent, meaningfully different angles (e.g. punchier, warmer, more concrete). Keep each roughly the same length as the original. Return ONLY a JSON array of 3 strings — no preamble, no code fences.\n\n${req.input}${ctx}`;
+    case "write":
+      // The richtext "Write about this" item: the selection is a TOPIC (often a
+      // heading or fragment); the result is inserted AFTER it as paragraphs, so
+      // plain prose only — markdown syntax would render literally in TipTap.
+      return `Write 2–4 well-crafted paragraphs about the following topic, as body text that could follow it in a document. Match the language of the topic. Return ONLY plain prose paragraphs separated by a blank line — no headings, no lists, no markdown syntax, no preamble.\n\nTopic:\n${req.input}${ctx}`;
   }
 }
 
