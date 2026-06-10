@@ -105,7 +105,9 @@ test("shell + tree + editor render; axe clean in LIGHT and DARK", async ({ page 
 test("command palette (⌘K) searches content and navigates", async ({ page }) => {
   await login(page);
   await page.keyboard.press("Control+k");
-  const input = page.getByPlaceholder(/Search content/);
+  // Match on "Search" only — the palette placeholder copy is a design choice
+  // that has already changed once ("Search content…" → "Search the newsroom…").
+  const input = page.getByPlaceholder(/Search/);
   await expect(input).toBeVisible();
   await input.fill("Author");
   await page.getByRole("option", { name: /Author Zone/ }).click();
