@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { PNG_1x1, SEL, login, openHome, waitForSaved } from "./helpers.js";
 
 /**
- * MEDIA — upload, alt text (+ ✨ AI offline fallback), the image field's
+ * MEDIA — upload, alt text (+ the no-key Describe-image disabled state), the image field's
  * choose/replace/clear via the picker, the picker's Library/Stock tabs (stock
  * is UNCONFIGURED in this env → assert the self-teaching inline error), and
  * deleting an asset that an image field references → "Image not found".
@@ -39,7 +39,7 @@ test("upload a PNG into the assets pane Media tab", async ({ page }) => {
   await expect.poll(async () => SEL.assetsPane(page).locator("img").count(), { timeout: 10_000 }).toBeGreaterThan(before);
 });
 
-test("edit alt text, including the ✨ AI suggest offline-fallback path", async ({ page }) => {
+test("edit alt text; Describe image is honestly disabled without an AI key", async ({ page }) => {
   await openHome(page);
   await uploadPng(page);
 
@@ -48,11 +48,11 @@ test("edit alt text, including the ✨ AI suggest offline-fallback path", async 
   const dlg = page.getByRole("dialog", { name: "Image details" });
   await expect(dlg).toBeVisible();
 
-  // ✨ Suggest fills the alt input (offline fallback derives basic alt text).
-  await dlg.getByRole("button", { name: /Suggest/ }).click();
-  await expect(dlg.getByLabel(/Alt text/)).not.toHaveValue("", { timeout: 10_000 });
+  // Alt text comes from VISION now (the model looks at the image) — with no
+  // key configured there is no fake filename fallback; the button is disabled.
+  await expect(dlg.getByRole("button", { name: /Describe image/ })).toBeDisabled();
 
-  // Override with our own and save.
+  // Manual alt editing is unaffected.
   await dlg.getByLabel(/Alt text/).fill("A debug test image");
   await dlg.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Alt text saved").first()).toBeVisible({ timeout: 10_000 });

@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "./api.js";
 
-export const AI_OFF_HINT = "AI is off — add an Anthropic API key in Settings → AI.";
+export const AI_OFF_HINT = "The copy desk is offline — add an Anthropic API key in Settings → AI.";
 
 /** Whether a real AI provider is configured. undefined while loading. */
 export function useAiEnabled(): boolean | undefined {

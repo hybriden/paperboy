@@ -132,9 +132,9 @@ function Btn({
 }
 
 /**
- * ✨ AI menu for the rich-text toolbar (module-level, see Btn). Works on the
- * CURRENT SELECTION — predictable scope, and the replacement can't mangle the
- * structure of the whole document. The selection survives the menu click
+ * Copy-desk menu for the rich-text toolbar (module-level, see Btn). Works on
+ * the CURRENT SELECTION — predictable scope, and the replacement can't mangle
+ * the structure of the whole document. The selection survives the menu click
  * because TipTap keeps it in editor state while blurred.
  */
 function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolean }) {
@@ -164,13 +164,12 @@ function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolea
     <Menu>
       <MenuTrigger
         className={`flex h-7 items-center gap-1 rounded px-1.5 text-xs ${pending ? "text-accent-700" : "text-muted hover:bg-line/60 hover:text-fg"} disabled:opacity-50`}
-        aria-label="AI writing tools"
+        aria-label="Copy desk"
         disabled={pending || !hasSelection || !aiEnabled}
-        title={!aiEnabled ? AI_OFF_HINT : hasSelection ? "AI writing tools" : "Select some text first"}
+        title={!aiEnabled ? AI_OFF_HINT : hasSelection ? "Copy desk — works on the selection" : "Select some text first"}
         onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
       >
-        <span aria-hidden>✨</span>
-        {pending ? "Thinking…" : "AI"}
+        {pending ? "Working…" : "Copy desk"}
       </MenuTrigger>
       <MenuContent>
         <MenuItem onSelect={() => void run("improve", "Improve writing")}>Improve writing</MenuItem>

@@ -118,7 +118,7 @@ export function BuildFromBriefDialog({
               </label>
               <span className="text-muted">Language: <strong className="text-fg">{locale.toUpperCase()}</strong></span>
               <button className="btn-primary ml-auto" disabled={brief.trim().length < 10} onClick={() => void start()}>
-                <span aria-hidden>✨</span> Build drafts
+                Build drafts
               </button>
             </div>
           </div>

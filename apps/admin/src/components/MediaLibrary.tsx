@@ -118,7 +118,7 @@ export function MediaTab() {
       setAlt(r.result);
       toast.success("Alt text suggested", "Generated from the image — review, then save.");
     },
-    onError: (e) => toast.error("AI request failed", (e as Error).message),
+    onError: (e) => toast.error("Couldn’t describe the image", (e as Error).message),
   });
 
   // Only the images in the current folder (null = root/unfiled).
@@ -180,7 +180,7 @@ export function MediaTab() {
                 title={aiEnabled ? "Describe the image with AI" : AI_OFF_HINT}
                 onClick={() => suggestAlt.mutate(editing)}
               >
-                <span aria-hidden>✨</span> {suggestAlt.isPending ? "Looking…" : "Suggest"}
+                {suggestAlt.isPending ? "Looking…" : "Describe image"}
               </button>
             </div>
             <input id="alt" className="field-input mb-4" value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="Describe the image" />
