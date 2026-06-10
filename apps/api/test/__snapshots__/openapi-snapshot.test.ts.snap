@@ -816,6 +816,20 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "ai",
     ],
   },
+  "POST /api/v1/ai/alt-text": {
+    "requestBodyRequired": [
+      "documentId",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "provider",
+      "result",
+    ],
+    "summary": null,
+    "tags": [
+      "ai",
+    ],
+  },
   "POST /api/v1/ai/assist": {
     "requestBodyRequired": [
       "input",

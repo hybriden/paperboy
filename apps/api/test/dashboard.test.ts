@@ -94,15 +94,26 @@ describe("dashboard aggregate", () => {
     expect(new Date(entry!.at).getTime()).toBe(new Date(publishAt).getTime());
   });
 
-  it("reports translation coverage per enabled locale (seed: most pages have no nb variant)", async () => {
+  it("reports translation coverage per enabled locale, with the missing pages listed (actionable)", async () => {
     const r = await dash(authHeaders(ed));
     expect(r.statusCode, r.body).toBe(200);
-    const translation = r.json().translation as Array<{ locale: string; displayName: string; missing: number }>;
+    const translation = r.json().translation as Array<{
+      locale: string;
+      displayName: string;
+      missing: number;
+      pages: { documentId: string; name: string }[];
+    }>;
     const nb = translation.find((t) => t.locale === "nb");
     expect(nb).toBeTruthy();
     expect(nb!.missing).toBeGreaterThan(0); // seed only translates Home to nb
+    // The gap is actionable: the missing pages come back with names so the
+    // dashboard can deep-link each one into the editor at that locale.
+    expect(nb!.pages.length).toBeGreaterThan(0);
+    expect(nb!.pages.length).toBeLessThanOrEqual(10);
+    expect(nb!.pages.some((p) => p.name === "Blog")).toBe(true); // seeded, en-only
     const en = translation.find((t) => t.locale === "en");
     expect(en?.missing ?? 0).toBe(0); // every seeded page has an EN variant
+    expect(en?.pages).toEqual([]);
   });
 
   it("housekeeping: trash count moves with deletes; unused shared blocks are counted; webhook health is admin-only", async () => {
@@ -127,7 +138,14 @@ describe("dashboard aggregate", () => {
 
     const r = await dash(authHeaders(ed));
     expect(r.statusCode, r.body).toBe(200);
-    const hk = r.json().housekeeping as { trash: number; unusedBlocks: number; emptyTypes: number; failingWebhooks: number | null };
+    const hk = r.json().housekeeping as {
+      trash: number;
+      unusedBlocks: number;
+      emptyTypes: number;
+      missingAlt: number;
+      failingWebhooks: number | null;
+    };
+    expect(hk.missingAlt).toBeGreaterThanOrEqual(0); // counted per site (raster images with empty alt)
     expect(hk.trash).toBeGreaterThanOrEqual(1);
     // EXACTLY the Orphan Block: the seeded Featured Card is embedded by Home's
     // content area, and usage must be detected from the version data itself —

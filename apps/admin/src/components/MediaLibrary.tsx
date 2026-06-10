@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Asset, StockSearchResult } from "@paperboy/shared";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
+import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
 import { FolderNav } from "./FolderNav.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { useToast } from "./ui/toast.js";
@@ -108,11 +109,14 @@ export function MediaTab() {
     },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
   });
+  // Vision: the server looks at the ACTUAL IMAGE (downscaled) — a filename can't
+  // describe a picture, so without a configured key the button is simply off.
+  const aiEnabled = useAiEnabled();
   const suggestAlt = useMutation({
-    mutationFn: (filename: string) => api.aiAssist("alt_text", filename),
+    mutationFn: (documentId: string) => api.aiAltText(documentId),
     onSuccess: (r) => {
       setAlt(r.result);
-      if (r.provider === "fallback") toast.success("Draft alt text added", "Basic mode — set ANTHROPIC_API_KEY for full AI.");
+      toast.success("Alt text suggested", "Generated from the image — review, then save.");
     },
     onError: (e) => toast.error("AI request failed", (e as Error).message),
   });
@@ -172,10 +176,11 @@ export function MediaTab() {
               <button
                 type="button"
                 className="btn-subtle px-1.5 py-0.5 text-[11px]"
-                disabled={suggestAlt.isPending}
-                onClick={() => suggestAlt.mutate(assets.data?.find((a) => a.documentId === editing)?.filename ?? "image")}
+                disabled={suggestAlt.isPending || !aiEnabled}
+                title={aiEnabled ? "Describe the image with AI" : AI_OFF_HINT}
+                onClick={() => suggestAlt.mutate(editing)}
               >
-                <span aria-hidden>✨</span> {suggestAlt.isPending ? "Thinking…" : "Suggest"}
+                <span aria-hidden>✨</span> {suggestAlt.isPending ? "Looking…" : "Suggest"}
               </button>
             </div>
             <input id="alt" className="field-input mb-4" value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="Describe the image" />

@@ -5,6 +5,7 @@ import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useState } from "react";
 import { type AiTask, api } from "../../lib/api.js";
 import { type PbCaret, takeCaret } from "../../lib/caret.js";
+import { AI_OFF_HINT, useAiEnabled } from "../../lib/useAiStatus.js";
 import { Icon } from "../../lib/icons.js";
 import { MediaPicker } from "../MediaLibrary.js";
 import { Menu, MenuContent, MenuItem, MenuTrigger } from "../ui/menu.js";
@@ -139,6 +140,9 @@ function Btn({
 function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolean }) {
   const toast = useToast();
   const [pending, setPending] = useState(false);
+  // No key → the menu is off with an honest hint, instead of a "result" that
+  // would just be the selection with a capital letter.
+  const aiEnabled = useAiEnabled();
 
   async function run(task: AiTask, label: string) {
     const { from, to } = editor.state.selection;
@@ -161,8 +165,8 @@ function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolea
       <MenuTrigger
         className={`flex h-7 items-center gap-1 rounded px-1.5 text-xs ${pending ? "text-accent-700" : "text-muted hover:bg-line/60 hover:text-fg"} disabled:opacity-50`}
         aria-label="AI writing tools"
-        disabled={pending || !hasSelection}
-        title={hasSelection ? "AI writing tools" : "Select some text first"}
+        disabled={pending || !hasSelection || !aiEnabled}
+        title={!aiEnabled ? AI_OFF_HINT : hasSelection ? "AI writing tools" : "Select some text first"}
         onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
       >
         <span aria-hidden>✨</span>

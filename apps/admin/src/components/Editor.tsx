@@ -14,6 +14,7 @@ import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { postCaret } from "../lib/caret.js";
 import { applyRichTextStrings, collectRichTextStrings } from "../lib/richtext-strings.js";
 import { pickTranslateSource } from "../lib/translate-offer.js";
+import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
 import { blockInstanceFromDrop, type DropPayload } from "../lib/block-drop.js";
 import { parsePreviewMessage } from "@paperboycms/preview/protocol";
 import { ResizeHandle } from "./ui/resize.js";
@@ -1532,6 +1533,9 @@ function OverlayAi({
   const [instruction, setInstruction] = useState("");
   const [variants, setVariants] = useState<string[] | null>(null);
   const [busy, setBusy] = useState<AiTask | null>(null);
+  // Improve/variants/rewrite all need a real model — with no key the whole
+  // strip is replaced by an honest hint instead of buttons that 409.
+  const aiEnabled = useAiEnabled();
 
   async function run(task: AiTask, opts?: { instruction?: string }) {
     if (!current.trim() || busy) return;
@@ -1564,6 +1568,14 @@ function OverlayAi({
     } finally {
       setBusy(null);
     }
+  }
+
+  if (!aiEnabled) {
+    return (
+      <div className="mt-3 border-t border-line pt-2.5">
+        <p className="text-xs text-muted"><span aria-hidden>✨</span> {AI_OFF_HINT}</p>
+      </div>
+    );
   }
 
   return (

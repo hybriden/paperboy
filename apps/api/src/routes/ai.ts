@@ -1,8 +1,11 @@
+import { readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
+import sharp from "sharp";
 import { z } from "zod";
-import { AI_TASKS, aiAssist, aiTranslateBatch } from "@paperboy/shared";
-import { getStoredAiKey, getStoredAiModel } from "@paperboy/db";
+import { AI_TASKS, AiUnavailableError, aiAssist, aiImageAltText, aiTranslateBatch } from "@paperboy/shared";
+import { getAssetRow, getStoredAiKey, getStoredAiModel } from "@paperboy/db";
 import { runContentAgent } from "../agent.js";
 import { requireAuth, requireCsrf, requirePermission } from "../security.js";
 
@@ -44,10 +47,67 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
           instruction: z.string().max(500).optional(),
           context: z.string().max(4000).optional(),
         }),
-        response: { 200: z.object({ result: z.string(), provider: z.enum(["anthropic", "fallback"]) }) },
+        response: {
+          200: z.object({ result: z.string(), provider: z.enum(["anthropic", "fallback"]) }),
+          409: z.object({ error: z.string(), message: z.string() }),
+        },
       },
     },
-    async (req) => aiAssist(req.body, await resolveAiConfig()),
+    async (req, reply) => {
+      try {
+        return await aiAssist(req.body, await resolveAiConfig());
+      } catch (err) {
+        if (err instanceof AiUnavailableError) return reply.code(409).send({ error: "ai_unavailable", message: err.message });
+        throw err;
+      }
+    },
+  );
+
+  // Alt text from the ACTUAL IMAGE (vision) — never from the filename. The
+  // asset is loaded site-partitioned, downscaled server-side, and sent to the
+  // model as an image content block. Requires a configured key (409 without).
+  app.post(
+    "/alt-text",
+    {
+      preHandler: [requireCsrf, requirePermission("content.update")],
+      config: { rateLimit: { max: 20, timeWindow: "1 minute" } },
+      schema: {
+        tags: ["ai"],
+        body: z.object({ documentId: z.string().min(1).max(64) }),
+        response: {
+          200: z.object({ result: z.string(), provider: z.enum(["anthropic", "fallback"]) }),
+          400: z.object({ error: z.string(), message: z.string() }),
+          404: z.object({ error: z.string(), message: z.string() }),
+          409: z.object({ error: z.string(), message: z.string() }),
+        },
+      },
+    },
+    async (req, reply) => {
+      const cfg = await resolveAiConfig();
+      if (!cfg.apiKey) {
+        return reply.code(409).send({ error: "ai_unavailable", message: new AiUnavailableError().message });
+      }
+      const row = await getAssetRow(app.db, req.body.documentId, req.accessCtx!.siteId);
+      if (!row) return reply.code(404).send({ error: "not_found", message: "Asset not found" });
+      if (!row.mime.startsWith("image/") || row.mime === "image/svg+xml") {
+        return reply.code(400).send({ error: "not_an_image", message: `Alt text needs a raster image; this asset is ${row.mime}.` });
+      }
+      // basename() guards against a hostile url value; files are stored flat
+      // under uploadsDir with server-generated names.
+      const file = await readFile(join(app.uploadsDir, basename(row.url)));
+      // Downscale before sending: vision quality saturates well below original
+      // resolution, and request size/cost scale with pixels.
+      const small = await sharp(file).resize(1024, 1024, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+      try {
+        return await aiImageAltText(
+          { imageBase64: small.toString("base64"), mediaType: "image/jpeg", filename: row.filename },
+          cfg,
+        );
+      } catch (err) {
+        if (err instanceof AiUnavailableError) return reply.code(409).send({ error: "ai_unavailable", message: err.message });
+        throw err;
+      }
+    },
   );
 
   // Batch translation — a whole page's text fields in ONE request (instead of one

@@ -1007,8 +1007,21 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     scheduled: z.array(
       z.object({ documentId: z.string(), name: z.string(), locale: z.string(), action: z.enum(["publish", "unpublish"]), at: z.string() }),
     ),
-    translation: z.array(z.object({ locale: z.string(), displayName: z.string(), missing: z.number() })),
-    housekeeping: z.object({ trash: z.number(), unusedBlocks: z.number(), emptyTypes: z.number(), failingWebhooks: z.number().nullable() }),
+    translation: z.array(
+      z.object({
+        locale: z.string(),
+        displayName: z.string(),
+        missing: z.number(),
+        pages: z.array(z.object({ documentId: z.string(), name: z.string() })),
+      }),
+    ),
+    housekeeping: z.object({
+      trash: z.number(),
+      unusedBlocks: z.number(),
+      emptyTypes: z.number(),
+      missingAlt: z.number(),
+      failingWebhooks: z.number().nullable(),
+    }),
   });
   app.get(
     "/dashboard",
