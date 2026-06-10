@@ -543,7 +543,8 @@ test("copy desk can generate SEO meta from the page content", async ({ page }) =
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
   await expect(editorName(page)).toHaveValue("Home");
-  await page.getByRole("button", { name: "Copy desk" }).click();
+  // exact: the richtext toolbar has its own "Copy desk (selection)" button.
+  await page.getByRole("button", { name: "Copy desk", exact: true }).click();
   await page.getByRole("menuitem", { name: "Generate SEO description" }).click();
   // The SEO tab's meta description is filled (offline fallback derives it from the page text).
   await page.getByRole("tab", { name: "SEO" }).click();

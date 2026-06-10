@@ -39,7 +39,7 @@ describe("aiAssist — no API key", () => {
     expect(sum.result).toBe("First sentence.");
   });
 
-  for (const task of ["improve", "rewrite", "translate", "variants", "alt_text"] as const) {
+  for (const task of ["improve", "rewrite", "translate", "variants", "alt_text", "write"] as const) {
     it(`refuses '${task}' with a self-teaching error instead of fake success`, async () => {
       await expect(aiAssist({ task, input: "some text", targetLocale: "nb" }, NO_KEY)).rejects.toThrow(AiUnavailableError);
       await expect(aiAssist({ task, input: "some text", targetLocale: "nb" }, NO_KEY)).rejects.toThrow(/Settings → AI/);
@@ -57,6 +57,21 @@ describe("aiAssist — provider failure with a key", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
     const r = await aiAssist({ task: "meta_title", input: "Resilient title. More." }, { apiKey: "k", model: "m" });
     expect(r).toEqual({ result: "Resilient title", provider: "fallback" });
+  });
+});
+
+describe("aiAssist — write (draft prose about a topic)", () => {
+  it("asks for plain prose paragraphs and returns the model text", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ content: [{ type: "text", text: "First paragraph.\n\nSecond paragraph." }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await aiAssist({ task: "write", input: "The history of the printing press" }, { apiKey: "k", model: "m" });
+    expect(r).toEqual({ result: "First paragraph.\n\nSecond paragraph.", provider: "anthropic" });
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body) as { messages: { content: string }[] };
+    expect(body.messages[0]!.content).toContain("The history of the printing press");
+    expect(body.messages[0]!.content).toMatch(/plain prose/i); // no markdown — TipTap inserts paragraphs
   });
 });
 

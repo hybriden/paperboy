@@ -151,7 +151,20 @@ function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolea
     setPending(true);
     try {
       const r = await api.aiAssist(task, text);
-      editor.chain().focus().insertContentAt({ from, to }, r.result).run();
+      if (task === "write") {
+        // The selection is the TOPIC (a heading, a fragment) — keep it, and
+        // insert the drafted prose after it as real paragraph nodes (the model
+        // returns blank-line-separated plain prose; raw \n\n text would land
+        // in one paragraph).
+        const paragraphs = r.result
+          .split(/\n{2,}/)
+          .map((p) => p.replace(/\s+/g, " ").trim())
+          .filter(Boolean)
+          .map((p) => ({ type: "paragraph", content: [{ type: "text", text: p }] }));
+        if (paragraphs.length) editor.chain().focus().insertContentAt(to, paragraphs).run();
+      } else {
+        editor.chain().focus().insertContentAt({ from, to }, r.result).run();
+      }
       if (r.provider === "fallback") toast.success(`${label} (basic mode)`, "Set an AI key in Settings for full AI.");
     } catch (e) {
       toast.error(`${label} failed`, (e as Error).message);
@@ -164,7 +177,7 @@ function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolea
     <Menu>
       <MenuTrigger
         className={`flex h-7 items-center gap-1 rounded px-1.5 text-xs ${pending ? "text-accent-700" : "text-muted hover:bg-line/60 hover:text-fg"} disabled:opacity-50`}
-        aria-label="Copy desk"
+        aria-label="Copy desk (selection)"
         disabled={pending || !hasSelection || !aiEnabled}
         title={!aiEnabled ? AI_OFF_HINT : hasSelection ? "Copy desk — works on the selection" : "Select some text first"}
         onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
@@ -174,6 +187,7 @@ function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolea
       <MenuContent>
         <MenuItem onSelect={() => void run("improve", "Improve writing")}>Improve writing</MenuItem>
         <MenuItem onSelect={() => void run("summarize", "Summarize")}>Summarize selection</MenuItem>
+        <MenuItem onSelect={() => void run("write", "Write about this")}>Write about this</MenuItem>
       </MenuContent>
     </Menu>
   );
