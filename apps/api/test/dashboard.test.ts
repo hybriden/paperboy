@@ -159,6 +159,41 @@ describe("dashboard aggregate", () => {
     expect((ra.json().housekeeping as { failingWebhooks: number | null }).failingWebhooks).toBe(0);
   });
 
+  it("lists the images missing alt text so the gap is fixable from the dashboard", async () => {
+    // Upload a PNG (alt starts empty).
+    const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]);
+    const boundary = "----paperboydash1234567890";
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="no-alt.png"\r\nContent-Type: image/png\r\n\r\n`),
+      PNG,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+    const up = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/assets",
+      headers: { ...authHeaders(ed), "content-type": `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    });
+    expect(up.statusCode, up.body).toBe(200);
+    const assetId = up.json().documentId as string;
+
+    let r = await dash(authHeaders(ed));
+    expect(r.statusCode, r.body).toBe(200);
+    let gaps = r.json().imagesMissingAlt as Array<{ documentId: string; url: string; filename: string }>;
+    const entry = gaps.find((g) => g.documentId === assetId);
+    expect(entry).toBeTruthy(); // url + filename so the dashboard can render a fixable thumbnail
+    expect(entry!.url).toContain("/media/");
+    expect(entry!.filename).toBe("no-alt.png");
+    expect(r.json().housekeeping.missingAlt).toBeGreaterThanOrEqual(1);
+
+    // Fixing the alt removes it from the gap list.
+    const fix = await s.app.inject({ method: "PUT", url: `/api/v1/manage/assets/${assetId}`, headers: authHeaders(ed), payload: { alt: "A described image" } });
+    expect(fix.statusCode, fix.body).toBe(200);
+    r = await dash(authHeaders(ed));
+    gaps = r.json().imagesMissingAlt as Array<{ documentId: string }>;
+    expect(gaps.find((g) => g.documentId === assetId)).toBeUndefined();
+  });
+
   it("is partitioned by the active site — a fresh site sees an empty dashboard", async () => {
     const site = (
       await s.app.inject({ method: "POST", url: "/api/v1/manage/sites", headers: authHeaders(admin), payload: { slug: "dash-x", name: "Dash X", defaultLocale: "en" } })

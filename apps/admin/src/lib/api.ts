@@ -428,6 +428,7 @@ export interface DashboardData {
   scheduled: { documentId: string; name: string; locale: string; action: "publish" | "unpublish"; at: string }[];
   translation: { locale: string; displayName: string; missing: number; pages: { documentId: string; name: string }[] }[];
   housekeeping: { trash: number; unusedBlocks: number; emptyTypes: number; missingAlt: number; failingWebhooks: number | null };
+  imagesMissingAlt: { documentId: string; url: string; filename: string }[];
 }
 
 export interface SiteRow {
