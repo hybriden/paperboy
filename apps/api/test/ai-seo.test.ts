@@ -76,9 +76,13 @@ describe("SEO fields + AI editorial assistant", () => {
     expect(noCsrf.statusCode).toBe(403);
   });
 
-  it("alt_text fallback derives readable text from a filename", async () => {
+  it("alt_text refuses without a key — a filename heuristic is not alt text", async () => {
+    // The old fallback derived "alt text" from the filename. Alt text describes
+    // what is IN the image; without vision (a key) the honest answer is a
+    // self-teaching 409, not a dressed-up filename (rule #1). The vision path
+    // lives at POST /ai/alt-text and sends the actual image.
     const res = await s.app.inject({ method: "POST", url: "/api/v1/ai/assist", headers: authHeaders(ed), payload: { task: "alt_text", input: "red-mountain-sunrise.jpg" } });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().result).toContain("red mountain sunrise"); // extension stripped, dashes → spaces
+    expect(res.statusCode).toBe(409);
+    expect(res.json().message).toContain("Settings → AI");
   });
 });
