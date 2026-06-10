@@ -9,6 +9,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# GitHub forces JS actions onto Node 24 from 2026-06-16; opt in early so a
+# breakage is discovered while it's still a choice (revert this env to roll back).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   ci:
     name: typecheck · test · build
