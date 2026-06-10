@@ -93,9 +93,11 @@ jobs:
         env:
           COOKIE_SECURE: "false"
           ALLOW_INSECURE_COOKIES: "true"
-          # 28 tests + retries from one runner IP — the production limit (10/min)
-          # would turn a single real failure into a 429 cascade.
+          # 30 tests + retries from one runner IP — the production limits
+          # (10 logins/min, 300 requests/min) would turn a single slow test
+          # into a 429 cascade that reads as flaky "element not visible".
           LOGIN_RATE_MAX: "1000"
+          RATE_LIMIT_MAX: "10000"
 
       - name: Wait for admin + api
         run: |

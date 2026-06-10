@@ -64,6 +64,8 @@ services:
       UNSPLASH_ACCESS_KEY: ${UNSPLASH_ACCESS_KEY:-}
       # Login brute-force limit per IP/min — raised by CI e2e runs only.
       LOGIN_RATE_MAX: ${LOGIN_RATE_MAX:-10}
+      # Global per-IP request ceiling per minute — raised by CI e2e runs only.
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
     depends_on:
       db:
         condition: service_healthy
