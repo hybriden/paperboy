@@ -4,6 +4,7 @@ exports[`Delivery API — golden-shape contract freeze > GET /delivery/content/:
 {
   "cv": "<cv>",
   "data": {
+    "canonicalUrl": "",
     "heading": "Welcome to Paperboy",
     "intro": {
       "content": [
@@ -53,6 +54,10 @@ exports[`Delivery API — golden-shape contract freeze > GET /delivery/content/:
         "shared": false,
       },
     ],
+    "metaDescription": "",
+    "metaTitle": "",
+    "ogDescription": "",
+    "ogTitle": "",
   },
   "documentId": "<id-1>",
   "kind": "page",
@@ -188,6 +193,7 @@ exports[`Delivery API — golden-shape contract freeze > GET /delivery/content/:
 {
   "cv": "<cv>",
   "data": {
+    "canonicalUrl": "",
     "heading": "Welcome to Paperboy",
     "intro": {
       "content": [
@@ -255,6 +261,7 @@ exports[`Delivery API — golden-shape contract freeze > GET /delivery/content/:
           "source": {
             "cv": "<cv>",
             "data": {
+              "canonicalUrl": "",
               "heading": "Blog",
               "intro": {
                 "content": [
@@ -271,6 +278,10 @@ exports[`Delivery API — golden-shape contract freeze > GET /delivery/content/:
                 "type": "doc",
               },
               "listedType": "BlogPost",
+              "metaDescription": "",
+              "metaTitle": "",
+              "ogDescription": "",
+              "ogTitle": "",
               "pageSize": 20,
             },
             "documentId": "<id-3>",
@@ -314,6 +325,10 @@ exports[`Delivery API — golden-shape contract freeze > GET /delivery/content/:
         "shared": false,
       },
     ],
+    "metaDescription": "",
+    "metaTitle": "",
+    "ogDescription": "",
+    "ogTitle": "",
   },
   "documentId": "<id-1>",
   "kind": "page",

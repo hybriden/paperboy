@@ -77,6 +77,45 @@ function Rich({ doc, className }: { doc: unknown; className?: string }) {
   return <div className={className}>{d.content.map((n, i) => renderNode(n, i))}</div>;
 }
 
+/** A richtext/markdown value with no rendered content — empty string, no doc,
+ *  or a doc of only empty paragraphs (and no media). Such a field renders no
+ *  DOM, so on-page editing needs a placeholder to give it a clickable target. */
+function richIsEmpty(doc: unknown): boolean {
+  if (doc == null) return true;
+  if (typeof doc === "string") return !doc.trim();
+  const text = (n: { text?: string; content?: unknown[] }): string =>
+    typeof n?.text === "string" ? n.text : Array.isArray(n?.content) ? n.content.map((c) => text(c as never)).join("") : "";
+  const hasMedia = (n: { type?: string; content?: unknown[] }): boolean => {
+    if (n?.type && n.type !== "doc" && n.type !== "paragraph" && n.type !== "text") return true;
+    return Array.isArray(n?.content) ? n.content.some((c) => hasMedia(c as never)) : false;
+  };
+  const d = doc as { type?: string; content?: unknown[] };
+  return !text(d).trim() && !hasMedia(d);
+}
+
+/** A rich-text region marked for on-page editing. Empty + preview → a visible,
+ *  clickable placeholder (the bridge outlines it and a click opens the on-page
+ *  editor for the field). Empty + public → nothing. Only rendered when the
+ *  field actually applies to this type (`applies`). */
+function EditableRich({ field, label, value, className, preview, applies }: { field: string; label: string; value: unknown; className?: string; preview: boolean; applies: boolean }) {
+  if (richIsEmpty(value)) {
+    if (!preview || !applies) return null;
+    return (
+      <div
+        data-pb-field={field}
+        style={{ border: "1.5px dashed var(--pb-edit, #c8362f)", borderRadius: 8, padding: "1rem", opacity: 0.7, cursor: "pointer" }}
+      >
+        <span className="post-meta" style={{ margin: 0 }}>Empty {label} — click to write.</span>
+      </div>
+    );
+  }
+  return (
+    <div data-pb-field={field}>
+      <Rich doc={value} className={className} />
+    </div>
+  );
+}
+
 /* ----------------------------- blocks ----------------------------- */
 // AreaBlock / blockData / contentAreas come from @paperboycms/client (shared,
 // DOM-free delivery-consumption helpers).
@@ -231,8 +270,8 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
   return (
     <main className="wrap" data-document-id={content.documentId}>
       <h1 className="page-heading" data-pb-field="heading">{String(data.heading ?? content.name)}</h1>
-      <div data-pb-field="intro"><Rich doc={data.intro} className="intro richtext" /></div>
-      {data.body != null ? <div data-pb-field="body"><Rich doc={data.body} className="richtext" /></div> : null}
+      <EditableRich field="intro" label="intro" value={data.intro} className="intro richtext" preview={preview} applies={"intro" in data} />
+      <EditableRich field="body" label="body" value={data.body} className="richtext" preview={preview} applies={"body" in data} />
       {area.length > 0 ? (
         // In preview the area gets a data-pb-area wrapper (via pbAreaAttrs) so
         // shared blocks / pages dragged from the admin can be dropped anywhere
@@ -255,7 +294,7 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
           data-pb-field={areaField}
           style={{ border: "2px dashed var(--pb-edit, #c8362f)", borderRadius: 8, padding: "2.5rem 1rem", textAlign: "center", opacity: 0.7, cursor: "pointer" }}
         >
-          <p className="post-meta" style={{ margin: 0 }}>This area is empty — click to add blocks.</p>
+          <p className="post-meta" style={{ margin: 0 }}>This area is empty — click to open the block palette.</p>
         </div>
       ) : null}
       {posts && posts.length > 0 ? <PostList posts={posts} locale={locale} basePath={basePath} /> : null}

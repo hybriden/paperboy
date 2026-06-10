@@ -299,9 +299,16 @@ async function sanitize(
     if (v === undefined) {
       // A DEFINED content area is ALWAYS present in output (as []), even when
       // the instance never set it — so a frontend can tell "this type has a
-      // content area (empty)" from "this type has none". Other unset fields
-      // stay absent.
-      if (f.type === "contentArea") out[f.name] = [];
+      // content area (empty)" from "this type has none".
+      if (f.type === "contentArea") {
+        out[f.name] = [];
+      } else if (perspective === "preview" && (f.type === "text" || f.type === "markdown" || f.type === "richtext")) {
+        // PREVIEW ONLY: surface unset editable text fields so on-page editing
+        // has a clickable target (an absent field renders no DOM → nothing to
+        // click). Published output stays lean — these keys never appear there.
+        out[f.name] = f.type === "richtext" ? null : "";
+      }
+      // Other unset fields stay absent.
       continue;
     }
 
