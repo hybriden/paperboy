@@ -77,6 +77,7 @@ import {
   listSites,
   createSite,
   deleteSite,
+  getDashboard,
   renameSite,
 } from "@paperboy/db";
 import { unlink, writeFile } from "node:fs/promises";
@@ -984,6 +985,35 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       await audit(app.db, { actorUserId: req.user!.id, action: "user.delete", ip: req.ip, detail: { id: req.params.id } });
       return { ok: true };
     },
+  );
+
+  /* ------------------------------- dashboard -------------------------------- */
+  // "What needs my attention" in one round-trip: WIP drafts, the scheduled
+  // publish queue, translation coverage and housekeeping counts. Same partition
+  // and scoping as the tree; webhook health only for webhook.manage holders.
+  const DashboardOut = z.object({
+    wip: z.array(
+      z.object({
+        documentId: z.string(),
+        name: z.string(),
+        type: z.string(),
+        kind: z.string(),
+        locale: z.string(),
+        change: z.enum(["new", "updated"]),
+        at: z.string(),
+      }),
+    ),
+    wipTotal: z.number(),
+    scheduled: z.array(
+      z.object({ documentId: z.string(), name: z.string(), locale: z.string(), action: z.enum(["publish", "unpublish"]), at: z.string() }),
+    ),
+    translation: z.array(z.object({ locale: z.string(), displayName: z.string(), missing: z.number() })),
+    housekeeping: z.object({ trash: z.number(), unusedBlocks: z.number(), emptyTypes: z.number(), failingWebhooks: z.number().nullable() }),
+  });
+  app.get(
+    "/dashboard",
+    { preHandler: [requirePermission("content.read")], schema: { tags: ["manage"], response: { 200: DashboardOut } } },
+    async (req) => getDashboard(app.db, req.accessCtx!),
   );
 
   /* --------------------------------- sites ---------------------------------- */
