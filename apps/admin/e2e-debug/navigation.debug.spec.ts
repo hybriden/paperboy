@@ -18,7 +18,7 @@ test.beforeEach(async ({ page }) => {
 
 test("⌘K palette searches content and jumps to it", async ({ page }) => {
   await page.keyboard.press("Control+k");
-  const input = page.getByPlaceholder(/Search content/);
+  const input = page.getByPlaceholder(/Search/);
   await expect(input).toBeVisible();
   await input.fill("Author");
   await page.getByRole("option", { name: /Author Zone/ }).click();
@@ -28,8 +28,8 @@ test("⌘K palette searches content and jumps to it", async ({ page }) => {
 
 test("⌘K palette jumps to a view (Dashboard)", async ({ page }) => {
   await page.keyboard.press("Control+k");
-  await expect(page.getByPlaceholder(/Search content/)).toBeVisible();
-  await page.getByPlaceholder(/Search content/).fill("Dashboard");
+  await expect(page.getByPlaceholder(/Search/)).toBeVisible();
+  await page.getByPlaceholder(/Search/).fill("Dashboard");
   await page.getByRole("option", { name: /Dashboard/ }).click();
   await expect(page.getByRole("heading", { name: /Newsroom dashboard/i })).toBeVisible({ timeout: 10_000 });
 });
