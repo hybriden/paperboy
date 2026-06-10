@@ -72,6 +72,18 @@ describe("MCP parity: real stdio server vs the API", () => {
     expect(doc.hint).toContain("move_content");
   }, 60_000);
 
+  it("create_content tells the agent the draft is an EMPTY shell to fill with update_content (rule 5/7)", async () => {
+    // Real incident (Harmonix 2026-06-10): a workflow drafted a body, called
+    // create_content, and stopped — leaving an empty draft (data:{}), because
+    // create only sets name/slug and nothing said "now fill it". The result
+    // must nudge the agent to write the fields next, even under a valid parent.
+    const created = await mcp.call("create_content", { type: "BlogPost", parentId: s.ids.blogId, name: "Shell To Fill" });
+    expect(created.isError).toBe(false);
+    const doc = created.json as { hint?: string };
+    expect(doc.hint).toMatch(/update_content/);
+    expect(doc.hint).toMatch(/empty|blank|no.*content|fill/i);
+  }, 60_000);
+
   it("update_content + set_field write parity (coercion chokepoint shared with the API)", async () => {
     const created = await mcp.call("create_content", { type: "BlogPost", parentId: s.ids.blogId, name: "MCP Field Writes" });
     const id = (created.json as { documentId: string }).documentId;

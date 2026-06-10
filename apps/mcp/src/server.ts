@@ -191,6 +191,11 @@ tool(
   "create_content",
   [
     "Create a new content item (page/block/global) as a draft.",
+    "This creates an EMPTY shell — it sets only the name (and an auto slug); it does NOT",
+    "take field data. You MUST follow with update_content (or set_field) to write the",
+    "body and other fields, or the page stays blank — a created-but-never-filled draft is",
+    "the #1 agent mistake (a workflow that drafted a body and then only called",
+    "create_content shipped an empty post). Sequence: create_content → update_content → publish.",
     "IMPORTANT: pages almost always belong UNDER an existing parent — a page's position",
     "decides its URL and which template the frontend renders it with (a blog post created",
     "at root gets a generic layout and looks empty when published). Call `tree` first and",
@@ -210,16 +215,22 @@ tool(
   async ({ type, parentId, locale, name, allowTypeMismatch }) => {
     const created = await createContent(db, ctx, { type, parentId: parentId ?? null, locale: locale ?? "en", name, allowTypeMismatch });
     mcpAudit("content.create", created.documentId, created.locale);
-    // A page created at root is usually an agent forgetting parentId (real incident:
-    // a blog post at root rendered "empty" on the live site). Surface a hint the
-    // agent reads in-band — the create still succeeds (top-level pages are legal).
-    if (created.kind === "page" && !parentId) {
-      return {
-        ...created,
-        hint: "This page was created at the TOP LEVEL of the site. If it belongs under another page (e.g. a blog post under the blog page), call `tree` to find the parent and fix it with move_content {documentId, parentId} BEFORE publishing — its URL and rendering template depend on its position.",
-      };
-    }
-    return created;
+    // Two in-band nudges the agent reads from the result (the create still
+    // succeeds — both situations are legal, but both are real incidents):
+    //  - FILL: the draft has no field data yet. A workflow that drafted a body
+    //    then only called create_content shipped an empty post (Harmonix,
+    //    2026-06-10). Always remind to write the fields next.
+    //  - PLACE: a page at root usually means a forgotten parentId — a blog post
+    //    at root renders with a generic template and looks empty when published.
+    const fill =
+      `NEXT: this draft has NO content yet — call update_content {documentId:"${created.documentId}", data:{…}} ` +
+      "(or set_field) to write the body and other fields now, then publish. Until then the page is blank.";
+    const place =
+      created.kind === "page" && !parentId
+        ? " PLACEMENT: created at the TOP LEVEL — if it belongs under another page (e.g. a blog post under the blog/list page), " +
+          "call `tree` to find the parent and move_content {documentId, parentId} BEFORE publishing; its URL and template depend on its position."
+        : "";
+    return { ...created, hint: fill + place };
   });
 tool(
   "update_content",
