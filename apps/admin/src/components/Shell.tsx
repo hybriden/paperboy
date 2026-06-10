@@ -97,7 +97,7 @@ function TopBar({
           aria-label="Open command palette"
         >
           <Icon.Search width={15} height={15} className="shrink-0" />
-          <span className="hidden font-display text-[13.5px] italic leading-none md:inline">Search…</span>
+          <span className="hidden leading-none md:inline">Search…</span>
           <kbd className="hidden rounded border border-chrome-border/80 px-1.5 py-0.5 font-mono text-[10px] leading-none text-chrome-fg/55 md:inline">
             {IS_MAC ? "⌘K" : "Ctrl K"}
           </kbd>
