@@ -76,7 +76,7 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   });
   await app.register(rateLimit, {
     global: true,
-    max: 300,
+    max: env.NODE_ENV === "test" ? 100_000 : env.RATE_LIMIT_MAX,
     timeWindow: "1 minute",
     // Delivery/preview keys and login have their own tighter limits per route.
   });

@@ -32,6 +32,10 @@ const EnvSchema = z.object({
   // Brute-force limit on login (per IP per minute). Raise for e2e runs where
   // one runner IP legitimately logs in many times; leave at 10 in production.
   LOGIN_RATE_MAX: z.coerce.number().int().positive().default(10),
+  // Global per-IP request ceiling (per minute). Raise for e2e runs — 30 tests
+  // plus retries from ONE runner IP brush against 300, and the 429s surface as
+  // flaky "treeitem not visible" failures; leave at 300 in production.
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
