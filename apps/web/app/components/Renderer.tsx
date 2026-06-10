@@ -234,14 +234,25 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
       <div data-pb-field="intro"><Rich doc={data.intro} className="intro richtext" /></div>
       {data.body != null ? <div data-pb-field="body"><Rich doc={data.body} className="richtext" /></div> : null}
       {area.length > 0 ? (
-        area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} />)
+        // In preview the area gets a data-pb-area wrapper so shared blocks /
+        // pages dragged from the admin can be dropped anywhere on it. The
+        // attribute VALUE is the contentArea field name — the bridge sends it
+        // back as paperboy:drop {field}, which the editor maps to the form
+        // field. The public page renders the blocks bare (no editor markers).
+        preview ? (
+          <div data-pb-area={areaField}>
+            {area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} />)}
+          </div>
+        ) : (
+          area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} />)
+        )
       ) : preview && areas.length > 0 ? (
         // Empty content area: render a visible, clickable target ONLY in preview
         // so on-page editing has somewhere to land. The data-pb-field marker lets
         // the bridge outline it and route the click to this field in the form
         // (where blocks are added / dropped). Never shown on the public page.
         <div
-          data-pb-area="true"
+          data-pb-area={areaField}
           data-pb-field={areaField}
           style={{ border: "2px dashed var(--pb-edit, #c8362f)", borderRadius: 8, padding: "2.5rem 1rem", textAlign: "center", opacity: 0.7, cursor: "pointer" }}
         >
