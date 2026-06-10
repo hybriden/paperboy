@@ -76,6 +76,7 @@ import {
   updateContentType,
   listSites,
   createSite,
+  deleteSite,
   renameSite,
 } from "@paperboy/db";
 import { unlink, writeFile } from "node:fs/promises";
@@ -1044,6 +1045,31 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       const site = await renameSite(app.db, req.accessCtx!, req.params.id, req.body);
       await audit(app.db, { actorUserId: req.user!.id, action: "site.rename", ip: req.ip, detail: { id: site.id, name: site.name, slug: site.slug } });
       return { ...site, createdAt: site.createdAt.toISOString() };
+    },
+  );
+
+  // Delete a site and everything bound to it (content, media, keys, scopes).
+  // Irreversible — the caller must echo the site's slug as ?confirm=<slug>.
+  app.delete(
+    "/sites/:id",
+    {
+      preHandler: [requireCsrf, requirePermission("user.manage")],
+      schema: {
+        tags: ["manage"],
+        params: z.object({ id: z.string() }),
+        querystring: z.object({ confirm: z.string().optional() }),
+        response: { 200: z.object({ ok: z.boolean(), contentItems: z.number(), assets: z.number(), deliveryKeys: z.number() }) },
+      },
+    },
+    async (req) => {
+      const r = await deleteSite(app.db, req.accessCtx!, req.params.id, req.query.confirm);
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "site.delete",
+        ip: req.ip,
+        detail: { id: r.site.id, slug: r.site.slug, name: r.site.name, contentItems: r.contentItems, assets: r.assets, deliveryKeys: r.deliveryKeys },
+      });
+      return { ok: true, contentItems: r.contentItems, assets: r.assets, deliveryKeys: r.deliveryKeys };
     },
   );
 }

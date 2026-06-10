@@ -412,6 +412,8 @@ export const api = {
   sites: () => request<{ sites: SiteRow[]; activeSiteId: string }>("GET", "/manage/sites"),
   createSite: (body: { slug: string; name: string; defaultLocale: string }) => request<SiteRow>("POST", "/manage/sites", body),
   renameSite: (id: string, body: { name?: string; slug?: string }) => request<SiteRow>("PATCH", `/manage/sites/${id}`, body),
+  deleteSite: (id: string, confirmSlug: string) =>
+    request<{ ok: boolean; contentItems: number; assets: number; deliveryKeys: number }>("DELETE", `/manage/sites/${id}?confirm=${encodeURIComponent(confirmSlug)}`),
 };
 
 export interface SiteRow {

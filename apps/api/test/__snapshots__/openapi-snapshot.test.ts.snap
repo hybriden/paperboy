@@ -82,6 +82,22 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "DELETE /api/v1/manage/sites/{id}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [
+      "assets",
+      "contentItems",
+      "deliveryKeys",
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "DELETE /api/v1/manage/users/{id}": {
     "requestBodyRequired": [],
     "requiredParams": [

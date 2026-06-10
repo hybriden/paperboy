@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import type { ContentTypeDef, RoleName } from "@paperboy/shared";
-import { api, type ManagedUser, type SiteRow } from "../../lib/api.js";
+import { ACTIVE_SITE_KEY, api, type ManagedUser, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
@@ -418,6 +418,7 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
 function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean; canManage: boolean }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const [deleting, setDeleting] = useState(false);
 
   // One editable draft per field, seeded from the site; resynced when the saved
   // site changes (keyed by the values we last persisted).
@@ -507,10 +508,64 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
       </label>
 
       {/* one save for the whole site */}
-      <div className="flex justify-end">
+      <div className="flex items-center justify-between">
+        {canManage && site.id !== "site_default" ? (
+          <button type="button" className="text-xs text-danger hover:underline" onClick={() => setDeleting(true)}>Delete site…</button>
+        ) : (
+          <span />
+        )}
         <button className="btn-primary" disabled={!dirty || invalid || save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
       </div>
+      {deleting && <DeleteSiteDialog site={site} active={active} onClose={() => setDeleting(false)} />}
     </form>
+  );
+}
+
+/** Deleting a site wipes all of its content, media and delivery keys, so the
+ *  confirm dialog requires typing the site's name before the button arms. */
+function DeleteSiteDialog({ site, active, onClose }: { site: SiteRow; active: boolean; onClose: () => void }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [typed, setTyped] = useState("");
+  const armed = typed.trim() === site.name;
+
+  const del = useMutation({
+    mutationFn: () => api.deleteSite(site.id, site.slug),
+    onSuccess: (r) => {
+      if (active) {
+        // The working site is gone — fall back to the Default site and reload.
+        localStorage.removeItem(ACTIVE_SITE_KEY);
+        window.location.href = "/settings";
+        return;
+      }
+      qc.invalidateQueries({ queryKey: ["sites"] });
+      toast.success("Site deleted", `“${site.name}” removed (${r.contentItems} content items, ${r.assets} media files).`);
+      onClose();
+    },
+    onError: (e) => toast.error("Couldn’t delete site", (e as Error).message),
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent title="Delete site" description={`Permanently delete “${site.name}” and everything in it.`} className="w-[min(480px,94vw)]">
+        <div className="flex flex-col gap-3">
+          <p className="rounded-[var(--radius)] border border-danger/30 bg-danger/5 p-3 text-sm text-fg">
+            This deletes <strong>all content, media and delivery keys</strong> belonging to “{site.name}”, including its trash.
+            This cannot be undone.
+          </p>
+          <label className="text-sm">
+            <span className="field-label">Type <strong>{site.name}</strong> to confirm</span>
+            <input className="field-input" autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={site.name} />
+          </label>
+          <div className="mt-1 flex justify-end gap-2">
+            <button type="button" className="btn-subtle" onClick={onClose}>Cancel</button>
+            <button type="button" className="btn-danger" disabled={!armed || del.isPending} onClick={() => del.mutate()}>
+              {del.isPending ? "Deleting…" : "Delete site"}
+            </button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
