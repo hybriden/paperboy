@@ -2,13 +2,31 @@
  * AI editorial assistant. Real editorial use-cases the editor needs help with:
  * SEO title/description generation, summarising, copy improvement, image alt
  * text, and translation. When ANTHROPIC_API_KEY is configured the API calls
- * Claude; otherwise a deterministic local fallback keeps every task usable
- * offline (truncation/cleanup heuristics) so the feature works without a key
- * and upgrades automatically when one is provided.
+ * Claude. Without a key, only the deterministic truncation tasks keep a
+ * fallback (meta_title/meta_description/summarize — genuinely useful offline,
+ * labeled provider:"fallback"); tasks that REQUIRE a model refuse with a
+ * self-teaching AiUnavailableError instead of returning the input dressed up
+ * as a result (rule #1: never garbage-in-success-out — the old "improve"
+ * fallback returned the source with a capital letter as success, and an MCP
+ * translate call with no key returned the untranslated source as success).
  */
 
 export const AI_TASKS = ["meta_title", "meta_description", "summarize", "improve", "alt_text", "translate", "rewrite", "variants"] as const;
 export type AiTask = (typeof AI_TASKS)[number];
+
+/** Tasks with no honest offline approximation — a model is required. */
+const REQUIRES_MODEL: ReadonlySet<AiTask> = new Set(["improve", "rewrite", "translate", "variants", "alt_text"]);
+
+/** Thrown when a model-requiring task is asked for and no provider is usable. */
+export class AiUnavailableError extends Error {
+  constructor(detail?: string) {
+    super(
+      detail ??
+        "AI is not configured — this task needs a real model. Add an Anthropic API key in Settings → AI (or set ANTHROPIC_API_KEY).",
+    );
+    this.name = "AiUnavailableError";
+  }
+}
 
 export interface AiRequest {
   task: AiTask;
@@ -86,7 +104,8 @@ async function callAnthropic(req: AiRequest, cfg: AiConfig): Promise<string> {
   }
 }
 
-/** Deterministic, offline-safe heuristics — genuinely useful for the SEO tasks. */
+/** Deterministic, offline-safe heuristics — ONLY for the truncation tasks.
+ *  Model-requiring tasks never reach this (they throw AiUnavailableError). */
 function fallback(req: AiRequest): string {
   const clean = req.input.replace(/\s+/g, " ").trim();
   const truncate = (s: string, n: number) => {
@@ -106,18 +125,9 @@ function fallback(req: AiRequest): string {
       const sentence = clean.match(/^.*?[.!?](\s|$)/)?.[0]?.trim();
       return sentence || truncate(clean, 160);
     }
-    case "improve": {
-      const t = clean.charAt(0).toUpperCase() + clean.slice(1);
-      return /[.!?]$/.test(t) ? t : `${t}.`;
-    }
-    case "alt_text":
-      return truncate(clean.replace(/\.[a-z0-9]+$/i, "").replace(/[-_]+/g, " "), 120) || "Image";
-    case "translate":
-      return clean; // offline: cannot translate — return the source unchanged
-    case "rewrite":
-      return clean; // offline: cannot follow instructions — return the source unchanged
-    case "variants":
-      return JSON.stringify([clean]); // offline: a single "variant" (the source)
+    default:
+      // Unreachable: aiAssist throws for model-requiring tasks before this.
+      throw new AiUnavailableError();
   }
 }
 
@@ -143,15 +153,82 @@ function normalizeVariants(raw: string): string {
 }
 
 export async function aiAssist(req: AiRequest, cfg: AiConfig): Promise<AiResult> {
-  if (cfg.apiKey) {
-    try {
-      const result = await callAnthropic(req, cfg);
-      return { result: req.task === "variants" ? normalizeVariants(result) : result, provider: "anthropic" };
-    } catch {
-      // Provider error/timeout → degrade to the deterministic fallback.
-    }
+  const needsModel = REQUIRES_MODEL.has(req.task);
+  if (!cfg.apiKey) {
+    if (needsModel) throw new AiUnavailableError();
+    return { result: fallback(req), provider: "fallback" };
   }
-  return { result: fallback(req), provider: "fallback" };
+  try {
+    const result = await callAnthropic(req, cfg);
+    return { result: req.task === "variants" ? normalizeVariants(result) : result, provider: "anthropic" };
+  } catch (err) {
+    // Truncation tasks degrade gracefully; model-requiring tasks must surface
+    // the failure — a "result" that is really the input would gaslight the
+    // caller (human or agent) into believing the work happened.
+    if (needsModel) {
+      throw new AiUnavailableError(
+        `AI provider call failed (${err instanceof Error ? err.message : "unknown error"}) — try again, or check the key/model in Settings → AI.`,
+      );
+    }
+    return { result: fallback(req), provider: "fallback" };
+  }
+}
+
+/* ------------------------------ vision alt text --------------------------- */
+
+const ALT_SYSTEM =
+  "You write alt text for images in a CMS. Describe what is IN the image for a person who cannot see it: subject, action, setting. Be specific and concise (max 120 characters). Do not start with 'Image of' or 'Photo of'. Return ONLY the alt text — no quotes, no preamble.";
+
+export interface AiAltTextRequest {
+  /** The image itself, base64-encoded (downscaled by the caller). */
+  imageBase64: string;
+  mediaType: string;
+  /** Filename/context shown to the model as a hint, never as the source. */
+  filename?: string;
+}
+
+/**
+ * Alt text from the ACTUAL IMAGE via a vision content block. There is no
+ * fallback: alt text derived from a filename is exactly the kind of fake
+ * output rule #1 forbids, so without a key this throws AiUnavailableError.
+ */
+export async function aiImageAltText(req: AiAltTextRequest, cfg: AiConfig): Promise<AiResult> {
+  if (!cfg.apiKey) throw new AiUnavailableError();
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 30_000);
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: cfg.model,
+        max_tokens: 256,
+        system: ALT_SYSTEM,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "image", source: { type: "base64", media_type: req.mediaType, data: req.imageBase64 } },
+              { type: "text", text: `Write alt text for this image.${req.filename ? ` (Filename, as a weak hint only: ${req.filename})` : ""}` },
+            ],
+          },
+        ],
+      }),
+      signal: ac.signal,
+    });
+    if (!res.ok) throw new Error(`Anthropic ${res.status}`);
+    const data = (await res.json()) as { content?: { type: string; text?: string }[] };
+    const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
+    if (!text) throw new Error("Empty AI response");
+    return { result: text.slice(0, 200), provider: "anthropic" };
+  } catch (err) {
+    if (err instanceof AiUnavailableError) throw err;
+    throw new AiUnavailableError(
+      `AI provider call failed (${err instanceof Error ? err.message : "unknown error"}) — try again, or check the key/model in Settings → AI.`,
+    );
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /* ----------------------------- batch translate ---------------------------- */

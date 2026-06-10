@@ -363,6 +363,9 @@ export const api = {
   aiStatus: (signal?: AbortSignal) => request<{ enabled: boolean; tasks: string[] }>("GET", "/ai/status", undefined, signal),
   aiAssist: (task: AiTask, input: string, opts?: { targetLocale?: string; instruction?: string; context?: string }) =>
     request<{ result: string; provider: "anthropic" | "fallback" }>("POST", "/ai/assist", { task, input, ...opts }),
+  // Vision: the server sends the actual image to the model (never the filename).
+  aiAltText: (documentId: string) =>
+    request<{ result: string; provider: "anthropic" | "fallback" }>("POST", "/ai/alt-text", { documentId }),
   aiTranslate: (texts: string[], targetLocale: string) =>
     request<{ results: string[]; provider: "anthropic" | "fallback" }>("POST", "/ai/translate", { texts, targetLocale }),
 
@@ -423,8 +426,8 @@ export interface DashboardData {
   wip: { documentId: string; name: string; type: string; kind: string; locale: string; change: "new" | "updated"; at: string }[];
   wipTotal: number;
   scheduled: { documentId: string; name: string; locale: string; action: "publish" | "unpublish"; at: string }[];
-  translation: { locale: string; displayName: string; missing: number }[];
-  housekeeping: { trash: number; unusedBlocks: number; emptyTypes: number; failingWebhooks: number | null };
+  translation: { locale: string; displayName: string; missing: number; pages: { documentId: string; name: string }[] }[];
+  housekeeping: { trash: number; unusedBlocks: number; emptyTypes: number; missingAlt: number; failingWebhooks: number | null };
 }
 
 export interface SiteRow {

@@ -65,6 +65,7 @@ export function DashboardView() {
     ? ([
         { label: hk.trash === 1 ? "item in trash" : "items in trash", count: hk.trash, to: "/settings#trash" },
         { label: hk.unusedBlocks === 1 ? "unused shared block" : "unused shared blocks", count: hk.unusedBlocks, to: "/edit" },
+        { label: hk.missingAlt === 1 ? "image without alt text" : "images without alt text", count: hk.missingAlt, to: "/edit" },
         { label: hk.emptyTypes === 1 ? "content type without content" : "content types without content", count: hk.emptyTypes, to: "/settings#model" },
         ...(hk.failingWebhooks != null
           ? [{ label: hk.failingWebhooks === 1 ? "failing webhook" : "failing webhooks", count: hk.failingWebhooks, to: "/settings#webhooks", alarm: true }]
@@ -135,15 +136,33 @@ export function DashboardView() {
         </div>
 
         <div className="grid gap-8 lg:grid-cols-2">
-          {/* Per-language coverage: pages that don't exist in a locale yet. */}
-          <DashSection title="Translations">
+          {/* Per-language coverage: the missing pages themselves, each a click
+              away from the editor at that locale — where the "Translate from …"
+              offer creates the AI-translated draft. */}
+          <DashSection title="Translations" hint="Open a page to create its translation draft.">
             {dash.isLoading && skeleton(2)}
             {d && gaps.length === 0 && <EmptyRow>Every page exists in all languages.</EmptyRow>}
             {gaps.map((t) => (
-              <div key={t.locale} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
-                <span className="font-mono text-xs text-muted">{t.locale}</span>
-                <span className="min-w-0 flex-1 truncate font-medium text-fg">{t.displayName}</span>
-                <span className="tnum text-xs text-muted">{t.missing} {t.missing === 1 ? "page" : "pages"} not translated</span>
+              <div key={t.locale} className="border-b border-line last:border-0">
+                <div className="flex items-center gap-3 bg-canvas/50 px-4 py-2 text-sm">
+                  <span className="font-mono text-xs text-muted">{t.locale}</span>
+                  <span className="min-w-0 flex-1 truncate font-medium text-fg">{t.displayName}</span>
+                  <span className="tnum text-xs text-muted">{t.missing} {t.missing === 1 ? "page" : "pages"} not translated</span>
+                </div>
+                {t.pages.map((p) => (
+                  <button
+                    key={p.documentId}
+                    onClick={() => navigate(`/edit/${p.documentId}?lang=${t.locale}`)}
+                    className="flex w-full items-center gap-3 px-4 py-2 pl-9 text-left text-sm transition-colors hover:bg-canvas"
+                  >
+                    <Icon.File width={14} height={14} className="shrink-0 text-muted" />
+                    <span className="min-w-0 flex-1 truncate text-fg">{p.name}</span>
+                    <span className="text-xs text-accent">Translate →</span>
+                  </button>
+                ))}
+                {t.missing > t.pages.length && (
+                  <p className="px-4 py-1.5 pl-9 text-xs text-muted">+ {t.missing - t.pages.length} more</p>
+                )}
               </div>
             ))}
           </DashSection>
