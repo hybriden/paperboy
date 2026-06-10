@@ -525,6 +525,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "requiredParams": [],
     "response200Props": [
       "housekeeping",
+      "imagesMissingAlt",
       "scheduled",
       "translation",
       "wip",

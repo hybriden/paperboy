@@ -1,10 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
-import { api } from "../../lib/api.js";
+import { type DashboardData, api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
+import { AI_OFF_HINT, useAiEnabled } from "../../lib/useAiStatus.js";
 import { useUser } from "../../lib/user.js";
 import type { ShellOutlet } from "../Shell.js";
+import { Dialog, DialogContent } from "../ui/dialog.js";
+import { useToast } from "../ui/toast.js";
 import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, LanguagesPanel, McpTokensPanel, PasswordPanel, SitePanel, StockImagesPanel, TrashPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
@@ -45,6 +48,82 @@ function EmptyRow({ children }: { children: React.ReactNode }) {
   return <p className="p-5 text-sm text-muted">{children}</p>;
 }
 
+/** The alt-text gaps, fixable IN PLACE: click a thumbnail, write (or generate)
+ *  the alt text, save — without leaving the dashboard. */
+function AltTextGaps({ images, total }: { images: DashboardData["imagesMissingAlt"]; total: number }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const aiEnabled = useAiEnabled();
+  const [editing, setEditing] = useState<DashboardData["imagesMissingAlt"][number] | null>(null);
+  const [alt, setAlt] = useState("");
+
+  const save = useMutation({
+    mutationFn: (v: { id: string; alt: string }) => api.updateAssetAlt(v.id, v.alt),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      qc.invalidateQueries({ queryKey: ["assets"] });
+      setEditing(null);
+      toast.success("Alt text saved");
+    },
+    onError: (e) => toast.error("Couldn’t save alt text", (e as Error).message),
+  });
+  const describe = useMutation({
+    mutationFn: (id: string) => api.aiAltText(id),
+    onSuccess: (r) => setAlt(r.result),
+    onError: (e) => toast.error("Couldn’t describe the image", (e as Error).message),
+  });
+
+  return (
+    <div className="border-b border-line last:border-0">
+      <div className="flex items-center gap-3 bg-canvas/50 px-4 py-2 text-sm">
+        <span className="tnum text-base font-semibold text-fg">{total}</span>
+        <span className="min-w-0 flex-1 truncate text-fg">{total === 1 ? "image without alt text" : "images without alt text"}</span>
+        <span className="text-xs text-muted">click to fix</span>
+      </div>
+      <div className="flex flex-wrap gap-2 px-4 py-3">
+        {images.map((img) => (
+          <button
+            key={img.documentId}
+            type="button"
+            className="h-16 w-16 overflow-hidden rounded border border-line transition-shadow hover:ring-2 hover:ring-accent"
+            title={`${img.filename} — add alt text`}
+            onClick={() => { setEditing(img); setAlt(""); }}
+          >
+            <img src={img.url} alt="" className="h-full w-full object-cover" />
+          </button>
+        ))}
+        {total > images.length && <span className="self-center text-xs text-muted">+ {total - images.length} more</span>}
+      </div>
+      {editing && (
+        <Dialog open onOpenChange={(o) => !o && setEditing(null)}>
+          <DialogContent title="Add alt text" description={editing.filename} className="w-[380px]">
+            <img src={editing.url} alt="" className="mb-3 max-h-48 w-full rounded border border-line object-contain" />
+            <div className="flex items-center justify-between">
+              <label className="field-label" htmlFor="dash-alt">Alt text (accessibility)</label>
+              <button
+                type="button"
+                className="btn-subtle px-1.5 py-0.5 text-[11px]"
+                disabled={describe.isPending || !aiEnabled}
+                title={aiEnabled ? "Describe the image with AI" : AI_OFF_HINT}
+                onClick={() => describe.mutate(editing.documentId)}
+              >
+                {describe.isPending ? "Looking…" : "Describe image"}
+              </button>
+            </div>
+            <input id="dash-alt" className="field-input mb-4" autoFocus value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="Describe the image" />
+            <div className="flex justify-end gap-2">
+              <button className="btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
+              <button className="btn-primary" disabled={save.isPending || !alt.trim()} onClick={() => save.mutate({ id: editing.documentId, alt: alt.trim() })}>
+                Save
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  );
+}
+
 export function DashboardView() {
   const { setCrumb } = useOutletContext<ShellOutlet>();
   const navigate = useNavigate();
@@ -65,7 +144,6 @@ export function DashboardView() {
     ? ([
         { label: hk.trash === 1 ? "item in trash" : "items in trash", count: hk.trash, to: "/settings#trash" },
         { label: hk.unusedBlocks === 1 ? "unused shared block" : "unused shared blocks", count: hk.unusedBlocks, to: "/edit" },
-        { label: hk.missingAlt === 1 ? "image without alt text" : "images without alt text", count: hk.missingAlt, to: "/edit" },
         { label: hk.emptyTypes === 1 ? "content type without content" : "content types without content", count: hk.emptyTypes, to: "/settings#model" },
         ...(hk.failingWebhooks != null
           ? [{ label: hk.failingWebhooks === 1 ? "failing webhook" : "failing webhooks", count: hk.failingWebhooks, to: "/settings#webhooks", alarm: true }]
@@ -73,6 +151,7 @@ export function DashboardView() {
       ] as { label: string; count: number; to: string; alarm?: boolean }[])
     : [];
   const attention = housekeepingItems.filter((i) => i.count > 0);
+  const altGaps = d?.imagesMissingAlt ?? [];
 
   const skeleton = (n: number) => [...Array(n)].map((_, i) => <div key={i} className="h-12 animate-pulse border-b border-line bg-line/30 last:border-0" />);
 
@@ -167,10 +246,11 @@ export function DashboardView() {
             ))}
           </DashSection>
 
-          {/* Tidy-up signals: trash, orphans, dead webhooks. */}
+          {/* Tidy-up signals: trash, orphans, alt-text gaps, dead webhooks. */}
           <DashSection title="Housekeeping">
             {dash.isLoading && skeleton(2)}
-            {d && attention.length === 0 && <EmptyRow>All tidy — nothing needs attention.</EmptyRow>}
+            {d && attention.length === 0 && altGaps.length === 0 && <EmptyRow>All tidy — nothing needs attention.</EmptyRow>}
+            {hk && altGaps.length > 0 && <AltTextGaps images={altGaps} total={hk.missingAlt} />}
             {attention.map((item) => (
               <button
                 key={item.label}
