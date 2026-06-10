@@ -126,6 +126,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
 
     if (e.dataTransfer.files.length > 0) {
       e.preventDefault();
+      e.stopPropagation(); // content areas can nest (contentArea block fields)
       void dropFile(e.dataTransfer.files[0]!, index, at);
       return;
     }
@@ -133,6 +134,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
     const raw = e.dataTransfer.getData("application/x-paperboy");
     if (!raw) return;
     e.preventDefault();
+    e.stopPropagation();
     try {
       const p = JSON.parse(raw) as { kind?: string; documentId?: string; blockType?: string; url?: string };
       if (p.kind === "media" && p.documentId) {

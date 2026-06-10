@@ -241,7 +241,12 @@ export default function RichTextEditor({
         const file = event.dataTransfer?.files?.[0];
         if (file) {
           if (!file.type.startsWith("image/")) return false;
+          // stopPropagation matters: this editor often sits INSIDE a content
+          // area whose own drop handler would otherwise see the same native
+          // event (preventDefault does not stop bubbling) and upload the file
+          // AGAIN — the duplicate-asset bug (one drop → two media entries).
           event.preventDefault();
+          event.stopPropagation();
           // Async: upload, then insert at the captured position (clamped — the
           // doc may have changed while the upload was in flight).
           void api.uploadAsset(file).then(
@@ -257,6 +262,7 @@ export default function RichTextEditor({
           const p = JSON.parse(raw) as { kind?: string; documentId?: string; url?: string; alt?: string };
           if (p.kind !== "media" || !p.url) return false;
           event.preventDefault();
+          event.stopPropagation(); // same bubble hazard as the file branch
           insertAt(pos, p.url, p.alt ?? "", p.documentId ?? null);
           return true;
         } catch {
