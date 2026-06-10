@@ -580,14 +580,25 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       }
 
       if (def) setTab(def.group);
-      setTimeout(() => {
-        const id = d.blockIndex != null ? `pb-block-${d.blockIndex}` : fieldName ? `f-${fieldName}` : null;
-        if (!id) return;
-        const el = document.getElementById(id);
-        el?.scrollIntoView({ behavior: "smooth", block: "center" });
-        if (el) { el.classList.add("pb-flash"); setTimeout(() => el.classList.remove("pb-flash"), 1400); }
-        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.focus();
-      }, 80);
+      const id = d.blockIndex != null ? `pb-block-${d.blockIndex}` : fieldName ? `f-${fieldName}` : null;
+      if (id) {
+        // Poll for the target: switching out of on-page mode REMOUNTS the form
+        // panel, so a fixed delay raced the new DOM (clicking an empty content
+        // area dropped to side-by-side but never scrolled to its block palette).
+        let tries = 0;
+        const land = () => {
+          const el = document.getElementById(id);
+          if (!el) {
+            if (tries++ < 25) setTimeout(land, 40); // ~1s budget
+            return;
+          }
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+          el.classList.add("pb-flash");
+          setTimeout(() => el.classList.remove("pb-flash"), 1400);
+          if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.focus();
+        };
+        setTimeout(land, 40);
+      }
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);

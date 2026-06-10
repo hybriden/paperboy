@@ -68,4 +68,29 @@ describe("Renderer — content-area drop targets (preview on-page editing)", () 
     expect(html).toContain("Card A");
     expect(html).not.toContain("data-pb-area");
   });
+
+  // Empty richtext fields render no DOM, so on-page editing had no target.
+  // In preview an applicable-but-empty field gets a clickable placeholder; the
+  // public page renders nothing for it.
+  it("renders a clickable placeholder for an applicable empty richtext field in preview", () => {
+    // In preview the delivery layer surfaces the empty field as null (present).
+    const html = renderToStaticMarkup(<Renderer content={page({ heading: "Hi", intro: null, mainArea: [] })} preview />);
+    expect(html).toContain('data-pb-field="intro"');
+    expect(html).toContain("Empty intro");
+  });
+
+  it("does NOT render an empty-field placeholder on the public page (field absent)", () => {
+    // Published output omits the empty field entirely — no key, no marker.
+    const html = renderToStaticMarkup(<Renderer content={page({ heading: "Hi", mainArea: [] })} />);
+    expect(html).not.toContain('data-pb-field="intro"');
+    expect(html).not.toContain("Empty intro");
+  });
+
+  it("renders the field content (no placeholder) when the richtext is non-empty", () => {
+    const doc = { type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "Real intro copy" }] }] };
+    const html = renderToStaticMarkup(<Renderer content={page({ heading: "Hi", intro: doc, mainArea: [] })} preview />);
+    expect(html).toContain("Real intro copy");
+    expect(html).not.toContain("Empty intro");
+    expect(html).toContain('data-pb-field="intro"');
+  });
 });
