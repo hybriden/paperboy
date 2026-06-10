@@ -8,7 +8,7 @@ coverage/
 .env.*
 !.env.example
 .DS_Store
-proof/screenshots/*.tmp
+proof/
 test-results/
 playwright-report/
 .playwright-mcp/
