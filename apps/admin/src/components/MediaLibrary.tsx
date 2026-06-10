@@ -326,9 +326,13 @@ export function ImageField({ id, value, disabled, onChange }: { id: string; valu
     setDropOver(false);
 
     // An OS image file: upload through the normal asset pipeline, then set.
+    // stopPropagation: this field usually sits INSIDE a content area whose own
+    // drop handler would otherwise see the same event and upload the file
+    // AGAIN (duplicate asset + an auto-created extra block).
     const file = e.dataTransfer.files[0];
     if (file) {
       e.preventDefault();
+      e.stopPropagation();
       if (!file.type.startsWith("image/")) {
         toast.error("Only images can be dropped here", file.name);
         return;
@@ -345,10 +349,15 @@ export function ImageField({ id, value, disabled, onChange }: { id: string; valu
 
     const raw = e.dataTransfer.getData("application/x-paperboy");
     if (!raw) return;
-    e.preventDefault();
     try {
       const p = JSON.parse(raw) as { kind?: string; documentId?: string };
-      if ((p.kind === "media" || p.kind === "image") && p.documentId) onChange(p.documentId);
+      if ((p.kind === "media" || p.kind === "image") && p.documentId) {
+        e.preventDefault();
+        e.stopPropagation(); // handled here — don't let the content area also act on it
+        onChange(p.documentId);
+      }
+      // Block/page payloads fall through on purpose: dropping a shared block
+      // over an image field should still reach the content area.
     } catch { /* ignore */ }
   };
 

@@ -476,6 +476,67 @@ test("drag an IMAGE into a content area → a block carrying it is auto-created"
   await page.getByRole("menuitem", { name: "Move to trash" }).click();
 });
 
+test("an image dropped on a block's image field uploads ONCE (no duplicate asset, no extra block)", async ({ page }) => {
+  // Regression: nested drop zones (image field / richtext INSIDE a content
+  // area) called preventDefault but not stopPropagation — the native event
+  // bubbled to the content area's drop handler, which uploaded the SAME file
+  // again (different generated name) and auto-created an image block.
+  await login(page);
+  const unique = `DupDrop-${Date.now().toString(36)}`;
+  await page.getByRole("button", { name: "Create new content" }).click();
+  const dlg = page.getByRole("dialog", { name: "Create content" });
+  await dlg.getByLabel("Name").fill(unique);
+  await dlg.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(editorName(page)).toHaveValue(unique, { timeout: 10000 });
+
+  // An inline Hero block — its image field sits INSIDE the content area.
+  await page.getByRole("button", { name: "+ Hero" }).click();
+  const area = page.getByTestId("content-area-mainArea");
+  await expect(area.getByRole("button", { name: "Choose image" }).first()).toBeVisible();
+
+  const mediaCount = async () => {
+    await page.getByRole("tab", { name: "Media" }).click();
+    // The count label renders "0 images" while the assets query loads — wait
+    // until two consecutive reads agree before trusting it.
+    const read = async () => Number((await page.getByRole("tab", { name: /^\d+ images?$/ }).textContent())?.match(/\d+/)?.[0] ?? Number.NaN);
+    let prev = await read();
+    for (let i = 0; i < 20; i += 1) {
+      await page.waitForTimeout(400);
+      const next = await read();
+      if (next === prev && Number.isFinite(next)) return next;
+      prev = next;
+    }
+    return prev;
+  };
+  const before = await mediaCount();
+
+  // Drop a real 1×1 PNG on the image field (dispatched with bubbles, like a
+  // genuine OS drop).
+  await area.getByRole("button", { name: "Choose image" }).first().evaluate((target) => {
+    const bytes = atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i += 1) arr[i] = bytes.charCodeAt(i);
+    const dt = new DataTransfer();
+    dt.items.add(new File([arr], "dup-check.png", { type: "image/png" }));
+    const fire = (t: string) => target.dispatchEvent(new DragEvent(t, { dataTransfer: dt, bubbles: true, cancelable: true }));
+    fire("dragenter");
+    fire("dragover");
+    fire("drop");
+  });
+
+  // The field fills (the upload landed)…
+  await expect(area.getByRole("button", { name: "Replace" }).first()).toBeVisible({ timeout: 15_000 });
+  // …allow any buggy second upload to land too, then count.
+  await page.waitForTimeout(2000);
+  expect(await mediaCount()).toBe(before + 1);
+  // No extra auto-created block: the area still holds exactly the Hero.
+  await expect(area.getByRole("listitem")).toHaveCount(1);
+
+  // Cleanup: trash the throwaway page.
+  await page.getByRole("treeitem", { name: new RegExp(unique) }).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Move to trash" }).click();
+});
+
 test("side panes can be pinned or set to auto-hide (collapse to an edge rail)", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
