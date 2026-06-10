@@ -81,8 +81,6 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
           className="fixed left-1/2 top-[15%] z-[80] w-[min(640px,92vw)] -translate-x-1/2 overflow-hidden rounded-[var(--radius-lg)] border border-line bg-panel shadow-pop outline-none data-[state=open]:animate-scale-in"
         >
           <RDialog.Title className="sr-only">Command palette</RDialog.Title>
-          {/* Masthead rule — same press-red rule the app header carries. */}
-          <div aria-hidden className="h-[3px] bg-brand" />
           <Command shouldFilter={false} label="Command palette" value={selected} onValueChange={setSelected}>
             <div className="flex items-center gap-3 border-b border-line px-4">
               <Icon.Search width={18} height={18} className="shrink-0 text-muted" />
@@ -91,7 +89,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                 value={query}
                 onValueChange={setQuery}
                 placeholder="Search the newsroom…"
-                className="h-14 w-full bg-transparent font-display text-[17px] text-fg caret-accent outline-none focus-visible:!outline-none placeholder:italic placeholder:text-muted/80"
+                className="h-14 w-full bg-transparent text-[15px] text-fg caret-accent outline-none focus-visible:!outline-none placeholder:text-muted/80"
               />
               <Kbd>esc</Kbd>
             </div>
@@ -101,8 +99,8 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                   <span className="text-sm text-muted">Searching…</span>
                 ) : (
                   <>
-                    <p className="font-display text-[16px] italic text-fg">No matches for “{query.trim()}”.</p>
-                    <p className="mt-1 text-xs text-muted">Try a different headline.</p>
+                    <p className="text-sm font-medium text-fg">No matches for “{query.trim()}”.</p>
+                    <p className="mt-1 text-xs text-muted">Try a different search.</p>
                   </>
                 )}
               </Command.Empty>
