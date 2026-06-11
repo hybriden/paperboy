@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { blockData, contentAreas, isRichTextDoc, pbAreaAttrs, renderRichText } from "./index.js";
+import { blockData, contentAreas, isRichTextDoc, pbAreaAttrs, renderKind, renderRichText } from "./index.js";
 
 // XSS regression guard for renderRichText — its output is injected via
 // innerHTML/set:html, and CMS content (incl. agent-written via MCP) is untrusted.
@@ -64,5 +64,16 @@ describe("blockData / contentAreas", () => {
   it("pbAreaAttrs emits data-pb-area=<field name> in preview, nothing on public pages", () => {
     expect(pbAreaAttrs("mainArea", true)).toEqual({ "data-pb-area": "mainArea" });
     expect(pbAreaAttrs("mainArea", false)).toEqual({});
+  });
+
+  // Render decision must come from the DECLARED type (fieldTypes[name]), not a
+  // value sniff — a richtext doc and an empty string both look stringy.
+  it("renderKind maps declared field types to a render strategy", () => {
+    expect(renderKind("richtext")).toBe("richtext");
+    expect(renderKind("markdown")).toBe("markdown");
+    expect(renderKind("text")).toBe("text");
+    expect(renderKind("image")).toBe("other");
+    expect(renderKind("contentArea")).toBe("other");
+    expect(renderKind(undefined)).toBe("other");
   });
 });

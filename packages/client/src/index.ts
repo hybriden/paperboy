@@ -60,6 +60,11 @@ export interface DeliveryContent {
   /** Cache-version: bumped on publish; used for ETag / cache busting. */
   cv: number;
   data: Record<string, unknown>;
+  /** Public field name → declared field type ("text" | "markdown" | "richtext"
+   *  | "contentArea" | "image" | "reference" | "boolean" | "number" |
+   *  "datetime" | "select" | "link"). Render each field by its SCHEMA type
+   *  rather than sniffing the value's shape. Private fields are never listed. */
+  fieldTypes: Record<string, string>;
   /** Normalized SEO/schema.org contract — present on pages, null otherwise. */
   seo: DeliverySeo | null;
 }
@@ -366,13 +371,36 @@ export interface AreaBlock {
   shared?: boolean;
   /** Inline block field values. */
   data?: Record<string, unknown>;
+  /** Public field name → declared type for an INLINE block (mirrors the
+   *  top-level item's `fieldTypes`); absent on shared-block entries (read the
+   *  resolved page/block's own `fieldTypes` via `content`). */
+  fieldTypes?: Record<string, string>;
   /** Shared block / referenced page (resolved at populate >= 1). */
-  content?: { kind?: string; name?: string; urlPath?: string | null; data?: Record<string, unknown> };
+  content?: { kind?: string; name?: string; urlPath?: string | null; data?: Record<string, unknown>; fieldTypes?: Record<string, string> };
 }
 
 /** A block's field values: inline blocks carry `data`, shared blocks `content.data`. */
 export function blockData(b: AreaBlock): Record<string, unknown> {
   return (b.shared ? b.content?.data : b.data) ?? {};
+}
+
+/** How a field's value should be rendered, decided from its DECLARED schema
+ *  type (`fieldTypes[name]`) — not by sniffing the value's shape, which can't
+ *  tell an empty richtext from an empty string. "richtext" → render the TipTap
+ *  doc as HTML; "markdown" → run a markdown renderer; "text" → plain text;
+ *  "other" → not free-text (image/reference/boolean/contentArea/…). */
+export type FieldRenderKind = "richtext" | "markdown" | "text" | "other";
+export function renderKind(fieldType: string | undefined): FieldRenderKind {
+  switch (fieldType) {
+    case "richtext":
+      return "richtext";
+    case "markdown":
+      return "markdown";
+    case "text":
+      return "text";
+    default:
+      return "other";
+  }
 }
 
 const looksLikeBlocks = (v: unknown): v is AreaBlock[] =>

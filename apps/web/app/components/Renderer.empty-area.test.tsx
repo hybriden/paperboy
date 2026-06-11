@@ -12,7 +12,7 @@ import { Renderer } from "./Renderer";
 //  3. A POPULATED area had no data-pb-area wrapper at all, so dragging a shared
 //     block onto a page that already has blocks could never hit a drop zone.
 
-function page(data: Record<string, unknown>): DeliveryContent {
+function page(data: Record<string, unknown>, fieldTypes: Record<string, string> = {}): DeliveryContent {
   return {
     documentId: "doc1",
     type: "StandardPage",
@@ -23,6 +23,7 @@ function page(data: Record<string, unknown>): DeliveryContent {
     urlPath: "/test",
     cv: 1,
     data,
+    fieldTypes,
     seo: null,
   };
 }
@@ -73,8 +74,9 @@ describe("Renderer — content-area drop targets (preview on-page editing)", () 
   // In preview an applicable-but-empty field gets a clickable placeholder; the
   // public page renders nothing for it.
   it("renders a clickable placeholder for an applicable empty richtext field in preview", () => {
-    // In preview the delivery layer surfaces the empty field as null (present).
-    const html = renderToStaticMarkup(<Renderer content={page({ heading: "Hi", intro: null, mainArea: [] })} preview />);
+    // "applies" comes from the SCHEMA (fieldTypes), so the placeholder shows for
+    // a declared-but-empty field even when its value is null.
+    const html = renderToStaticMarkup(<Renderer content={page({ heading: "Hi", intro: null, mainArea: [] }, { intro: "richtext" })} preview />);
     expect(html).toContain('data-pb-field="intro"');
     expect(html).toContain("Empty intro");
   });

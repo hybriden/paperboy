@@ -270,8 +270,10 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
   return (
     <main className="wrap" data-document-id={content.documentId}>
       <h1 className="page-heading" data-pb-field="heading">{String(data.heading ?? content.name)}</h1>
-      <EditableRich field="intro" label="intro" value={data.intro} className="intro richtext" preview={preview} applies={"intro" in data} />
-      <EditableRich field="body" label="body" value={data.body} className="richtext" preview={preview} applies={"body" in data} />
+      {/* "applies" comes from the SCHEMA (fieldTypes), not value presence: a
+          field belongs to this type even when its value is empty/absent. */}
+      <EditableRich field="intro" label="intro" value={data.intro} className="intro richtext" preview={preview} applies={"intro" in content.fieldTypes} />
+      <EditableRich field="body" label="body" value={data.body} className="richtext" preview={preview} applies={"body" in content.fieldTypes} />
       {area.length > 0 ? (
         // In preview the area gets a data-pb-area wrapper (via pbAreaAttrs) so
         // shared blocks / pages dragged from the admin can be dropped anywhere

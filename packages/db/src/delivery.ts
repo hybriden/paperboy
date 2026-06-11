@@ -280,6 +280,16 @@ function absolutizeRichTextImages(node: unknown): unknown {
   return next;
 }
 
+/** Public field name → declared type, from the content-type definition. Lets a
+ *  frontend render each field by its schema type instead of sniffing the value
+ *  (a richtext doc and a "" both look stringy). Private fields are excluded so
+ *  their names/types never leak — same fail-closed rule as `sanitize`. */
+function publicFieldTypes(def: ContentTypeDef): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const f of def.fields) if (f.delivery === "public") out[f.name] = f.type;
+  return out;
+}
+
 /** Strip private fields and resolve/shallow references + content areas. */
 async function sanitize(
   ctx: DeliveryCtx,
@@ -351,7 +361,9 @@ async function sanitize(
             loc,
             depth,
           );
-          blocks.push({ blockType, display, shared: false, data: inlineData });
+          const blockDef = await ctx.type(blockType);
+          // Each inline block describes its own public field types too.
+          blocks.push({ blockType, display, shared: false, data: inlineData, fieldTypes: blockDef ? publicFieldTypes(blockDef) : {} });
         }
       }
       out[f.name] = blocks;
@@ -580,13 +592,11 @@ export async function resolveContent(
   );
   const sanitized = await sanitize(ctx, perspective, item.type, data, found.usedLocale, depth);
   const urlPath = await urlPathOf(ctx, perspective, documentId, loc);
+  const def = await ctx.type(item.type);
   // SEO/schema.org contract — pages only, computed from SANITIZED (public) data.
   let seo: DeliveryContent["seo"] = null;
-  if (item.kind === "page") {
-    const def = await ctx.type(item.type);
-    if (def) {
-      seo = await computeSeo(ctx, perspective, documentId, def, found.row.name, urlPath, sanitized, found.usedLocale);
-    }
+  if (item.kind === "page" && def) {
+    seo = await computeSeo(ctx, perspective, documentId, def, found.row.name, urlPath, sanitized, found.usedLocale);
   }
   return {
     documentId,
@@ -600,6 +610,8 @@ export async function resolveContent(
     urlPath,
     cv: found.row.cv,
     data: sanitized,
+    // Public field types so a frontend renders by schema type, not value shape.
+    fieldTypes: def ? publicFieldTypes(def) : {},
     seo,
   };
 }

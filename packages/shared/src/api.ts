@@ -201,6 +201,12 @@ export const DeliveryContent = z.object({
   /** cache-version: bumped on publish, used for ETag / cache busting. */
   cv: z.number(),
   data: z.record(z.unknown()),
+  /** Public field name → its declared field type ("text" | "markdown" |
+   *  "richtext" | "contentArea" | "image" | "reference" | "boolean" | "number"
+   *  | "datetime" | "select" | "link"). Lets a frontend render each field by
+   *  its SCHEMA type instead of sniffing the value's shape. Private fields are
+   *  never listed (their names/types must not leak). */
+  fieldTypes: z.record(z.string()),
   /** Normalized SEO/schema.org contract — present on pages, null otherwise. */
   seo: DeliverySeo.nullable(),
 });
