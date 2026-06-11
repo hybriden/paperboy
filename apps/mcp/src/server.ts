@@ -191,11 +191,11 @@ tool(
   "create_content",
   [
     "Create a new content item (page/block/global) as a draft.",
-    "This creates an EMPTY shell — it sets only the name (and an auto slug); it does NOT",
-    "take field data. You MUST follow with update_content (or set_field) to write the",
-    "body and other fields, or the page stays blank — a created-but-never-filled draft is",
-    "the #1 agent mistake (a workflow that drafted a body and then only called",
-    "create_content shipped an empty post). Sequence: create_content → update_content → publish.",
+    "Pass the field content in `data` (field name → value, same shapes as update_content)",
+    "to fill the page in ONE call — strongly preferred for a one-shot create. If you omit",
+    "`data` it creates an EMPTY shell (name + auto slug only) that you MUST then fill with",
+    "update_content/set_field, or the page stays blank. Either way: get_content_type first",
+    "to learn the field names/shapes for this type.",
     "IMPORTANT: pages almost always belong UNDER an existing parent — a page's position",
     "decides its URL and which template the frontend renders it with (a blog post created",
     "at root gets a generic layout and looks empty when published). Call `tree` first and",
@@ -210,27 +210,45 @@ tool(
     parentId: z.string().nullable().optional().describe("documentId of the parent page. Required in practice for pages — find it with `tree`. Omit only for top-level pages."),
     locale: z.string().optional().describe("The LANGUAGE BRANCH for this content — MATCH the language you are writing (Norwegian content → 'nb', English → 'en'). Call list_locales to see the site's branches. Defaults to the site default locale, which is usually English."),
     name: z.string(),
+    data: z.record(z.unknown()).optional().describe("Initial field values (field name → value), same shapes as update_content. Provide this to create a FILLED draft in one call. Call get_content_type first for the field names/shapes."),
+    slug: z.string().optional().describe("URL slug for a page. Omit to auto-derive from the name."),
     allowTypeMismatch: z.boolean().optional().describe("Set true ONLY for a deliberate sub-page whose type differs from the parent list page's listedType"),
   },
-  async ({ type, parentId, locale, name, allowTypeMismatch }) => {
-    const created = await createContent(db, ctx, { type, parentId: parentId ?? null, locale: locale ?? "en", name, allowTypeMismatch });
-    mcpAudit("content.create", created.documentId, created.locale);
-    // Two in-band nudges the agent reads from the result (the create still
-    // succeeds — both situations are legal, but both are real incidents):
-    //  - FILL: the draft has no field data yet. A workflow that drafted a body
-    //    then only called create_content shipped an empty post (Harmonix,
-    //    2026-06-10). Always remind to write the fields next.
+  async ({ type, parentId, locale, name, data, slug, allowTypeMismatch }) => {
+    const shell = await createContent(db, ctx, { type, parentId: parentId ?? null, locale: locale ?? "en", name, allowTypeMismatch });
+    mcpAudit("content.create", shell.documentId, shell.locale);
+    // Persist initial data through the SAME coerce/validate chokepoint as
+    // update_content (rule #3) — don't silently drop a body the caller sent
+    // (the Harmonix incident: valid data in → empty draft out → rule #1).
+    const hasData = data && Object.keys(data).length > 0;
+    const created =
+      hasData || slug !== undefined
+        ? await (async () => {
+            const updated = await updateContent(db, ctx, shell.documentId, shell.locale, { data: data ?? {}, slug, merge: true });
+            mcpAudit("content.update", shell.documentId, shell.locale);
+            return updated;
+          })()
+        : shell;
+    // In-band nudges the agent reads from the result (the create still
+    // succeeds — these situations are legal, but each is a real incident):
+    //  - FILL: only when no data was provided — the draft is blank and must be
+    //    filled with update_content (Harmonix shipped an empty post this way).
     //  - PLACE: a page at root usually means a forgotten parentId — a blog post
     //    at root renders with a generic template and looks empty when published.
-    const fill =
-      `NEXT: this draft has NO content yet — call update_content {documentId:"${created.documentId}", data:{…}} ` +
-      "(or set_field) to write the body and other fields now, then publish. Until then the page is blank.";
-    const place =
-      created.kind === "page" && !parentId
-        ? " PLACEMENT: created at the TOP LEVEL — if it belongs under another page (e.g. a blog post under the blog/list page), " +
-          "call `tree` to find the parent and move_content {documentId, parentId} BEFORE publishing; its URL and template depend on its position."
-        : "";
-    return { ...created, hint: fill + place };
+    const hints: string[] = [];
+    if (!hasData) {
+      hints.push(
+        `NEXT: this draft has NO content yet — call update_content {documentId:"${created.documentId}", data:{…}} ` +
+          "(or set_field) to write the body and other fields now, then publish. Until then the page is blank.",
+      );
+    }
+    if (created.kind === "page" && !parentId) {
+      hints.push(
+        "PLACEMENT: created at the TOP LEVEL — if it belongs under another page (e.g. a blog post under the blog/list page), " +
+          "call `tree` to find the parent and move_content {documentId, parentId} BEFORE publishing; its URL and template depend on its position.",
+      );
+    }
+    return hints.length ? { ...created, hint: hints.join(" ") } : created;
   });
 tool(
   "update_content",
