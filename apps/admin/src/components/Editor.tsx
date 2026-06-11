@@ -349,6 +349,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       qc.invalidateQueries({ queryKey: ["content", documentId, locale] });
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Draft discarded");
     },
     onError: (e) => toast.error("Couldn’t discard draft", (e as Error).message),
@@ -386,6 +387,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Moved to trash", "Restore it from Settings → Trash.");
       navigate("/edit");
     },

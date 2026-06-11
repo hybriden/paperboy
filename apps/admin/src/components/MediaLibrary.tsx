@@ -325,10 +325,29 @@ export function ImageField({ id, value, disabled, onChange }: { id: string; valu
   const onDrop = (e: React.DragEvent) => {
     setDropOver(false);
 
-    // An OS image file: upload through the normal asset pipeline, then set.
+    // An in-app asset reference (dragging a library/stock thumbnail) is checked
+    // FIRST and wins over any file: the browser's native <img> drag tags the
+    // image along in dataTransfer.files too, and taking that file path would
+    // RE-UPLOAD a duplicate of an asset that already exists (the reported bug —
+    // import a stock photo, drag it into an image field, end up with two).
+    const raw = e.dataTransfer.getData("application/x-paperboy");
+    if (raw) {
+      try {
+        const p = JSON.parse(raw) as { kind?: string; documentId?: string };
+        if ((p.kind === "media" || p.kind === "image") && p.documentId) {
+          e.preventDefault();
+          e.stopPropagation(); // handled here — don't let the content area also act on it
+          onChange(p.documentId);
+        }
+        // Block/page payloads fall through on purpose: dropping a shared block
+        // over an image field should still reach the content area.
+      } catch { /* ignore */ }
+      return;
+    }
+
+    // No in-app payload → a genuine OS file drop from the desktop: upload it.
     // stopPropagation: this field usually sits INSIDE a content area whose own
-    // drop handler would otherwise see the same event and upload the file
-    // AGAIN (duplicate asset + an auto-created extra block).
+    // drop handler would otherwise see the same event and upload AGAIN.
     const file = e.dataTransfer.files[0];
     if (file) {
       e.preventDefault();
@@ -344,21 +363,7 @@ export function ImageField({ id, value, disabled, onChange }: { id: string; valu
         },
         (err) => toast.error("Upload failed", (err as Error).message),
       );
-      return;
     }
-
-    const raw = e.dataTransfer.getData("application/x-paperboy");
-    if (!raw) return;
-    try {
-      const p = JSON.parse(raw) as { kind?: string; documentId?: string };
-      if ((p.kind === "media" || p.kind === "image") && p.documentId) {
-        e.preventDefault();
-        e.stopPropagation(); // handled here — don't let the content area also act on it
-        onChange(p.documentId);
-      }
-      // Block/page payloads fall through on purpose: dropping a shared block
-      // over an image field should still reach the content area.
-    } catch { /* ignore */ }
   };
 
   return (

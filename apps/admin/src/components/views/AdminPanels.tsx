@@ -1135,6 +1135,7 @@ export function TrashPanel() {
       qc.invalidateQueries({ queryKey: ["trash"] });
       qc.invalidateQueries({ queryKey: ["tree", "root"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Restored", "Re-publish to make it live again.");
     },
     onError: (e) => toast.error("Couldn’t restore", (e as Error).message),
@@ -1143,6 +1144,7 @@ export function TrashPanel() {
     mutationFn: () => api.emptyTrash(),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["trash"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Trash emptied", `Permanently deleted ${r.purged} item${r.purged === 1 ? "" : "s"}.`);
     },
     onError: (e) => toast.error("Couldn’t empty trash", (e as Error).message),

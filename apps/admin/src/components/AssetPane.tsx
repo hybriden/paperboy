@@ -45,6 +45,7 @@ export function AssetPane({
       qc.invalidateQueries({ queryKey: ["blocks"] });
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["trash"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Moved to trash", "Restore it from Settings → Trash.");
     },
     onError: (e) => toast.error("Couldn’t delete block", (e as Error).message),

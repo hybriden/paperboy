@@ -396,6 +396,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
       qc.invalidateQueries({ queryKey: ["trash"] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Moved to trash", "Restore it from Settings → Trash.");
     },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
@@ -410,6 +411,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
       qc.invalidateQueries({ queryKey: ["tree"] });
       qc.invalidateQueries({ queryKey: ["blocks"] });
       qc.invalidateQueries({ queryKey: ["content", node.documentId] });
+      qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success(`Deleted ${locale.toUpperCase()} version`, `“${node.name}” keeps its other languages.`);
     },
     onError: (e) => toast.error("Couldn’t delete version", (e as Error).message),

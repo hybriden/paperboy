@@ -238,13 +238,31 @@ export default function RichTextEditor({
         };
         const pos = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ?? view.state.selection.to;
 
+        // In-app payload FIRST: dragging an existing library/stock image
+        // references it (no upload). The browser's native <img> drag also tags
+        // the image along as a file, and taking that file path would RE-UPLOAD
+        // a duplicate — so the payload always wins over the file.
+        const raw = event.dataTransfer?.getData("application/x-paperboy");
+        if (raw) {
+          try {
+            const p = JSON.parse(raw) as { kind?: string; documentId?: string; url?: string; alt?: string };
+            if (p.kind !== "media" || !p.url) return false;
+            event.preventDefault();
+            event.stopPropagation();
+            insertAt(pos, p.url, p.alt ?? "", p.documentId ?? null);
+            return true;
+          } catch {
+            return false;
+          }
+        }
+
+        // No payload → a genuine OS file drop from the desktop: upload it.
+        // stopPropagation matters: this editor often sits INSIDE a content
+        // area whose own drop handler would otherwise see the same native
+        // event (preventDefault does not stop bubbling) and upload AGAIN.
         const file = event.dataTransfer?.files?.[0];
         if (file) {
           if (!file.type.startsWith("image/")) return false;
-          // stopPropagation matters: this editor often sits INSIDE a content
-          // area whose own drop handler would otherwise see the same native
-          // event (preventDefault does not stop bubbling) and upload the file
-          // AGAIN — the duplicate-asset bug (one drop → two media entries).
           event.preventDefault();
           event.stopPropagation();
           // Async: upload, then insert at the captured position (clamped — the
@@ -255,19 +273,7 @@ export default function RichTextEditor({
           );
           return true;
         }
-
-        const raw = event.dataTransfer?.getData("application/x-paperboy");
-        if (!raw) return false;
-        try {
-          const p = JSON.parse(raw) as { kind?: string; documentId?: string; url?: string; alt?: string };
-          if (p.kind !== "media" || !p.url) return false;
-          event.preventDefault();
-          event.stopPropagation(); // same bubble hazard as the file branch
-          insertAt(pos, p.url, p.alt ?? "", p.documentId ?? null);
-          return true;
-        } catch {
-          return false;
-        }
+        return false;
       },
       // External drags don't get PM's dragover handling — without preventDefault
       // the browser refuses the drop.
