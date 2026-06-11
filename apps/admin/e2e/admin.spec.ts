@@ -537,6 +537,74 @@ test("an image dropped on a block's image field uploads ONCE (no duplicate asset
   await page.getByRole("menuitem", { name: "Move to trash" }).click();
 });
 
+test("dragging an EXISTING library image onto an image field references it — no duplicate (reported: stock image, dragged in, became two)", async ({ page }) => {
+  // Repro: a library/stock thumbnail's native <img> drag tags the image along
+  // in dataTransfer.files AND carries the app's x-paperboy {kind:media} payload.
+  // The drop handler used to take the file path first → re-upload → a second
+  // copy in the media pane. It must prefer the in-app reference.
+  await login(page);
+  const unique = `RefDrop-${Date.now().toString(36)}`;
+  await page.getByRole("button", { name: "Create new content" }).click();
+  const dlg = page.getByRole("dialog", { name: "Create content" });
+  await dlg.getByLabel("Name").fill(unique);
+  await dlg.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(editorName(page)).toHaveValue(unique, { timeout: 10000 });
+  await page.getByRole("button", { name: "+ Hero" }).click();
+  const area = page.getByTestId("content-area-mainArea");
+  await expect(area.getByRole("button", { name: "Choose image" }).first()).toBeVisible();
+
+  // Upload exactly one real asset to reference (page context → session cookie).
+  const assetId = await page.evaluate(async () => {
+    const csrf = await (await fetch("/api/v1/auth/me", { credentials: "include" })).json();
+    const bytes = atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i += 1) arr[i] = bytes.charCodeAt(i);
+    const fd = new FormData();
+    fd.append("file", new File([arr], "library-original.png", { type: "image/png" }));
+    const r = await fetch("/api/v1/manage/assets", { method: "POST", body: fd, credentials: "include", headers: { "x-csrf-token": csrf.csrfToken } });
+    return (await r.json()).documentId as string;
+  });
+  expect(assetId).toBeTruthy();
+
+  const mediaCount = async () => {
+    await page.getByRole("tab", { name: "Media" }).click();
+    const read = async () => Number((await page.getByRole("tab", { name: /^\d+ images?$/ }).textContent())?.match(/\d+/)?.[0] ?? Number.NaN);
+    let prev = await read();
+    for (let i = 0; i < 20; i += 1) {
+      await page.waitForTimeout(400);
+      const next = await read();
+      if (next === prev && Number.isFinite(next)) return next;
+      prev = next;
+    }
+    return prev;
+  };
+  const before = await mediaCount();
+
+  // Drop carrying BOTH the in-app reference AND a tag-along file (the exact
+  // shape a native image drag produces). The reference must win.
+  await area.getByRole("button", { name: "Choose image" }).first().evaluate((target, id) => {
+    const bytes = atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==");
+    const arr = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i += 1) arr[i] = bytes.charCodeAt(i);
+    const dt = new DataTransfer();
+    dt.setData("application/x-paperboy", JSON.stringify({ kind: "media", documentId: id, url: "/api/v1/media/library-original.png", alt: "" }));
+    dt.items.add(new File([arr], "tagalong.png", { type: "image/png" })); // native <img> drag adds this
+    const fire = (t: string) => target.dispatchEvent(new DragEvent(t, { dataTransfer: dt, bubbles: true, cancelable: true }));
+    fire("dragenter");
+    fire("dragover");
+    fire("drop");
+  }, assetId);
+
+  // Field fills (now referencing the existing asset)…
+  await expect(area.getByRole("button", { name: "Replace" }).first()).toBeVisible({ timeout: 15_000 });
+  // …and crucially NO new asset was uploaded: count is unchanged.
+  await page.waitForTimeout(2000);
+  expect(await mediaCount()).toBe(before);
+
+  await page.getByRole("treeitem", { name: new RegExp(unique) }).click({ button: "right" });
+  await page.getByRole("menuitem", { name: "Move to trash" }).click();
+});
+
 test("side panes can be pinned or set to auto-hide (collapse to an edge rail)", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();

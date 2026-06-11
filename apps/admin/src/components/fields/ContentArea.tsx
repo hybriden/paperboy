@@ -124,37 +124,43 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
     const at = { x: e.clientX, y: e.clientY };
     const index = dropIndex(e);
 
+    // In-app payload FIRST: dragging an existing media asset / shared block /
+    // page references it (no upload). A library/stock thumbnail's native <img>
+    // drag also tags the image along as a file — taking the file path would
+    // RE-UPLOAD a duplicate, so the payload always wins.
+    const raw = e.dataTransfer.getData("application/x-paperboy");
+    if (raw) {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        const p = JSON.parse(raw) as { kind?: string; documentId?: string; blockType?: string; url?: string };
+        if (p.kind === "media" && p.documentId) {
+          if (p.url?.endsWith(".pdf")) {
+            toast.error("Can’t drop a PDF here", "Content-area image drops take images.");
+            return;
+          }
+          dropImage(p.documentId, index, at);
+          return;
+        }
+        if (!p.documentId || !p.blockType) return;
+        if (p.kind === "block") {
+          // allowedBlocks constrains which BLOCK types may be placed here.
+          const ok = !field.allowedBlocks.length || field.allowedBlocks.includes(p.blockType);
+          if (ok) addShared(p.documentId, p.blockType);
+        } else if (p.kind === "page") {
+          // Pages are always placeable (rendered as teasers, not as blocks).
+          addShared(p.documentId, p.blockType);
+        }
+      } catch { /* ignore */ }
+      return;
+    }
+
+    // No payload → a genuine OS file drop from the desktop: upload it.
     if (e.dataTransfer.files.length > 0) {
       e.preventDefault();
       e.stopPropagation(); // content areas can nest (contentArea block fields)
       void dropFile(e.dataTransfer.files[0]!, index, at);
-      return;
     }
-
-    const raw = e.dataTransfer.getData("application/x-paperboy");
-    if (!raw) return;
-    e.preventDefault();
-    e.stopPropagation();
-    try {
-      const p = JSON.parse(raw) as { kind?: string; documentId?: string; blockType?: string; url?: string };
-      if (p.kind === "media" && p.documentId) {
-        if (p.url?.endsWith(".pdf")) {
-          toast.error("Can’t drop a PDF here", "Content-area image drops take images.");
-          return;
-        }
-        dropImage(p.documentId, index, at);
-        return;
-      }
-      if (!p.documentId || !p.blockType) return;
-      if (p.kind === "block") {
-        // allowedBlocks constrains which BLOCK types may be placed here.
-        const ok = !field.allowedBlocks.length || field.allowedBlocks.includes(p.blockType);
-        if (ok) addShared(p.documentId, p.blockType);
-      } else if (p.kind === "page") {
-        // Pages are always placeable (rendered as teasers, not as blocks).
-        addShared(p.documentId, p.blockType);
-      }
-    } catch { /* ignore */ }
   }
   function updateBlock(key: string, patch: Partial<BlockInstance>) {
     onChange(blocks.map((b) => (b.key === key ? { ...b, ...patch } : b)));
