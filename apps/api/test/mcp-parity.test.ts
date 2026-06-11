@@ -72,6 +72,29 @@ describe("MCP parity: real stdio server vs the API", () => {
     expect(doc.hint).toContain("move_content");
   }, 60_000);
 
+  it("create_content PERSISTS data passed in the same call (no silent drop — Harmonix incident)", async () => {
+    // Real incident (Harmonix 2026-06-11): the workflow passed the full body in
+    // `data` to create_content, but the tool didn't declare `data` so Zod
+    // stripped it and returned a successful EMPTY draft (data:{}). Valid content
+    // in → "success" out → content gone (rule #1). create_content must accept
+    // and persist `data` through the same coerce/validate chokepoint as update.
+    const created = await mcp.call("create_content", {
+      type: "BlogPost",
+      parentId: s.ids.blogId,
+      name: "ZoomMate Shifts Meetings",
+      data: { title: "ZoomMate Shifts Meetings", body: "## Heading\n\nThe meeting ends. ZoomMate acts.", summary: "AI teammate.", author: "Neoteric Editorial" },
+    });
+    expect(created.isError).toBe(false);
+    const doc = created.json as { documentId: string; data?: Record<string, unknown> };
+    // The created draft carries the data (not {}), readable identically via the API.
+    const viaApi = (await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${doc.documentId}?locale=en`, headers: { cookie: admin.cookie } })).json();
+    expect(viaApi.data.title).toBe("ZoomMate Shifts Meetings");
+    expect(viaApi.data.body).toContain("ZoomMate acts");
+    expect(viaApi.data.author).toBe("Neoteric Editorial");
+    // Body present → the "NO content yet" nudge should NOT appear (it's filled).
+    expect(doc.data?.title).toBe("ZoomMate Shifts Meetings");
+  }, 60_000);
+
   it("create_content tells the agent the draft is an EMPTY shell to fill with update_content (rule 5/7)", async () => {
     // Real incident (Harmonix 2026-06-10): a workflow drafted a body, called
     // create_content, and stopped — leaving an empty draft (data:{}), because
