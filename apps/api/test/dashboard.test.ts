@@ -159,6 +159,37 @@ describe("dashboard aggregate", () => {
     expect((ra.json().housekeeping as { failingWebhooks: number | null }).failingWebhooks).toBe(0);
   });
 
+  it("lists the unused blocks and empty types THEMSELVES so housekeeping is actionable", async () => {
+    // A bare count that links nowhere helps nobody (same rationale as
+    // imagesMissingAlt): the dashboard must name the unused blocks (click →
+    // editor, where the block can be placed or trashed) and the empty types
+    // (click → model editor, where an unused type can be deleted).
+    const ct = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content-types",
+      headers: authHeaders(admin),
+      payload: { name: "DashEmptyType", displayName: "Dash Empty Type", kind: "page", description: "", icon: "file", fields: [] },
+    });
+    expect(ct.statusCode, ct.body).toBe(200);
+
+    const r = await dash(authHeaders(ed));
+    expect(r.statusCode, r.body).toBe(200);
+    const body = r.json();
+
+    // The orphan CardBlock from the previous test, by name + documentId + type.
+    const blocks = body.unusedBlocksList as Array<{ documentId: string; name: string; type: string }>;
+    const orphan = blocks.find((b) => b.name === "Orphan Block");
+    expect(orphan).toBeTruthy();
+    expect(orphan!.type).toBe("CardBlock");
+    expect(orphan!.documentId).toBeTruthy();
+    expect(blocks.length).toBeLessThanOrEqual(10);
+
+    const types = body.emptyTypesList as Array<{ name: string; displayName: string; kind: string }>;
+    expect(types.some((t) => t.name === "DashEmptyType" && t.displayName === "Dash Empty Type" && t.kind === "page")).toBe(true);
+    expect(types.length).toBeLessThanOrEqual(10);
+    expect(body.housekeeping.emptyTypes).toBeGreaterThanOrEqual(1);
+  });
+
   it("lists the images missing alt text so the gap is fixable from the dashboard", async () => {
     // Upload a PNG (alt starts empty).
     const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]);

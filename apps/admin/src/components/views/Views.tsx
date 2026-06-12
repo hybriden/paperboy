@@ -140,11 +140,11 @@ export function DashboardView() {
   const d = dash.data;
   const gaps = (d?.translation ?? []).filter((t) => t.missing > 0);
   const hk = d?.housekeeping;
+  // Unused blocks and empty types render as their own groups below (the items
+  // themselves, not a bare count) — only trash and webhooks stay simple rows.
   const housekeepingItems = hk
     ? ([
         { label: hk.trash === 1 ? "item in trash" : "items in trash", count: hk.trash, to: "/settings#trash" },
-        { label: hk.unusedBlocks === 1 ? "unused shared block" : "unused shared blocks", count: hk.unusedBlocks, to: "/edit" },
-        { label: hk.emptyTypes === 1 ? "content type without content" : "content types without content", count: hk.emptyTypes, to: "/settings#model" },
         ...(hk.failingWebhooks != null
           ? [{ label: hk.failingWebhooks === 1 ? "failing webhook" : "failing webhooks", count: hk.failingWebhooks, to: "/settings#webhooks", alarm: true }]
           : []),
@@ -152,6 +152,9 @@ export function DashboardView() {
     : [];
   const attention = housekeepingItems.filter((i) => i.count > 0);
   const altGaps = d?.imagesMissingAlt ?? [];
+  const unusedBlockRows = d?.unusedBlocksList ?? [];
+  const emptyTypeRows = d?.emptyTypesList ?? [];
+  const tidy = attention.length === 0 && altGaps.length === 0 && (hk?.unusedBlocks ?? 0) === 0 && (hk?.emptyTypes ?? 0) === 0;
 
   const skeleton = (n: number) => [...Array(n)].map((_, i) => <div key={i} className="h-12 animate-pulse border-b border-line bg-line/30 last:border-0" />);
 
@@ -249,8 +252,60 @@ export function DashboardView() {
           {/* Tidy-up signals: trash, orphans, alt-text gaps, dead webhooks. */}
           <DashSection title="Housekeeping">
             {dash.isLoading && skeleton(2)}
-            {d && attention.length === 0 && altGaps.length === 0 && <EmptyRow>All tidy — nothing needs attention.</EmptyRow>}
+            {d && tidy && <EmptyRow>All tidy — nothing needs attention.</EmptyRow>}
             {hk && altGaps.length > 0 && <AltTextGaps images={altGaps} total={hk.missingAlt} />}
+            {/* The unused blocks themselves: open one to place it on a page or trash it. */}
+            {hk && hk.unusedBlocks > 0 && (
+              <div className="border-b border-line last:border-0">
+                <div className="flex items-center gap-3 bg-canvas/50 px-4 py-2 text-sm">
+                  <span className="tnum text-base font-semibold text-fg">{hk.unusedBlocks}</span>
+                  <span className="min-w-0 flex-1 truncate text-fg">{hk.unusedBlocks === 1 ? "unused shared block" : "unused shared blocks"}</span>
+                  <span className="text-xs text-muted">not placed on any page</span>
+                </div>
+                {unusedBlockRows.map((b) => (
+                  <button
+                    key={b.documentId}
+                    onClick={() => navigate(`/edit/${b.documentId}`)}
+                    className="flex w-full items-center gap-3 px-4 py-2 pl-9 text-left text-sm transition-colors hover:bg-canvas"
+                  >
+                    <Icon.Block width={14} height={14} className="shrink-0 text-muted" />
+                    <span className="min-w-0 flex-1 truncate text-fg">{b.name}</span>
+                    <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{b.type}</code>
+                    <span className="text-xs text-accent">Review →</span>
+                  </button>
+                ))}
+                {hk.unusedBlocks > unusedBlockRows.length && (
+                  <p className="px-4 py-1.5 pl-9 text-xs text-muted">+ {hk.unusedBlocks - unusedBlockRows.length} more</p>
+                )}
+              </div>
+            )}
+            {/* The empty types themselves: open one in the model editor, where an
+                unused type can be deleted (or keep it and create its first content). */}
+            {hk && hk.emptyTypes > 0 && (
+              <div className="border-b border-line last:border-0">
+                <div className="flex items-center gap-3 bg-canvas/50 px-4 py-2 text-sm">
+                  <span className="tnum text-base font-semibold text-fg">{hk.emptyTypes}</span>
+                  <span className="min-w-0 flex-1 truncate text-fg">{hk.emptyTypes === 1 ? "content type without content" : "content types without content"}</span>
+                  <span className="text-xs text-muted">create its first content, or delete it</span>
+                </div>
+                {emptyTypeRows.map((t) => (
+                  <button
+                    key={t.name}
+                    onClick={() => navigate(`/settings#model:${t.name}`)}
+                    className="flex w-full items-center gap-3 px-4 py-2 pl-9 text-left text-sm transition-colors hover:bg-canvas"
+                  >
+                    {t.kind === "block" ? <Icon.Block width={14} height={14} className="shrink-0 text-muted" /> : <Icon.File width={14} height={14} className="shrink-0 text-muted" />}
+                    <span className="min-w-0 flex-1 truncate text-fg">{t.displayName}</span>
+                    <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{t.name}</code>
+                    <span className="rounded bg-canvas px-1.5 py-0.5 text-[11px] text-muted">{t.kind}</span>
+                    <span className="text-xs text-accent">Open in model →</span>
+                  </button>
+                ))}
+                {hk.emptyTypes > emptyTypeRows.length && (
+                  <p className="px-4 py-1.5 pl-9 text-xs text-muted">+ {hk.emptyTypes - emptyTypeRows.length} more</p>
+                )}
+              </div>
+            )}
             {attention.map((item) => (
               <button
                 key={item.label}
@@ -299,8 +354,11 @@ export function SettingsView() {
   ];
   const tabs = allTabs.filter((t) => t.show);
 
-  // Deep-link a tab via the URL hash (e.g. /settings#site from the site switcher).
-  const hashTab = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
+  // Deep-link a tab via the URL hash (e.g. /settings#site from the site
+  // switcher). A suffix after ":" addresses something INSIDE the tab — e.g.
+  // #model:BlogPost from the dashboard opens that type's editor (the panel
+  // itself consumes the suffix).
+  const hashTab = typeof window !== "undefined" ? window.location.hash.slice(1).split(":")[0]! : "";
   const [active, setActive] = useState(tabs.some((t) => t.key === hashTab) ? hashTab : (tabs[0]?.key ?? "model"));
   const current = tabs.find((t) => t.key === active) ?? tabs[0];
   const groups: SettingsTab["group"][] = ["Content", "Administration", "Account"];

@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import type { ContentTypeDef, RoleName } from "@paperboy/shared";
 import { ACTIVE_SITE_KEY, api, type ManagedUser, type SiteRow } from "../../lib/api.js";
@@ -134,6 +134,18 @@ export function ContentTypesPanel() {
   const [kind, setKind] = useState<KindFilter>("all");
 
   const all = types.data ?? [];
+  // Deep link from the dashboard ("content types without content"):
+  // #model:TypeName opens that type's editor once the list has loaded. The
+  // hash is consumed so closing the editor doesn't re-open it. Manage-gated:
+  // others land on the list itself.
+  useEffect(() => {
+    const m = /^#model:(.+)$/.exec(window.location.hash);
+    if (!m || !types.data || !canManage) return;
+    const t = types.data.find((x) => x.name === decodeURIComponent(m[1]!));
+    history.replaceState(null, "", `${window.location.pathname}#model`);
+    if (t) setEditor({ mode: "edit", initial: t });
+  }, [types.data, canManage]);
+
   const counts: Record<KindFilter, number> = {
     all: all.length,
     page: all.filter((t) => t.kind === "page").length,
