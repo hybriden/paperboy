@@ -11,8 +11,9 @@ Guidance for Claude / contributors. Read this before changing or deploying anyth
 - `apps/mcp` — stdio MCP server. Imports `@paperboy/db` and calls the **same functions** the API does, so it inherits RBAC + Zod + the no-leak chokepoint + audit.
 - `packages/shared` — Zod schemas + types (single source of truth) + the AI provider.
 - `packages/db` — Drizzle schema, forward-only SQL migrations, the query layer (all object-level authz lives here, deny-by-default), seed.
-- `packages/client` — the typed Delivery API client SDK (`createClient`, lists/search/media variants, optional ETag cache). End-to-end tested in `apps/api/test/client-sdk.test.ts` against a live server.
-- `evals/` — model-driven MCP usability eval (weekly workflow; needs `ANTHROPIC_API_KEY` secret). `ops/` — reference copies of the production backup/monitor scripts.
+- `packages/client` — `@paperboycms/client` (published to npm): the typed Delivery API client SDK (`createClient`, lists/search/media variants, schema-driven render helpers, optional ETag cache). End-to-end tested in `apps/api/test/client-sdk.test.ts` against a live server.
+- `packages/preview` — `@paperboycms/preview` (published to npm): the framework-agnostic on-page-editing bridge for the preview iframe, zero runtime dependencies. Single source of truth for the admin↔frontend postMessage protocol (`paperboy:edit/drop/rect/patch/focus`) and the `data-pb-*` DOM contract; the admin and `apps/web` both import it — never re-declare message shapes elsewhere.
+- `evals/` — model-driven MCP usability eval. Every push/PR runs it with the deterministic `--mock` driver (real MCP tool calls, no paid API — failures are real agent-surface regressions, not model flake); the weekly schedule/manual dispatch runs a real model (needs `ANTHROPIC_API_KEY` secret). `ops/` — reference copies of the production backup/monitor scripts.
 
 ## ⚠️ Deploy safety (most important rule)
 The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds — **wiping all data and regenerating IDs** — but the CLI is GUARDED: on a database that already holds content it skips the wipe (and still applies migrations) unless `FORCE_SEED=1`. The guard exists because a plain `docker compose up <svc>` pulling in `init` caused real data loss; treat it as a seatbelt, not an invitation.
@@ -38,8 +39,20 @@ The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds
 
 ## Content model
 - Content types are **data** (`content_type` table), not hardcoded. Kinds: `page` / `block` / `global`.
-- Content areas hold ordered block instances — inline (page-local) or shared (reference). Fields: text, markdown, richtext (TipTap JSON), boolean, number, datetime, select, link, image, reference, contentArea.
+- Content areas hold ordered block instances — inline (page-local) or shared (reference). Fields: text, markdown, richtext (TipTap JSON), boolean, number, datetime, select, link, image, reference, contentArea (+ legacy media). Image/media values are asset documentIds — URLs and paths are rejected at write.
 - Delivery is a **single read chokepoint** with a `perspective` (published | preview). Public key → published only; preview key → drafts. Private fields never reach delivery output. Don't add read paths that bypass it.
+- Delivery items and inline blocks expose **`fieldTypes`** (the declared type per *public* field) so frontends switch on schema instead of value-sniffing — an empty richtext field stays richtext. Part of the frozen delivery contract.
+- **SEO contract**: fields can declare a `seoRole` (title/description/image/datePublished/…) and/or a `schemaProp` (dot-path schema.org property, e.g. `offers.price`); the content type carries a `schemaType`. Delivery computes a normalized `seo` block (meta/canonical/robots/OG/Twitter + per-`@type`-correct JSON-LD + breadcrumbs) on every PAGE item — **post-sanitize**, so a private role-tagged field can never leak; preview is always `noindex`. The per-`@type` catalog and `SEO_CONVENTION` live in packages/shared so the type-editor checklist and delivery can't drift. Pinned by `delivery-seo-contract.test.ts`.
+
+## AI (the copy desk)
+- One provider in `packages/shared`; key/model + the agentReview gate are instance-global (Settings → AI). Surfaces: the admin copy desk (improve/rewrite/draft-about-a-topic/variants), translate (incl. richtext), vision alt text (`POST /ai/alt-text` sends the actual image bytes, site-partitioned), schema.org field suggestions, MCP `ai_assist`.
+- **No key → model-requiring tasks REFUSE** with a self-teaching `AiUnavailableError` — never echo the input dressed up as a result (rule #1 below; the old improve fallback did exactly that). Only meta_title/meta_description/summarize keep truncation fallbacks, labeled `basic`. The admin disables model-requiring entry points with an honest hint when no key is set.
+
+## Published npm packages
+`@paperboycms/client` and `@paperboycms/preview` ship to npm (independently versioned).
+- **Publish with `pnpm publish` from the package dir** — `publishConfig` rewrites the dev `src/` entry points to `dist/` at publish time; a raw `npm publish` would ship TypeScript sources (this bit once: preview 0.1.1 exists because of it).
+- Bump the package version in the same change that alters its public surface, and keep its README in sync — external consumers read npm, not this repo.
+- Protocol/contract changes must stay consumable by already-deployed frontends: the client's surface is pinned by `client-sdk.test.ts`; the preview protocol is consumed by the admin AND arbitrary external frontends, so additions yes, breaking renames no (or version deliberately on both sides).
 
 ## Multisite
 Multiple sites/brands live in one instance, partitioned by `content_item.site_id` (migration `0012_sites.sql`; all pre-multisite data was backfilled losslessly into the fixed `'site_default'` site, which is also the column DEFAULT so single-site write paths keep working). Decisions: **D1** per-site delivery keys (`delivery_key.site_id`; `verifyDeliveryKey` → `{type, siteId}`); **D2** media is per-site (`asset.site_id`) while **content types, locales and users are SHARED**; **D3** one lossless Default site.
@@ -48,7 +61,7 @@ Multiple sites/brands live in one instance, partitioned by `content_item.site_id
 - **Active site** (management) comes from the `x-paperboy-site` request header (the admin site switcher); unknown/absent → Default. Slug uniqueness is per-site, so two sites can each own a root `/about`. `createContent` children inherit the parent's site; roots take the active site.
 - **Per-site setup** (migration `0013`): the **preview URL** and **start page** live on the `site` entity (not the global `site_setting` table), and **delivery keys are minted/listed/renamed/revoked per active site**. Settings → Site edits the active site + lists/creates sites. AI key/model + agentReview stay instance-global. `deliveryStartPage` serves the requesting site's own start page.
 - **Known gaps (NOT yet closed — flag before relying on them):** (1) **roles are still global** — an Admin/Editor is one in every site; per-site role membership + a cross-site super-admin is deferred (Phase 5). Section *scopes* are already per-site. (2) **cross-site references aren't blocked at write** — an editor can set a reference/contentArea ref to another site's documentId; it's harmless at delivery (resolves to null, never leaks) but is a write-time integrity gap.
-- **Deploy:** `0012` is additive/idempotent and runs on api boot like any migration — no reseed. Status: on branch `feat/multisite`, fully tested, **not yet merged/deployed** (it touches the live delivery path).
+- **Deploy:** `0012`/`0013` are additive/idempotent and run on api boot like any migration — no reseed. Status: **merged to main** (PR #2, plus per-site setup/UX in PRs #3–#8); the known gaps above are still open.
 
 ## Agent-API design rules (MCP & write endpoints — learned from real failures)
 Every rule below traces to a real agent run that broke. Do not regress them.

@@ -17,14 +17,18 @@ on-page editing, a Next.js reference frontend, and a stdio MCP server — on Pos
 ## Highlights
 - **Data-driven content types** — pages, blocks, and globals defined as data, not code.
 - **Content areas** with inline + shared blocks and per-field "allowed types".
-- **No-leak Delivery API** — one read chokepoint with a `perspective`; public keys see only published content, private fields never serialize, preview keys see drafts. Lists support **pagination, sorting and field filters** (`?limit=&offset=&sort=-data.publishDate&data.author=Jane`), plus **full-text search** (`/delivery/search?q=`).
+- **Multisite** — several sites/brands in one instance: per-site delivery keys, media library, preview URL and start page, with a site switcher in the admin and full site management (create wizard, rename, start-page picker, delete with cascade + type-the-name confirm) under Settings → Sites. Content types, locales and users stay shared. The partition is enforced deny-by-default in the same chokepoints as everything else.
+- **No-leak Delivery API** — one read chokepoint with a `perspective`; public keys see only published content, private fields never serialize, preview keys see drafts. Lists support **pagination, sorting and field filters** (`?limit=&offset=&sort=-data.publishDate&data.author=Jane`), plus **full-text search** (`/delivery/search?q=`). Every item and inline block also ships **`fieldTypes`** — the declared type per public field — so frontends switch on schema instead of sniffing value shapes.
+- **SEO & schema.org built in** — every page delivers a server-computed `seo` block (title/description/canonical/robots/OpenGraph/Twitter) plus per-`@type`-correct **JSON-LD** with a breadcrumb trail, driven by field-level SEO roles and a schema.org type on the content type. The type editor shows a Google rich-result coverage checklist with one-click "add missing fields"; preview is always `noindex`.
 - **Image transforms** — `?w=800&format=webp&q=75` on any media URL; variants generated once with sharp and cached on disk (widths/qualities snap to fixed steps).
-- **Visual on-page editing** — click an element in the live preview to focus its field in the editor, and focus a field to highlight it in the preview (both ways).
-- **Multi-language** (document-level i18n + fallback chain), **hierarchical URLs** from the page tree, **version history** + restore, **trash**/restore, **duplicate**.
+- **Visual on-page editing** — click an element in the live preview to focus its field in the editor, focus a field to highlight it in the preview, and drag shared blocks from the assets pane straight onto the page — even into a **cross-origin** preview iframe. The bridge ships as the framework-agnostic [`@paperboycms/preview`](packages/preview) npm package (see below).
+- **Multi-language** (document-level i18n + fallback chain) — untranslated content is flagged in the live content tree, single language variants can be deleted, and translation gaps are actionable from the dashboard. Plus **hierarchical URLs** from the page tree, **version history** + restore, **trash**/restore, **duplicate**.
 - **Secure by default** — Argon2id + opaque server-side sessions + CSRF, **passwordless TOTP 2FA**, deny-by-default **RBAC** with object-level scope checks, append-only **audit log**.
-- **Typed client SDK** — `@paperboycms/client`: `createClient({ baseUrl, key })`, then typed `getBySlug`/`list`/`search` + media-variant helpers and an optional ETag cache. No codegen — types come from the shared Zod schemas.
+- **Typed client SDK** — [`@paperboycms/client`](packages/client) on npm: `createClient({ baseUrl, key })`, then typed `getBySlug`/`list`/`search`, media-variant helpers, framework-agnostic render helpers and an optional ETag cache. No codegen — types come from the shared Zod schemas.
 - **Agent provenance & review** — every version records whether a human or an agent wrote it (🤖 badges), agent drafts carry a one-click-approve review flag, and an opt-in gate keeps agents from publishing unreviewed work.
-- **Integrations** — HMAC **publish webhooks**, media uploads, SEO/OpenGraph metadata, an optional **AI editorial assistant**, and a full **MCP server** (drive the CMS from an AI client, with revocable tokens).
+- **AI copy desk** (optional) — improve/rewrite/summarize, draft prose about a selected topic, richtext-aware translation, **vision-based alt text** generated from the actual image bytes, and schema.org field suggestions. With no API key configured it refuses honestly with a clear error instead of faking output.
+- **Dashboard as a worklist** — translation gaps, images missing alt text, unused blocks and empty types are named and deep-linked so they're fixable in place, not dead counts.
+- **Integrations** — HMAC **publish webhooks**, media uploads with **folders**, and a full **MCP server** (drive the CMS from an AI client, with revocable tokens).
 - **Great admin** — React 19 + Vite, light/dark themes, ⌘K command palette, accessible (axe-clean), keyboard-operable drag-drop.
 
 ## Layout
@@ -33,13 +37,85 @@ apps/api      Fastify v5 — Management API (auth/RBAC) + Delivery API (read-onl
 apps/admin    React 19 + Vite — the editor (tree, content areas, live preview, on-page editing)
 apps/web      Next.js 15 — reference headless frontend with Draft Mode preview
 apps/mcp      stdio MCP server — operate the whole CMS over the Model Context Protocol
-packages/shared  Zod schemas + shared types (single source of truth)
+packages/shared  Zod schemas + shared types (single source of truth) + the AI provider
 packages/db      Drizzle schema, migrations, query layer (object-level authz), seed
-packages/client  @paperboycms/client — the typed Delivery API SDK (see its README)
+packages/client  @paperboycms/client — the typed Delivery API SDK (published to npm)
+packages/preview @paperboycms/preview — the on-page-editing bridge (published to npm)
 ```
 Any frontend (Next, Astro, SvelteKit, …) can be a Paperboy client — either with
 `@paperboycms/client` (typed, ETag-aware) or by reading the Delivery API over plain HTTP;
 it doesn't import the CMS, only the contract.
+
+## The npm packages
+
+Two packages are published to npm so external frontends integrate against a contract,
+not against the CMS codebase. Both are versioned independently of the CMS itself.
+
+### [`@paperboycms/client`](packages/client) — typed Delivery API SDK
+
+```bash
+npm install @paperboycms/client
+```
+
+Thin and dependency-free, end-to-end typed from the same Zod schemas the server
+serializes with — no codegen step:
+
+```ts
+import { createClient, mediaUrl, mediaSrcset } from "@paperboycms/client";
+
+const cms = createClient({
+  baseUrl: "https://cms.example.com",
+  key: process.env.PAPERBOY_PUBLIC_KEY!, // pk_… = published only; prv_… = drafts (server-side!)
+});
+
+type BlogPost = { title: string; body: unknown; publishDate?: string };
+const post = await cms.getBySlug<BlogPost>("hello-world", { locale: "en", populate: 2 });
+const { items, total } = await cms.list<BlogPost>("BlogPost", { sort: "-data.publishDate", limit: 10 });
+const hits = await cms.search("local ai", { type: "BlogPost" });
+await cms.getByPath("/blog/hello-world");   // hierarchical URLs
+await cms.startPage();                       // the requesting site's start page
+await cms.global("SiteSettings");
+
+const img = post!.data.image as unknown as string;
+const src = mediaUrl(img, { w: 640, format: "webp" });   // server-side image variants
+const srcset = mediaSrcset(img);                         // 320/640/1024/1600w webp
+```
+
+It also ships **render helpers** that read the delivered `fieldTypes` schema instead of
+value-sniffing — `renderRichText`, `renderKind`, `contentAreas`, `blockData`,
+`pbAreaAttrs` — so a frontend renders richtext/markdown/text correctly even when a field
+is empty, and emits the right `data-pb-*` attributes for the preview bridge. 404s return
+`null`; other errors throw a typed `PaperboyError`; `etagCache: true` gives free
+conditional-GET caching. Full docs in [its README](packages/client/README.md). The SDK is
+end-to-end tested against a live server in `apps/api/test/client-sdk.test.ts`.
+
+### [`@paperboycms/preview`](packages/preview) — on-page-editing bridge
+
+```bash
+npm install @paperboycms/preview
+```
+
+The browser-side bridge that makes any frontend visually editable inside the admin's
+preview iframe. **Framework-agnostic, zero runtime dependencies**, and the single source
+of truth for the postMessage protocol between admin and frontend (click-to-edit,
+drag-drop of shared blocks, live patching, focus highlighting — also across origins):
+
+```ts
+import { initPreviewBridge } from "@paperboycms/preview";
+if (inPreviewMode) initPreviewBridge();
+```
+
+```html
+<h1 data-pb-field="heading">…</h1>
+<div data-pb-area="contentarea">
+  <section data-pb-block-index="0" data-pb-block-type="CardBlock">…</section>
+</div>
+```
+
+Mark editable DOM with `data-pb-*` attributes (or let the client SDK's `pbAreaAttrs`
+emit them) and the admin lights up: clicks focus the right field, dropped blocks land in
+the right area, edits patch live. Protocol and details in
+[its README](packages/preview/README.md). `apps/web` is the reference consumer.
 
 ## Quickstart (Docker)
 ```bash
@@ -107,6 +183,9 @@ pnpm dev                        # api :8091, admin :8090, web :8092
 pnpm --filter @paperboy/api test            # integration tests (real Postgres)
 pnpm --filter @paperboy/admin test:e2e      # Playwright e2e + axe accessibility
 ```
+CI also runs the **MCP usability eval** (`evals/`) on every push with a deterministic
+`--mock` driver (real MCP tool calls, no paid API) and weekly with a real model — so
+regressions in the agent surface are caught for free before an agent hits them.
 
 ## MCP
 ```bash
@@ -137,6 +216,8 @@ The full rules (with the war stories behind them) live in [`CLAUDE.md`](./CLAUDE
 ## Docs
 - **`CLAUDE.md`** — how to develop & deploy safely (and how AI agents should work in the repo).
 - **`STACK.md`** — the stack and the reasoning behind each choice.
+- **`docs/POSITIONING.md`** — what Paperboy is for and who it's for.
+- **[`packages/client/README.md`](packages/client/README.md)** / **[`packages/preview/README.md`](packages/preview/README.md)** — the npm packages, in depth.
 
 ## License
 [MIT](./LICENSE) — do what you like. *Don't Pay eXtra.* 📰
