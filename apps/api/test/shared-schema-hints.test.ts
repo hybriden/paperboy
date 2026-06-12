@@ -261,6 +261,18 @@ describe("dataSchemaFor: representative valid/invalid per field type", () => {
     expect(single(f("media"), "asset_1")).toBe(true);
   });
 
+  it("image / media reject a URL or file path — an asset reference is a documentId, not an address", () => {
+    // Harmonix 2026-06-12: a flow hotlinked a raw Unsplash URL into an image
+    // field; it persisted with a success response and the site rendered no
+    // image. URLs/paths must be refused at write — in DRAFT mode too, because
+    // the incident write was a draft save — so the agent imports the picture
+    // and sends the asset documentId instead.
+    expect(single(f("image"), "https://images.unsplash.com/photo-1608742213509?fm=jpg&w=1080")).toBe(false);
+    expect(single(f("image"), "/profile.jpg", false)).toBe(false);
+    expect(single(f("media"), "https://example.com/a.png", false)).toBe(false);
+    expect(single(f("image"), "0j4U5aAj9WqmLUFW4I_iGaxN")).toBe(true); // a real documentId stays valid
+  });
+
   it("reference accepts {documentId}, accepts {documentId,type}, rejects a bare string", () => {
     expect(single(f("reference"), { documentId: "p1" })).toBe(true);
     expect(single(f("reference"), { documentId: "p1", type: "ArticlePage" })).toBe(true);
