@@ -130,6 +130,40 @@ describe("MCP parity: real stdio server vs the API", () => {
     expect(bad.text).toContain("publishDate"); // the agent can self-correct in one step
   }, 60_000);
 
+  it("update_content REFUSES a raw URL in an image field, steering to import_stock_image (Harmonix 2026-06-12)", async () => {
+    // Real incident: a flow wrote image:"https://images.unsplash.com/…" — it
+    // persisted with a success response and the site rendered no image. The
+    // error must name the field AND the tools that produce a real asset
+    // documentId, so the agent self-corrects in one step (rules #1 and #2).
+    const created = await mcp.call("create_content", { type: "BlogPost", parentId: s.ids.blogId, name: "Hotlink Refused" });
+    const id = (created.json as { documentId: string }).documentId;
+    const bad = await mcp.call("update_content", {
+      documentId: id,
+      data: { ogImage: "https://images.unsplash.com/photo-1608742213509-815b97c30b36?fm=jpg&w=1080" },
+    });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toContain("ogImage");
+    expect(bad.text).toContain("import_stock_image");
+  }, 60_000);
+
+  it("create_content with an empty-string image persists null, not an empty pseudo-id (Harmonix 2026-06-12)", async () => {
+    // Real incident, other half: a template-resolution failure sent image:""
+    // inside create_content's data — it persisted as "" with a success
+    // response. "" carries no reference; it must land as null ("no image").
+    const created = await mcp.call("create_content", {
+      type: "BlogPost",
+      parentId: s.ids.blogId,
+      name: "Empty Image Cleared",
+      data: { title: "Empty Image Cleared", ogImage: "" },
+    });
+    expect(created.isError).toBe(false);
+    const doc = created.json as { documentId: string };
+    const viaApi = (
+      await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${doc.documentId}?locale=en`, headers: { cookie: admin.cookie } })
+    ).json();
+    expect(viaApi.data.ogImage).toBeNull();
+  }, 60_000);
+
   it("every MCP write leaves an audit trail with ip='mcp'", async () => {
     const audit = await s.app.inject({ method: "GET", url: "/api/v1/manage/audit?action=content.create", headers: authHeaders(admin) });
     const rows = audit.json() as Array<{ ip: string | null; action: string }>;

@@ -236,6 +236,18 @@ export const RichTextDoc = z
 export type RichTextDoc = z.infer<typeof RichTextDoc>;
 
 /**
+ * What an image/media field VALUE must look like: a nanoid-style asset
+ * documentId (letters/digits/_/- only). Anything with a '/', ':' or '.' —
+ * URLs, file paths, data URIs — is an address, not an asset reference, and
+ * delivery would resolve it to nothing.
+ */
+const ASSET_DOCUMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
+const ASSET_DOCUMENT_ID_MESSAGE =
+  "must reference the media library by asset documentId, not a URL or file path. " +
+  "Get one first: upload the file, or import a stock photo (MCP: search_stock_images → import_stock_image; " +
+  "admin: the image field's Choose button), then send the documentId it returns";
+
+/**
  * Build a Zod object schema for a content type's `data` payload from its field
  * defs. `strict` = enforce required fields (used at publish time); when false,
  * required fields may be missing (draft save).
@@ -279,10 +291,13 @@ export function dataSchemaFor(type: ContentTypeDef, strict: boolean): z.ZodTypeA
         s = LinkValue;
         break;
       case "image":
-        s = z.string(); // image asset documentId (resolved to {url,alt} in delivery)
-        break;
       case "media":
-        s = z.string(); // asset documentId
+        // An asset reference is a documentId into the media library — never a
+        // URL or file path. A hotlinked URL used to persist with a success
+        // response and deliver nothing (Harmonix 2026-06-12); reject it with
+        // the fix spelled out instead (rules #1/#2). Applies in draft mode too:
+        // the incident write was a draft save.
+        s = z.string().regex(ASSET_DOCUMENT_ID, ASSET_DOCUMENT_ID_MESSAGE);
         break;
       case "reference":
         s = ReferenceValue;
@@ -842,7 +857,11 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
       // into a write — the write format is the asset documentId string.
       const id =
         unwrapped && typeof unwrapped === "object" ? (unwrapped as { documentId?: unknown }).documentId : undefined;
-      return typeof id === "string" && id ? id : unwrapped;
+      const v = typeof id === "string" && id ? id : unwrapped;
+      // "" is the cleared-input / failed-template artifact, never a reference —
+      // normalize to null ("no image") instead of persisting an empty pseudo-id
+      // with a success response (Harmonix 2026-06-12).
+      return v === "" ? null : v;
     }
     default:
       return value;

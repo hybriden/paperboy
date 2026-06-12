@@ -262,6 +262,15 @@ describe("coerceFieldValue: image / media field shapes", () => {
     // locale unwrap → the image branch returns the original object unchanged.
     expect(coerceFieldValue(f("image"), { documentId: "", url: "/u.png" })).toEqual({ documentId: "", url: "/u.png" });
   });
+
+  it("normalizes an empty string to null for image / media (a cleared value, never an empty pseudo-id)", () => {
+    // Harmonix 2026-06-12: a template-resolution failure sent image:"" through
+    // create_content and it persisted as an empty pseudo-id with a success
+    // response. "" carries no reference — normalize to null ("no image"), which
+    // is also what the admin's legacy media text input emits when emptied.
+    expect(coerceFieldValue(f("image"), "")).toBeNull();
+    expect(coerceFieldValue(f("media"), "")).toBeNull();
+  });
 });
 
 describe("coerceFieldValue: reference field shapes", () => {

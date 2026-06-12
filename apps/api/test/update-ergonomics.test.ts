@@ -96,6 +96,47 @@ describe("update_content ergonomics: helpful errors + merge mode", () => {
     expect(got.data.mainArea[0].blockType).toBe("HeroBlock");
   });
 
+  it("a raw URL in an image field is REJECTED with an error naming the field and the import path", async () => {
+    // Harmonix 2026-06-12: an automation hotlinked a raw Unsplash URL into an
+    // image field. It persisted with a success response and delivered no image
+    // (garbage-in-success-out, rule #1). The write must fail and the error must
+    // teach the fix: import the picture, then send the asset documentId.
+    const res = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${pageId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: { merge: true, data: { ogImage: "https://images.unsplash.com/photo-1608742213509?fm=jpg&w=1080" } },
+    });
+    expect(res.statusCode).toBe(422);
+    const msg = res.json().message as string;
+    expect(msg).toContain("ogImage");
+    expect(msg).toContain("not a URL");
+    expect(msg).toContain("import_stock_image"); // names the fix, not just the failure
+    expect(msg).toContain("'ogImage' is a image field"); // format hint appended as usual
+  });
+
+  it("an empty-string image value is stored as null (cleared), never as an empty pseudo-id", async () => {
+    // Same incident, other half: a template-resolution failure sent image:"".
+    // "" carries no reference — it must land as null ("no image"), not as a
+    // persisted empty string masquerading as a documentId.
+    const set = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${pageId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: { merge: true, data: { ogImage: "0j4U5aAj9WqmLUFW4I_iGaxN" } },
+    });
+    expect(set.statusCode).toBe(200);
+    const clear = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${pageId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: { merge: true, data: { ogImage: "" } },
+    });
+    expect(clear.statusCode).toBe(200);
+    const got = (await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${pageId}?locale=en`, headers: authHeaders(ed) })).json();
+    expect(got.data.ogImage).toBeNull();
+  });
+
   it("strips empty text nodes from richtext (ProseMirror rejects them → blank editor)", async () => {
     // Regression: an AI/MCP write stored {type:"text", text:""} inside a doc;
     // TipTap then refused the WHOLE document and the admin editor rendered empty.
