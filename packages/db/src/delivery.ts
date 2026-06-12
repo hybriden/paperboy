@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, withSeoGroup } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, type FieldDef, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, isCreativeWorkType, withSeoGroup } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import type { Database } from "./client.js";
 import { asset, contentItem, contentType, contentVersion, locale, site } from "./schema.js";
@@ -443,20 +443,10 @@ function roleValue(def: ContentTypeDef, role: string, data: Record<string, unkno
   return f ? data[f.name] : undefined;
 }
 
-/**
- * Conventional field names per SEO role — the safety net when a type hasn't
- * tagged a field with an explicit seoRole. Keeps EVERY type's SEO useful
- * (present + future, prod types edited before roles existed) without manual
- * tagging. Explicit seoRole / metaTitle / ogImage always win over this.
- */
-const SEO_CONVENTION: Record<string, string[]> = {
-  title: ["title", "heading", "headline", "name"],
-  description: ["summary", "excerpt", "description", "lead", "subtitle", "intro"],
-  image: ["image", "heroimage", "leadimage", "coverimage", "featuredimage", "thumbnail"],
-  datePublished: ["publishdate", "publisheddate", "publishedat", "datepublished", "date"],
-  author: ["author", "byline", "writtenby"],
-  keywords: ["tags", "keywords", "topics"],
-};
+// SEO_CONVENTION (the conventional-name safety net when a type hasn't tagged a
+// field with an explicit seoRole) lives in @paperboy/shared, shared with the
+// type editor's coverage check so the two can't drift. Explicit seoRole /
+// metaTitle / ogImage always win over it.
 /** First conventionally-named field whose sanitized value passes `usable`. */
 function conventionValue(
   def: ContentTypeDef,
@@ -484,6 +474,50 @@ function roleOrConvention(
 function asText(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
 }
+/**
+ * A schemaProp field's value as a JSON-LD scalar: strings/numbers/booleans
+ * pass; a sanitized image ({url,…}) or link ({href,…}) collapses to its URL;
+ * structural values (richtext docs, content areas, references) have no sane
+ * scalar form and are skipped.
+ */
+function schemaPropValue(v: unknown): string | number | boolean | undefined {
+  if (typeof v === "string") return v.trim() ? v : undefined;
+  if (typeof v === "number" || typeof v === "boolean") return v;
+  if (v && typeof v === "object") {
+    const o = v as { url?: unknown; href?: unknown };
+    if (typeof o.url === "string" && o.url) return o.url;
+    if (typeof o.href === "string" && o.href) return o.href;
+  }
+  return undefined;
+}
+
+/**
+ * Fold `schemaProp`-tagged fields into the jsonLd. "a.b" builds a nested
+ * object (siblings accumulate, e.g. offers.price + offers.priceCurrency), and
+ * known wrapper props get their @type injected — a flat string on a wrapper
+ * prop is lifted to {"@type": X, name: value}. Only ever called with the
+ * sanitized public data, so private fields are simply absent here.
+ */
+function applySchemaProps(def: ContentTypeDef, data: Record<string, unknown>, jsonLd: Record<string, unknown>): void {
+  for (const f of def.fields as FieldDef[]) {
+    if (!f.schemaProp) continue;
+    const value = schemaPropValue(data[f.name]);
+    if (value === undefined) continue;
+    const [head, leaf] = f.schemaProp.split(".") as [string, string?];
+    const wrapperType = SCHEMA_WRAPPER_TYPES[head];
+    if (leaf) {
+      const existing = jsonLd[head];
+      const obj: Record<string, unknown> =
+        existing && typeof existing === "object" && !Array.isArray(existing) ? (existing as Record<string, unknown>) : {};
+      if (wrapperType && !obj["@type"]) obj["@type"] = wrapperType;
+      obj[leaf] = value;
+      jsonLd[head] = obj;
+    } else {
+      jsonLd[head] = wrapperType && typeof value === "string" ? { "@type": wrapperType, name: value } : value;
+    }
+  }
+}
+
 /** An image field is sanitized to {url, alt, …}; normalize to {url, alt}. */
 function asImage(v: unknown): { url: string; alt: string } | null {
   if (v && typeof v === "object" && typeof (v as { url?: unknown }).url === "string") {
@@ -540,15 +574,29 @@ async function computeSeo(
   const jsonLd: Record<string, unknown> = {
     "@context": "https://schema.org",
     "@type": schemaType,
-    headline: title,
-    inLanguage: loc,
   };
-  if (description) jsonLd.description = description;
-  if (image) jsonLd.image = image.url;
-  if (datePublished) jsonLd.datePublished = datePublished;
-  if (dateModified) jsonLd.dateModified = dateModified;
-  if (author) jsonLd.author = { "@type": "Person", name: author };
-  if (keywords) jsonLd.keywords = keywords;
+  if (isCreativeWorkType(schemaType)) {
+    jsonLd.headline = title;
+    jsonLd.inLanguage = loc;
+    if (description) jsonLd.description = description;
+    if (image) jsonLd.image = image.url;
+    if (datePublished) jsonLd.datePublished = datePublished;
+    if (dateModified) jsonLd.dateModified = dateModified;
+    if (author) jsonLd.author = { "@type": "Person", name: author };
+    if (keywords) jsonLd.keywords = keywords;
+  } else {
+    // Product/Event/custom @types are not CreativeWorks: headline, author,
+    // keywords and datePublished are invalid there. Emit the Thing subset —
+    // the only properties valid on EVERY schema.org type — and let explicit
+    // schemaProp mappings carry the @type-specific rest.
+    jsonLd.name = title;
+    if (description) jsonLd.description = description;
+    if (image) jsonLd.image = image.url;
+  }
+  // Explicit field → schema.org property mappings, applied LAST so an explicit
+  // mapping wins over a derived prop. Reads the sanitized PUBLIC data only —
+  // a private field's schemaProp can never leak.
+  applySchemaProps(def, data, jsonLd);
 
   return {
     title,

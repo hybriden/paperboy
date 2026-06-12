@@ -452,4 +452,4 @@ export interface AgentEvent {
   created?: Array<{ documentId: string; name: string; type: string }>;
 }
 
-export type AiTask = "meta_title" | "meta_description" | "summarize" | "improve" | "alt_text" | "translate" | "rewrite" | "variants" | "write";
+export type AiTask = "meta_title" | "meta_description" | "summarize" | "improve" | "alt_text" | "translate" | "rewrite" | "variants" | "write" | "schema_fields";

@@ -1,3 +1,5 @@
+import { AiSchemaFieldSuggestions } from "./schema-catalog.js";
+
 /**
  * AI editorial assistant. Real editorial use-cases the editor needs help with:
  * SEO title/description generation, summarising, copy improvement, image alt
@@ -11,11 +13,11 @@
  * translate call with no key returned the untranslated source as success).
  */
 
-export const AI_TASKS = ["meta_title", "meta_description", "summarize", "improve", "alt_text", "translate", "rewrite", "variants", "write"] as const;
+export const AI_TASKS = ["meta_title", "meta_description", "summarize", "improve", "alt_text", "translate", "rewrite", "variants", "write", "schema_fields"] as const;
 export type AiTask = (typeof AI_TASKS)[number];
 
 /** Tasks with no honest offline approximation — a model is required. */
-const REQUIRES_MODEL: ReadonlySet<AiTask> = new Set(["improve", "rewrite", "translate", "variants", "alt_text", "write"]);
+const REQUIRES_MODEL: ReadonlySet<AiTask> = new Set(["improve", "rewrite", "translate", "variants", "alt_text", "write", "schema_fields"]);
 
 /** Thrown when a model-requiring task is asked for and no provider is usable. */
 export class AiUnavailableError extends Error {
@@ -77,7 +79,42 @@ function instruction(req: AiRequest): string {
       // heading or fragment); the result is inserted AFTER it as paragraphs, so
       // plain prose only — markdown syntax would render literally in TipTap.
       return `Write 2–4 well-crafted paragraphs about the following topic, as body text that could follow it in a document. Match the language of the topic. Return ONLY plain prose paragraphs separated by a blank line — no headings, no lists, no markdown syntax, no preamble.\n\nTopic:\n${req.input}${ctx}`;
+    case "schema_fields":
+      // Field proposals for a custom schema.org @type the static catalog
+      // doesn't know. The reply is validated against AiSchemaFieldSuggestions
+      // before anything reaches the editor.
+      return [
+        `You are configuring a content type in a headless CMS. Its schema.org @type is "${req.input}".`,
+        `Propose the content fields this type needs so its delivered JSON-LD qualifies for the Google rich result of that @type (fall back to schema.org's required/recommended properties when Google defines none).`,
+        `Return ONLY a JSON array (no code fences, no prose) of 4–8 objects, most impactful first:`,
+        `{"prop": "<schema.org property it feeds>", "required": <true if the rich result requires it>, "field": {"name": "<camelCase>", "displayName": "<label>", "type": "<one of: text, markdown, richtext, boolean, number, datetime, select, link, image>", "localized": <true for human-language text>, "seoRole": "<ONLY for the universal meta — one of title, description, image, datePublished, dateModified, author, keywords>", "schemaProp": "<ONLY for @type-specific properties, e.g. startDate or offers.price — at most one dot>", "helpText": "<short editor hint>"}}`,
+        `Rules: every suggestion carries EITHER seoRole OR schemaProp, never both and never neither. Use the universal seoRole for title/description/image/dates/author/keywords; use schemaProp for everything specific to "${req.input}".`,
+        req.context?.trim() ? `The type already has these fields (do NOT re-propose properties they cover):\n${req.context.trim()}` : "",
+      ].filter(Boolean).join("\n");
   }
+}
+
+/**
+ * Normalize a `schema_fields` reply to a guaranteed-valid JSON string of
+ * AiSchemaFieldSuggestions — fences stripped, shape Zod-validated. Garbage
+ * throws (surfaced as a provider failure) instead of reaching the editor.
+ */
+export function normalizeSchemaFields(raw: string): string {
+  const text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const tryParse = (s: string): string | null => {
+    try {
+      const parsed = AiSchemaFieldSuggestions.safeParse(JSON.parse(s));
+      return parsed.success ? JSON.stringify(parsed.data) : null;
+    } catch {
+      return null;
+    }
+  };
+  const direct = tryParse(text);
+  if (direct) return direct;
+  const embedded = text.match(/\[[\s\S]*\]/);
+  const fromEmbedded = embedded ? tryParse(embedded[0]) : null;
+  if (fromEmbedded) return fromEmbedded;
+  throw new Error("the model returned an unusable field-suggestion list");
 }
 
 async function callAnthropic(req: AiRequest, cfg: AiConfig): Promise<string> {
@@ -165,7 +202,10 @@ export async function aiAssist(req: AiRequest, cfg: AiConfig): Promise<AiResult>
   }
   try {
     const result = await callAnthropic(req, cfg);
-    return { result: req.task === "variants" ? normalizeVariants(result) : result, provider: "anthropic" };
+    return {
+      result: req.task === "variants" ? normalizeVariants(result) : req.task === "schema_fields" ? normalizeSchemaFields(result) : result,
+      provider: "anthropic",
+    };
   } catch (err) {
     // Truncation tasks degrade gracefully; model-requiring tasks must surface
     // the failure — a "result" that is really the input would gaslight the
