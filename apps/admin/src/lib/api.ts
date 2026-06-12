@@ -429,6 +429,8 @@ export interface DashboardData {
   translation: { locale: string; displayName: string; missing: number; pages: { documentId: string; name: string }[] }[];
   housekeeping: { trash: number; unusedBlocks: number; emptyTypes: number; missingAlt: number; failingWebhooks: number | null };
   imagesMissingAlt: { documentId: string; url: string; filename: string }[];
+  unusedBlocksList: { documentId: string; name: string; type: string }[];
+  emptyTypesList: { name: string; displayName: string; kind: string }[];
 }
 
 export interface SiteRow {

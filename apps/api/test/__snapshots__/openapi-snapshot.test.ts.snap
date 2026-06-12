@@ -529,10 +529,12 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "requestBodyRequired": [],
     "requiredParams": [],
     "response200Props": [
+      "emptyTypesList",
       "housekeeping",
       "imagesMissingAlt",
       "scheduled",
       "translation",
+      "unusedBlocksList",
       "wip",
       "wipTotal",
     ],

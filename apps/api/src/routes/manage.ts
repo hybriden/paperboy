@@ -1023,6 +1023,8 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       failingWebhooks: z.number().nullable(),
     }),
     imagesMissingAlt: z.array(z.object({ documentId: z.string(), url: z.string(), filename: z.string() })),
+    unusedBlocksList: z.array(z.object({ documentId: z.string(), name: z.string(), type: z.string() })),
+    emptyTypesList: z.array(z.object({ name: z.string(), displayName: z.string(), kind: z.string() })),
   });
   app.get(
     "/dashboard",
