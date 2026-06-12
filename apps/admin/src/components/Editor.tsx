@@ -1,12 +1,14 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type {
-  BlockInstance,
-  ContentDetail,
-  ContentTypeDef,
-  FieldDef,
-  Locale,
-  SessionUser,
+import {
+  type BlockInstance,
+  type ContentDetail,
+  type ContentTypeDef,
+  type FieldDef,
+  type Locale,
+  SEO_CONVENTION,
+  SEO_FIELD_NAMES,
+  type SessionUser,
 } from "@paperboy/shared";
 import { Panel, PanelGroup } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
@@ -396,9 +398,30 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
   // ----- AI editorial assistant (SEO meta generation from the page content) -----
   const hasField = (name: string) => Boolean(type?.fields.some((f) => f.name === name));
+  // The page text is harvested SCHEMA-AWARE — seoRole-tagged fields first,
+  // then delivery's name conventions, then every remaining text-bearing field —
+  // so the copy desk reads the page the same way the delivered seo block does,
+  // whatever the type's fields are called. (It used to read only 'heading' +
+  // 'intro', which starved every other type down to just the page name.)
   function pageText(): string {
-    const d = (formRef.current ?? form)?.data ?? {};
-    const parts = [String((formRef.current ?? form)?.name ?? ""), typeof d.heading === "string" ? d.heading : "", docToText(d.intro)];
+    const current = formRef.current ?? form;
+    const d = current?.data ?? {};
+    const all = (type?.fields ?? []).filter((f) => !SEO_FIELD_NAMES.has(f.name)); // never feed meta back into meta
+    const textOf = (f: FieldDef): string => {
+      const v = d[f.name];
+      if (typeof v === "string") return v;
+      if (f.type === "richtext") return docToText(v);
+      return "";
+    };
+    const byRole = (role: "title" | "description"): FieldDef | undefined => {
+      const tagged = all.find((f) => f.seoRole === role);
+      if (tagged) return tagged;
+      const names = SEO_CONVENTION[role] ?? [];
+      return all.find((f) => names.includes(f.name.toLowerCase()));
+    };
+    const prioritized = [byRole("title"), byRole("description")].filter((f): f is FieldDef => Boolean(f));
+    const rest = all.filter((f) => !prioritized.includes(f) && (f.type === "text" || f.type === "markdown" || f.type === "richtext"));
+    const parts = [String(current?.name ?? ""), ...[...prioritized, ...rest].map(textOf)];
     return parts.filter(Boolean).join("\n").slice(0, 8000);
   }
   const ai = useMutation({

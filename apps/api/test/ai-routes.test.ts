@@ -39,7 +39,7 @@ describe("AI routes — no provider key", () => {
     expect(r.json()).toEqual({ result: "A long headline about something", provider: "fallback" });
   });
 
-  for (const task of ["improve", "rewrite", "translate", "variants", "alt_text", "write"]) {
+  for (const task of ["improve", "rewrite", "translate", "variants", "alt_text", "write", "schema_fields"]) {
     it(`/ai/assist: '${task}' answers 409 with a self-teaching message`, async () => {
       const r = await s.app.inject({
         method: "POST",

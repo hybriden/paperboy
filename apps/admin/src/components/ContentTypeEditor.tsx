@@ -1,8 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { ContentTypeDef, SEO_FIELD_NAMES, type ContentKind, type FieldOption, type FieldType, type FieldValidation } from "@paperboy/shared";
+import { ContentTypeDef, SEO_FIELD_NAMES, type ContentKind, type FieldOption, type FieldType, type FieldValidation, type SchemaFieldGap, type SchemaFieldSuggestion, resolveSchemaSuggestions, schemaFieldGaps, seoRoleEligible } from "@paperboy/shared";
 import { api, ApiError } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
+import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
 import { TypeIcon, resolveIconBase, usePhosphorIconNames } from "../lib/typeIcons.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
@@ -28,6 +29,8 @@ interface DraftField {
   validation?: FieldValidation;
   helpText?: string;
   seoRole?: "title" | "description" | "image" | "datePublished" | "dateModified" | "author" | "keywords";
+  /** schema.org property this field feeds in the delivered JSON-LD (e.g. "startDate", "offers.price"). */
+  schemaProp?: string;
 }
 
 const SEO_ROLES = ["title", "description", "image", "datePublished", "dateModified", "author", "keywords"] as const;
@@ -40,12 +43,8 @@ const SEO_ROLE_LABELS: Record<(typeof SEO_ROLES)[number], string> = {
   author: "Author",
   keywords: "Keywords",
 };
-/** Field types that can sensibly fill each SEO role (keeps the picker focused). */
-function seoEligible(role: (typeof SEO_ROLES)[number], t: FieldType): boolean {
-  if (role === "image") return t === "image";
-  if (role === "datePublished" || role === "dateModified") return t === "datetime";
-  return t === "text" || t === "markdown" || t === "richtext" || t === "select";
-}
+// Field-type eligibility per SEO role comes from @paperboy/shared
+// (seoRoleEligible), shared with the catalog's coverage computation.
 
 // Common page-level schema.org @types for the dropdown. The stored value stays
 // a free string (MCP can set any @type); this is just discoverable admin UX.
@@ -227,6 +226,63 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
       return next;
     });
 
+  // schema.org coverage: what the chosen @type needs for its rich result vs
+  // what the current fields carry (explicit role/schemaProp or delivery's name
+  // convention). Catalog @types resolve statically; for custom @types the AI
+  // proposes the same suggestion shape and it flows through the same resolver.
+  const aiEnabled = useAiEnabled();
+  const [aiSuggestions, setAiSuggestions] = useState<SchemaFieldSuggestion[] | null>(null);
+  const suggest = useMutation({
+    mutationFn: async () => {
+      const r = await api.aiAssist("schema_fields", schemaType.trim(), {
+        context: JSON.stringify(fields.filter((f) => f.name.trim()).map(({ name, type, seoRole, schemaProp }) => ({ name, type, seoRole, schemaProp }))),
+      });
+      return JSON.parse(r.result) as SchemaFieldSuggestion[]; // server-validated (normalizeSchemaFields)
+    },
+    onSuccess: setAiSuggestions,
+    onError: (e) => toast.error("Couldn’t suggest fields", (e as Error).message),
+  });
+  const catalogGaps = useMemo(
+    () => (kind === "page" && schemaType.trim() ? schemaFieldGaps(schemaType.trim(), fields) : null),
+    [kind, schemaType, fields],
+  );
+  const unknownType = kind === "page" && Boolean(schemaType.trim()) && catalogGaps === null;
+  const gaps = catalogGaps ?? (unknownType && aiSuggestions ? resolveSchemaSuggestions(aiSuggestions, fields) : null);
+  const missingGaps = (gaps ?? []).filter((g) => !g.coveredBy);
+  // Free-entry @type (any schema.org type, e.g. Recipe/JobPosting) — the AI
+  // suggestion path serves these; the select alone would make it unreachable.
+  const [customSchema, setCustomSchema] = useState(
+    () => Boolean(initial?.schemaType && !(SCHEMA_TYPES as readonly string[]).includes(initial.schemaType)),
+  );
+  const nameTaken = (n: string) => fields.some((f) => f.name.toLowerCase() === n.toLowerCase());
+  /** Close gaps: tag the same-named existing field where one exists, else add
+   *  the suggested field (delivery: public — it exists to feed the JSON-LD). */
+  const applySuggestions = (toApply: SchemaFieldGap[]) =>
+    setFields((prev) => {
+      let next = [...prev];
+      for (const g of toApply) {
+        const want = g.suggestion.field;
+        if (g.tagField) {
+          next = next.map((f) =>
+            f.name === g.tagField ? { ...f, seoRole: want.seoRole ?? f.seoRole, schemaProp: want.schemaProp ?? f.schemaProp } : f,
+          );
+        } else if (!next.some((f) => f.name.toLowerCase() === want.name.toLowerCase())) {
+          next.push({
+            ...newField(),
+            name: want.name,
+            displayName: want.displayName,
+            type: want.type,
+            localized: want.localized ?? false,
+            delivery: "public",
+            ...(want.helpText ? { helpText: want.helpText } : {}),
+            ...(want.seoRole ? { seoRole: want.seoRole } : {}),
+            ...(want.schemaProp ? { schemaProp: want.schemaProp } : {}),
+          });
+        }
+      }
+      return next;
+    });
+
   const save = useMutation({
     mutationFn: (def: ContentTypeDef) => (mode === "create" ? api.createContentType(def) : api.updateContentType(name, def)),
     onSuccess: (saved) => {
@@ -357,6 +413,12 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                   </select>
                 </label>
                 {f.delivery === "public" && <span className="rounded bg-draft/10 px-1.5 py-0.5 text-[11px] text-draft">exposed to public API</span>}
+                {f.schemaProp && (
+                  <span className="inline-flex items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 text-[11px] text-accent-700" title="Feeds this schema.org property in the delivered JSON-LD">
+                    schema: {f.schemaProp}
+                    <button type="button" aria-label={`Clear schema.org mapping ${f.schemaProp}`} className="hover:text-danger" onClick={() => patchField(f._key, { schemaProp: undefined })}>×</button>
+                  </span>
+                )}
                 <div className="ml-auto flex items-center gap-0.5">
                   <button className="rounded p-1 text-muted hover:bg-line" aria-label="Move field up" onClick={() => moveField(f._key, -1)}><Icon.Up width={14} height={14} /></button>
                   <button className="rounded p-1 text-muted hover:bg-line" aria-label="Move field down" onClick={() => moveField(f._key, 1)}><Icon.Down width={14} height={14} /></button>
@@ -392,18 +454,93 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
               Optional. Delivery builds the SEO / JSON-LD block automatically from field-name conventions — set these only to
               override that guess (e.g. force a schema.org type, or point a role at a differently-named field).
             </p>
-            <label className="mb-3 block text-sm" style={{ maxWidth: 280 }}>
-              <span className="field-label">schema.org @type</span>
-              <select className="field-input" value={schemaType} onChange={(e) => setSchemaType(e.target.value)} aria-label="schema.org type">
-                <option value="">Auto (derived from the type)</option>
-                {schemaType && !(SCHEMA_TYPES as readonly string[]).includes(schemaType) && <option value={schemaType}>{schemaType} (custom)</option>}
-                {SCHEMA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
-            </label>
+            <div className="mb-3 flex items-end gap-2">
+              <label className="block flex-1 text-sm" style={{ maxWidth: 280 }}>
+                <span className="field-label">schema.org @type</span>
+                <select
+                  className="field-input"
+                  value={customSchema ? "__custom" : schemaType}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setAiSuggestions(null);
+                    if (v === "__custom") {
+                      setCustomSchema(true);
+                      setSchemaType("");
+                    } else {
+                      setCustomSchema(false);
+                      setSchemaType(v);
+                    }
+                  }}
+                  aria-label="schema.org type"
+                >
+                  <option value="">Auto (derived from the type)</option>
+                  {SCHEMA_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  <option value="__custom">Custom…</option>
+                </select>
+              </label>
+              {customSchema && (
+                <label className="block flex-1 text-sm" style={{ maxWidth: 220 }}>
+                  <span className="field-label">Custom @type</span>
+                  <input
+                    className="field-input"
+                    value={schemaType}
+                    placeholder="e.g. Recipe, JobPosting"
+                    onChange={(e) => { setSchemaType(e.target.value); setAiSuggestions(null); }}
+                    aria-label="Custom schema.org type"
+                  />
+                </label>
+              )}
+            </div>
+            {unknownType && !aiSuggestions && (
+              <div className="mb-3 flex items-center gap-2 rounded-[var(--radius)] border border-line bg-panel/60 px-2.5 py-2 text-xs text-muted">
+                <span className="min-w-0 flex-1">“{schemaType.trim()}” isn’t in the built-in catalog — AI can propose the fields its rich result needs.</span>
+                {aiEnabled ? (
+                  <button type="button" className="btn-subtle px-2 py-1 text-xs" disabled={suggest.isPending} onClick={() => suggest.mutate()}>
+                    {suggest.isPending ? "Asking…" : "Suggest fields with AI"}
+                  </button>
+                ) : (
+                  <span title={AI_OFF_HINT}>{AI_OFF_HINT}</span>
+                )}
+              </div>
+            )}
+            {gaps && (
+              <div className="mb-3 rounded-[var(--radius)] border border-line bg-panel/60 p-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium text-fg">
+                    {catalogGaps ? `What ${schemaType.trim()} needs for its rich result` : `AI-suggested fields for ${schemaType.trim()} — review before adding`}
+                  </span>
+                  {missingGaps.length > 0 ? (
+                    <button type="button" className="btn-subtle px-2 py-1 text-xs" onClick={() => applySuggestions(missingGaps)}>
+                      <Icon.Plus width={12} height={12} /> Add {missingGaps.length} missing {missingGaps.length === 1 ? "field" : "fields"}
+                    </button>
+                  ) : (
+                    <span className="text-xs text-published">All covered</span>
+                  )}
+                </div>
+                <ul className="mt-1.5 grid grid-cols-1 gap-0.5 sm:grid-cols-2">
+                  {gaps.map((g) => (
+                    <li key={g.suggestion.prop} className="flex items-center gap-1.5 text-xs">
+                      <span aria-hidden className={g.coveredBy ? "text-published" : "text-muted"}>{g.coveredBy ? "✓" : "·"}</span>
+                      <code className="font-mono text-fg">{g.suggestion.prop}</code>
+                      {g.suggestion.required && !g.coveredBy && <span className="rounded bg-danger/10 px-1 text-[10px] font-medium text-danger">required</span>}
+                      <span className="min-w-0 truncate text-muted">
+                        {g.coveredBy
+                          ? `→ ${g.coveredBy}`
+                          : g.tagField
+                            ? `tags existing “${g.tagField}”`
+                            : nameTaken(g.suggestion.field.name)
+                              ? `“${g.suggestion.field.name}” is taken by an incompatible field`
+                              : `adds “${g.suggestion.field.name}”`}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
               {SEO_ROLES.map((role) => {
                 const current = fieldForRole(role);
-                const opts = fields.filter((f) => f.name.trim() && (seoEligible(role, f.type) || f._key === current));
+                const opts = fields.filter((f) => f.name.trim() && (seoRoleEligible(role, f.type) || f._key === current));
                 return (
                   <label key={role} className="flex items-center justify-between gap-2 text-sm">
                     <span className="text-muted">{SEO_ROLE_LABELS[role]}</span>

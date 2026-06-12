@@ -99,6 +99,19 @@ export const FieldDef = z.object({
   seoRole: z
     .enum(["title", "description", "image", "datePublished", "dateModified", "author", "keywords"])
     .optional(),
+  /**
+   * schema.org property this field's value feeds in the delivered JSON-LD
+   * (e.g. "startDate", "sku", "offers.price" — one dot level builds a nested
+   * object, with a known wrapper @type injected). Complements seoRole: the
+   * roles cover the universal CreativeWork meta; schemaProp carries the
+   * @type-specific properties (Event dates, Product offers). Private fields
+   * never reach the jsonLd regardless of this tag.
+   */
+  schemaProp: z
+    .string()
+    .regex(/^[a-zA-Z][a-zA-Z0-9]*(\.[a-zA-Z][a-zA-Z0-9]*)?$/)
+    .max(80)
+    .optional(),
 });
 export type FieldDef = z.infer<typeof FieldDef>;
 
