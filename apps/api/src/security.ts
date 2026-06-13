@@ -24,7 +24,7 @@ export function requirePermission(perm: Permission) {
  * to the server-side session, echoed by the SPA in X-CSRF-Token, plus an
  * Origin/Referer allowlist check. SameSite is defense-in-depth on top.
  */
-export async function requireCsrf(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+export async function requireCsrf(req: FastifyRequest, _reply: FastifyReply): Promise<void> {
   await requireAuth(req);
   const header = req.headers["x-csrf-token"];
   const token = Array.isArray(header) ? header[0] : header;

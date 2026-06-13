@@ -48,6 +48,9 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      - name: Lint (oxlint)
+        run: pnpm lint
+
       - name: Typecheck
         run: pnpm -r typecheck
 

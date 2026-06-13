@@ -16,7 +16,7 @@ import { AutoHideRail, PinButton, usePinned } from "../ui/SidePane.js";
 export function EditView() {
   const { setCrumb } = useOutletContext<ShellOutlet>();
   const { documentId } = useParams();
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
   const locale = params.get("lang") ?? "en";
   const navigate = useNavigate();
   const { user } = useUser();

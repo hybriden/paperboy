@@ -375,7 +375,7 @@ function SortableBlock({
         <div className="space-y-2 p-2.5">
           {type.fields.map((f) => (
             <BlockField key={f.name} field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
-              onChange={(v) => onUpdate({ inline: { ...(block.inline ?? {}), [f.name]: v } })} />
+              onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })} />
           ))}
         </div>
       )}
@@ -419,7 +419,7 @@ function BlockField({ field, fieldId, value, onChange }: { field: FieldDef; fiel
       {field.type === "link" && (
         <input id={id} className="field-input py-1" placeholder="https://… or /path"
           value={((value as { href?: string } | null) ?? {}).href ?? ""}
-          onChange={(e) => onChange(e.target.value ? { ...((value as object) ?? {}), href: e.target.value } : null)} />
+          onChange={(e) => onChange(e.target.value ? { ...(value as object), href: e.target.value } : null)} />
       )}
       {field.type === "reference" && <ReferenceField id={id} value={value} onChange={onChange} />}
       {field.type === "image" && <ImageField id={id} value={value} onChange={onChange} />}
