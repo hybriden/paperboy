@@ -1,5 +1,5 @@
 import type { Folder as FolderDTO, FolderKind } from "@paperboy/shared";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";

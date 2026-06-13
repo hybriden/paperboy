@@ -112,7 +112,8 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
   const toggle = (id: string) =>
     setExpanded((prev) => {
       const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
       localStorage.setItem(EXPAND_KEY, JSON.stringify([...next]));
       return next;
     });

@@ -10,7 +10,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
-    "lint": "pnpm -r lint",
+    "lint": "oxlint",
+    "lint:fix": "oxlint --fix",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm --filter @paperboy/api test",
     "test:e2e": "pnpm --filter @paperboy/admin test:e2e",
@@ -18,6 +19,7 @@
     "db:seed": "pnpm --filter @paperboy/db seed"
   },
   "devDependencies": {
+    "oxlint": "1.69.0",
     "typescript": "^5.6.3"
   }
 }
