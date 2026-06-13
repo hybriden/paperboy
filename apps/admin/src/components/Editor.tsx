@@ -1182,7 +1182,7 @@ function VersionsDialog({
     },
     onError: (e) => toast.error("Couldn’t restore", (e as Error).message),
   });
-  const rows = versions.data ?? [];
+  const rows = useMemo(() => versions.data ?? [], [versions.data]);
 
   // A↔B selection for the compare view. Default to the two most recent versions
   // (rows are sorted newest-first): A = older of the two, B = newest.
@@ -1508,7 +1508,7 @@ function wordDiff(aText: string, bText: string): Array<{ t: "eq" | "del" | "ins"
   const b = bText ? bText.split(/(\s+)/) : [];
   const n = a.length;
   const m = b.length;
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0));
+  const dp: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
   for (let i = n - 1; i >= 0; i--) {
     for (let j = m - 1; j >= 0; j--) {
       dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
