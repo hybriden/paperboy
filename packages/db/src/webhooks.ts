@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Database } from "./client.js";

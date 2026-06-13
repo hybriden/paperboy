@@ -505,10 +505,10 @@ function markdownToTiptapDoc(src: string): unknown {
       i++;
       continue;
     }
-    if (/^```/.test(line.trim())) {
+    if (line.trim().startsWith('```')) {
       i++;
       const buf: string[] = [];
-      while (i < lines.length && !/^```/.test(lines[i]!.trim())) buf.push(lines[i++]!);
+      while (i < lines.length && !lines[i]!.trim().startsWith('```')) buf.push(lines[i++]!);
       i++; // closing fence
       out.push({ type: "codeBlock", content: buf.length ? [{ type: "text", text: buf.join("\n") }] : [] });
       continue;
