@@ -246,6 +246,10 @@ test("RBAC: a Viewer cannot create content", async ({ page }) => {
 test("Admin can create a content type from Settings; Editor cannot", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "Settings" }).click();
+  // Let the Settings panel finish mounting before interacting — ContentTypesPanel
+  // re-renders as its data queries resolve, which can detach the action button
+  // mid-click under CI load. Wait for the (static) panel heading first.
+  await expect(page.getByRole("heading", { name: "Content types" }).first()).toBeVisible();
   await page.getByRole("button", { name: "New content type" }).click();
   const unique = `Bulletin${Date.now().toString().slice(-5)}`;
   await page.getByLabel("Name (code)").fill(unique);
@@ -402,6 +406,10 @@ test("Settings is tabbed and exposes the admin sections for an Admin", async ({ 
 test("content-type editor offers the new field types (datetime, select, link)", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "Settings" }).click();
+  // Let the Settings panel finish mounting before interacting — ContentTypesPanel
+  // re-renders as its data queries resolve, which can detach the action button
+  // mid-click under CI load. Wait for the (static) panel heading first.
+  await expect(page.getByRole("heading", { name: "Content types" }).first()).toBeVisible();
   await page.getByRole("button", { name: "New content type" }).click();
   const dlg = page.getByRole("dialog");
   await dlg.getByRole("button", { name: "Add field" }).click();
