@@ -10,7 +10,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
-    "lint": "oxlint --type-aware",
+    "lint": "oxlint --type-aware && pnpm --filter @paperboy/admin lint",
     "lint:fix": "oxlint --type-aware --fix",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm --filter @paperboy/api test",
