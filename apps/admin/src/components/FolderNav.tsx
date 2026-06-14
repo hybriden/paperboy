@@ -26,7 +26,7 @@ export function FolderNav({
   const qc = useQueryClient();
   const toast = useToast();
   const folders = useQuery({ queryKey: ["folders", kind], queryFn: ({ signal }) => api.folders(kind, signal) });
-  const [dropTarget, setDropTarget] = useState<string | null | "none">("none");
+  const [dropTarget, setDropTarget] = useState<string | null>("none");
 
   const all = folders.data ?? [];
   const byId = new Map(all.map((f) => [f.documentId, f]));
@@ -56,7 +56,7 @@ export function FolderNav({
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteFolder(id),
     onSuccess: (_r, id) => {
-      invalidate();
+      void invalidate();
       if (currentFolderId === id) onNavigate(byId.get(id)?.parentId ?? null);
       toast.success("Folder deleted", "Its contents moved up one level.");
     },

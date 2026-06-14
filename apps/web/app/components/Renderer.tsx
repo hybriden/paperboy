@@ -16,13 +16,21 @@ interface Node {
   attrs?: Record<string, unknown>;
 }
 
+/** Render a scalar field/attr value (typed `unknown`, always a scalar at runtime);
+ *  objects/arrays/null become "" rather than "[object Object]". */
+function asText(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v);
+  return "";
+}
+
 function renderText(node: Node, key: number): ReactNode {
   let el: ReactNode = node.text ?? "";
   for (const m of node.marks ?? []) {
     if (m.type === "bold") el = <strong>{el}</strong>;
     else if (m.type === "italic") el = <em>{el}</em>;
     else if (m.type === "code") el = <code>{el}</code>;
-    else if (m.type === "link") el = <a href={String(m.attrs?.href ?? "#")} rel="noopener">{el}</a>;
+    else if (m.type === "link") el = <a href={asText(m.attrs?.href) || "#"} rel="noopener">{el}</a>;
   }
   return <Fragment key={key}>{el}</Fragment>;
 }
@@ -52,9 +60,9 @@ function renderNode(node: Node, key: number): ReactNode {
     case "horizontalRule":
       return <hr key={key} />;
     case "image": {
-      const src = String(node.attrs?.src ?? "");
+      const src = asText(node.attrs?.src);
       if (!src) return null;
-      return <img key={key} src={src} alt={String(node.attrs?.alt ?? "")} title={node.attrs?.title ? String(node.attrs.title) : undefined} loading="lazy" />;
+      return <img key={key} src={src} alt={asText(node.attrs?.alt)} title={asText(node.attrs?.title) || undefined} loading="lazy" />;
     }
     default:
       return <Fragment key={key}>{kids}</Fragment>;
@@ -123,8 +131,8 @@ function EditableRich({ field, label, value, className, preview, applies }: { fi
 /** Newest-first by publishDate (fallback name) — the teaser/list ordering. */
 function newestFirst(items: DeliveryContent[]): DeliveryContent[] {
   return [...items].sort((a, b) =>
-    String((b.data as Record<string, unknown>).publishDate ?? "").localeCompare(
-      String((a.data as Record<string, unknown>).publishDate ?? ""),
+    asText((b.data as Record<string, unknown>).publishDate).localeCompare(
+      asText((a.data as Record<string, unknown>).publishDate),
     ) || a.name.localeCompare(b.name),
   );
 }
@@ -138,7 +146,7 @@ async function ListBlockTeasers({ d, locale, preview, edit }: { d: Record<string
     : [];
   return (
     <section className="block block--narrow" data-block="ListBlock" {...edit}>
-      <h2>{String(d.heading ?? "")}</h2>
+      <h2>{asText(d.heading)}</h2>
       {items.length === 0 ? (
         <p className="post-meta">Nothing to list yet.</p>
       ) : (
@@ -149,10 +157,10 @@ async function ListBlockTeasers({ d, locale, preview, edit }: { d: Record<string
             return (
               <li key={p.documentId} className="card post-card">
                 <a className="post-link" href={p.urlPath ? `/${locale}${p.urlPath}` : "#"}>
-                  <h3>{String(pd.title ?? p.name)}</h3>
+                  <h3>{asText(pd.title) || p.name}</h3>
                 </a>
                 {date ? <p className="post-meta">{date}</p> : null}
-                {pd.summary ? <p className="post-summary">{String(pd.summary)}</p> : null}
+                {pd.summary ? <p className="post-summary">{asText(pd.summary)}</p> : null}
               </li>
             );
           })}
@@ -168,13 +176,13 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
   const edit = { "data-pb-block-index": index, "data-pb-block-type": b.blockType, "data-pb-shared": b.shared ? "true" : undefined };
   if (b.blockType === "HeroBlock") {
     const img = d.heroImage as { url?: string; alt?: string } | null | undefined;
-    const cta = String(d.ctaUrl ?? "");
+    const cta = asText(d.ctaUrl);
     const href = cta.startsWith("/") ? `/${locale}${cta}` : cta;
     return (
       <section className={`block block--full block--${b.display}`} data-block="HeroBlock" {...edit}>
         {img?.url ? <img className="hero-image" src={img.url} alt={img.alt ?? ""} loading="lazy" /> : null}
-        <h2>{String(d.title ?? "")}</h2>
-        {d.subtitle ? <p>{String(d.subtitle)}</p> : null}
+        <h2>{asText(d.title)}</h2>
+        {d.subtitle ? <p>{asText(d.subtitle)}</p> : null}
         {cta ? <a href={href}>Learn more</a> : null}
       </section>
     );
@@ -182,7 +190,7 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
   if (b.blockType === "CardBlock") {
     return (
       <div className={`block card card--${b.display}`} data-block="CardBlock" {...edit}>
-        <h3>{String(d.title ?? "")}</h3>
+        <h3>{asText(d.title)}</h3>
         <Rich doc={d.body} className="richtext" />
       </div>
     );
@@ -201,9 +209,9 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
     const date = fmtDate(d.publishDate);
     return (
       <a className={`block card post-card post-link card--${b.display}`} href={`/${locale}${c.urlPath}`} data-block="PageTeaser" {...edit}>
-        <h3>{String(d.title ?? c.name)}</h3>
+        <h3>{asText(d.title) || c.name}</h3>
         {date ? <p className="post-meta">{date}</p> : null}
-        {summary ? <p className="post-summary">{String(summary)}</p> : <Rich doc={d.intro} className="post-summary" />}
+        {summary ? <p className="post-summary">{asText(summary)}</p> : <Rich doc={d.intro} className="post-summary" />}
       </a>
     );
   }
@@ -225,9 +233,9 @@ function BlogPostView({ content }: { content: DeliveryContent }) {
   return (
     <main className="wrap" data-document-id={content.documentId}>
       <article className="post">
-        <h1 className="page-heading" data-pb-field="title">{String(d.title ?? content.name)}</h1>
+        <h1 className="page-heading" data-pb-field="title">{asText(d.title) || content.name}</h1>
         {date ? <p className="post-meta">{date}</p> : null}
-        {d.summary ? <p className="post-summary" data-pb-field="summary">{String(d.summary)}</p> : null}
+        {d.summary ? <p className="post-summary" data-pb-field="summary">{asText(d.summary)}</p> : null}
         <div data-pb-field="body"><Rich doc={d.body} className="richtext post-body" /></div>
       </article>
     </main>
@@ -245,10 +253,10 @@ function PostList({ posts, locale, basePath }: { posts: DeliveryContent[]; local
         return (
           <li key={p.documentId} className="card post-card">
             <a className="post-link" href={href(p)}>
-              <h3>{String(d.title ?? p.name)}</h3>
+              <h3>{asText(d.title) || p.name}</h3>
             </a>
             {date ? <p className="post-meta">{date}</p> : null}
-            {d.summary ? <p className="post-summary">{String(d.summary)}</p> : null}
+            {d.summary ? <p className="post-summary">{asText(d.summary)}</p> : null}
           </li>
         );
       })}
@@ -269,7 +277,7 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
   const area = picked.blocks;
   return (
     <main className="wrap" data-document-id={content.documentId}>
-      <h1 className="page-heading" data-pb-field="heading">{String(data.heading ?? content.name)}</h1>
+      <h1 className="page-heading" data-pb-field="heading">{asText(data.heading) || content.name}</h1>
       {/* "applies" comes from the SCHEMA (fieldTypes), not value presence: a
           field belongs to this type even when its value is empty/absent. */}
       <EditableRich field="intro" label="intro" value={data.intro} className="intro richtext" preview={preview} applies={"intro" in content.fieldTypes} />

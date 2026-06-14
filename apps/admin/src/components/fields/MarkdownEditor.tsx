@@ -143,6 +143,7 @@ export function MarkdownEditor({
         <textarea
           id={id}
           ref={ref}
+          aria-label="Markdown content"
           className="block w-full resize-y bg-transparent px-3 py-2 font-mono text-[13px] leading-relaxed text-fg outline-none"
           style={{ minHeight }}
           value={value}

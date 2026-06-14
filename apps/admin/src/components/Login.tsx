@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, setCsrf } from "../lib/api.js";
 import type { SessionUser } from "@paperboy/shared";
 
@@ -13,6 +13,16 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
   // 2FA challenge.
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [code, setCode] = useState("");
+
+  // Focus the active step's input on mount / step change (replaces autoFocus).
+  const emailRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const codeRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (step === "code") codeRef.current?.focus();
+    else if (step === "password") passwordRef.current?.focus();
+    else emailRef.current?.focus();
+  }, [step]);
 
   function finish(res: { user: SessionUser; csrfToken: string }) {
     setCsrf(res.csrfToken);
@@ -98,7 +108,7 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
           <h1 id="mfa-title" className="text-lg font-bold leading-tight">Two-factor authentication</h1>
           <p className="mb-4 mt-1 text-xs text-muted">Signing in as <strong>{email}</strong>. Enter the 6-digit code from your authenticator app (or a backup code).</p>
           <label className="field-label" htmlFor="mfacode">Authentication code</label>
-          <input id="mfacode" className="field-input mb-4 text-center font-mono tracking-[0.3em]" inputMode="text" autoFocus autoComplete="one-time-code"
+          <input id="mfacode" ref={codeRef} aria-label="Authentication code" className="field-input mb-4 text-center font-mono tracking-[0.3em]" inputMode="text" autoComplete="one-time-code"
             value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" required />
           {Err}
           <button type="submit" className="btn-primary w-full" disabled={busy || code.trim().length < 6}>{busy ? "Verifying…" : "Verify"}</button>
@@ -115,7 +125,7 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
           {Brand}
           <p className="mb-4 text-xs text-muted">Signing in as <strong>{email}</strong></p>
           <label className="field-label" htmlFor="password">Password</label>
-          <input id="password" className="field-input mb-4" type="password" value={password} autoFocus autoComplete="current-password"
+          <input id="password" ref={passwordRef} aria-label="Password" className="field-input mb-4" type="password" value={password} autoComplete="current-password"
             onChange={(e) => setPassword(e.target.value)} required />
           {Err}
           <button type="submit" className="btn-primary w-full" disabled={busy || !password}>{busy ? "Signing in…" : "Sign in"}</button>
@@ -130,7 +140,7 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
       <form onSubmit={submitEmail} className="w-[360px] rounded-lg bg-panel p-7 shadow-panel" aria-labelledby="login-title">
         {Brand}
         <label className="field-label" htmlFor="email">Email</label>
-        <input id="email" className="field-input mb-4" type="email" value={email} autoFocus autoComplete="username"
+        <input id="email" ref={emailRef} aria-label="Email" className="field-input mb-4" type="email" value={email} autoComplete="username"
           onChange={(e) => setEmail(e.target.value)} required />
         {Err}
         <button type="submit" className="btn-primary w-full" disabled={busy || !email}>{busy ? "Continuing…" : "Continue"}</button>

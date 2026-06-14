@@ -108,7 +108,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
     }
     try {
       const asset = await api.uploadAsset(file);
-      qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["assets"] });
       dropImage(asset.documentId, index, at);
     } catch (err) {
       toast.error("Upload failed", (err as Error).message);
@@ -395,20 +395,20 @@ function BlockField({ field, fieldId, value, onChange }: { field: FieldDef; fiel
     <div>
       <label className="field-label text-[12px]" htmlFor={id}>{field.displayName}</label>
       {field.type === "text" && (
-        <input id={id} className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} />
+        <input id={id} aria-label={field.displayName} className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} />
       )}
       {field.type === "markdown" && (
         <MarkdownEditor id={id} value={(value as string) ?? ""} onChange={(v) => onChange(v)} minHeight={160} />
       )}
       {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} />}
       {field.type === "boolean" && (
-        <input id={id} type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
+        <input id={id} aria-label={field.displayName} type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
       )}
       {field.type === "number" && (
-        <input id={id} type="number" className="field-input py-1" value={(value as number) ?? ""} onChange={(e) => onChange(Number(e.target.value))} />
+        <input id={id} aria-label={field.displayName} type="number" className="field-input py-1" value={(value as number) ?? ""} onChange={(e) => onChange(Number(e.target.value))} />
       )}
       {field.type === "datetime" && (
-        <input id={id} type="datetime-local" className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)} />
+        <input id={id} aria-label={field.displayName} type="datetime-local" className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)} />
       )}
       {field.type === "select" && (
         <select id={id} className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)}>
@@ -417,7 +417,7 @@ function BlockField({ field, fieldId, value, onChange }: { field: FieldDef; fiel
         </select>
       )}
       {field.type === "link" && (
-        <input id={id} className="field-input py-1" placeholder="https://… or /path"
+        <input id={id} aria-label={field.displayName} className="field-input py-1" placeholder="https://… or /path"
           value={((value as { href?: string } | null) ?? {}).href ?? ""}
           onChange={(e) => onChange(e.target.value ? { ...(value as object), href: e.target.value } : null)} />
       )}

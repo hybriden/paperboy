@@ -42,14 +42,14 @@ export function EditView() {
     const startId = site.data?.startPageId;
     if (!startId) return;
     const t = setTimeout(() => {
-      if (!docIdRef.current) navigate(`/edit/${startId}${locale !== "en" ? `?lang=${locale}` : ""}`, { replace: true });
+      if (!docIdRef.current) void navigate(`/edit/${startId}${locale !== "en" ? `?lang=${locale}` : ""}`, { replace: true });
     }, 50);
     return () => clearTimeout(t);
   }, [documentId, isMobile, site.data?.startPageId, locale, navigate]);
 
   const setLocale = useCallback(
     (l: string) => {
-      if (documentId) navigate(`/edit/${documentId}?lang=${l}`);
+      if (documentId) void navigate(`/edit/${documentId}?lang=${l}`);
     },
     [documentId, navigate],
   );

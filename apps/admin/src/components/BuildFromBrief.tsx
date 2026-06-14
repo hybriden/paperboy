@@ -85,8 +85,8 @@ export function BuildFromBriefDialog({
       setPhase("error");
     } finally {
       // New drafts exist regardless of how the run ended.
-      qc.invalidateQueries({ queryKey: ["tree", "root"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["tree", "root"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
     }
   }
 
@@ -150,7 +150,7 @@ export function BuildFromBriefDialog({
                         className="flex w-full items-center gap-2 rounded-[var(--radius)] border border-line px-2.5 py-1.5 text-left text-sm hover:bg-line/40"
                         onClick={() => {
                           onOpenChange(false);
-                          navigate(`/edit/${c.documentId}${locale !== "en" ? `?lang=${locale}` : ""}`);
+                          void navigate(`/edit/${c.documentId}${locale !== "en" ? `?lang=${locale}` : ""}`);
                         }}
                       >
                         <TypeIcon name={undefined} fallback="file" width={15} height={15} className="shrink-0 text-muted" />

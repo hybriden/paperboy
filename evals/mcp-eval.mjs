@@ -678,4 +678,5 @@ async function main() {
   }
 }
 
-main();
+// main() handles all its own errors and calls process.exit; nothing to await.
+void main();

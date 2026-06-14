@@ -36,6 +36,8 @@ export function TwoFactorPanel() {
   const [code, setCode] = useState("");
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [disablePw, setDisablePw] = useState("");
+  const codeRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (step === "qr") codeRef.current?.focus(); }, [step]);
 
   const setup = useMutation({
     mutationFn: () => api.mfaSetup(),
@@ -44,12 +46,12 @@ export function TwoFactorPanel() {
   });
   const enable = useMutation({
     mutationFn: () => api.mfaEnable(code.trim()),
-    onSuccess: (r) => { setBackupCodes(r.backupCodes); setStep("backup"); setCode(""); qc.invalidateQueries({ queryKey: ["mfa-status"] }); },
+    onSuccess: (r) => { setBackupCodes(r.backupCodes); setStep("backup"); setCode(""); void qc.invalidateQueries({ queryKey: ["mfa-status"] }); },
     onError: (e) => { toast.error("Couldn’t enable 2FA", (e as Error).message); setCode(""); },
   });
   const disable = useMutation({
     mutationFn: () => api.mfaDisable(disablePw),
-    onSuccess: () => { setDisablePw(""); qc.invalidateQueries({ queryKey: ["mfa-status"] }); toast.success("Two-factor disabled"); },
+    onSuccess: () => { setDisablePw(""); void qc.invalidateQueries({ queryKey: ["mfa-status"] }); toast.success("Two-factor disabled"); },
     onError: (e) => toast.error("Couldn’t disable", (e as Error).message),
   });
 
@@ -63,7 +65,7 @@ export function TwoFactorPanel() {
             <p className="flex items-center gap-2 text-published"><span className="h-2 w-2 rounded-full bg-published" /> 2FA is <strong>on</strong>. {status.data?.backupCodesRemaining} backup codes remaining.</p>
             <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); disable.mutate(); }}>
               <label className="text-sm"><span className="field-label">Confirm password to disable</span>
-                <input className="field-input" type="password" autoComplete="current-password" value={disablePw} onChange={(e) => setDisablePw(e.target.value)} /></label>
+                <input aria-label="Confirm password to disable" className="field-input" type="password" autoComplete="current-password" value={disablePw} onChange={(e) => setDisablePw(e.target.value)} /></label>
               <button className="btn-ghost text-danger" disabled={disable.isPending || !disablePw}>Disable 2FA</button>
             </form>
           </div>
@@ -82,7 +84,7 @@ export function TwoFactorPanel() {
                 <code className="block break-all rounded bg-line/60 px-2 py-1 font-mono">{secret}</code>
                 <form className="flex items-end gap-2 pt-2" onSubmit={(e) => { e.preventDefault(); enable.mutate(); }}>
                   <label><span className="field-label">6-digit code</span>
-                    <input className="field-input w-32 text-center font-mono tracking-widest" autoFocus value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" /></label>
+                    <input ref={codeRef} aria-label="6-digit code" className="field-input w-32 text-center font-mono tracking-widest" value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" /></label>
                   <button className="btn-primary" disabled={enable.isPending || code.trim().length < 6}>{enable.isPending ? "…" : "Verify & enable"}</button>
                   <button type="button" className="btn-ghost" onClick={() => { setStep("idle"); setCode(""); }}>Cancel</button>
                 </form>
@@ -221,22 +223,25 @@ export function LanguagesPanel() {
   const [displayName, setDisplayName] = useState("");
   const [fallback, setFallback] = useState("");
   const [editing, setEditing] = useState<{ code: string; displayName: string; fallback: string } | null>(null);
+  const editNameRef = useRef<HTMLInputElement>(null);
+  const editingCode = editing?.code;
+  useEffect(() => { if (editingCode) editNameRef.current?.focus(); }, [editingCode]);
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["locales"] });
   const create = useMutation({
     mutationFn: () => api.createLocale({ code: code.trim(), displayName: displayName.trim(), fallbackLocaleCode: fallback || null }),
-    onSuccess: () => { setCode(""); setDisplayName(""); setFallback(""); invalidate(); toast.success("Language added"); },
+    onSuccess: () => { setCode(""); setDisplayName(""); setFallback(""); void invalidate(); toast.success("Language added"); },
     onError: (e) => toast.error("Couldn’t add language", (e as Error).message),
   });
   const update = useMutation({
     mutationFn: (v: { code: string; patch: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean } }) =>
       api.updateLocale(v.code, v.patch),
-    onSuccess: () => { invalidate(); setEditing(null); toast.success("Language updated"); },
+    onSuccess: () => { void invalidate(); setEditing(null); toast.success("Language updated"); },
     onError: (e) => toast.error("Couldn’t update", (e as Error).message),
   });
   const del = useMutation({
     mutationFn: (c: string) => api.deleteLocale(c),
-    onSuccess: () => { invalidate(); toast.success("Language deleted"); },
+    onSuccess: () => { void invalidate(); toast.success("Language deleted"); },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
   });
 
@@ -269,7 +274,7 @@ export function LanguagesPanel() {
               onSubmit={(e) => { e.preventDefault(); if (editing.displayName.trim()) update.mutate({ code: l.code, patch: { displayName: editing.displayName.trim(), fallbackLocaleCode: editing.fallback || null } }); }}
             >
               <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{l.code}</code>
-              <input className="field-input py-0.5 text-xs" value={editing.displayName} autoFocus aria-label="Display name" onChange={(e) => setEditing({ ...editing, displayName: e.target.value })} />
+              <input ref={editNameRef} className="field-input py-0.5 text-xs" value={editing.displayName} aria-label="Display name" onChange={(e) => setEditing({ ...editing, displayName: e.target.value })} />
               <select className="field-input py-0.5 text-xs" value={editing.fallback} aria-label="Fallback language" onChange={(e) => setEditing({ ...editing, fallback: e.target.value })}>
                 <option value="">no fallback</option>
                 {list.filter((o) => o.code !== l.code).map((o) => <option key={o.code} value={o.code}>↳ {o.code}</option>)}
@@ -348,6 +353,8 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
   const slug = slugEdited ?? autoSlug;
   const [locale, setLocale] = useState(defaultLocale);
   const [previewUrl, setPreviewUrl] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { nameRef.current?.focus(); }, []);
 
   const slugValid = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug);
   const canNext = name.trim().length > 0 && slugValid;
@@ -360,7 +367,7 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
       return site;
     },
     onSuccess: (site) => {
-      qc.invalidateQueries({ queryKey: ["sites"] });
+      void qc.invalidateQueries({ queryKey: ["sites"] });
       toast.success("Site created", `“${site.name}” is ready — make it active to add content.`);
       onClose();
     },
@@ -378,11 +385,11 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
           <div className="flex flex-col gap-3">
             <label className="text-sm">
               <span className="field-label">Site name</span>
-              <input className="field-input" autoFocus placeholder="Brand B" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && canNext) setStep(2); }} />
+              <input ref={nameRef} aria-label="Site name" className="field-input" placeholder="Brand B" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && canNext) setStep(2); }} />
             </label>
             <label className="text-sm">
               <span className="field-label">URL slug</span>
-              <input className="field-input" value={slug} onChange={(e) => setSlugEdited(e.target.value.toLowerCase())} />
+              <input aria-label="URL slug" className="field-input" value={slug} onChange={(e) => setSlugEdited(e.target.value.toLowerCase())} />
               {slug.length > 0 && !slugValid ? (
                 <span className="mt-1 block text-xs text-danger">Lowercase letters, numbers and single hyphens only (e.g. “brand-b”).</span>
               ) : (
@@ -406,7 +413,7 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
             </label>
             <label className="text-sm">
               <span className="field-label">Preview URL <span className="text-muted">(optional)</span></span>
-              <input className="field-input" type="url" inputMode="url" placeholder="https://brand-b.example" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} />
+              <input aria-label="Preview URL" className="field-input" type="url" inputMode="url" placeholder="https://brand-b.example" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} />
               <span className="mt-1 block text-xs text-muted">The front-end origin previews load from. You can set this later.</span>
             </label>
             <div className="mt-2 flex items-center justify-between gap-2">
@@ -466,8 +473,8 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
       if (startChanged) await api.setStartPage(startPageId || null, site.id);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["sites"] });
-      qc.invalidateQueries({ queryKey: ["site"] });
+      void qc.invalidateQueries({ queryKey: ["sites"] });
+      void qc.invalidateQueries({ queryKey: ["site"] });
       toast.success("Site saved", name.trim());
     },
     onError: (e) => toast.error("Couldn’t save site", (e as Error).message),
@@ -481,11 +488,11 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
           <>
             <label className="text-sm" style={{ minWidth: 180 }}>
               <span className="field-label">Name</span>
-              <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} />
+              <input aria-label="Site name" className="field-input" value={name} onChange={(e) => setName(e.target.value)} />
             </label>
             <label className="text-sm" style={{ minWidth: 140 }}>
               <span className="field-label">Slug</span>
-              <input className="field-input" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
+              <input aria-label="Site slug" className="field-input" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
               {slug.trim() && !slugValid && <span className="mt-1 block text-xs text-danger">Lowercase, numbers and single hyphens.</span>}
             </label>
           </>
@@ -502,7 +509,7 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
       {/* preview URL */}
       <label className="text-sm">
         <span className="field-label">Preview base URL</span>
-        <input className="field-input" type="url" inputMode="url" placeholder="https://example.com" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} />
+        <input aria-label="Preview base URL" className="field-input" type="url" inputMode="url" placeholder="https://example.com" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} />
         <span className="mt-1 block text-xs text-muted">
           Preview opens <code>{(previewUrl || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Empty = fall back to the admin host on :8092.
         </span>
@@ -540,6 +547,8 @@ function DeleteSiteDialog({ site, active, onClose }: { site: SiteRow; active: bo
   const qc = useQueryClient();
   const [typed, setTyped] = useState("");
   const armed = typed.trim() === site.name;
+  const confirmRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { confirmRef.current?.focus(); }, []);
 
   const del = useMutation({
     mutationFn: () => api.deleteSite(site.id, site.slug),
@@ -550,7 +559,7 @@ function DeleteSiteDialog({ site, active, onClose }: { site: SiteRow; active: bo
         window.location.href = "/settings";
         return;
       }
-      qc.invalidateQueries({ queryKey: ["sites"] });
+      void qc.invalidateQueries({ queryKey: ["sites"] });
       toast.success("Site deleted", `“${site.name}” removed (${r.contentItems} content items, ${r.assets} media files).`);
       onClose();
     },
@@ -567,7 +576,7 @@ function DeleteSiteDialog({ site, active, onClose }: { site: SiteRow; active: bo
           </p>
           <label className="text-sm">
             <span className="field-label">Type <strong>{site.name}</strong> to confirm</span>
-            <input className="field-input" autoFocus value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={site.name} />
+            <input ref={confirmRef} aria-label={`Type ${site.name} to confirm`} className="field-input" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={site.name} />
           </label>
           <div className="mt-1 flex justify-end gap-2">
             <button type="button" className="btn-subtle" onClick={onClose}>Cancel</button>
@@ -647,6 +656,7 @@ export function AiPanel() {
           <label className="grow text-sm" style={{ minWidth: 320 }}>
             <span className="field-label">Anthropic API key</span>
             <input
+              aria-label="Anthropic API key"
               className="field-input"
               type="password"
               autoComplete="off"
@@ -658,7 +668,7 @@ export function AiPanel() {
           </label>
           <label className="text-sm" style={{ minWidth: 220 }}>
             <span className="field-label">Model</span>
-            <input className="field-input" placeholder="claude-haiku-4-5-20251001" value={modelValue} onChange={(e) => setModel(e.target.value)} />
+            <input aria-label="Model" className="field-input" placeholder="claude-haiku-4-5-20251001" value={modelValue} onChange={(e) => setModel(e.target.value)} />
           </label>
           <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
           <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>Test</button>
@@ -730,6 +740,7 @@ export function StockImagesPanel() {
           <label className="grow text-sm" style={{ minWidth: 320 }}>
             <span className="field-label">Unsplash access key</span>
             <input
+              aria-label="Unsplash access key"
               className="field-input"
               type="password"
               autoComplete="off"
@@ -771,11 +782,11 @@ export function PasswordPanel() {
       >
         <label className="text-sm">
           <span className="field-label">Current password</span>
-          <input className="field-input" type="password" autoComplete="current-password" value={oldPassword} onChange={(e) => setOld(e.target.value)} />
+          <input aria-label="Current password" className="field-input" type="password" autoComplete="current-password" value={oldPassword} onChange={(e) => setOld(e.target.value)} />
         </label>
         <label className="text-sm">
           <span className="field-label">New password (min 10)</span>
-          <input className="field-input" type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNew(e.target.value)} />
+          <input aria-label="New password (min 10)" className="field-input" type="password" autoComplete="new-password" value={newPassword} onChange={(e) => setNew(e.target.value)} />
         </label>
         <button className="btn-primary" disabled={change.isPending || newPassword.length < 10 || !oldPassword}>
           {change.isPending ? "Saving…" : "Change password"}
@@ -795,7 +806,7 @@ export function UsersPanel() {
 
   const del = useMutation({
     mutationFn: (id: string) => api.deleteUser(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["users"] }); toast.success("User deleted"); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["users"] }); toast.success("User deleted"); },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
   });
 
@@ -823,7 +834,7 @@ export function UsersPanel() {
           dialog={dialog}
           pages={pages.data ?? []}
           onClose={() => setDialog(null)}
-          onSaved={() => { qc.invalidateQueries({ queryKey: ["users"] }); setDialog(null); }}
+          onSaved={() => { void qc.invalidateQueries({ queryKey: ["users"] }); setDialog(null); }}
         />
       )}
     </PanelShell>
@@ -868,12 +879,12 @@ function UserDialog({
       <DialogContent title={editing ? `Edit ${editing.email}` : "New user"} description="Assign roles; Authors are scoped to the sections you select." className="w-[min(560px,94vw)]">
         <div className="grid grid-cols-2 gap-3">
           <label className="text-sm"><span className="field-label">Email</span>
-            <input className="field-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+            <input aria-label="Email" className="field-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
           <label className="text-sm"><span className="field-label">Name</span>
-            <input className="field-input" value={name} onChange={(e) => setName(e.target.value)} /></label>
+            <input aria-label="Name" className="field-input" value={name} onChange={(e) => setName(e.target.value)} /></label>
           {!editing && (
             <label className="col-span-2 text-sm"><span className="field-label">Temporary password (min 10)</span>
-              <input className="field-input" type="text" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+              <input aria-label="Temporary password (min 10)" className="field-input" type="text" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
           )}
         </div>
         <div className="mt-3">
@@ -891,7 +902,7 @@ function UserDialog({
             <div className="max-h-40 space-y-1 overflow-auto rounded border border-line p-2">
               {pages.filter((p) => p.parentId === null).map((p) => (
                 <label key={p.documentId} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={sections.includes(p.documentId)} onChange={() => toggleSection(p.documentId)} />
+                  <input type="checkbox" aria-label={p.name} checked={sections.includes(p.documentId)} onChange={() => toggleSection(p.documentId)} />
                   <span>{p.name}</span>
                 </label>
               ))}
@@ -919,20 +930,23 @@ export function DeliveryKeysPanel() {
   const [name, setName] = useState("");
   const [type, setType] = useState<"public" | "preview">("public");
   const [editing, setEditing] = useState<{ id: number; name: string } | null>(null);
+  const editKeyRef = useRef<HTMLInputElement>(null);
+  const editingId = editing?.id;
+  useEffect(() => { if (editingId != null) editKeyRef.current?.focus(); }, [editingId]);
 
   const create = useMutation({
     mutationFn: () => api.createDeliveryKey(name || `${type} key`, type),
-    onSuccess: (r) => { setCreated(r.key); setName(""); qc.invalidateQueries({ queryKey: ["delivery-keys"] }); },
+    onSuccess: (r) => { setCreated(r.key); setName(""); void qc.invalidateQueries({ queryKey: ["delivery-keys"] }); },
     onError: (e) => toast.error("Couldn’t create key", (e as Error).message),
   });
   const rename = useMutation({
     mutationFn: (v: { id: number; name: string }) => api.renameDeliveryKey(v.id, v.name),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["delivery-keys"] }); setEditing(null); toast.success("Key renamed"); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["delivery-keys"] }); setEditing(null); toast.success("Key renamed"); },
     onError: (e) => toast.error("Couldn’t rename", (e as Error).message),
   });
   const revoke = useMutation({
     mutationFn: (id: number) => api.revokeDeliveryKey(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["delivery-keys"] }); toast.success("Key revoked"); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["delivery-keys"] }); toast.success("Key revoked"); },
     onError: (e) => toast.error("Couldn’t revoke", (e as Error).message),
   });
 
@@ -966,7 +980,7 @@ export function DeliveryKeysPanel() {
               className="flex items-center gap-1.5"
               onSubmit={(e) => { e.preventDefault(); if (editing.name.trim()) rename.mutate({ id: k.id, name: editing.name.trim() }); }}
             >
-              <input className="field-input py-0.5 text-xs" value={editing.name} autoFocus aria-label="Key name"
+              <input ref={editKeyRef} className="field-input py-0.5 text-xs" value={editing.name} aria-label="Key name"
                 onChange={(e) => setEditing({ id: k.id, name: e.target.value })} />
               <button className="btn-primary px-2 py-0.5 text-xs" disabled={rename.isPending}>Save</button>
               <button type="button" className="btn-ghost px-2 py-0.5 text-xs" onClick={() => setEditing(null)}>Cancel</button>
@@ -1006,12 +1020,12 @@ export function McpTokensPanel() {
 
   const create = useMutation({
     mutationFn: () => api.createMcpToken(name || "MCP token", userId || users.data?.[0]?.id || ""),
-    onSuccess: (r) => { setCreated(r.token); setName(""); qc.invalidateQueries({ queryKey: ["mcp-tokens"] }); },
+    onSuccess: (r) => { setCreated(r.token); setName(""); void qc.invalidateQueries({ queryKey: ["mcp-tokens"] }); },
     onError: (e) => toast.error("Couldn’t create token", (e as Error).message),
   });
   const revoke = useMutation({
     mutationFn: (id: number) => api.revokeMcpToken(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["mcp-tokens"] }); toast.success("Token revoked"); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["mcp-tokens"] }); toast.success("Token revoked"); },
     onError: (e) => toast.error("Couldn’t revoke", (e as Error).message),
   });
   // Agent-review gate: agent drafts must be human-approved before an AGENT may publish them.
@@ -1063,8 +1077,10 @@ export function McpTokensPanel() {
         </div>
       ))}
       {tokens.data?.length === 0 && <p className="p-4 text-sm text-muted">No MCP tokens yet.</p>}
-      <label className="flex items-start gap-2.5 border-t border-line px-4 py-3 text-sm">
+      <label htmlFor="agent-review-toggle" className="flex items-start gap-2.5 border-t border-line px-4 py-3 text-sm">
         <input
+          id="agent-review-toggle"
+          aria-label="Require human review before agents publish"
           type="checkbox"
           className="mt-0.5"
           checked={review.data?.required ?? false}
@@ -1094,12 +1110,12 @@ export function WebhooksPanel() {
 
   const create = useMutation({
     mutationFn: () => api.createWebhook({ name, url }),
-    onSuccess: (r) => { setCreated(r.secret); setName(""); setUrl(""); qc.invalidateQueries({ queryKey: ["webhooks"] }); },
+    onSuccess: (r) => { setCreated(r.secret); setName(""); setUrl(""); void qc.invalidateQueries({ queryKey: ["webhooks"] }); },
     onError: (e) => toast.error("Couldn’t create webhook", (e as Error).message),
   });
   const del = useMutation({
     mutationFn: (id: number) => api.deleteWebhook(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["webhooks"] }); toast.success("Webhook removed"); },
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["webhooks"] }); toast.success("Webhook removed"); },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
   });
 
@@ -1144,10 +1160,10 @@ export function TrashPanel() {
   const restore = useMutation({
     mutationFn: (id: string) => api.restoreContent(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["trash"] });
-      qc.invalidateQueries({ queryKey: ["tree", "root"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["trash"] });
+      void qc.invalidateQueries({ queryKey: ["tree", "root"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Restored", "Re-publish to make it live again.");
     },
     onError: (e) => toast.error("Couldn’t restore", (e as Error).message),
@@ -1155,8 +1171,8 @@ export function TrashPanel() {
   const empty = useMutation({
     mutationFn: () => api.emptyTrash(),
     onSuccess: (r) => {
-      qc.invalidateQueries({ queryKey: ["trash"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["trash"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Trash emptied", `Permanently deleted ${r.purged} item${r.purged === 1 ? "" : "s"}.`);
     },
     onError: (e) => toast.error("Couldn’t empty trash", (e as Error).message),

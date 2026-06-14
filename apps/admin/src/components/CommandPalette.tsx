@@ -1,7 +1,7 @@
 import * as RDialog from "@radix-ui/react-dialog";
 import { useQuery } from "@tanstack/react-query";
 import { Command } from "cmdk";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
@@ -13,12 +13,15 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [selected, setSelected] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
 
-  // Reset on open so the palette never shows a stale query.
+  // Reset on open so the palette never shows a stale query, and focus the input
+  // (replaces autoFocus on the field).
   useEffect(() => {
     if (open) {
       setQuery("");
       setDebounced("");
+      inputRef.current?.focus();
     }
   }, [open]);
   // Debounce the server search so we don't hit the API on every keystroke.
@@ -85,7 +88,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
             <div className="flex items-center gap-3 border-b border-line px-4">
               <Icon.Search width={18} height={18} className="shrink-0 text-muted" />
               <Command.Input
-                autoFocus
+                ref={inputRef}
                 value={query}
                 onValueChange={setQuery}
                 placeholder="Search the newsroom…"

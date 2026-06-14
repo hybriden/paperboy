@@ -277,6 +277,13 @@ function rtEsc(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+/** Stringify a scalar attr; objects/arrays/null collapse to "" (never "[object Object]"). */
+function rtScalar(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v);
+  return "";
+}
+
 function rtSafeHref(href: string): string {
   const h = (href || "").trim();
   return /^(https?:|mailto:|tel:|\/|#)/i.test(h) ? h : "#";
@@ -299,7 +306,7 @@ function rtApplyMarks(text: string, marks?: { type: string; attrs?: Record<strin
         out = `<code>${out}</code>`;
         break;
       case "link": {
-        const href = rtEsc(rtSafeHref(String(m.attrs?.href ?? "#")));
+        const href = rtEsc(rtSafeHref(rtScalar(m.attrs?.href) || "#"));
         const blank = m.attrs?.target === "_blank" ? ' target="_blank" rel="noopener noreferrer"' : "";
         out = `<a href="${href}"${blank}>${out}</a>`;
         break;
@@ -332,9 +339,9 @@ function rtRenderNode(node: RtNode): string {
     case "codeBlock":
       return `<pre><code>${inner}</code></pre>`;
     case "image": {
-      const src = String(node.attrs?.src ?? "").trim();
+      const src = rtScalar(node.attrs?.src).trim();
       if (!/^(https?:|\/)/i.test(src)) return "";
-      const alt = rtEsc(String(node.attrs?.alt ?? ""));
+      const alt = rtEsc(rtScalar(node.attrs?.alt));
       const width = Number(node.attrs?.width);
       const style = Number.isFinite(width) && width >= 10 && width <= 100 ? ` style="width:${Math.round(width)}%"` : "";
       return `<img src="${rtEsc(src)}" alt="${alt}" loading="lazy"${style}/>`;

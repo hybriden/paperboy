@@ -83,11 +83,11 @@ export default async function ContentPage({
     const listedType = typeof cfg.listedType === "string" && cfg.listedType ? cfg.listedType : "BlogPost";
     const pageSize = typeof cfg.pageSize === "number" && cfg.pageSize > 0 ? cfg.pageSize : 20;
     posts = await fetchList(listedType, locale, preview, content.documentId);
-    posts.sort((a, b) =>
-      String((b.data as Record<string, unknown>).publishDate ?? "").localeCompare(
-        String((a.data as Record<string, unknown>).publishDate ?? ""),
-      ),
-    );
+    const pubDate = (c: { data: unknown }): string => {
+      const v = (c.data as Record<string, unknown>).publishDate;
+      return typeof v === "string" ? v : "";
+    };
+    posts.sort((a, b) => pubDate(b).localeCompare(pubDate(a)));
     posts = posts.slice(0, pageSize);
   }
 

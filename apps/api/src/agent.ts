@@ -13,7 +13,7 @@ import {
   moveContent,
   updateContent,
 } from "@paperboy/db";
-import { aiTranslateBatch } from "@paperboy/shared";
+import { aiTranslateBatch, scalarToString } from "@paperboy/shared";
 
 /**
  * The in-product content agent ("Build from brief"). A server-side tool-use
@@ -228,17 +228,17 @@ async function callAnthropic(
 function toolLabel(name: string, input: Record<string, unknown>): string {
   switch (name) {
     case "create_content":
-      return `Creating ${String(input.type ?? "content")} “${String(input.name ?? "")}”`;
+      return `Creating ${scalarToString(input.type) || "content"} “${scalarToString(input.name)}”`;
     case "update_content":
-      return `Filling in fields${input.slug ? ` (slug: ${String(input.slug)})` : ""}`;
+      return `Filling in fields${input.slug ? ` (slug: ${scalarToString(input.slug)})` : ""}`;
     case "translate_texts":
-      return `Translating ${Array.isArray(input.texts) ? input.texts.length : "?"} texts to ${String(input.targetLocale ?? "")}`;
+      return `Translating ${Array.isArray(input.texts) ? input.texts.length : "?"} texts to ${scalarToString(input.targetLocale)}`;
     case "move_content":
       return "Arranging pages";
     case "list_content_types":
       return "Reading the content model";
     case "get_content_type":
-      return `Inspecting type ${String(input.name ?? "")}`;
+      return `Inspecting type ${scalarToString(input.name)}`;
     case "tree":
     case "list_pages":
       return "Looking at the page tree";
@@ -297,7 +297,7 @@ export async function runContentAgent(
         const result = await tool.run(args, deps);
         if (tu.name === "create_content" && result && typeof result === "object" && "documentId" in result) {
           const r = result as { documentId: string; name?: string; type?: string };
-          created.push({ documentId: r.documentId, name: r.name ?? String(input.name ?? ""), type: r.type ?? String(input.type ?? "") });
+          created.push({ documentId: r.documentId, name: r.name ?? scalarToString(input.name), type: r.type ?? scalarToString(input.type) });
         }
         emit({ type: "tool_done", name: tu.name, ok: true });
         results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result ?? { ok: true }).slice(0, 16_000) });

@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, type FieldDef, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, isCreativeWorkType, withSeoGroup } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, type FieldDef, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, isCreativeWorkType, scalarToString, withSeoGroup } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import type { Database } from "./client.js";
 import { asset, contentItem, contentType, contentVersion, locale, site } from "./schema.js";
@@ -343,13 +343,13 @@ async function sanitize(
     } else if (f.type === "contentArea" && Array.isArray(v)) {
       const blocks: unknown[] = [];
       for (const b of v as Array<Record<string, unknown>>) {
-        const blockType = String(b.blockType ?? "");
+        const blockType = scalarToString(b.blockType);
         const display = b.display ?? "automatic";
         if (b.ref) {
           // Shared block: resolve through the SAME chokepoint/perspective.
           const resolved =
             depth > 0
-              ? await resolveContent(ctx, perspective, String(b.ref), loc, depth - 1)
+              ? await resolveContent(ctx, perspective, scalarToString(b.ref), loc, depth - 1)
               : { documentId: b.ref, type: blockType };
           if (resolved) blocks.push({ blockType, display, shared: true, content: resolved });
         } else if (b.inline && typeof b.inline === "object") {
@@ -726,7 +726,9 @@ function compareKeys(a: unknown, b: unknown): number {
   if (a == null) return 1; // missing values sort last
   if (b == null) return -1;
   if (typeof a === "number" && typeof b === "number") return a - b;
-  return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+  const as = scalarToString(a);
+  const bs = scalarToString(b);
+  return as < bs ? -1 : as > bs ? 1 : 0;
 }
 
 export async function deliveryList(
@@ -769,7 +771,7 @@ export async function deliveryList(
       const data = row.data as Record<string, unknown>;
       for (const [field, want] of Object.entries(opts.filter!)) {
         const have = field === "name" ? row.name : field === "slug" ? row.slug : data[field];
-        const ok = Array.isArray(have) ? have.map(String).includes(want) : String(have ?? "") === want;
+        const ok = Array.isArray(have) ? have.map(scalarToString).includes(want) : scalarToString(have) === want;
         if (!ok) return false;
       }
       return true;

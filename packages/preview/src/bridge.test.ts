@@ -2,7 +2,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initPreviewBridge } from "./bridge.js";
 
-const makeTarget = () => ({ postMessage: vi.fn() }) as unknown as Window;
+// postMessage is redeclared as a plain mock PROPERTY (not Window's method) so
+// tests can reference it unbound — `expect(target.postMessage)` — without tripping
+// no-unbound-method, while the value still satisfies the `target?: Window` option.
+interface MockWindow extends Window {
+  postMessage: ReturnType<typeof vi.fn>;
+}
+const makeTarget = (): MockWindow => ({ postMessage: vi.fn() }) as unknown as MockWindow;
 
 beforeEach(() => {
   document.head.innerHTML = "";
@@ -26,7 +32,7 @@ describe("initPreviewBridge", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-field="heading">Hi</div>`;
     const teardown = initPreviewBridge({ target, badge: false });
-    (target.postMessage as ReturnType<typeof vi.fn>).mockClear();
+    target.postMessage.mockClear();
     document.querySelector("[data-pb-field]")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(target.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "paperboy:edit", field: "heading" }), "*");
     teardown();

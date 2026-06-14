@@ -36,6 +36,13 @@ import { useToast } from "./ui/toast.js";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
+/** Stringify a scalar field value; objects/arrays/null become "" (never "[object Object]"). */
+function asText(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v);
+  return "";
+}
+
 // Unique keys for blocks dropped onto the preview (matches fields/ContentArea).
 let blockKeyCounter = 0;
 const newBlockKey = () => `b_${Date.now().toString(36)}_${blockKeyCounter++}`;
@@ -259,8 +266,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       };
       setForm((prev) => (prev ? { ...prev, ...meta } : prev));
       formRef.current = formRef.current ? { ...formRef.current, ...meta } : formRef.current;
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
       // Reload the preview with the saved draft — but NOT while an on-page
       // overlay is open (the reload would yank the page out from under the
       // editor mid-typing; live patches keep it current, and the deferred
@@ -320,8 +327,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       formRef.current = updated;
       setSaveState("idle");
       qc.setQueryData(["content", documentId, locale], updated);
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
       toast.success("Published", `“${updated.name}” is live in ${locale.toUpperCase()}.`);
     },
     onError: (e) => toast.error("Publish failed", (e as Error).message),
@@ -333,8 +340,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       setForm(updated);
       formRef.current = updated;
       qc.setQueryData(["content", documentId, locale], updated);
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
       toast.success("Unpublished", `Removed from the public delivery API.`);
     },
     onError: (e) => toast.error("Couldn’t unpublish", (e as Error).message),
@@ -348,10 +355,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     },
     onSuccess: () => {
       loadedKey.current = null; // force re-init from server
-      qc.invalidateQueries({ queryKey: ["content", documentId, locale] });
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["content", documentId, locale] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Draft discarded");
     },
     onError: (e) => toast.error("Couldn’t discard draft", (e as Error).message),
@@ -363,10 +370,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const duplicate = useMutation({
     mutationFn: () => api.duplicate(documentId, locale),
     onSuccess: (created) => {
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
       toast.success("Duplicated", `Created “${created.name}”.`);
-      navigate(`/edit/${created.documentId}${locale !== "en" ? `?lang=${locale}` : ""}`);
+      void navigate(`/edit/${created.documentId}${locale !== "en" ? `?lang=${locale}` : ""}`);
     },
     onError: (e) => toast.error("Couldn’t duplicate", (e as Error).message),
   });
@@ -387,11 +394,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const trash = useMutation({
     mutationFn: () => api.trash(documentId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Moved to trash", "Restore it from Settings → Trash.");
-      navigate("/edit");
+      void navigate("/edit");
     },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
   });
@@ -657,7 +664,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // richtext renders to HTML via a lazily-loaded TipTap serializer chunk).
   function pushLivePatch(fieldDef: FieldDef, value: unknown) {
     if (fieldDef.type === "text" || fieldDef.type === "number") {
-      setLivePatch({ field: fieldDef.name, text: String(value ?? ""), n: ++livePatchCounter.current });
+      setLivePatch({ field: fieldDef.name, text: asText(value), n: ++livePatchCounter.current });
     } else if (fieldDef.type === "richtext") {
       void import("../lib/richtextHtml.js").then(({ richTextHtml }) => {
         const html = richTextHtml(value);
@@ -967,7 +974,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                   onChange={(e) => patch((prev) => ({ ...prev, slug: e.target.value }))} aria-label="Slug" />
               </div>
               <label className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={form.displayInNav} disabled={!canEdit}
+                <input type="checkbox" checked={form.displayInNav} disabled={!canEdit} aria-label="Display in navigation"
                   onChange={(e) => patch((prev) => ({ ...prev, displayInNav: e.target.checked }))} />
                 <span>Display in navigation (menus)</span>
               </label>
@@ -1030,6 +1037,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                           <label className="field-label" htmlFor="ope-name">Name</label>
                           <input
                             id="ope-name"
+                            aria-label="Name"
                             className="field-input"
                             value={form.name}
                             disabled={!canEdit}
@@ -1054,7 +1062,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                       )}
                       {canEdit && (isName || def!.type === "text" || def!.type === "markdown") && (
                         <OverlayAi
-                          current={String(current ?? "")}
+                          current={asText(current)}
                           context={pageAiContext()}
                           onApply={(v) => {
                             if (isName) {
@@ -1068,7 +1076,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                           onPreview={(v) => {
                             const f = formRef.current ?? form;
                             if (isName) liveText(v ?? f.name);
-                            else pushLivePatch(def!, v ?? String(f.data[def!.name] ?? ""));
+                            else pushLivePatch(def!, v ?? asText(f.data[def!.name]));
                           }}
                         />
                       )}
@@ -1113,7 +1121,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             loadedKey.current = variantKey;
             setSaveState("idle");
             qc.setQueryData(["content", documentId, locale], updated);
-            qc.invalidateQueries({ queryKey: ["tree"] });
+            void qc.invalidateQueries({ queryKey: ["tree"] });
           }}
         />
       )}
@@ -1141,8 +1149,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             formRef.current = updated;
             setSaveState("idle");
             qc.setQueryData(["content", documentId, locale], updated);
-            qc.invalidateQueries({ queryKey: ["tree"] });
-            qc.invalidateQueries({ queryKey: ["versions", documentId, locale] });
+            void qc.invalidateQueries({ queryKey: ["tree"] });
+            void qc.invalidateQueries({ queryKey: ["versions", documentId, locale] });
           }}
         />
       )}
@@ -1231,10 +1239,10 @@ function VersionsDialog({
                   {rows.length >= 2 && (
                     <span className="flex items-center gap-1.5" aria-label={`Select version ${v.versionNumber} for comparison`}>
                       <label className="flex items-center gap-0.5 text-[10px] font-semibold text-muted">
-                        <input type="radio" name="cmp-a" checked={selA === v.id} onChange={() => setSelA(v.id)} disabled={selB === v.id} /> A
+                        <input type="radio" name="cmp-a" aria-label="Select as version A" checked={selA === v.id} onChange={() => setSelA(v.id)} disabled={selB === v.id} /> A
                       </label>
                       <label className="flex items-center gap-0.5 text-[10px] font-semibold text-muted">
-                        <input type="radio" name="cmp-b" checked={selB === v.id} onChange={() => setSelB(v.id)} disabled={selA === v.id} /> B
+                        <input type="radio" name="cmp-b" aria-label="Select as version B" checked={selB === v.id} onChange={() => setSelB(v.id)} disabled={selA === v.id} /> B
                       </label>
                     </span>
                   )}
@@ -1320,12 +1328,12 @@ function ScheduleDialog({
         <div className="space-y-4">
           <div>
             <label className="field-label" htmlFor="sched-pub">Publish at</label>
-            <input id="sched-pub" type="datetime-local" className="field-input" value={pub} onChange={(e) => setPub(e.target.value)} />
+            <input id="sched-pub" aria-label="Publish at" type="datetime-local" className="field-input" value={pub} onChange={(e) => setPub(e.target.value)} />
             <p className="mt-1 text-xs text-muted">A future time schedules the current draft to go live automatically. Empty/past publishes now.</p>
           </div>
           <div>
             <label className="field-label" htmlFor="sched-exp">Expire (unpublish) at</label>
-            <input id="sched-exp" type="datetime-local" className="field-input" value={exp} onChange={(e) => setExp(e.target.value)} />
+            <input id="sched-exp" aria-label="Expire at" type="datetime-local" className="field-input" value={exp} onChange={(e) => setExp(e.target.value)} />
             <p className="mt-1 text-xs text-muted">After this time the content is removed from the public delivery API.</p>
           </div>
           <div className="flex items-center justify-between gap-2 pt-1">
@@ -1389,7 +1397,7 @@ function CompareView({
           <span className="font-mono text-published">B v{b.data.versionNumber}</span> · {changed.length} changed field{changed.length === 1 ? "" : "s"}
         </span>
         <label className="flex items-center gap-1.5 text-muted">
-          <input type="checkbox" checked={showUnchanged} onChange={(e) => setShowUnchanged(e.target.checked)} /> Show unchanged
+          <input type="checkbox" aria-label="Show unchanged" checked={showUnchanged} onChange={(e) => setShowUnchanged(e.target.checked)} /> Show unchanged
         </label>
       </div>
       {shown.length === 0 && <p className="py-6 text-center text-sm text-muted">No differences between these versions.</p>}
@@ -1478,7 +1486,7 @@ function diffTextOf(fieldType: string, value: unknown): string {
       return blocks.length ? `${types} (${blocks.length} block${blocks.length === 1 ? "" : "s"})` : "";
     }
     case "select":
-      return Array.isArray(value) ? (value as string[]).join(", ") : String(value);
+      return Array.isArray(value) ? (value as string[]).join(", ") : asText(value);
     default:
       return typeof value === "string" ? value : JSON.stringify(value);
   }
@@ -1714,7 +1722,7 @@ function Field({
       {field.helpText && <p className="mb-1 text-xs text-muted">{field.helpText}</p>}
       {field.type === "text" && (
         <div>
-          <input id={id} className="field-input" value={(value as string) ?? ""} disabled={disabled}
+          <input id={id} aria-label={field.displayName} className="field-input" value={(value as string) ?? ""} disabled={disabled}
             onChange={(e) => onChange(e.target.value)} />
           {field.validation?.maxLength != null && (
             <div className={`mt-0.5 text-right text-[11px] ${((value as string) ?? "").length > field.validation.maxLength ? "text-danger" : "text-muted"}`}>
@@ -1728,14 +1736,14 @@ function Field({
       )}
       {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} />}
       {field.type === "boolean" && (
-        <input id={id} type="checkbox" checked={Boolean(value)} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
+        <input id={id} aria-label={field.displayName} type="checkbox" checked={Boolean(value)} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       )}
       {field.type === "number" && (
-        <input id={id} type="number" className="field-input" value={(value as number) ?? ""} disabled={disabled}
+        <input id={id} aria-label={field.displayName} type="number" className="field-input" value={(value as number) ?? ""} disabled={disabled}
           onChange={(e) => onChange(Number(e.target.value))} />
       )}
       {field.type === "datetime" && (
-        <input id={id} type="datetime-local" className="field-input" value={(value as string) ?? ""} disabled={disabled}
+        <input id={id} aria-label={field.displayName} type="datetime-local" className="field-input" value={(value as string) ?? ""} disabled={disabled}
           onChange={(e) => onChange(e.target.value || null)} />
       )}
       {field.type === "select" && <SelectField id={id} field={field} types={types} value={value} disabled={disabled} onChange={onChange} />}
@@ -1745,7 +1753,7 @@ function Field({
         <ImageField id={id} value={value} disabled={disabled} onChange={onChange} />
       )}
       {field.type === "media" && (
-        <input id={id} className="field-input" placeholder="Asset documentId" value={(value as string) ?? ""} disabled={disabled}
+        <input id={id} aria-label={field.displayName} className="field-input" placeholder="Asset documentId" value={(value as string) ?? ""} disabled={disabled}
           onChange={(e) => onChange(e.target.value)} />
       )}
     </div>

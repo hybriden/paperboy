@@ -98,9 +98,9 @@ describe("aiImageAltText — vision alt text", () => {
     const r = await aiImageAltText({ imageBase64: "aGk=", mediaType: "image/jpeg", filename: "IMG_1234.jpg" }, { apiKey: "k", model: "m" });
     expect(r.result).toBe("A red bicycle leaning against a brick wall");
     const body = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body) as {
-      messages: { content: { type: string; source?: { data?: string; media_type?: string } } }[][] | any;
+      messages: { content: { type: string; source?: { data?: string; media_type?: string } }[] }[];
     };
-    const blocks = body.messages[0].content as { type: string; source?: { data?: string; media_type?: string } }[];
+    const blocks = body.messages[0]!.content;
     const image = blocks.find((b) => b.type === "image");
     expect(image?.source?.data).toBe("aGk=");
     expect(image?.source?.media_type).toBe("image/jpeg");

@@ -74,10 +74,10 @@ describe("AI content agent (build from brief)", () => {
     let call = 0;
     let createdId = "";
     globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-      if (!String(url).includes("api.anthropic.com")) return realFetch(url as never, init as never);
+      if (!(url instanceof Request ? url.url : String(url)).includes("api.anthropic.com")) return realFetch(url as never, init as never);
       // The scripted 3rd turn needs the real documentId from the 2nd turn's
       // tool_result (it's in the request body we receive).
-      const body = JSON.parse(String(init?.body ?? "{}")) as { messages: Array<{ content: unknown }> };
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as { messages: Array<{ content: unknown }> };
       const last = JSON.stringify(body.messages.at(-1)?.content ?? "");
       const m = /"documentId\\?":\\?"([A-Za-z0-9_-]{10,})/.exec(last);
       if (m) createdId = m[1]!;
@@ -122,7 +122,7 @@ describe("AI content agent (build from brief)", () => {
     ];
     let call = 0;
     globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-      if (!String(url).includes("api.anthropic.com")) return realFetch(url as never, init as never);
+      if (!(url instanceof Request ? url.url : String(url)).includes("api.anthropic.com")) return realFetch(url as never, init as never);
       return new Response(JSON.stringify(turns[Math.min(call++, turns.length - 1)]), { status: 200, headers: { "content-type": "application/json" } });
     }) as typeof fetch;
 

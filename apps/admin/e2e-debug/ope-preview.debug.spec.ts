@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { SEL, login, openHome, waitForSaved } from "./helpers.js";
+import { login, openHome, waitForSaved } from "./helpers.js";
 
 /**
  * ON-PAGE EDITING + LIVE PREVIEW.

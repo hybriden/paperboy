@@ -29,7 +29,7 @@ const knobs = {
 
 function stubFetch() {
   return vi.fn(async (input: RequestInfo | URL) => {
-    const url = String(input);
+    const url = input instanceof Request ? input.url : String(input);
     if (url.startsWith("https://api.unsplash.com/search/photos")) {
       return new Response(JSON.stringify({ results: [PHOTO] }), { status: 200 });
     }

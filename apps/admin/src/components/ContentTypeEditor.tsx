@@ -141,8 +141,8 @@ function DeleteTypeButton({ name, usage, onDeleted }: { name: string; usage?: { 
   const del = useMutation({
     mutationFn: () => api.deleteContentType(name),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["content-types"] });
-      qc.invalidateQueries({ queryKey: ["content-types-usage"] });
+      void qc.invalidateQueries({ queryKey: ["content-types"] });
+      void qc.invalidateQueries({ queryKey: ["content-types-usage"] });
       toast.success("Content type deleted", name);
       onDeleted();
     },
@@ -286,7 +286,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
   const save = useMutation({
     mutationFn: (def: ContentTypeDef) => (mode === "create" ? api.createContentType(def) : api.updateContentType(name, def)),
     onSuccess: (saved) => {
-      qc.invalidateQueries({ queryKey: ["content-types"] });
+      void qc.invalidateQueries({ queryKey: ["content-types"] });
       toast.success(mode === "create" ? "Content type created" : "Content type updated", saved.displayName);
       onOpenChange(false);
     },
@@ -349,12 +349,12 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className="field-label" htmlFor="ct-name">Name (code)</label>
-            <input id="ct-name" className="field-input font-mono" value={name} disabled={mode === "edit"}
+            <input id="ct-name" aria-label="Name (code)" className="field-input font-mono" value={name} disabled={mode === "edit"}
               placeholder="StandardPage" onChange={(e) => setName(e.target.value)} />
           </div>
           <div>
             <label className="field-label" htmlFor="ct-display">Display name</label>
-            <input id="ct-display" className="field-input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+            <input id="ct-display" aria-label="Display name" className="field-input" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
           </div>
           <div>
             <label className="field-label" htmlFor="ct-kind">Kind</label>
@@ -369,7 +369,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
           </div>
           <div className="col-span-2">
             <label className="field-label" htmlFor="ct-desc">Description</label>
-            <input id="ct-desc" className="field-input" value={description} onChange={(e) => setDescription(e.target.value)} />
+            <input id="ct-desc" aria-label="Description" className="field-input" value={description} onChange={(e) => setDescription(e.target.value)} />
           </div>
         </div>
 
