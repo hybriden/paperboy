@@ -441,7 +441,7 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
 
   // One editable draft per field, seeded from the site; resynced when the saved
   // site changes (keyed by the values we last persisted).
-  const saved = `${site.name} ${site.slug} ${site.previewBaseUrl ?? ""} ${site.startPageId ?? ""}`;
+  const saved = `${site.name}\u0000${site.slug}\u0000${site.previewBaseUrl ?? ""}\u0000${site.startPageId ?? ""}`;
   const [name, setName] = useState(site.name);
   const [slug, setSlug] = useState(site.slug);
   const [previewUrl, setPreviewUrl] = useState(site.previewBaseUrl ?? "");
