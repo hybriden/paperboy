@@ -62,7 +62,7 @@ describe("Delivery: list pagination/sorting/filters + full-text search", () => {
   it("sorts by data.<field> descending and by name ascending", async () => {
     const byDate = await s.app.inject({ method: "GET", url: "/api/v1/delivery/content?type=BlogPost&sort=-data.publishDate&limit=3", headers: pub });
     const dates = (byDate.json().items as Array<{ data: { publishDate?: string } }>).map((i) => i.data.publishDate).filter(Boolean);
-    expect(dates).toEqual([...dates].sort().reverse());
+    expect(dates).toEqual([...dates].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).reverse());
 
     const byName = await s.app.inject({ method: "GET", url: "/api/v1/delivery/content?type=BlogPost&sort=name", headers: pub });
     const names = (byName.json().items as Array<{ name: string }>).map((i) => i.name);

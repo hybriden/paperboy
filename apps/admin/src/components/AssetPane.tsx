@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ContentTypeDef } from "@paperboy/shared";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
@@ -42,10 +42,10 @@ export function AssetPane({
   const trash = useMutation({
     mutationFn: (id: string) => api.trash(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["blocks"] });
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["trash"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["trash"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Moved to trash", "Restore it from Settings → Trash.");
     },
     onError: (e) => toast.error("Couldn’t delete block", (e as Error).message),
@@ -145,6 +145,8 @@ function CreateBlockDialog({
   const qc = useQueryClient();
   const [type, setType] = useState(blockTypes[0]?.name ?? "");
   const [name, setName] = useState("");
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { nameRef.current?.focus(); }, []);
   const create = useMutation({
     mutationFn: async () => {
       const created = await api.create({ type, parentId: null, locale: "en", name });
@@ -152,7 +154,7 @@ function CreateBlockDialog({
       return created;
     },
     onSuccess: (created) => {
-      qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
       onClose();
       onCreated(created.documentId);
     },
@@ -165,7 +167,7 @@ function CreateBlockDialog({
           {blockTypes.map((t) => <option key={t.name} value={t.name}>{t.displayName}</option>)}
         </select>
         <label className="field-label" htmlFor="nb-name">Name</label>
-        <input id="nb-name" className="field-input mb-4" value={name} autoFocus onChange={(e) => setName(e.target.value)} placeholder="e.g. Campaign banner" />
+        <input id="nb-name" ref={nameRef} aria-label="Name" className="field-input mb-4" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Campaign banner" />
         {create.isError && <p role="alert" className="mb-3 text-sm text-danger">{(create.error as Error).message}</p>}
         <div className="flex justify-end gap-2">
           <button className="btn-ghost" onClick={onClose}>Cancel</button>

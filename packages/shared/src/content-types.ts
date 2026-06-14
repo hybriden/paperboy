@@ -375,11 +375,22 @@ export function fieldFormatHint(f: FieldDef): { format: string; example: unknown
 // a stuck retry loop.)
 type TtNode = { type?: string; text?: string; content?: TtNode[]; attrs?: Record<string, unknown>; marks?: { type: string; attrs?: Record<string, unknown> }[] };
 
+/**
+ * Stringify a scalar value (e.g. a TipTap attr, typed `unknown` but only ever a
+ * scalar at runtime). Objects/arrays/null collapse to "" rather than the useless
+ * "[object Object]" — and the explicit narrowing satisfies no-base-to-string.
+ */
+export function scalarToString(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v);
+  return "";
+}
+
 function ttInline(nodes: TtNode[] | undefined, md: boolean): string {
   return (nodes ?? [])
     .map((n) => {
       if (n.type === "hardBreak") return md ? "  \n" : "\n";
-      if (n.type === "image") return md ? `![${String(n.attrs?.alt ?? "")}](${String(n.attrs?.src ?? "")})` : String(n.attrs?.alt ?? "");
+      if (n.type === "image") return md ? `![${scalarToString(n.attrs?.alt)}](${scalarToString(n.attrs?.src)})` : scalarToString(n.attrs?.alt);
       let t = typeof n.text === "string" ? n.text : ttInline(n.content, md);
       if (md) {
         for (const m of n.marks ?? []) {
@@ -387,7 +398,7 @@ function ttInline(nodes: TtNode[] | undefined, md: boolean): string {
           else if (m.type === "italic" || m.type === "em") t = `*${t}*`;
           else if (m.type === "code") t = `\`${t}\``;
           else if (m.type === "strike") t = `~~${t}~~`;
-          else if (m.type === "link") t = `[${t}](${String(m.attrs?.href ?? "#")})`;
+          else if (m.type === "link") t = `[${t}](${scalarToString(m.attrs?.href) || "#"})`;
         }
       }
       return t;
@@ -426,7 +437,7 @@ function ttBlocks(nodes: TtNode[] | undefined, md: boolean): string[] {
         if (md) out.push("---");
         break;
       case "image":
-        out.push(md ? `![${String(n.attrs?.alt ?? "")}](${String(n.attrs?.src ?? "")})` : String(n.attrs?.alt ?? ""));
+        out.push(md ? `![${scalarToString(n.attrs?.alt)}](${scalarToString(n.attrs?.src)})` : scalarToString(n.attrs?.alt));
         break;
       default:
         // Unknown wrapper: descend; bare inline content becomes its own block.

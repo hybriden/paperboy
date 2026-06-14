@@ -87,7 +87,7 @@ describe("OpenAPI surface — stable digest snapshot", () => {
         const params = (Array.isArray(op.parameters) ? op.parameters : []) as JsonObj[];
         const requiredParams = params
           .filter((p) => p.required === true)
-          .map((p) => `${p.in}:${p.name}`)
+          .map((p) => `${p.in as string}:${p.name as string}`)
           .sort();
 
         // Request body required fields.

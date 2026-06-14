@@ -143,12 +143,12 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
     mutationFn: (v: { id: string; parentId: string | null; beforeId?: string | null; afterId?: string | null }) =>
       api.move(v.id, { parentId: v.parentId, beforeId: v.beforeId ?? null, afterId: v.afterId ?? null }),
     onSuccess: (_r, v) => {
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["pages"] });
-      qc.invalidateQueries({ queryKey: ["content", v.id] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["pages"] });
+      void qc.invalidateQueries({ queryKey: ["content", v.id] });
     },
     onError: (e) => {
-      qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
       toast.error("Couldn’t move", (e as Error).message);
     },
   });
@@ -205,6 +205,7 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
             <input
               type="checkbox"
               className="h-3 w-3 accent-accent"
+              aria-label="Only current locale"
               checked={onlyCurrentLocale}
               onChange={(e) => updateOnlyLocale(e.target.checked)}
             />
@@ -233,7 +234,7 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
           onDragCancel={() => { setActiveId(null); setOver(null); }}
           accessibility={{ container: typeof document !== "undefined" ? document.body : undefined }}
         >
-          <div role="tree" aria-label="Content tree" className="min-h-0 flex-1 overflow-auto px-1.5 pb-3" onKeyDown={onKeyDown}>
+          <div role="tree" tabIndex={0} aria-label="Content tree" className="min-h-0 flex-1 overflow-auto px-1.5 pb-3" onKeyDown={onKeyDown}>
             <Level
               parentId={null}
               depth={0}
@@ -384,8 +385,8 @@ function Row(props: LevelProps & { node: TreeNode }) {
   const duplicate = useMutation({
     mutationFn: () => api.duplicate(node.documentId, locale),
     onSuccess: (created) => {
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
       toast.success("Duplicated", `Created “${created.name}”.`);
       onSelect(created.documentId);
     },
@@ -394,10 +395,10 @@ function Row(props: LevelProps & { node: TreeNode }) {
   const trash = useMutation({
     mutationFn: () => api.trash(node.documentId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
-      qc.invalidateQueries({ queryKey: ["trash"] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["trash"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success("Moved to trash", "Restore it from Settings → Trash.");
     },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
@@ -409,10 +410,10 @@ function Row(props: LevelProps & { node: TreeNode }) {
   const deleteVariant = useMutation({
     mutationFn: () => api.deleteVariant(node.documentId, locale),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tree"] });
-      qc.invalidateQueries({ queryKey: ["blocks"] });
-      qc.invalidateQueries({ queryKey: ["content", node.documentId] });
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      void qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["content", node.documentId] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
       toast.success(`Deleted ${locale.toUpperCase()} version`, `“${node.name}” keeps its other languages.`);
     },
     onError: (e) => toast.error("Couldn’t delete version", (e as Error).message),
@@ -420,7 +421,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
   const setStart = useMutation({
     mutationFn: (id: string | null) => api.setStartPage(id),
     onSuccess: (_r, id) => {
-      qc.invalidateQueries({ queryKey: ["site"] });
+      void qc.invalidateQueries({ queryKey: ["site"] });
       toast.success(id ? "Start page set" : "Start page cleared", id ? `“${node.name}” is now served at /` : undefined);
     },
     onError: (e) => toast.error("Couldn’t set start page", (e as Error).message),
@@ -542,7 +543,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
                 same Editor/Admin roles as content.publish in the default RBAC. */}
             {canDelete && node.kind === "page" && !isStartPage && <CtxItem onSelect={() => setStart.mutate(node.documentId)}>Set as start page</CtxItem>}
             {canDelete && node.kind === "page" && isStartPage && <CtxItem onSelect={() => setStart.mutate(null)}>Unset start page</CtxItem>}
-            <CtxItem onSelect={() => { navigator.clipboard?.writeText(node.documentId); toast.success("Copied document ID"); }}>Copy document ID</CtxItem>
+            <CtxItem onSelect={() => { void navigator.clipboard?.writeText(node.documentId); toast.success("Copied document ID"); }}>Copy document ID</CtxItem>
             {/* Delete just the active-language version — only when another
                 language remains (deleting the last one is "Move to trash"). */}
             {canDelete && ind.translated && Object.keys(node.locales).length > 1 && (
@@ -638,9 +639,9 @@ function MoveDialog({ node, onClose }: { node: { documentId: string; name: strin
   const move = useMutation({
     mutationFn: () => api.move(node.documentId, { parentId: target === "__root__" ? null : target }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["tree"] }); // prefix: refresh every loaded level
-      qc.invalidateQueries({ queryKey: ["pages"] });
-      qc.invalidateQueries({ queryKey: ["content", node.documentId] });
+      void qc.invalidateQueries({ queryKey: ["tree"] }); // prefix: refresh every loaded level
+      void qc.invalidateQueries({ queryKey: ["pages"] });
+      void qc.invalidateQueries({ queryKey: ["content", node.documentId] });
       toast.success("Page moved", node.name);
       onClose();
     },
@@ -686,7 +687,7 @@ function CreateDialog(props: {
   const create = useMutation({
     mutationFn: () => api.create({ type, parentId: props.parentId, locale: props.locale, name }),
     onSuccess: (created) => {
-      qc.invalidateQueries({ queryKey: ["tree", props.parentId ?? "root"] });
+      void qc.invalidateQueries({ queryKey: ["tree", props.parentId ?? "root"] });
       props.onCreated(created.documentId);
     },
   });
@@ -700,7 +701,7 @@ function CreateDialog(props: {
           {props.types.map((t) => <option key={t.name} value={t.name}>{t.displayName} ({t.kind})</option>)}
         </select>
         <label className="field-label" htmlFor="cname">Name</label>
-        <input id="cname" className="field-input mb-4" value={name} autoFocus onChange={(e) => setName(e.target.value)} placeholder="e.g. About us" />
+        <input id="cname" aria-label="Name" className="field-input mb-4" value={name} autoFocus onChange={(e) => setName(e.target.value)} placeholder="e.g. About us" />
         {create.isError && <p role="alert" className="mb-3 text-sm text-danger">{(create.error as Error).message}</p>}
         <div className="flex justify-end gap-2">
           <button className="btn-ghost" onClick={props.onClose}>Cancel</button>

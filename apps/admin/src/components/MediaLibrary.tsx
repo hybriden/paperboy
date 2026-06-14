@@ -34,7 +34,7 @@ function UploadButton({ onUploaded, label = "Upload", folderId }: { onUploaded?:
       return asset;
     },
     onSuccess: (asset) => {
-      qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["assets"] });
       toast.success("Image uploaded", asset.filename);
       onUploaded?.(asset);
     },
@@ -46,6 +46,7 @@ function UploadButton({ onUploaded, label = "Upload", folderId }: { onUploaded?:
         ref={ref}
         type="file"
         accept={ACCEPT}
+        aria-label="Upload image"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -95,7 +96,7 @@ export function MediaTab() {
   const saveAlt = useMutation({
     mutationFn: (v: { id: string; alt: string }) => api.updateAssetAlt(v.id, v.alt),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["assets"] });
       setEditing(null);
       toast.success("Alt text saved");
     },
@@ -103,7 +104,7 @@ export function MediaTab() {
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteAsset(id),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["assets"] });
       setEditing(null);
       toast.success("Image deleted");
     },
@@ -183,7 +184,7 @@ export function MediaTab() {
                 {suggestAlt.isPending ? "Looking…" : "Describe image"}
               </button>
             </div>
-            <input id="alt" className="field-input mb-4" value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="Describe the image" />
+            <input id="alt" aria-label="Alt text" className="field-input mb-4" value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="Describe the image" />
             <div className="flex items-center justify-between gap-2">
               <button
                 className="btn-ghost px-2 text-xs text-danger"
@@ -261,7 +262,7 @@ function StockTab({ onPick, cols = "grid-cols-3" }: { onPick: (a: Asset) => void
   const importPhoto = useMutation({
     mutationFn: (r: StockSearchResult) => api.stockImport({ providerId: r.id, alt: r.description }),
     onSuccess: (asset) => {
-      qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["assets"] });
       toast.success("Image imported", asset.sourceMeta ? `Photo by ${asset.sourceMeta.credit} on ${asset.sourceMeta.providerName}` : asset.filename);
       onPick(asset);
     },
@@ -358,7 +359,7 @@ export function ImageField({ id, value, disabled, onChange }: { id: string; valu
       }
       api.uploadAsset(file).then(
         (asset) => {
-          qc.invalidateQueries({ queryKey: ["assets"] });
+          void qc.invalidateQueries({ queryKey: ["assets"] });
           onChange(asset.documentId);
         },
         (err) => toast.error("Upload failed", (err as Error).message),

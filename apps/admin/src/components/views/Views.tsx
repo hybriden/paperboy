@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { type DashboardData, api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
@@ -56,12 +56,14 @@ function AltTextGaps({ images, total }: { images: DashboardData["imagesMissingAl
   const aiEnabled = useAiEnabled();
   const [editing, setEditing] = useState<DashboardData["imagesMissingAlt"][number] | null>(null);
   const [alt, setAlt] = useState("");
+  const altRef = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (editing) altRef.current?.focus(); }, [editing]);
 
   const save = useMutation({
     mutationFn: (v: { id: string; alt: string }) => api.updateAssetAlt(v.id, v.alt),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["dashboard"] });
-      qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] });
+      void qc.invalidateQueries({ queryKey: ["assets"] });
       setEditing(null);
       toast.success("Alt text saved");
     },
@@ -86,6 +88,7 @@ function AltTextGaps({ images, total }: { images: DashboardData["imagesMissingAl
             key={img.documentId}
             type="button"
             className="h-16 w-16 overflow-hidden rounded border border-line transition-shadow hover:ring-2 hover:ring-accent"
+            aria-label="Add alt text"
             title={`${img.filename} — add alt text`}
             onClick={() => { setEditing(img); setAlt(""); }}
           >
@@ -110,7 +113,7 @@ function AltTextGaps({ images, total }: { images: DashboardData["imagesMissingAl
                 {describe.isPending ? "Looking…" : "Describe image"}
               </button>
             </div>
-            <input id="dash-alt" className="field-input mb-4" autoFocus value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="Describe the image" />
+            <input id="dash-alt" ref={altRef} aria-label="Alt text" className="field-input mb-4" value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="Describe the image" />
             <div className="flex justify-end gap-2">
               <button className="btn-ghost" onClick={() => setEditing(null)}>Cancel</button>
               <button className="btn-primary" disabled={save.isPending || !alt.trim()} onClick={() => save.mutate({ id: editing.documentId, alt: alt.trim() })}>
