@@ -382,12 +382,19 @@ test("version history dialog lists versions and can restore", async ({ page }) =
 test("Settings is tabbed and exposes the admin sections for an Admin", async ({ page }) => {
   await login(page);
   await page.getByRole("link", { name: "Settings" }).click();
+  // Confirm the route landed and the settings shell mounted BEFORE asserting
+  // panel content — this splits "navigation missed" from "panel didn't render".
+  // Assertions inherit the project's CI expect timeout (15s, tuned for
+  // post-navigation render lag under load); a hardcoded shorter timeout here
+  // used to undercut that global and flake on the first heading after nav.
+  await expect(page).toHaveURL(/\/settings/);
+  await expect(page.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
   // Default tab = Content types.
-  await expect(page.getByRole("heading", { name: "Content types" }).first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByRole("heading", { name: "Content types" }).first()).toBeVisible();
   // Each section is a tab in the left nav; clicking it shows that section.
   for (const tab of ["Users & roles", "API keys", "Webhooks", "Trash", "Audit log", "Your account", "Languages"]) {
     await page.getByRole("button", { name: tab, exact: true }).click();
-    await expect(page.getByRole("heading", { name: tab }).first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByRole("heading", { name: tab }).first()).toBeVisible();
   }
   await page.screenshot({ path: `${SHOT}/08-admin-panels.png` });
 });
