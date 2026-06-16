@@ -55,6 +55,25 @@ function notModified(req: FastifyRequest, perspective: Perspective, cv: number):
   return perspective === "published" && req.headers["if-none-match"] === `W/"cv-${cv}"`;
 }
 
+/**
+ * Finish a single-item delivery read: emit cache headers, then return either a
+ * 304 (published ETag match) or the payload. The conditional-GET dance lives
+ * here only, so cache correctness can't drift between the by-slug/by-path/by-id
+ * /start handlers that all share it.
+ */
+function deliverItem<T extends { cv: number }>(
+  req: FastifyRequest,
+  reply: FastifyReply,
+  perspective: Perspective,
+  result: T,
+): T | FastifyReply {
+  setCacheHeaders(reply, perspective, result.cv);
+  if (notModified(req, perspective, result.cv)) {
+    return reply.code(304 as 200).send(undefined as never);
+  }
+  return result;
+}
+
 export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<void> {
   const app = appBase.withTypeProvider<ZodTypeProvider>();
 
@@ -155,12 +174,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const locale = req.query.locale ?? "en";
       const result = await deliveryStartPage(app.db, perspective, req.deliverySiteId!, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No start page configured" });
-      if (notModified(req, perspective, result.cv)) {
-        setCacheHeaders(reply, perspective, result.cv);
-        return reply.code(304 as 200).send(undefined as never);
-      }
-      setCacheHeaders(reply, perspective, result.cv);
-      return result;
+      return deliverItem(req, reply, perspective, result);
     },
   );
 
@@ -179,12 +193,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const locale = req.query.locale ?? "en";
       const result = await deliveryGetBySlug(app.db, perspective, req.deliverySiteId!, req.query.slug, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No published content for that slug" });
-      if (notModified(req, perspective, result.cv)) {
-        setCacheHeaders(reply, perspective, result.cv);
-        return reply.code(304 as 200).send(undefined as never);
-      }
-      setCacheHeaders(reply, perspective, result.cv);
-      return result;
+      return deliverItem(req, reply, perspective, result);
     },
   );
 
@@ -204,12 +213,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const segments = req.query.path.split("/").filter(Boolean);
       const result = await deliveryGetByPath(app.db, perspective, req.deliverySiteId!, segments, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No content at that path" });
-      if (notModified(req, perspective, result.cv)) {
-        setCacheHeaders(reply, perspective, result.cv);
-        return reply.code(304 as 200).send(undefined as never);
-      }
-      setCacheHeaders(reply, perspective, result.cv);
-      return result;
+      return deliverItem(req, reply, perspective, result);
     },
   );
 
@@ -229,13 +233,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const locale = req.query.locale ?? "en";
       const result = await deliveryGetById(app.db, perspective, req.deliverySiteId!, req.params.documentId, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "Not found or not published" });
-      // Conditional GET on published content (ETag keyed by cache-version).
-      if (notModified(req, perspective, result.cv)) {
-        setCacheHeaders(reply, perspective, result.cv);
-        return reply.code(304 as 200).send(undefined as never);
-      }
-      setCacheHeaders(reply, perspective, result.cv);
-      return result;
+      return deliverItem(req, reply, perspective, result);
     },
   );
 

@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { type ContentTypeDef, type DeliveryContent, type FieldDef, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, isCreativeWorkType, scalarToString, withSeoGroup } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
+import { localeChainFrom } from "./content.js";
 import type { Database } from "./client.js";
 import { asset, contentItem, contentType, contentVersion, locale, site } from "./schema.js";
 
@@ -133,16 +134,7 @@ class DeliveryCtx {
 
   async localeChain(code: string): Promise<string[]> {
     if (!this.locales) this.locales = await this.db.select().from(locale);
-    const byCode = new Map(this.locales.map((l) => [l.code, l]));
-    const chain: string[] = [];
-    let cur: string | null = code;
-    const guard = new Set<string>();
-    while (cur && !guard.has(cur)) {
-      guard.add(cur);
-      chain.push(cur);
-      cur = byCode.get(cur)?.fallbackLocaleCode ?? null;
-    }
-    return chain;
+    return localeChainFrom(this.locales, code);
   }
 
   /** Every enabled locale code in stable (sortIndex) order. */

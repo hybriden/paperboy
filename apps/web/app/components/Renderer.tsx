@@ -1,20 +1,10 @@
-import { Fragment, type ReactNode } from "react";
 import type { DeliveryContent } from "@paperboy/shared";
-import { blockData, contentAreas, pbAreaAttrs, type AreaBlock } from "@paperboycms/client";
+import { blockData, contentAreas, pbAreaAttrs, renderRichText, type AreaBlock } from "@paperboycms/client";
 import DOMPurify from "isomorphic-dompurify";
 import { marked } from "marked";
 import { fetchList } from "../lib/delivery";
 
 marked.setOptions({ gfm: true, breaks: false });
-
-/* ---- TipTap doc → React (paragraphs, headings, lists, quote, bold/italic/link) ---- */
-interface Node {
-  type: string;
-  text?: string;
-  content?: Node[];
-  marks?: { type: string; attrs?: Record<string, unknown> }[];
-  attrs?: Record<string, unknown>;
-}
 
 /** Render a scalar field/attr value (typed `unknown`, always a scalar at runtime);
  *  objects/arrays/null become "" rather than "[object Object]". */
@@ -24,55 +14,13 @@ function asText(v: unknown): string {
   return "";
 }
 
-function renderText(node: Node, key: number): ReactNode {
-  let el: ReactNode = node.text ?? "";
-  for (const m of node.marks ?? []) {
-    if (m.type === "bold") el = <strong>{el}</strong>;
-    else if (m.type === "italic") el = <em>{el}</em>;
-    else if (m.type === "code") el = <code>{el}</code>;
-    else if (m.type === "link") el = <a href={asText(m.attrs?.href) || "#"} rel="noopener">{el}</a>;
-  }
-  return <Fragment key={key}>{el}</Fragment>;
-}
-
-function renderNode(node: Node, key: number): ReactNode {
-  const kids = (node.content ?? []).map((c, i) => renderNode(c, i));
-  switch (node.type) {
-    case "text":
-      return renderText(node, key);
-    case "paragraph":
-      return <p key={key}>{kids}</p>;
-    case "heading": {
-      const lvl = Number(node.attrs?.level ?? 2);
-      const Tag = (lvl === 3 ? "h3" : "h2") as "h2" | "h3";
-      return <Tag key={key}>{kids}</Tag>;
-    }
-    case "bulletList":
-      return <ul key={key}>{kids}</ul>;
-    case "orderedList":
-      return <ol key={key}>{kids}</ol>;
-    case "listItem":
-      return <li key={key}>{kids}</li>;
-    case "blockquote":
-      return <blockquote key={key}>{kids}</blockquote>;
-    case "hardBreak":
-      return <br key={key} />;
-    case "horizontalRule":
-      return <hr key={key} />;
-    case "image": {
-      const src = asText(node.attrs?.src);
-      if (!src) return null;
-      return <img key={key} src={src} alt={asText(node.attrs?.alt)} title={asText(node.attrs?.title) || undefined} loading="lazy" />;
-    }
-    default:
-      return <Fragment key={key}>{kids}</Fragment>;
-  }
-}
-
 /**
- * Render any text-ish field value: a TipTap doc (richtext fields) renders via
- * the node walker above; a STRING (markdown / plain-text fields — the delivery
- * API returns markdown verbatim) is parsed with marked and sanitised.
+ * Render any text-ish field value: a TipTap doc (richtext fields) renders via the
+ * published @paperboycms/client `renderRichText` — the single source of truth for
+ * the doc→HTML walk, which escapes text and restricts link/image URLs to safe
+ * schemes (so a `data:`/`javascript:` href can't reach the DOM). A STRING (markdown
+ * / plain-text fields — the delivery API returns markdown verbatim) is parsed with
+ * marked and sanitised. Both branches yield trusted HTML, injected with innerHTML.
  */
 function Rich({ doc, className }: { doc: unknown; className?: string }) {
   if (typeof doc === "string") {
@@ -80,9 +28,9 @@ function Rich({ doc, className }: { doc: unknown; className?: string }) {
     const html = DOMPurify.sanitize(marked.parse(doc, { async: false }) as string);
     return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
   }
-  const d = doc as Node | null;
-  if (!d?.content) return null;
-  return <div className={className}>{d.content.map((n, i) => renderNode(n, i))}</div>;
+  const html = renderRichText(doc);
+  if (!html) return null;
+  return <div className={className} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 /** A richtext/markdown value with no rendered content — empty string, no doc,
