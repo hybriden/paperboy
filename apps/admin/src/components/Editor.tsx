@@ -16,6 +16,7 @@ import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { postCaret } from "../lib/caret.js";
 import { applyRichTextStrings, collectRichTextStrings } from "../lib/richtext-strings.js";
 import { pickTranslateSource } from "../lib/translate-offer.js";
+import { reviewBadge } from "../lib/review-badge.js";
 import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
 import { blockInstanceFromDrop, type DropPayload } from "../lib/block-drop.js";
 import { parsePreviewMessage } from "@paperboycms/preview/protocol";
@@ -83,6 +84,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Site config (preview base URL + start page) for the "View on site" shortcut.
   // Same query key as PreviewPane, so the request is shared, not duplicated.
   const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
+
+  // The agent-review gate (Settings → MCP). The "Needs review" badge is the
+  // visible side of this gate, so it only shows when review is actually required.
+  // Same query key as the settings panel, so the request is shared.
+  const reviewGate = useQuery({ queryKey: ["agent-review"], queryFn: ({ signal }) => api.agentReview(signal) });
 
   const type = useMemo(
     () => types.find((t) => t.name === detail.data?.type),
@@ -768,9 +774,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             <span className={`h-2 w-2 rounded-full ${form.status === "published" ? "bg-published" : "bg-draft"}`} />
             {form.status === "published" ? (form.hasUnpublishedChanges ? "Published · changes" : "Published") : "Draft"}
           </span>
-          {/* Agent provenance: the working draft was written via MCP and awaits a human eye. */}
-          {form.needsReview && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-draft/10 px-2.5 py-1 text-xs font-semibold text-draft" title="The working draft was written by an agent (via MCP). Approve it or edit it to clear the flag.">
+          {/* Agent provenance. The actionable "Needs review" badge only shows when
+              the site requires agent review (Settings → MCP); otherwise an agent
+              write is surfaced as a passive "agent-edited" label. */}
+          {reviewBadge(form, reviewGate.data?.required ?? false) === "needs-review" && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-draft/10 px-2.5 py-1 text-xs font-semibold text-draft" title="The working draft was written by an agent (via MCP) and the site requires human review before agents publish. Approve it or edit it to clear the flag.">
               <span aria-hidden>🤖</span> Needs review
               {canEdit && (
                 <button
@@ -784,7 +792,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               )}
             </span>
           )}
-          {!form.needsReview && (form.updatedVia === "mcp" || form.updatedVia === "agent") && (
+          {reviewBadge(form, reviewGate.data?.required ?? false) === "agent-edited" && (
             <span className="text-[11px] text-muted" title="The working version was last written by an agent via MCP.">
               <span aria-hidden>🤖</span> agent-edited
             </span>
