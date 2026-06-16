@@ -10,6 +10,7 @@ import {
   findLoginMethod,
   getMfaStatus,
   getSessionUser,
+  SESSION_ABSOLUTE_HOURS,
   verifyLogin,
   verifySecondFactor,
 } from "@paperboy/db";
@@ -29,6 +30,10 @@ export async function registerAuthRoutes(appBase: FastifyInstance): Promise<void
   const app = appBase.withTypeProvider<ZodTypeProvider>();
 
   const cookieOpts = () => ({ httpOnly: true, secure: app.cookieSecure, sameSite: "lax" as const, path: "/" });
+  // Persist the session cookie across browser restarts, pinned to the server-side
+  // absolute lifetime so the two expire together. Applied to the login cookie only —
+  // clearCookie (logout) must not carry a Max-Age or it would re-set, not clear.
+  const SESSION_COOKIE_MAX_AGE = SESSION_ABSOLUTE_HOURS * 3600; // seconds
 
   /** Short-lived signed token proving the password step passed (5 min). Stateless. */
   function signMfaToken(userId: string): string {
@@ -49,7 +54,7 @@ export async function registerAuthRoutes(appBase: FastifyInstance): Promise<void
 
   async function issueSession(userId: string, reply: import("fastify").FastifyReply, ip?: string) {
     const { token, csrfToken } = await createSession(app.db, userId);
-    reply.setCookie(app.cookieName, token, cookieOpts());
+    reply.setCookie(app.cookieName, token, { ...cookieOpts(), maxAge: SESSION_COOKIE_MAX_AGE });
     await audit(app.db, { actorUserId: userId, action: "auth.login", ip });
     return { user: await getSessionUser(app.db, userId), csrfToken };
   }
