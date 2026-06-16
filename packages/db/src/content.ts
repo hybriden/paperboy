@@ -407,12 +407,18 @@ async function workingSlug(db: Database, documentId: string, loc: string): Promi
   return row?.slug ?? null;
 }
 
-/** The locale fallback chain (e.g. nb → en), mirroring delivery's localeChain. */
-async function localeFallbackChain(db: Database, loc: string): Promise<string[]> {
-  const locales = await db.select().from(locale);
+/**
+ * Walk a locale fallback chain (e.g. nb → en) from `code`, guarding against
+ * cycles. Pure: callers load the locale rows however they like (delivery caches
+ * them per request, this module queries fresh) so the walk itself can't drift.
+ */
+export function localeChainFrom(
+  locales: { code: string; fallbackLocaleCode: string | null }[],
+  code: string,
+): string[] {
   const byCode = new Map(locales.map((l) => [l.code, l]));
   const chain: string[] = [];
-  let cur: string | null = loc;
+  let cur: string | null = code;
   const guard = new Set<string>();
   while (cur && !guard.has(cur)) {
     guard.add(cur);
@@ -420,6 +426,11 @@ async function localeFallbackChain(db: Database, loc: string): Promise<string[]>
     cur = byCode.get(cur)?.fallbackLocaleCode ?? null;
   }
   return chain;
+}
+
+/** The locale fallback chain (e.g. nb → en), mirroring delivery's localeChain. */
+async function localeFallbackChain(db: Database, loc: string): Promise<string[]> {
+  return localeChainFrom(await db.select().from(locale), loc);
 }
 
 /**
