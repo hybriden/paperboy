@@ -38,18 +38,22 @@ export async function registerAuthRoutes(appBase: FastifyInstance): Promise<void
   /** Short-lived signed token proving the password step passed (5 min). Stateless. */
   function signMfaToken(userId: string): string {
     const exp = Date.now() + 5 * 60_000;
-    const body = `${userId}.${exp}`;
+    // base64url-encode the userId so the "." field separator stays unambiguous
+    // even if an id ever contains a dot (today's nanoid ids don't, but the token
+    // format must not silently depend on that). The signature covers this exact
+    // encoded body, and verify re-signs the same components — they can't drift.
+    const body = `${Buffer.from(userId, "utf8").toString("base64url")}.${exp}`;
     const sig = createHmac("sha256", app.sessionSecret).update(`mfa.${body}`).digest("base64url");
     return `${body}.${sig}`;
   }
   function verifyMfaToken(token: string): string | null {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
-    const [userId, expStr, sig] = parts;
-    const expected = createHmac("sha256", app.sessionSecret).update(`mfa.${userId}.${expStr}`).digest("base64url");
+    const [encodedId, expStr, sig] = parts;
+    const expected = createHmac("sha256", app.sessionSecret).update(`mfa.${encodedId}.${expStr}`).digest("base64url");
     if (sig!.length !== expected.length || !timingSafeEqual(Buffer.from(sig!), Buffer.from(expected))) return null;
     if (Number(expStr) < Date.now()) return null;
-    return userId!;
+    return Buffer.from(encodedId!, "base64url").toString("utf8");
   }
 
   async function issueSession(userId: string, reply: import("fastify").FastifyReply, ip?: string) {
