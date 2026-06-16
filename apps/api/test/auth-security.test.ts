@@ -40,6 +40,20 @@ describe("Secure login (Argon2id, generic errors, lockout, sessions)", () => {
     expect(res.json().csrfToken).toBeTruthy();
   });
 
+  it("issues a PERSISTENT session cookie (survives a browser restart, not a session cookie)", async () => {
+    // A session cookie (no Max-Age/Expires) is dropped when the browser closes,
+    // forcing a re-login every day. The login cookie must carry a Max-Age so the
+    // session persists across restarts up to the absolute lifetime (~30 days).
+    const res = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: "admin@paperboy.test", password: "Admin!Passw0rd" },
+    });
+    const cookie = res.cookies.find((c) => c.name.includes("paperboy_sid"))!;
+    // maxAge is in seconds; expect ~30 days (allow a small floor for clock/setup).
+    expect(cookie.maxAge).toBeGreaterThanOrEqual(29 * 24 * 60 * 60);
+  });
+
   it("locks the account after repeated failures", async () => {
     const attempt = () =>
       s.app.inject({
