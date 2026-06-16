@@ -86,6 +86,15 @@ Every bugfix STARTS with a test that reproduces the exact reported failure — s
 
 ## Code Quality Rules
 
+Before writing anything, walk this ladder top-down and STOP at the first rung that applies. This IS the law:
+
+1. **Does this need to exist?** → no: skip it (YAGNI)
+2. **Stdlib does it?** → use it
+3. **Native platform feature?** → use it
+4. **Installed dependency?** → use it
+5. **One line?** → one line
+6. **Only then:** the minimum that works
+
 - Prefer simple, human-readable implementations over clever abstractions.
 - Keep files and functions focused on a single responsibility.
 - Avoid large monolithic modules; split by feature or domain.
