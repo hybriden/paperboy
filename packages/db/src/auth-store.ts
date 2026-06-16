@@ -25,8 +25,13 @@ import {
 
 const MAX_FAILED = 5;
 const LOCK_MINUTES = 15;
-const SESSION_ABSOLUTE_HOURS = 12;
-const SESSION_IDLE_MINUTES = 60;
+// Absolute session lifetime: a login is valid for this long regardless of
+// activity. Exported so the api can pin the session COOKIE's Max-Age to the
+// same value (a persistent cookie that outlived the server session, or vice
+// versa, would surprise-logout the user). The idle window is set to match, so
+// inactivity alone never logs you out before the absolute cap is reached.
+export const SESSION_ABSOLUTE_HOURS = 24 * 30; // 30 days
+const SESSION_IDLE_MINUTES = 60 * 24 * 30; // 30 days
 
 /** Argon2id parameters (OWASP-recommended baseline). */
 const ARGON2_OPTS: argon2.Options = {
