@@ -10,7 +10,7 @@ const sizeClass = {
   sm: "w-[min(400px,94vw)]",
   md: "w-[min(460px,94vw)]",
   lg: "w-[min(560px,94vw)]",
-  xl: "w-[min(680px,94vw)]",
+  xl: "w-[min(720px,94vw)]",
 } as const;
 
 export function DialogContent({

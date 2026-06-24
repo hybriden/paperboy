@@ -73,6 +73,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const toast = useToast();
   const navigate = useNavigate();
   const [showVersions, setShowVersions] = useState(false);
+  // "review" auto-opens the diff of the published version vs the working draft;
+  // "history" is the plain version list.
+  const [versionsMode, setVersionsMode] = useState<"history" | "review">("history");
   const [showReferences, setShowReferences] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [showBrief, setShowBrief] = useState(false);
@@ -897,7 +900,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               <Icon.Dots width={16} height={16} />
             </MenuTrigger>
             <MenuContent>
-              <MenuItem onSelect={() => setShowVersions(true)}>Version history…</MenuItem>
+              <MenuItem onSelect={() => { setVersionsMode("history"); setShowVersions(true); }}>Version history…</MenuItem>
               <MenuItem onSelect={() => setShowReferences(true)}>Used on…</MenuItem>
               {canCreate && <MenuItem onSelect={() => duplicate.mutate()}>Duplicate</MenuItem>}
               {canDelete && (
@@ -947,6 +950,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                   <Icon.ChevronDown width={15} height={15} />
                 </MenuTrigger>
                 <MenuContent>
+                  {form.hasUnpublishedChanges && (
+                    <>
+                      <MenuItem onSelect={() => { setVersionsMode("review"); setShowVersions(true); }}>Review changes…</MenuItem>
+                      <MenuSeparator />
+                    </>
+                  )}
                   {form.status === "published" && form.urlPath != null && (
                     <>
                       <MenuItem
@@ -1178,6 +1187,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           locale={locale}
           type={type}
           canRestore={canEdit}
+          mode={versionsMode}
           open={showVersions}
           onOpenChange={setShowVersions}
           onRestored={(updated) => {
@@ -1284,6 +1294,7 @@ function VersionsDialog({
   locale,
   type,
   canRestore,
+  mode,
   open,
   onOpenChange,
   onRestored,
@@ -1292,6 +1303,7 @@ function VersionsDialog({
   locale: string;
   type: ContentTypeDef | undefined;
   canRestore: boolean;
+  mode: "history" | "review";
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onRestored: (updated: ContentDetail) => void;
@@ -1318,19 +1330,37 @@ function VersionsDialog({
   const [selB, setSelB] = useState<number | null>(null);
   const [comparing, setComparing] = useState(false);
   useEffect(() => {
-    if (rows.length >= 2 && selA == null && selB == null) {
-      setSelB(rows[0]!.id);
-      setSelA(rows[1]!.id);
+    if (rows.length < 2 || selA != null || selB != null) return;
+    // Review mode jumps straight to the published → draft diff (the pre-publish
+    // "what am I about to ship?"). Falls back to the two newest if there's no
+    // clean published/draft pair.
+    if (mode === "review") {
+      const published = rows.find((r) => r.isCurrentPublished);
+      const draft = rows.find((r) => r.status === "draft");
+      if (published && draft && published.id !== draft.id) {
+        setSelA(published.id);
+        setSelB(draft.id);
+        setComparing(true);
+        return;
+      }
     }
-  }, [rows, selA, selB]);
+    setSelB(rows[0]!.id);
+    setSelA(rows[1]!.id);
+  }, [rows, selA, selB, mode]);
   const canCompare = selA != null && selB != null && selA !== selB;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        title={comparing ? "Compare versions" : "Version history"}
-        description={comparing ? `Differences in ${locale.toUpperCase()}.` : `All saved versions for this content in ${locale.toUpperCase()}.`}
-        className="w-[min(820px,96vw)]"
+        title={comparing ? (mode === "review" ? "Review changes" : "Compare versions") : "Version history"}
+        description={
+          comparing
+            ? mode === "review"
+              ? `What's about to be published in ${locale.toUpperCase()} (published → draft).`
+              : `Differences in ${locale.toUpperCase()}.`
+            : `All saved versions for this content in ${locale.toUpperCase()}.`
+        }
+        size="xl"
       >
         {comparing && canCompare ? (
           <CompareView
