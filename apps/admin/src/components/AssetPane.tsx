@@ -161,7 +161,7 @@ function CreateBlockDialog({
   });
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title="New shared block" description="A reusable block with its own publishing lifecycle." className="w-[380px]">
+      <DialogContent title="New shared block" description="A reusable block with its own publishing lifecycle." size="sm">
         <label className="field-label" htmlFor="nb-type">Block type</label>
         <select id="nb-type" className="field-input mb-3" value={type} onChange={(e) => setType(e.target.value)}>
           {blockTypes.map((t) => <option key={t.name} value={t.name}>{t.displayName}</option>)}

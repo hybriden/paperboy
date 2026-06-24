@@ -1332,7 +1332,7 @@ function ScheduleDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent title="Schedule publish" description={`Timed go-live and expiry for ${locale.toUpperCase()}.`} className="w-[min(480px,94vw)]">
+      <DialogContent title="Schedule publish" description={`Timed go-live and expiry for ${locale.toUpperCase()}.`} size="md">
         <div className="space-y-4">
           <div>
             <label className="field-label" htmlFor="sched-pub">Publish at</label>
@@ -1557,7 +1557,7 @@ function SaveIndicator({ state }: { state: SaveState }) {
     dirty: { text: "Unsaved changes", cls: "text-draft" },
     saving: { text: "Saving…", cls: "text-muted" },
     saved: { text: "All changes saved", cls: "text-published" },
-    error: { text: "Save failed", cls: "text-red-600" },
+    error: { text: "Save failed", cls: "text-danger" },
   };
   const s = map[state];
   if (!s.text) return null;
@@ -1724,7 +1724,7 @@ function Field({
     <div>
       <label className="field-label flex items-center gap-2" htmlFor={id}>
         {field.displayName}
-        {field.required && <span className="text-red-500" title="Required to publish">*</span>}
+        {field.required && <span className="text-danger" title="Required to publish">*</span>}
         {field.delivery === "private" && <span className="rounded bg-line px-1 text-[10px] text-muted">private</span>}
       </label>
       {field.helpText && <p className="mb-1 text-xs text-muted">{field.helpText}</p>}

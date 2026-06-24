@@ -33,9 +33,22 @@
   --c-accent-fg: 255 255 255;
 
   --c-brand: 200 54 47; /* press-red — masthead mark ONLY */
-  --c-published: 19 122 62;
-  --c-draft: 154 87 0;
-  --c-danger: 185 28 28;
+
+  /* Semantic status tones. Each tone exposes: the solid colour (DEFAULT) used
+     for fills and for text on a tint; `-fg` for text/icons ON the solid fill;
+     `-subtle` for tinted backgrounds. Borders on tinted surfaces derive from
+     the solid colour at low alpha (e.g. border-published/30), so there's no
+     separate border channel. Maps to the Surface/Badge tones positive /
+     caution / critical. */
+  --c-published: 19 122 62; /* positive */
+  --c-published-fg: 255 255 255;
+  --c-published-subtle: 230 245 236;
+  --c-draft: 154 87 0; /* caution */
+  --c-draft-fg: 255 255 255;
+  --c-draft-subtle: 250 240 222;
+  --c-danger: 185 28 28; /* critical */
+  --c-danger-fg: 255 255 255;
+  --c-danger-subtle: 250 232 232;
   --c-ring: 34 87 214;
 
   --radius: 9px;
@@ -71,8 +84,14 @@
 
   --c-brand: 232 100 92;
   --c-published: 60 200 130;
+  --c-published-fg: 12 28 18;
+  --c-published-subtle: 24 46 35;
   --c-draft: 216 162 84;
+  --c-draft-fg: 38 28 12;
+  --c-draft-subtle: 48 38 20;
   --c-danger: 248 120 120;
+  --c-danger-fg: 40 16 16;
+  --c-danger-subtle: 52 28 28;
   --c-ring: 110 152 255;
 
   --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.5);

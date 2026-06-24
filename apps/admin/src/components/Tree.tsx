@@ -26,6 +26,7 @@ import { Icon } from "../lib/icons.js";
 import { localeIndicator } from "../lib/locale-indicator.js";
 import { TypeIcon, useTypeIconName } from "../lib/typeIcons.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
+import { Surface } from "./ui/surface.js";
 import { useToast } from "./ui/toast.js";
 
 const EXPAND_KEY = "paperboy-tree-expanded";
@@ -558,7 +559,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
           <DialogContent
             title={`Delete ${locale.toUpperCase()} version?`}
             description={`This permanently removes the ${locale.toUpperCase()} version of “${node.name}”. Its other languages are kept. This cannot be undone (it is not recoverable from Trash).`}
-            className="w-[460px]"
+            size="md"
           >
             <div className="flex justify-end gap-2">
               <button className="btn-ghost" onClick={() => setConfirmDelVariant(false)}>Cancel</button>
@@ -650,7 +651,7 @@ function MoveDialog({ node, onClose }: { node: { documentId: string; name: strin
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title={`Move “${node.name}”`} description="Choose a new parent. The page and its children keep their content; the URL updates to match the new position." className="w-[440px]">
+      <DialogContent title={`Move “${node.name}”`} description="Choose a new parent. The page and its children keep their content; the URL updates to match the new position." size="md">
         <label className="field-label" htmlFor="mv-target">New parent</label>
         <select id="mv-target" className="field-input mb-4" value={target} onChange={(e) => setTarget(e.target.value)} aria-label="New parent">
           <option value="__root__">— Top level —</option>
@@ -694,7 +695,7 @@ function CreateDialog(props: {
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 backdrop-blur-[1px] animate-fade-in" role="dialog" aria-modal aria-label="Create content">
-      <div className="w-[400px] animate-scale-in rounded-[var(--radius-lg)] border border-line bg-panel p-5 shadow-pop">
+      <Surface elevation={2} radius="lg" padding="lg" className="w-[min(400px,94vw)] animate-scale-in">
         <h3 className="mb-3 text-base font-bold text-fg">{props.parentId ? "Create child content" : "Create content"}</h3>
         <label className="field-label" htmlFor="ctype">Content type</label>
         <select id="ctype" className="field-input mb-3" value={type} onChange={(e) => setType(e.target.value)}>
@@ -709,7 +710,7 @@ function CreateDialog(props: {
             {create.isPending ? "Creating…" : "Create"}
           </button>
         </div>
-      </div>
+      </Surface>
     </div>
   );
 }

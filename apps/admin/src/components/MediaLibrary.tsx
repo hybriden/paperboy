@@ -161,7 +161,7 @@ export function MediaTab() {
       )}
       {editing && (
         <Dialog open onOpenChange={(o) => !o && setEditing(null)}>
-          <DialogContent title="Image details" className="w-[380px]">
+          <DialogContent title="Image details" size="sm">
             <img src={assets.data?.find((a) => a.documentId === editing)?.url} alt="" className="mb-3 max-h-48 w-full rounded border border-line object-contain" />
             {(() => {
               const meta = assets.data?.find((a) => a.documentId === editing)?.sourceMeta;
@@ -211,7 +211,7 @@ export function MediaPicker({ onPick, onClose }: { onPick: (a: Asset) => void; o
   const [tab, setTab] = useState<"library" | "stock">("library");
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title="Choose image" description="Pick an existing image, upload a new one, or import a stock photo." className="w-[560px]">
+      <DialogContent title="Choose image" description="Pick an existing image, upload a new one, or import a stock photo." size="lg">
         <div className="mb-3 flex items-center justify-between">
           <div className="flex gap-1" role="tablist" aria-label="Image source">
             {([["library", "Library"], ["stock", "Stock"]] as const).map(([key, label]) => (

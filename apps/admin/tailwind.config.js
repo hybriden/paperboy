@@ -28,9 +28,21 @@ export default {
           fg: ch("--c-accent-fg"),
         },
         brand: ch("--c-brand"),
-        published: ch("--c-published"),
-        draft: ch("--c-draft"),
-        danger: ch("--c-danger"),
+        published: {
+          DEFAULT: ch("--c-published"),
+          fg: ch("--c-published-fg"),
+          subtle: ch("--c-published-subtle"),
+        },
+        draft: {
+          DEFAULT: ch("--c-draft"),
+          fg: ch("--c-draft-fg"),
+          subtle: ch("--c-draft-subtle"),
+        },
+        danger: {
+          DEFAULT: ch("--c-danger"),
+          fg: ch("--c-danger-fg"),
+          subtle: ch("--c-danger-subtle"),
+        },
         ring: ch("--c-ring"),
       },
       fontFamily: {
