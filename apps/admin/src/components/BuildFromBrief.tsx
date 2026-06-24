@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { type AgentEvent, api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
+import { Badge } from "./ui/badge.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 
 type Phase = "idle" | "running" | "done" | "error";
@@ -156,7 +157,7 @@ export function BuildFromBriefDialog({
                         <TypeIcon name={undefined} fallback="file" width={15} height={15} className="shrink-0 text-muted" />
                         <span className="font-medium">{c.name}</span>
                         <span className="text-xs text-muted">{c.type}</span>
-                        <span className="ml-auto rounded-full bg-draft/10 px-2 py-0.5 text-[11px] font-semibold text-draft">Draft</span>
+                        <Badge tone="caution" className="ml-auto">Draft</Badge>
                       </button>
                     </li>
                   ))}

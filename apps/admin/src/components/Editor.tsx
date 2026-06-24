@@ -1398,13 +1398,13 @@ function VersionsDialog({
                   )}
                   <span className="font-mono text-xs text-muted">v{v.versionNumber}</span>
                   <span className="font-medium text-fg">{v.name}</span>
-                  <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${v.isCurrentPublished ? "bg-published/10 text-published" : v.status === "draft" ? "bg-draft/10 text-draft" : "bg-line text-muted"}`}>
+                  <Badge tone={v.isCurrentPublished ? "positive" : v.status === "draft" ? "caution" : "default"}>
                     {v.isCurrentPublished ? "live" : v.status}
-                  </span>
+                  </Badge>
                   {(v.createdVia === "mcp" || v.createdVia === "agent") && (
-                    <span className="rounded-full bg-line px-2 py-0.5 text-[11px] font-semibold text-muted" title="Written by an agent via MCP">
+                    <Badge tone="default" title="Written by an agent via MCP">
                       <span aria-hidden>🤖</span> agent
-                    </span>
+                    </Badge>
                   )}
                   <span className="ml-auto text-xs text-muted">{new Date(v.createdAt).toLocaleString()}</span>
                   {canRestore && !v.isCurrentPublished && (
