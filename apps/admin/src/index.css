@@ -47,11 +47,15 @@
 }
 
 [data-theme="dark"] {
-  --c-canvas: 17 18 22;
-  --c-panel: 26 27 32;
-  --c-fg: 236 233 225;
-  --c-muted: 150 160 172;
-  --c-line: 41 44 52;
+  /* Dark newsprint — a subtly warm charcoal (r≥g≥b), echoing the light
+     theme's warmth instead of the old cool blue-gray. Clear step from the
+     app background (canvas) to raised surfaces (panel) so cards/shell read
+     by tone, not shadow (shadows barely register on dark). */
+  --c-canvas: 23 22 20;
+  --c-panel: 32 31 28;
+  --c-fg: 237 234 226;
+  --c-muted: 162 156 146;
+  --c-line: 46 44 40;
 
   --c-chrome: 11 12 16;
   --c-chrome-light: 24 26 32;
