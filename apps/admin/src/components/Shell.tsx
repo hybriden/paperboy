@@ -69,22 +69,22 @@ function TopBar({
   onOpenPalette: () => void;
 }) {
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b-2 border-brand bg-chrome px-3 text-chrome-fg">
+    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-panel px-3 text-fg">
       <div className="flex items-baseline gap-2 pr-2">
-        <span className="masthead text-[22px] leading-none text-chrome-fg">Paperboy</span>
-        <span className="hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-chrome-fg/75 sm:inline">CMS</span>
+        <span className="masthead text-[22px] leading-none text-fg">Paperboy</span>
+        <span className="hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-muted sm:inline">CMS</span>
       </div>
 
       {/* On phones the breadcrumb is dropped — the bottom nav shows the section,
           and the editor surfaces the document name itself. */}
       {!compact && (
-        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-chrome-fg/80">
-          <span className="text-chrome-fg/55" aria-hidden>/</span>
-          <span className="font-medium text-chrome-fg">{section}</span>
+        <nav aria-label="Breadcrumb" className="flex items-center gap-2 text-sm text-muted">
+          <span className="text-muted/60" aria-hidden>/</span>
+          <span className="font-medium text-fg">{section}</span>
           {crumb && (
             <>
-              <span className="text-chrome-fg/55" aria-hidden>/</span>
-              <span className="max-w-[280px] truncate text-chrome-fg">{crumb}</span>
+              <span className="text-muted/60" aria-hidden>/</span>
+              <span className="max-w-[280px] truncate text-fg">{crumb}</span>
             </>
           )}
         </nav>
@@ -93,12 +93,12 @@ function TopBar({
       <div className="ml-auto flex items-center gap-1.5">
         <button
           onClick={onOpenPalette}
-          className="flex h-9 items-center gap-2 rounded-[var(--radius)] px-2.5 text-sm text-chrome-fg/60 transition-colors hover:bg-chrome-light hover:text-chrome-fg/90"
+          className="flex h-9 items-center gap-2 rounded-[var(--radius)] px-2.5 text-sm text-muted transition-colors hover:bg-line/60 hover:text-fg"
           aria-label="Open command palette"
         >
           <Icon.Search width={15} height={15} className="shrink-0" />
           <span className="hidden leading-none md:inline">Search…</span>
-          <kbd className="hidden rounded border border-chrome-border/80 px-1.5 py-0.5 font-mono text-[10px] leading-none text-chrome-fg/55 md:inline">
+          <kbd className="hidden rounded border border-line px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted md:inline">
             {IS_MAC ? "⌘K" : "Ctrl K"}
           </kbd>
         </button>
@@ -109,7 +109,7 @@ function TopBar({
             href="/api/docs"
             target="_blank"
             rel="noreferrer"
-            className="grid h-9 w-9 place-items-center rounded-[var(--radius)] text-chrome-fg/70 hover:bg-chrome-light"
+            className="grid h-9 w-9 place-items-center rounded-[var(--radius)] text-muted hover:bg-line/60 hover:text-fg"
             aria-label="API documentation"
             title="API docs"
           >
@@ -128,7 +128,7 @@ function ThemeToggle() {
   return (
     <Menu>
       <Tooltip label="Theme">
-        <MenuTrigger className="grid h-9 w-9 place-items-center rounded-[var(--radius)] text-chrome-fg/70 hover:bg-chrome-light" aria-label="Theme">
+        <MenuTrigger className="grid h-9 w-9 place-items-center rounded-[var(--radius)] text-muted hover:bg-line/60 hover:text-fg" aria-label="Theme">
           <Cur width={17} height={17} />
         </MenuTrigger>
       </Tooltip>
@@ -154,9 +154,9 @@ function UserMenu() {
   const initials = user.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   return (
     <Menu>
-      <MenuTrigger className="ml-1 flex items-center gap-2 rounded-[var(--radius)] py-1 pl-1 pr-2 hover:bg-chrome-light" aria-label="Account menu">
+      <MenuTrigger className="ml-1 flex items-center gap-2 rounded-[var(--radius)] py-1 pl-1 pr-2 hover:bg-line/60" aria-label="Account menu">
         <span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-xs font-bold text-accent-fg">{initials}</span>
-        <Icon.ChevronDown width={14} height={14} className="text-chrome-fg/60" />
+        <Icon.ChevronDown width={14} height={14} className="text-muted" />
       </MenuTrigger>
       <MenuContent>
         <div className="px-2.5 py-1.5">
@@ -178,7 +178,7 @@ function UserMenu() {
 function Rail() {
   const { pathname } = useLocation();
   return (
-    <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-chrome-border bg-chrome-rail py-3" aria-label="Main">
+    <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-line bg-panel py-3" aria-label="Main">
       {RAIL.map((it) => {
         const isActive = pathname === it.to || pathname.startsWith(`${it.to}/`);
         return (
@@ -187,7 +187,7 @@ function Rail() {
               to={it.to}
               aria-label={it.label}
               className={`grid h-10 w-10 place-items-center rounded-[var(--radius)] transition-colors ${
-                isActive ? "bg-accent text-accent-fg" : "text-chrome-fg/80 hover:bg-chrome-light hover:text-chrome-fg"
+                isActive ? "bg-accent text-accent-fg shadow-panel" : "text-muted hover:bg-line/60 hover:text-fg"
               }`}
             >
               <it.icon />
@@ -203,7 +203,7 @@ function Rail() {
 function BottomNav() {
   const { pathname } = useLocation();
   return (
-    <nav className="flex shrink-0 items-stretch border-t border-chrome-border bg-chrome-rail" aria-label="Main">
+    <nav className="flex shrink-0 items-stretch border-t border-line bg-panel" aria-label="Main">
       {RAIL.map((it) => {
         const isActive = pathname === it.to || pathname.startsWith(`${it.to}/`);
         return (
@@ -212,7 +212,7 @@ function BottomNav() {
             to={it.to}
             aria-label={it.label}
             className={`flex flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[11px] font-medium transition-colors ${
-              isActive ? "text-accent" : "text-chrome-fg/80 hover:text-chrome-fg"
+              isActive ? "text-accent" : "text-muted hover:text-fg"
             }`}
           >
             <it.icon />

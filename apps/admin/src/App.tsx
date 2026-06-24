@@ -41,8 +41,8 @@ export function App() {
 
   if (loading) {
     return (
-      <div className="grid h-full place-items-center bg-chrome">
-        <div className="masthead animate-fade-in text-3xl text-chrome-fg">Paperboy</div>
+      <div className="grid h-full place-items-center bg-canvas">
+        <div className="masthead animate-fade-in text-3xl text-fg">Paperboy</div>
       </div>
     );
   }
