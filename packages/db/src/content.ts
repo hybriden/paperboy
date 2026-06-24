@@ -85,6 +85,73 @@ export async function contentTypeUsage(db: Database): Promise<Record<string, Con
   return usage;
 }
 
+export interface ReferencingDoc {
+  documentId: string;
+  name: string;
+  type: string;
+  kind: string;
+  fields: string[];
+}
+
+/**
+ * "Used on": the documents that reference `documentId` — via a reference field
+ * or a shared-block slot in a contentArea — read from the maintained
+ * content_reference index (kept in sync on every save). Site-partitioned and
+ * section-scoped exactly like getTree, so a cross-site or out-of-scope referrer
+ * is never revealed.
+ */
+export async function findReferencingDocuments(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+): Promise<ReferencingDoc[]> {
+  // Partition: the target must live in the active site (else not-found, like every other read).
+  const target = await db
+    .select({ documentId: contentItem.documentId })
+    .from(contentItem)
+    .where(and(eq(contentItem.documentId, documentId), eq(contentItem.siteId, ctx.siteId), isNull(contentItem.deletedAt)))
+    .limit(1);
+  if (!target[0]) throw Errors.notFound("Content");
+
+  const rows = await db
+    .select({
+      fromDocumentId: contentReference.fromDocumentId,
+      fieldName: contentReference.fieldName,
+      type: contentItem.type,
+      kind: contentItem.kind,
+      sectionId: contentItem.sectionId,
+    })
+    .from(contentReference)
+    .innerJoin(contentItem, eq(contentItem.documentId, contentReference.fromDocumentId))
+    .where(and(eq(contentReference.toDocumentId, documentId), eq(contentItem.siteId, ctx.siteId), isNull(contentItem.deletedAt)));
+
+  // Section scope: authors only see referrers inside their sections (mirrors getTree).
+  const visible = rows.filter((r) => ctx.siteWide || ctx.sections.includes(r.sectionId ?? r.fromDocumentId));
+  if (!visible.length) return [];
+
+  // Display names from the current version — prefer the draft, else the published.
+  const ids = [...new Set(visible.map((r) => r.fromDocumentId))];
+  const names = await db
+    .select({ documentId: contentVersion.documentId, name: contentVersion.name, status: contentVersion.status, isPub: contentVersion.isCurrentPublished })
+    .from(contentVersion)
+    .where(inArray(contentVersion.documentId, ids));
+  const nameOf = new Map<string, string>();
+  for (const n of names) {
+    if (n.status !== "draft" && !n.isPub) continue; // skip history
+    if (n.status === "draft" || !nameOf.has(n.documentId)) nameOf.set(n.documentId, n.name);
+  }
+
+  const byDoc = new Map<string, ReferencingDoc>();
+  for (const r of visible) {
+    const entry =
+      byDoc.get(r.fromDocumentId) ??
+      ({ documentId: r.fromDocumentId, name: nameOf.get(r.fromDocumentId) ?? r.fromDocumentId, type: r.type, kind: r.kind, fields: [] } satisfies ReferencingDoc);
+    if (!entry.fields.includes(r.fieldName)) entry.fields.push(r.fieldName);
+    byDoc.set(r.fromDocumentId, entry);
+  }
+  return [...byDoc.values()];
+}
+
 export async function getContentType(db: Database, name: string): Promise<ContentTypeDef> {
   const rows = await db.select().from(contentType).where(eq(contentType.name, name)).limit(1);
   if (!rows[0]) {

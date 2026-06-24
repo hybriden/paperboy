@@ -286,6 +286,14 @@ export const api = {
     request<
       Array<{ id: number; versionNumber: number; status: string; isCurrentPublished: boolean; name: string; createdAt: string; createdBy: string | null; createdVia: "mcp" | "agent" | "web" | null; needsReview: boolean; publishAt: string | null; expireAt: string | null }>
     >("GET", `/manage/content/${documentId}/versions?locale=${locale}`, undefined, signal),
+  // "Used on": documents that reference this one (reference field / shared block).
+  references: (documentId: string, signal?: AbortSignal) =>
+    request<Array<{ documentId: string; name: string; type: string; kind: string; fields: string[] }>>(
+      "GET",
+      `/manage/content/${documentId}/references`,
+      undefined,
+      signal,
+    ),
   // Agent review: approve an agent-written draft / toggle the publish gate.
   approveReview: (documentId: string, locale: string) =>
     request<ContentDetail>("POST", `/manage/content/${documentId}/review?locale=${locale}`),

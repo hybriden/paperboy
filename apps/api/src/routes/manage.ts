@@ -60,6 +60,7 @@ import {
   updateAssetAlt,
   getContent,
   getContentType,
+  findReferencingDocuments,
   getTree,
   getVersion,
   contentTypeUsage,
@@ -252,6 +253,20 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/blocks",
     { schema: { tags: ["manage"], response: { 200: z.array(BlockSummary) } } },
     async (req) => listBlocks(app.db, req.accessCtx!),
+  );
+
+  // "Used on": documents that reference this one (reference field or shared
+  // block in a contentArea) — so editors see the blast radius before changing it.
+  app.get(
+    "/content/:documentId/references",
+    {
+      schema: {
+        tags: ["manage"],
+        params: DocParams,
+        response: { 200: z.array(z.object({ documentId: z.string(), name: z.string(), type: z.string(), kind: z.string(), fields: z.array(z.string()) })) },
+      },
+    },
+    async (req) => findReferencingDocuments(app.db, req.accessCtx!, req.params.documentId),
   );
 
   // Move a shared block into a block folder (null = root/unfiled).
