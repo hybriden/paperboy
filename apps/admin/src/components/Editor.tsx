@@ -33,6 +33,8 @@ import { type PbRect, type PreviewMode, PreviewPane, publicSiteUrl } from "./Pre
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
+import { Badge } from "./ui/badge.js";
+import { EmptyState } from "./ui/empty-state.js";
 import { FieldError } from "./ui/field-error.js";
 import { Skeleton } from "./ui/skeleton.js";
 import { useToast } from "./ui/toast.js";
@@ -71,6 +73,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const toast = useToast();
   const navigate = useNavigate();
   const [showVersions, setShowVersions] = useState(false);
+  const [showReferences, setShowReferences] = useState(false);
   const [showSchedule, setShowSchedule] = useState(false);
   const [showBrief, setShowBrief] = useState(false);
   const [hideTranslateOffer, setHideTranslateOffer] = useState(false);
@@ -895,6 +898,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             </MenuTrigger>
             <MenuContent>
               <MenuItem onSelect={() => setShowVersions(true)}>Version history…</MenuItem>
+              <MenuItem onSelect={() => setShowReferences(true)}>Used on…</MenuItem>
               {canCreate && <MenuItem onSelect={() => duplicate.mutate()}>Duplicate</MenuItem>}
               {canDelete && (
                 <>
@@ -1187,6 +1191,18 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         />
       )}
 
+      {showReferences && (
+        <ReferencesDialog
+          documentId={documentId}
+          open={showReferences}
+          onOpenChange={setShowReferences}
+          onNavigate={(id) => {
+            setShowReferences(false);
+            void navigate(`/edit/${id}`);
+          }}
+        />
+      )}
+
       {showBrief && (
         <BuildFromBriefDialog
           parentId={isPage ? documentId : null}
@@ -1217,6 +1233,49 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       )}
     </div>
     </StockQueryContext.Provider>
+  );
+}
+
+function ReferencesDialog({
+  documentId,
+  open,
+  onOpenChange,
+  onNavigate,
+}: {
+  documentId: string;
+  open: boolean;
+  onOpenChange: (o: boolean) => void;
+  onNavigate: (id: string) => void;
+}) {
+  const refs = useQuery({
+    queryKey: ["references", documentId],
+    queryFn: ({ signal }) => api.references(documentId, signal),
+  });
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent title="Used on" description="Documents that reference this one — via a reference field or a shared block." size="md">
+        {refs.isLoading && (
+          <div className="space-y-1">
+            {[0, 1, 2].map((i) => <Skeleton key={i} className="h-12" />)}
+          </div>
+        )}
+        {refs.data?.length === 0 && <EmptyState>Nothing references this yet — it's safe to change or delete.</EmptyState>}
+        {refs.data && refs.data.length > 0 && (
+          <ul className="max-h-[60vh] divide-y divide-line overflow-auto">
+            {refs.data.map((r) => (
+              <li key={r.documentId}>
+                <button className="flex w-full items-center gap-2 px-1 py-2.5 text-left text-sm hover:bg-canvas" onClick={() => onNavigate(r.documentId)}>
+                  {r.kind === "block" ? <Icon.Block width={16} height={16} className="shrink-0 text-muted" /> : <Icon.File width={16} height={16} className="shrink-0 text-muted" />}
+                  <span className="min-w-0 flex-1 truncate font-medium text-fg">{r.name}</span>
+                  <span className="shrink-0 text-xs text-muted">via {r.fields.join(", ")}</span>
+                  <Badge tone={r.kind === "block" ? "default" : "primary"}>{r.kind}</Badge>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 

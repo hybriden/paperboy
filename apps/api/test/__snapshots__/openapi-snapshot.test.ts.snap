@@ -481,6 +481,23 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "GET /api/v1/manage/content/{documentId}/references": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "[]documentId",
+      "[]fields",
+      "[]kind",
+      "[]name",
+      "[]type",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "GET /api/v1/manage/content/{documentId}/versions": {
     "requestBodyRequired": [],
     "requiredParams": [
