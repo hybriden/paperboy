@@ -7,6 +7,8 @@ import { TypeIcon } from "../lib/typeIcons.js";
 import { FolderNav } from "./FolderNav.js";
 import { MediaTab } from "./MediaLibrary.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
+import { EmptyState } from "./ui/empty-state.js";
+import { Skeleton } from "./ui/skeleton.js";
 import { useToast } from "./ui/toast.js";
 
 /**
@@ -81,8 +83,8 @@ export function AssetPane({
         {tab === "blocks" && (
           <>
             <FolderNav kind="block" currentFolderId={folderId} onNavigate={setFolderId} onMoveItem={(id, target) => move.mutate({ id, folderId: target })} />
-            {blocks.isLoading && [0, 1].map((i) => <div key={i} className="mb-1 h-9 animate-pulse rounded bg-line/50" />)}
-            {visibleBlocks?.length === 0 && <p className="px-2 py-6 text-center text-xs text-muted">{folderId ? "This folder is empty. Drag blocks here." : "No shared blocks yet."}</p>}
+            {blocks.isLoading && [0, 1].map((i) => <Skeleton key={i} className="mb-1 h-9" />)}
+            {visibleBlocks?.length === 0 && <EmptyState className="py-6">{folderId ? "This folder is empty. Drag blocks here." : "No shared blocks yet."}</EmptyState>}
             {visibleBlocks?.map((b) => {
               const loc = Object.values(b.locales)[0];
               const selected = selectedId === b.documentId;

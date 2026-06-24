@@ -8,6 +8,7 @@ import { useUser } from "../../lib/user.js";
 import type { ShellOutlet } from "../Shell.js";
 import { Dialog, DialogContent } from "../ui/dialog.js";
 import { Badge } from "../ui/badge.js";
+import { SkeletonRows } from "../ui/skeleton.js";
 import { Surface } from "../ui/surface.js";
 import { useToast } from "../ui/toast.js";
 import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, LanguagesPanel, McpTokensPanel, PasswordPanel, SitePanel, StockImagesPanel, TrashPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
@@ -161,7 +162,7 @@ export function DashboardView() {
   const emptyTypeRows = d?.emptyTypesList ?? [];
   const tidy = attention.length === 0 && altGaps.length === 0 && (hk?.unusedBlocks ?? 0) === 0 && (hk?.emptyTypes ?? 0) === 0;
 
-  const skeleton = (n: number) => [...Array(n)].map((_, i) => <div key={i} className="h-12 animate-pulse border-b border-line bg-line/30 last:border-0" />);
+  const skeleton = (n: number) => <SkeletonRows rows={n} />;
 
   return (
     <div className="h-full overflow-auto">
