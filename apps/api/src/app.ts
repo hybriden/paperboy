@@ -127,7 +127,9 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   // Unified error handling.
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof AppError) {
-      return reply.code(err.status).send({ error: err.code, message: err.message });
+      // `fields` is additive: present only on validation errors that name the
+      // content fields at fault, so the admin can show the message inline.
+      return reply.code(err.status).send({ error: err.code, message: err.message, ...(err.fields?.length ? { fields: err.fields } : {}) });
     }
     if (err instanceof ZodError) {
       return reply.code(422).send({ error: "validation_error", message: err.message, issues: err.issues });

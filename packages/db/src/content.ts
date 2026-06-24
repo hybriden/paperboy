@@ -794,6 +794,15 @@ export async function getContent(
 
 /* ------------------------------ update/save ------------------------------- */
 
+/** The top-level content fields a Zod parse error refers to (deduped, in order),
+ *  so the API can hand them to the admin for inline display. */
+function failedFields(err: { issues?: Array<{ path: (string | number)[] }> }): string[] {
+  const names = (err.issues ?? [])
+    .map((i) => i.path.find((p) => typeof p === "string"))
+    .filter((p): p is string => typeof p === "string");
+  return [...new Set(names)];
+}
+
 /** Turn a Zod parse error into a concise, human message naming the field(s). */
 function formatValidation(err: { issues?: Array<{ path: (string | number)[]; message: string }> }): string {
   const issues = err.issues ?? [];
@@ -988,7 +997,7 @@ export async function updateContent(
   // the message names each field's expected JSON shape (with an example), so an
   // agent can self-correct instead of guessing.
   const parsed = dataSchemaFor(type, false).safeParse(data);
-  if (!parsed.success) throw Errors.validation(formatDataValidation(parsed.error, type));
+  if (!parsed.success) throw Errors.validation(formatDataValidation(parsed.error, type), failedFields(parsed.error));
   // Placement rules ARE enforced even on draft save (allowed blocks / ref types).
   await assertAllowedTypes(db, type, data);
 
@@ -1181,6 +1190,7 @@ async function assertDraftPublishable(
       formatValidation(parsed.error) +
         " — the DRAFT is missing/has invalid fields (drafts save with relaxed validation; publish is strict)." +
         " Fix it with update_content using merge:true and ONLY the offending fields, then publish again.",
+      failedFields(parsed.error),
     );
   }
   await assertAllowedTypes(db, type, draft.data as Record<string, unknown>);
