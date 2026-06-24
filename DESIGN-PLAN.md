@@ -4,6 +4,40 @@ A phased plan to bring paperboy's admin UI to (or past) the level of Sanity.io's
 Studio, derived from a side-by-side study of [Sanity UI](https://www.sanity.io/ui)
 and the current `apps/admin` codebase.
 
+## Status (implementation)
+
+Delivered on branch `feat/design-system-foundation`:
+
+- **Phase 1 — done.** Semantic tone tokens (positive/caution/critical, light+dark)
+  · `Surface` card primitive · `Badge` + `Callout` · `DialogContent` size scale
+  (all hardcoded dialog widths removed) · off-token Tailwind reds → `text-danger`.
+- **Phase 2 — done, except 2.3.** Inline per-field validation end-to-end
+  (`AppError.fields` → API → `ApiError` → inline `FieldError` + aria-invalid +
+  scroll-to-first; test-pinned) · `Skeleton`/`SkeletonRows` · `EmptyState`.
+  **2.3 (columnar Table) intentionally skipped** — the admin's "tables" are fluid
+  row-feeds with conditional columns already unified by `Surface`/`PanelShell`; a
+  `<table>` abstraction would fit worse for no gain (YAGNI).
+- **Phase 3.1 — done.** A field-by-field diff (`CompareView`/`diffFields`, inline
+  word-diff + restore) already existed; added the missing **"Review changes"**
+  pre-publish entry point (published → draft) on the publish control.
+- **Phase 3.2 — done.** "Used on" references panel: `findReferencingDocuments`
+  (reads the maintained `content_reference` index, site-partitioned +
+  section-scoped) → `GET …/references` (OpenAPI snapshot updated deliberately) →
+  editor "Used on…" dialog. Test-pinned.
+- **Phase 3.3 (stega auto-instrumentation) — deliberately deferred.** It's a large
+  standalone feature that changes the **published** `@paperboycms/preview`
+  contract (consumed by deployed external frontends) with real risk of leaking
+  zero-width characters into published delivery output — for what is a refinement,
+  not a gap (visual editing already works via `data-pb-*`). It deserves its own
+  focused PR + a product decision about maintaining a second instrumentation path,
+  not a tail-end addition here.
+
+Every shipped change typechecks, lints, builds, and (for API/contract changes)
+passes the DB-backed test gate including the OpenAPI and mcp-parity freeze tests.
+
+---
+
+
 ## Guiding principle
 
 Paperboy's admin is already in good shape: token-driven theming
