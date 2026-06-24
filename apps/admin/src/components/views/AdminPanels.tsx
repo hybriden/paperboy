@@ -289,8 +289,8 @@ export function LanguagesPanel() {
             <>
               <span className="font-medium text-fg">{l.displayName}</span>
               <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{l.code}</code>
-              {l.isDefault && <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-medium text-fg">default</span>}
-              {!l.enabled && <span className="rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">disabled</span>}
+              {l.isDefault && <Badge tone="primary">default</Badge>}
+              {!l.enabled && <Badge tone="default">disabled</Badge>}
               {l.fallbackLocaleCode && <span className="text-xs text-muted">falls back → {l.fallbackLocaleCode}</span>}
               {canManage && (
                 <div className="ml-auto flex items-center gap-1">
@@ -503,7 +503,7 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
           <span className="text-sm font-medium">{site.name} <code className="text-xs text-muted">/{site.slug}</code></span>
         )}
         {active ? (
-          <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-semibold text-accent">active</span>
+          <Badge tone="primary">active</Badge>
         ) : (
           <button type="button" className="text-xs text-accent hover:underline" onClick={() => switchSite(site.id)}>Make active</button>
         )}
@@ -822,9 +822,9 @@ export function UsersPanel() {
         <div key={u.id} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
           <span className="font-medium text-fg">{u.name}</span>
           <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{u.email}</code>
-          <span className="flex gap-1">{u.roles.map((r) => <span key={r} className="rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-medium text-fg">{r}</span>)}</span>
+          <span className="flex gap-1">{u.roles.map((r) => <Badge key={r} tone="primary">{r}</Badge>)}</span>
           {u.sections.length > 0 && <span className="text-[11px] text-muted">· {u.sections.length} section(s)</span>}
-          {u.locked && <span className="rounded bg-draft/10 px-1.5 py-0.5 text-[11px] text-draft">locked</span>}
+          {u.locked && <Badge tone="caution">locked</Badge>}
           <div className="ml-auto flex gap-1">
             <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setDialog({ mode: "edit", user: u })}>Edit</button>
             <button className="rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => { if (confirm(`Delete ${u.email}?`)) del.mutate(u.id); }}>Delete</button>
@@ -1000,7 +1000,7 @@ export function DeliveryKeysPanel() {
           )}
           <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{k.keyPrefix}…</code>
           <Badge tone={k.type === "preview" ? "caution" : "positive"}>{k.type}</Badge>
-          {k.revokedAt ? <span className="rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">revoked</span> : null}
+          {k.revokedAt ? <Badge tone="default">revoked</Badge> : null}
           {!k.revokedAt && (
             <button className="ml-auto rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => { if (confirm(`Revoke “${k.name}”?`)) revoke.mutate(k.id); }}>Revoke</button>
           )}

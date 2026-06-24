@@ -5,6 +5,7 @@ import { api, ApiError } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
 import { TypeIcon, resolveIconBase, usePhosphorIconNames } from "../lib/typeIcons.js";
+import { Badge } from "./ui/badge.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
 import { Switch } from "./ui/switch.js";
@@ -412,12 +413,12 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                     <option value="public">public</option>
                   </select>
                 </label>
-                {f.delivery === "public" && <span className="rounded bg-draft/10 px-1.5 py-0.5 text-[11px] text-draft">exposed to public API</span>}
+                {f.delivery === "public" && <Badge tone="caution">exposed to public API</Badge>}
                 {f.schemaProp && (
-                  <span className="inline-flex items-center gap-1 rounded bg-accent/10 px-1.5 py-0.5 text-[11px] text-accent-700" title="Feeds this schema.org property in the delivered JSON-LD">
+                  <Badge tone="primary" title="Feeds this schema.org property in the delivered JSON-LD">
                     schema: {f.schemaProp}
                     <button type="button" aria-label={`Clear schema.org mapping ${f.schemaProp}`} className="hover:text-danger" onClick={() => patchField(f._key, { schemaProp: undefined })}>×</button>
-                  </span>
+                  </Badge>
                 )}
                 <div className="ml-auto flex items-center gap-0.5">
                   <button className="rounded p-1 text-muted hover:bg-line" aria-label="Move field up" onClick={() => moveField(f._key, -1)}><Icon.Up width={14} height={14} /></button>
