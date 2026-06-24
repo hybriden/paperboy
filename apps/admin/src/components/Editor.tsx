@@ -33,6 +33,7 @@ import { type PbRect, type PreviewMode, PreviewPane, publicSiteUrl } from "./Pre
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
+import { FieldError } from "./ui/field-error.js";
 import { Skeleton } from "./ui/skeleton.js";
 import { useToast } from "./ui/toast.js";
 
@@ -105,6 +106,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
   // ----- local working copy + save state machine -----
   const [form, setForm] = useState<ContentDetail | null>(null);
+  // Per-field validation messages from the last rejected save/publish, keyed by
+  // field name, shown inline beneath the offending field.
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [tab, setTab] = useState("Content");
   // Editor view — the Episerver-style trio. Persisted so it survives
@@ -256,6 +260,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       }),
     onSuccess: (updated) => {
       setSaveState("saved");
+      setFieldErrors({});
       // Keep the query cache authoritative so switching away and back shows the
       // latest saved state (not the initial fetch).
       qc.setQueryData(["content", documentId, locale], updated);
@@ -284,7 +289,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     },
     onError: (e) => {
       setSaveState("error");
-      toast.error("Couldn’t save", (e as Error).message);
+      const inline = applyFieldErrors(e);
+      toast.error("Couldn’t save", inline ? "Some fields need attention — see the highlighted fields." : (e as Error).message);
     },
   });
 
@@ -336,9 +342,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       qc.setQueryData(["content", documentId, locale], updated);
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["blocks"] });
+      setFieldErrors({});
       toast.success("Published", `“${updated.name}” is live in ${locale.toUpperCase()}.`);
     },
-    onError: (e) => toast.error("Publish failed", (e as Error).message),
+    onError: (e) => {
+      const inline = applyFieldErrors(e);
+      toast.error("Publish failed", inline ? "Some fields need attention — see the highlighted fields." : (e as Error).message);
+    },
   });
 
   const unpublish = useMutation({
@@ -727,6 +737,40 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // un-initialized in that closure (TDZ) and crash the first drop.
   function setField(name: string, value: unknown) {
     patch((prev) => ({ ...prev, data: { ...prev.data, [name]: value } }));
+    // Editing a field clears its inline error.
+    setFieldErrors((prev) => {
+      if (!prev[name]) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  }
+
+  /** Map a rejected save/publish (an ApiError carrying `fields`) onto the inline
+   *  per-field errors and jump to the first offending field (switch to its group
+   *  and scroll it into view). Returns true if the error was field-specific. */
+  function applyFieldErrors(e: unknown): boolean {
+    const err = e instanceof ApiError ? e : null;
+    if (!err?.fields?.length) return false;
+    const fields = err.fields;
+    // The message is "field: reason; field2: reason …" — give each field its own
+    // segment, falling back to the whole message if a segment can't be isolated.
+    const segments = err.message.split(/;\s+/);
+    const map: Record<string, string> = {};
+    for (const name of fields) {
+      const seg = segments.find((s) => s.startsWith(`${name}:`));
+      map[name] = seg ? seg.slice(name.length + 1).trim() : err.message;
+    }
+    setFieldErrors(map);
+    const first = fields[0];
+    if (first) {
+      const def = type?.fields.find((f) => f.name === first);
+      if (def) setTab(def.group);
+      requestAnimationFrame(() => {
+        document.querySelector(`[data-pb-prop="${CSS.escape(first)}"]`)?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    }
+    return true;
   }
 
   // Tabs + property fields. Shared between the desktop split pane and the
@@ -756,6 +800,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 types={types}
                 sharedBlocks={sharedBlocks.data ?? []}
                 onChange={(v) => setField(f.name, v)}
+                error={fieldErrors[f.name]}
               />
             </div>
           ))}
@@ -1702,6 +1747,7 @@ function Field({
   disabled,
   types,
   sharedBlocks,
+  error,
 }: {
   field: FieldDef;
   value: unknown;
@@ -1709,6 +1755,7 @@ function Field({
   disabled: boolean;
   types: ContentTypeDef[];
   sharedBlocks: { documentId: string; name: string; type: string }[];
+  error?: string;
 }) {
   const id = `f-${field.name}`;
   if (field.type === "contentArea") {
@@ -1725,6 +1772,7 @@ function Field({
           types={types}
           sharedBlocks={sharedBlocks}
         />
+        <FieldError>{error}</FieldError>
       </div>
     );
   }
@@ -1738,7 +1786,7 @@ function Field({
       {field.helpText && <p className="mb-1 text-xs text-muted">{field.helpText}</p>}
       {field.type === "text" && (
         <div>
-          <input id={id} aria-label={field.displayName} className="field-input" value={(value as string) ?? ""} disabled={disabled}
+          <input id={id} aria-label={field.displayName} aria-invalid={error ? true : undefined} className="field-input" value={(value as string) ?? ""} disabled={disabled}
             onChange={(e) => onChange(e.target.value)} />
           {field.validation?.maxLength != null && (
             <div className={`mt-0.5 text-right text-[11px] ${((value as string) ?? "").length > field.validation.maxLength ? "text-danger" : "text-muted"}`}>
@@ -1755,11 +1803,11 @@ function Field({
         <input id={id} aria-label={field.displayName} type="checkbox" checked={Boolean(value)} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       )}
       {field.type === "number" && (
-        <input id={id} aria-label={field.displayName} type="number" className="field-input" value={(value as number) ?? ""} disabled={disabled}
+        <input id={id} aria-label={field.displayName} aria-invalid={error ? true : undefined} type="number" className="field-input" value={(value as number) ?? ""} disabled={disabled}
           onChange={(e) => onChange(Number(e.target.value))} />
       )}
       {field.type === "datetime" && (
-        <input id={id} aria-label={field.displayName} type="datetime-local" className="field-input" value={(value as string) ?? ""} disabled={disabled}
+        <input id={id} aria-label={field.displayName} aria-invalid={error ? true : undefined} type="datetime-local" className="field-input" value={(value as string) ?? ""} disabled={disabled}
           onChange={(e) => onChange(e.target.value || null)} />
       )}
       {field.type === "select" && <SelectField id={id} field={field} types={types} value={value} disabled={disabled} onChange={onChange} />}
@@ -1769,9 +1817,10 @@ function Field({
         <ImageField id={id} value={value} disabled={disabled} onChange={onChange} />
       )}
       {field.type === "media" && (
-        <input id={id} aria-label={field.displayName} className="field-input" placeholder="Asset documentId" value={(value as string) ?? ""} disabled={disabled}
+        <input id={id} aria-label={field.displayName} aria-invalid={error ? true : undefined} className="field-input" placeholder="Asset documentId" value={(value as string) ?? ""} disabled={disabled}
           onChange={(e) => onChange(e.target.value)} />
       )}
+      <FieldError>{error}</FieldError>
     </div>
   );
 }

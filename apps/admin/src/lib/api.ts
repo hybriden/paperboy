@@ -125,6 +125,8 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    // Content fields the (validation) error refers to, for inline display.
+    public fields?: string[],
   ) {
     super(message);
   }
@@ -164,7 +166,7 @@ async function request<T>(
  *  "Unexpected token <" JSON SyntaxError. */
 async function parseResponse<T>(res: Response): Promise<T> {
   const text = await res.text();
-  let data: { error?: string; message?: string } | undefined;
+  let data: { error?: string; message?: string; fields?: string[] } | undefined;
   try {
     data = text ? JSON.parse(text) : undefined;
   } catch {
@@ -175,7 +177,7 @@ async function parseResponse<T>(res: Response): Promise<T> {
       res.status === 413
         ? "File is too large (max 5 MB)."
         : res.statusText || `Request failed (${res.status})`;
-    throw new ApiError(res.status, data?.error ?? "error", data?.message ?? fallback);
+    throw new ApiError(res.status, data?.error ?? "error", data?.message ?? fallback, data?.fields);
   }
   return data as T;
 }

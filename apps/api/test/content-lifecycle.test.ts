@@ -101,6 +101,9 @@ describe("Pages, blocks, content areas + draft/publish lifecycle", () => {
       headers: authHeaders(ed),
     });
     expect(publish.statusCode).toBe(422);
+    // The error names the offending field(s) structurally so the admin can show
+    // the message inline on the field (not just in a toast).
+    expect(publish.json().fields).toContain("heading");
   });
 
   it("unpublish removes content from the public Delivery API", async () => {

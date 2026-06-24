@@ -171,6 +171,13 @@ body {
   }
 }
 
+/* Invalid form control (inline validation). Unlayered so it wins over the
+   layered `.field-input:focus` accent border. */
+.field-input[aria-invalid="true"],
+.field-input[aria-invalid="true"]:focus {
+  border-color: rgb(var(--c-danger));
+}
+
 /* TipTap content */
 .prose-paperboy :where(p) { margin: 0 0 0.6em; }
 .prose-paperboy :where(p):last-child { margin-bottom: 0; }
