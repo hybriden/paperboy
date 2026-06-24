@@ -8,6 +8,9 @@ import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
 import { ContentTypeEditor } from "../ContentTypeEditor.js";
 import { Dialog, DialogContent } from "../ui/dialog.js";
+import { Badge } from "../ui/badge.js";
+import { Callout } from "../ui/callout.js";
+import { Surface } from "../ui/surface.js";
 import { useToast } from "../ui/toast.js";
 
 const ROLES: RoleName[] = ["Admin", "Editor", "Author", "Viewer"];
@@ -20,7 +23,7 @@ function PanelShell({ title, hint, action, children }: { title: string; hint?: s
         {action}
       </div>
       {hint && <p className="mb-2 text-xs text-muted">{hint}</p>}
-      <div className="overflow-hidden rounded-lg border border-line bg-panel shadow-panel">{children}</div>
+      <Surface elevation={1} className="overflow-hidden">{children}</Surface>
     </section>
   );
 }
@@ -568,12 +571,12 @@ function DeleteSiteDialog({ site, active, onClose }: { site: SiteRow; active: bo
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title="Delete site" description={`Permanently delete “${site.name}” and everything in it.`} className="w-[min(480px,94vw)]">
+      <DialogContent title="Delete site" description={`Permanently delete “${site.name}” and everything in it.`} size="md">
         <div className="flex flex-col gap-3">
-          <p className="rounded-[var(--radius)] border border-danger/30 bg-danger/5 p-3 text-sm text-fg">
+          <Callout tone="critical">
             This deletes <strong>all content, media and delivery keys</strong> belonging to “{site.name}”, including its trash.
             This cannot be undone.
-          </p>
+          </Callout>
           <label className="text-sm">
             <span className="field-label">Type <strong>{site.name}</strong> to confirm</span>
             <input ref={confirmRef} aria-label={`Type ${site.name} to confirm`} className="field-input" value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={site.name} />
@@ -876,7 +879,7 @@ function UserDialog({
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title={editing ? `Edit ${editing.email}` : "New user"} description="Assign roles; Authors are scoped to the sections you select." className="w-[min(560px,94vw)]">
+      <DialogContent title={editing ? `Edit ${editing.email}` : "New user"} description="Assign roles; Authors are scoped to the sections you select." size="lg">
         <div className="grid grid-cols-2 gap-3">
           <label className="text-sm"><span className="field-label">Email</span>
             <input aria-label="Email" className="field-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
@@ -996,7 +999,7 @@ export function DeliveryKeysPanel() {
             </>
           )}
           <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{k.keyPrefix}…</code>
-          <span className={`rounded px-1.5 py-0.5 text-[11px] ${k.type === "preview" ? "bg-draft/10 text-draft" : "bg-published/10 text-published"}`}>{k.type}</span>
+          <Badge tone={k.type === "preview" ? "caution" : "positive"}>{k.type}</Badge>
           {k.revokedAt ? <span className="rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">revoked</span> : null}
           {!k.revokedAt && (
             <button className="ml-auto rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => { if (confirm(`Revoke “${k.name}”?`)) revoke.mutate(k.id); }}>Revoke</button>
@@ -1143,7 +1146,7 @@ export function WebhooksPanel() {
           <Icon.Link width={15} height={15} className="text-muted" />
           <span className="font-medium text-fg">{h.name}</span>
           <code className="max-w-[280px] truncate rounded bg-line/70 px-1 font-mono text-[11px] text-muted" title={h.url}>{h.url}</code>
-          {h.lastStatus != null && <span className={`rounded px-1.5 py-0.5 text-[11px] ${h.lastStatus >= 200 && h.lastStatus < 300 ? "bg-published/10 text-published" : "bg-danger/10 text-danger"}`}>last {h.lastStatus}</span>}
+          {h.lastStatus != null && <Badge tone={h.lastStatus >= 200 && h.lastStatus < 300 ? "positive" : "critical"}>last {h.lastStatus}</Badge>}
           <button className="ml-auto rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => { if (confirm(`Delete webhook “${h.name}”?`)) del.mutate(h.id); }}>Delete</button>
         </div>
       ))}

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
+import { Surface } from "./ui/surface.js";
 
 const PREVIEW_SECRET = (import.meta.env.VITE_PREVIEW_SECRET as string) ?? "dev-preview-secret-change-me";
 
@@ -270,14 +271,16 @@ export function PreviewPane({
               aria-hidden
             />
             {/* The anchored editor card (unscaled admin UI). */}
-            <div
-              className="absolute z-20 rounded-[var(--radius-lg)] border border-line bg-panel shadow-pop"
+            <Surface
+              elevation={2}
+              radius="lg"
+              className="absolute z-20"
               style={{ ...anchor.card, width: CARD_W }}
               role="dialog"
               aria-label="Edit property"
             >
               {overlay.content}
-            </div>
+            </Surface>
           </>
         )}
       </div>

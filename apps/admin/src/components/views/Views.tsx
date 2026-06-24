@@ -7,15 +7,17 @@ import { AI_OFF_HINT, useAiEnabled } from "../../lib/useAiStatus.js";
 import { useUser } from "../../lib/user.js";
 import type { ShellOutlet } from "../Shell.js";
 import { Dialog, DialogContent } from "../ui/dialog.js";
+import { Badge } from "../ui/badge.js";
+import { Surface } from "../ui/surface.js";
 import { useToast } from "../ui/toast.js";
 import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, LanguagesPanel, McpTokensPanel, PasswordPanel, SitePanel, StockImagesPanel, TrashPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
-    <div className="rounded-lg border border-line bg-panel p-5 shadow-panel">
+    <Surface elevation={1} padding="lg">
       <div className="masthead tnum text-4xl leading-none text-fg">{value}</div>
       <div className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</div>
-    </div>
+    </Surface>
   );
 }
 
@@ -39,7 +41,7 @@ function DashSection({ title, hint, children }: { title: string; hint?: string; 
     <section>
       <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">{title}</h2>
       {hint && <p className="-mt-1 mb-2 text-xs text-muted">{hint}</p>}
-      <div className="overflow-hidden rounded-lg border border-line bg-panel shadow-panel">{children}</div>
+      <Surface elevation={1} className="overflow-hidden">{children}</Surface>
     </section>
   );
 }
@@ -99,7 +101,7 @@ function AltTextGaps({ images, total }: { images: DashboardData["imagesMissingAl
       </div>
       {editing && (
         <Dialog open onOpenChange={(o) => !o && setEditing(null)}>
-          <DialogContent title="Add alt text" description={editing.filename} className="w-[380px]">
+          <DialogContent title="Add alt text" description={editing.filename} size="sm">
             <img src={editing.url} alt="" className="mb-3 max-h-48 w-full rounded border border-line object-contain" />
             <div className="flex items-center justify-between">
               <label className="field-label" htmlFor="dash-alt">Alt text (accessibility)</label>
@@ -188,9 +190,7 @@ export function DashboardView() {
                 {w.kind === "block" ? <Icon.Block width={16} height={16} className="shrink-0 text-muted" /> : <Icon.File width={16} height={16} className="shrink-0 text-muted" />}
                 <span className="min-w-0 flex-1 truncate font-medium text-fg">{w.name}</span>
                 <span className="hidden font-mono text-xs text-muted sm:inline">{w.locale}</span>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${w.change === "new" ? "bg-draft/10 text-draft" : "bg-accent/10 text-accent-700"}`}>
-                  {w.change === "new" ? "draft" : "edited"}
-                </span>
+                <Badge tone={w.change === "new" ? "caution" : "primary"}>{w.change === "new" ? "draft" : "edited"}</Badge>
                 <span className="tnum w-20 shrink-0 text-right text-xs text-muted">{relativeTime(w.at)}</span>
               </button>
             ))}
@@ -211,9 +211,7 @@ export function DashboardView() {
               >
                 <Icon.File width={16} height={16} className="shrink-0 text-muted" />
                 <span className="min-w-0 flex-1 truncate font-medium text-fg">{sch.name}</span>
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${sch.action === "publish" ? "bg-published/10 text-published" : "bg-danger/10 text-danger"}`}>
-                  {sch.action === "publish" ? "goes live" : "expires"}
-                </span>
+                <Badge tone={sch.action === "publish" ? "positive" : "critical"}>{sch.action === "publish" ? "goes live" : "expires"}</Badge>
                 <span className="tnum shrink-0 text-xs text-muted">{scheduleTime(sch.at)}</span>
               </button>
             ))}
