@@ -168,7 +168,7 @@ export function ContentTypesPanel() {
           <button key={t.key} role="tab" aria-selected={kind === t.key}
             className={`rounded-full px-2.5 py-1 text-xs font-medium ${kind === t.key ? "bg-accent/15 text-accent-700" : "text-muted hover:bg-line/60 hover:text-fg"}`}
             onClick={() => setKind(t.key)}>
-            {t.label} <span className="opacity-60">{counts[t.key]}</span>
+            {t.label} <span className="tnum">{counts[t.key]}</span>
           </button>
         ))}
       </div>

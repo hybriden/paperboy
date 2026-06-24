@@ -38,7 +38,7 @@ function DashSection({ title, hint, children }: { title: string; hint?: string; 
   return (
     <section>
       <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">{title}</h2>
-      {hint && <p className="-mt-1 mb-2 text-xs text-muted/80">{hint}</p>}
+      {hint && <p className="-mt-1 mb-2 text-xs text-muted">{hint}</p>}
       <div className="overflow-hidden rounded-lg border border-line bg-panel shadow-panel">{children}</div>
     </section>
   );
@@ -371,13 +371,13 @@ export function SettingsView() {
       <div className="flex h-full">
         {/* Left section nav */}
         <nav aria-label="Settings sections" className="w-56 shrink-0 overflow-auto border-r border-line bg-panel p-3">
-          <h1 className="masthead mb-3 px-2 text-xl text-fg">Settings</h1>
+          <h1 className="mb-3 px-2 text-xl font-semibold tracking-[-0.02em] text-fg">Settings</h1>
           {groups.map((g) => {
             const items = tabs.filter((t) => t.group === g);
             if (!items.length) return null;
             return (
               <div key={g} className="mb-3">
-                <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-muted/70">{g}</div>
+                <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-muted">{g}</div>
                 {items.map((t) => (
                   <button
                     key={t.key}
@@ -398,7 +398,7 @@ export function SettingsView() {
         {/* Active section */}
         <section className="min-w-0 flex-1 overflow-auto">
           <div className="mx-auto max-w-4xl animate-slide-up p-8">
-            <h2 className="masthead mb-5 text-2xl text-fg">{current?.label}</h2>
+            <h2 className="mb-5 text-2xl font-semibold tracking-[-0.02em] text-fg">{current?.label}</h2>
             {current?.render()}
           </div>
         </section>

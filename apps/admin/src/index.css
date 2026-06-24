@@ -13,8 +13,8 @@
   --font-display: "Newsreader Variable", Georgia, "Times New Roman", serif;
   --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", monospace;
 
-  /* Light — warm newsprint */
-  --c-canvas: 247 245 240;
+  /* Light — clean warm near-white (lifted from the old cream newsprint) */
+  --c-canvas: 251 250 248;
   --c-panel: 255 255 255;
   --c-fg: 26 26 24;
   --c-muted: 90 99 110;
@@ -38,9 +38,9 @@
   --c-danger: 185 28 28;
   --c-ring: 34 87 214;
 
-  --radius: 7px;
-  --radius-lg: 11px;
-  --shadow-panel: 0 1px 2px rgb(16 24 40 / 0.06), 0 1px 3px rgb(16 24 40 / 0.08);
+  --radius: 9px;
+  --radius-lg: 14px;
+  --shadow-panel: 0 1px 2px rgb(16 24 40 / 0.04), 0 6px 16px -6px rgb(16 24 40 / 0.10);
   --shadow-pop: 0 10px 30px -10px rgb(16 24 40 / 0.28), 0 2px 8px rgb(16 24 40 / 0.10);
   --dur: 160ms;
   --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
