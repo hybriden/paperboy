@@ -4,6 +4,16 @@ import type { SessionUser } from "@paperboy/shared";
 
 type Step = "email" | "password" | "code";
 
+// Newspapers carry the date on the masthead. Computed once per mount.
+function todayDateline(): string {
+  return new Date().toLocaleDateString(undefined, {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  });
+}
+
 export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
   const [step, setStep] = useState<Step>("email");
   const [email, setEmail] = useState("");
@@ -13,6 +23,7 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
   // 2FA challenge.
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [code, setCode] = useState("");
+  const [dateline] = useState(todayDateline);
 
   // Focus the active step's input on mount / step change (replaces autoFocus).
   const emailRef = useRef<HTMLInputElement>(null);
@@ -87,67 +98,118 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
     }
   }
 
-  const Shell = ({ children }: { children: React.ReactNode }) => (
-    <div className="flex h-full items-center justify-center bg-chrome">{children}</div>
+  const errBanner = error && (
+    <p role="alert" className="mb-4 rounded-[var(--radius)] border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+      {error}
+    </p>
   );
-  const Brand = (
-    <div className="mb-6 flex items-center gap-2">
-      <div className="grid h-9 w-9 place-items-center rounded bg-accent font-bold text-white">P</div>
-      <div>
-        <h1 className="text-lg font-bold leading-tight">Paperboy CMS</h1>
-        <p className="text-xs text-muted">Sign in to the editor</p>
-      </div>
-    </div>
-  );
-  const Err = error && <p role="alert" className="mb-3 rounded bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>;
-
-  if (step === "code") {
-    return (
-      <Shell>
-        <form onSubmit={submitMfa} className="w-[360px] rounded-lg bg-panel p-7 shadow-panel" aria-labelledby="mfa-title">
-          <h1 id="mfa-title" className="text-lg font-bold leading-tight">Two-factor authentication</h1>
-          <p className="mb-4 mt-1 text-xs text-muted">Signing in as <strong>{email}</strong>. Enter the 6-digit code from your authenticator app (or a backup code).</p>
-          <label className="field-label" htmlFor="mfacode">Authentication code</label>
-          <input id="mfacode" ref={codeRef} aria-label="Authentication code" className="field-input mb-4 text-center font-mono tracking-[0.3em]" inputMode="text" autoComplete="one-time-code"
-            value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" required />
-          {Err}
-          <button type="submit" className="btn-primary w-full" disabled={busy || code.trim().length < 6}>{busy ? "Verifying…" : "Verify"}</button>
-          <button type="button" className="mt-3 w-full text-center text-xs text-muted hover:text-fg" onClick={reset}>← Back to sign in</button>
-        </form>
-      </Shell>
-    );
-  }
-
-  if (step === "password") {
-    return (
-      <Shell>
-        <form onSubmit={submitPassword} className="w-[360px] rounded-lg bg-panel p-7 shadow-panel" aria-labelledby="login-title">
-          {Brand}
-          <p className="mb-4 text-xs text-muted">Signing in as <strong>{email}</strong></p>
-          <label className="field-label" htmlFor="password">Password</label>
-          <input id="password" ref={passwordRef} aria-label="Password" className="field-input mb-4" type="password" value={password} autoComplete="current-password"
-            onChange={(e) => setPassword(e.target.value)} required />
-          {Err}
-          <button type="submit" className="btn-primary w-full" disabled={busy || !password}>{busy ? "Signing in…" : "Sign in"}</button>
-          <button type="button" className="mt-3 w-full text-center text-xs text-muted hover:text-fg" onClick={reset}>← Use a different email</button>
-        </form>
-      </Shell>
-    );
-  }
 
   return (
-    <Shell>
-      <form onSubmit={submitEmail} className="w-[360px] rounded-lg bg-panel p-7 shadow-panel" aria-labelledby="login-title">
-        {Brand}
-        <label className="field-label" htmlFor="email">Email</label>
-        <input id="email" ref={emailRef} aria-label="Email" className="field-input mb-4" type="email" value={email} autoComplete="username"
-          onChange={(e) => setEmail(e.target.value)} required />
-        {Err}
-        <button type="submit" className="btn-primary w-full" disabled={busy || !email}>{busy ? "Continuing…" : "Continue"}</button>
-        <p className="mt-4 text-center text-xs text-muted">
-          2FA accounts sign in with a code; others continue to a password.
-        </p>
-      </form>
-    </Shell>
+    <div className="grid h-full grid-cols-1 bg-canvas md:grid-cols-[1.05fr_1fr]">
+      {/* ── Editorial masthead — the front page. Always dark; reads in both themes. ── */}
+      <aside
+        className="relative hidden overflow-hidden border-chrome-border bg-chrome px-12 py-10 text-chrome-fg md:flex md:flex-col md:justify-between md:border-r"
+        style={{
+          // Faint newspaper column rules — ambient texture, not a divider.
+          backgroundImage:
+            "repeating-linear-gradient(90deg, rgb(var(--c-chrome-fg) / 0.035) 0 1px, transparent 1px 96px)",
+        }}
+      >
+        {/* Dateline — tracked mono caps, with the one press-red brand mark. */}
+        <div className="flex items-center gap-2.5 text-[11px] uppercase tracking-[0.22em] text-chrome-fg/70">
+          <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-[2px] bg-brand" aria-hidden="true" />
+          <span>{dateline}</span>
+        </div>
+
+        {/* Masthead wordmark + motto. */}
+        <div className="animate-slide-up">
+          <div className="mb-4 border-t border-chrome-border pt-5 text-[11px] uppercase tracking-[0.3em] text-chrome-fg/65">
+            The editor’s desk
+          </div>
+          <h1 className="font-display text-6xl font-semibold leading-[0.95] tracking-[-0.02em] lg:text-7xl">
+            Paperboy
+          </h1>
+          <p className="mt-5 max-w-sm border-t border-chrome-border pt-5 font-display text-lg leading-snug text-chrome-fg/80">
+            All the content that’s fit to publish.
+          </p>
+        </div>
+
+        {/* Footer line. */}
+        <div className="text-[11px] uppercase tracking-[0.22em] text-chrome-fg/65">
+          Headless CMS · Newsroom edition
+        </div>
+      </aside>
+
+      {/* ── Sign-in form ── */}
+      <main className="flex items-center justify-center px-6 py-10">
+        <div className="w-full max-w-[380px] animate-fade-in">
+          {/* Compact wordmark for mobile, where the masthead panel is hidden. */}
+          <div className="mb-8 flex items-center gap-2.5 md:hidden">
+            <span className="grid h-9 w-9 place-items-center rounded-[var(--radius)] bg-brand font-display text-lg font-semibold text-white">P</span>
+            <span className="font-display text-2xl font-semibold tracking-[-0.01em]">Paperboy</span>
+          </div>
+
+          {step === "email" && (
+            <form onSubmit={submitEmail} aria-labelledby="login-title">
+              <h2 id="login-title" className="text-2xl font-bold tracking-[-0.01em]">Sign in</h2>
+              <p className="mb-7 mt-1.5 text-sm text-muted">Enter your email to continue to the editor.</p>
+              <label className="field-label" htmlFor="email">Email</label>
+              <input
+                id="email" ref={emailRef} aria-label="Email" type="email" autoComplete="username"
+                className="field-input mb-5" value={email} onChange={(e) => setEmail(e.target.value)} required
+              />
+              {errBanner}
+              <button type="submit" className="btn-primary h-11 w-full text-[15px]" disabled={busy || !email}>
+                {busy ? "Continuing…" : "Continue"}
+              </button>
+              <p className="mt-6 text-center text-xs text-muted">
+                Accounts with two-factor sign in with a code; others continue to a password.
+              </p>
+            </form>
+          )}
+
+          {step === "password" && (
+            <form onSubmit={submitPassword} aria-labelledby="login-title">
+              <h2 id="login-title" className="text-2xl font-bold tracking-[-0.01em]">Enter your password</h2>
+              <p className="mb-7 mt-1.5 text-sm text-muted">Signing in as <strong className="font-semibold text-fg">{email}</strong></p>
+              <label className="field-label" htmlFor="password">Password</label>
+              <input
+                id="password" ref={passwordRef} aria-label="Password" type="password" autoComplete="current-password"
+                className="field-input mb-5" value={password} onChange={(e) => setPassword(e.target.value)} required
+              />
+              {errBanner}
+              <button type="submit" className="btn-primary h-11 w-full text-[15px]" disabled={busy || !password}>
+                {busy ? "Signing in…" : "Sign in"}
+              </button>
+              <button type="button" className="mt-3 w-full rounded-[var(--radius)] py-1.5 text-center text-xs text-muted transition-colors hover:text-fg" onClick={reset}>
+                ← Use a different email
+              </button>
+            </form>
+          )}
+
+          {step === "code" && (
+            <form onSubmit={submitMfa} aria-labelledby="mfa-title">
+              <h2 id="mfa-title" className="text-2xl font-bold tracking-[-0.01em]">Two-factor authentication</h2>
+              <p className="mb-7 mt-1.5 text-sm text-muted">
+                Signing in as <strong className="font-semibold text-fg">{email}</strong>. Enter the 6-digit code from your authenticator app, or a backup code.
+              </p>
+              <label className="field-label" htmlFor="mfacode">Authentication code</label>
+              <input
+                id="mfacode" ref={codeRef} aria-label="Authentication code" inputMode="text" autoComplete="one-time-code"
+                className="field-input mb-5 text-center font-mono text-lg tracking-[0.4em]"
+                value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" required
+              />
+              {errBanner}
+              <button type="submit" className="btn-primary h-11 w-full text-[15px]" disabled={busy || code.trim().length < 6}>
+                {busy ? "Verifying…" : "Verify"}
+              </button>
+              <button type="button" className="mt-3 w-full rounded-[var(--radius)] py-1.5 text-center text-xs text-muted transition-colors hover:text-fg" onClick={reset}>
+                ← Back to sign in
+              </button>
+            </form>
+          )}
+        </div>
+      </main>
+    </div>
   );
 }
