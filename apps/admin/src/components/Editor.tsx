@@ -33,6 +33,7 @@ import { type PbRect, type PreviewMode, PreviewPane, publicSiteUrl } from "./Pre
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
+import { Skeleton } from "./ui/skeleton.js";
 import { useToast } from "./ui/toast.js";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
@@ -707,7 +708,14 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     return <div className="grid h-full place-items-center text-muted">{msg}</div>;
   }
   if (detail.isLoading || !form) {
-    return <div className="grid h-full place-items-center text-muted">Loading editor…</div>;
+    return (
+      <div className="space-y-4 p-6" aria-busy>
+        <Skeleton className="h-8 w-1/3" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-8 w-2/3" />
+        <Skeleton className="h-24 w-full" />
+      </div>
+    );
   }
 
   const groups = type ? [...new Set(type.fields.map((f) => f.group))] : ["Content"];

@@ -26,6 +26,7 @@ import { Icon } from "../lib/icons.js";
 import { localeIndicator } from "../lib/locale-indicator.js";
 import { TypeIcon, useTypeIconName } from "../lib/typeIcons.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
+import { Skeleton } from "./ui/skeleton.js";
 import { Surface } from "./ui/surface.js";
 import { useToast } from "./ui/toast.js";
 
@@ -322,7 +323,7 @@ function Level(props: LevelProps) {
   if (q.isLoading) {
     return (
       <div className="space-y-1 px-2 py-1" aria-busy>
-        {[0, 1, 2].map((i) => <div key={i} className="h-7 animate-pulse rounded bg-line/50" />)}
+        {[0, 1, 2].map((i) => <Skeleton key={i} className="h-7" />)}
       </div>
     );
   }
