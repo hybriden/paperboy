@@ -15,7 +15,7 @@ import {
   validatorCompiler,
 } from "fastify-type-provider-zod";
 import { ZodError } from "zod";
-import type { Env } from "./env.js";
+import { type Env, parseTrustProxy } from "./env.js";
 import { registerAiRoutes } from "./routes/ai.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDeliveryRoutes } from "./routes/delivery.js";
@@ -34,7 +34,10 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   const { env } = opts;
   const app = Fastify({
     logger: env.NODE_ENV === "test" ? false : { level: "info" },
-    trustProxy: true,
+    // Configurable trusted-proxy boundary (M9): default "true" preserves behaviour,
+    // but operators can pin a hop count / CIDR list so req.ip can't be spoofed via
+    // X-Forwarded-For. (req.ip backs the IP rate-limits and audit-log IPs.)
+    trustProxy: parseTrustProxy(env.TRUST_PROXY),
   }).withTypeProvider<ZodTypeProvider>();
 
   app.setValidatorCompiler(validatorCompiler);
