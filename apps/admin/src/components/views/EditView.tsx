@@ -118,7 +118,9 @@ export function EditView() {
     // Resizable workspace — drag the dividers to give the editor/preview more room.
     // Each side pane is pinned (in-flow) or auto-hidden (edge rail + hover flyout).
     // The PanelGroup is keyed by the pin config so each layout persists separately.
-    <div className="relative flex h-full">
+    // overflow-hidden so an auto-hide pane rolling back tucks away at the
+    // workspace edge instead of sliding out over the global nav rail.
+    <div className="relative flex h-full overflow-hidden">
       {!treePinned && (
         <AutoHideRail side="left" label="Content" onPin={toggleTree}>
           <div className="flex h-full flex-col border-r border-line bg-panel">{tree}</div>
