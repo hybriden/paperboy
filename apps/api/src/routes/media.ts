@@ -7,6 +7,13 @@ import { nanoid } from "nanoid";
 import sharp from "sharp";
 import { z } from "zod";
 
+// Decompression-bomb / resource-DoS hardening (M8): cap the decoded pixel count
+// (24 Mpix ≈ 6000×4000 — covers real photos, rejects bombs) and the libvips
+// thread pool so a burst of transform requests can't pin every core. An
+// over-limit source throws in sharp and falls back to serving the original below.
+const MAX_INPUT_PIXELS = 24_000_000;
+sharp.concurrency(2);
+
 /**
  * Media serving with on-the-fly image transforms:
  *
@@ -98,7 +105,7 @@ export async function registerMediaRoutes(appBase: FastifyInstance): Promise<voi
       let variant = await stat(variantPath).catch(() => null);
       if (!variant) {
         await mkdir(variantsDir, { recursive: true });
-        let img = sharp(originalPath, { failOn: "none" });
+        let img = sharp(originalPath, { failOn: "none", limitInputPixels: MAX_INPUT_PIXELS });
         if (width) img = img.resize({ width, withoutEnlargement: true });
         if (format === "webp") img = img.webp({ quality });
         else if (format === "avif") img = img.avif({ quality });
