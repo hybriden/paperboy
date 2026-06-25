@@ -240,6 +240,33 @@ export async function adminDeleteUser(db: Database, ctx: AccessContext, userId: 
 }
 
 /** Self-service password change: verify the current password, then re-hash. */
+/**
+ * Re-verify the account password for a sensitive action (change-password,
+ * disable-2FA) WITH the same per-account lockout as login (S3-L3) — otherwise a
+ * session holder could brute-force the password on these unguarded reauth paths.
+ * Throws a generic unauthorized on any failure (locked, wrong, or unknown).
+ */
+async function verifyReauth(db: Database, userId: string, password: string): Promise<void> {
+  const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  const user = rows[0];
+  const generic = Errors.unauthorized("Current password is incorrect");
+  if (!user) throw generic;
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    await argon2.verify(user.passwordHash, password).catch(() => false); // match the verify path's timing
+    throw generic;
+  }
+  const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
+  if (!ok) {
+    const failed = user.failedAttempts + 1;
+    const locked = failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null;
+    await db.update(users).set({ failedAttempts: failed, lockedUntil: locked }).where(eq(users.id, user.id));
+    throw generic;
+  }
+  if (user.failedAttempts > 0 || user.lockedUntil) {
+    await db.update(users).set({ failedAttempts: 0, lockedUntil: null }).where(eq(users.id, user.id));
+  }
+}
+
 export async function changePassword(
   db: Database,
   userId: string,
@@ -247,11 +274,7 @@ export async function changePassword(
   newPassword: string,
 ): Promise<void> {
   if (newPassword.length < 10) throw Errors.badRequest("New password must be at least 10 characters");
-  const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  const user = rows[0];
-  if (!user) throw Errors.unauthorized();
-  const ok = await argon2.verify(user.passwordHash, oldPassword).catch(() => false);
-  if (!ok) throw Errors.unauthorized("Current password is incorrect");
+  await verifyReauth(db, userId, oldPassword);
   const passwordHash = await argon2.hash(newPassword, ARGON2_OPTS);
   await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
   // Invalidate all OTHER sessions (keep none — force re-login everywhere).
@@ -350,11 +373,7 @@ export async function enableTotp(db: Database, userId: string, code: string): Pr
 
 /** Disable 2FA (requires the account password — a re-auth gate). */
 export async function disableTotp(db: Database, userId: string, password: string): Promise<void> {
-  const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  const user = rows[0];
-  if (!user) throw Errors.unauthorized();
-  const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
-  if (!ok) throw Errors.unauthorized("Password is incorrect");
+  await verifyReauth(db, userId, password); // same per-account lockout as login (S3-L3)
   await db.update(users).set({ totpSecret: null, totpEnabled: false, backupCodes: null }).where(eq(users.id, userId));
 }
 
