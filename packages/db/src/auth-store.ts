@@ -12,7 +12,7 @@ import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { getDefaultSite } from "./sites.js";
-import { auditLog, deliveryKey, session, userRole, userScope, users } from "./schema.js";
+import { DEFAULT_SITE_ID, auditLog, contentItem, deliveryKey, session, userRole, userScope, users } from "./schema.js";
 import {
   decryptSecret,
   encryptSecret,
@@ -52,6 +52,18 @@ export function constantTimeEqual(a: string, b: string): boolean {
 
 /* --------------------------------- users ---------------------------------- */
 
+/** A section is a top-level content_item; its scope must be stored under that
+ *  document's OWN site, not the column DEFAULT — getAccessContext filters scopes
+ *  by the active site, so a mismatched site_id silently hides the assignment. */
+async function sectionSiteId(db: Database, sectionId: string): Promise<string> {
+  const rows = await db
+    .select({ siteId: contentItem.siteId })
+    .from(contentItem)
+    .where(eq(contentItem.documentId, sectionId))
+    .limit(1);
+  return rows[0]?.siteId ?? DEFAULT_SITE_ID;
+}
+
 export async function createUser(
   db: Database,
   input: {
@@ -69,7 +81,8 @@ export async function createUser(
     await db.insert(userRole).values({ userId: id, role }).onConflictDoNothing();
   }
   for (const sectionId of input.sections ?? []) {
-    await db.insert(userScope).values({ userId: id, sectionId }).onConflictDoNothing();
+    const siteId = await sectionSiteId(db, sectionId);
+    await db.insert(userScope).values({ userId: id, sectionId, siteId }).onConflictDoNothing();
   }
   return id;
 }
@@ -185,6 +198,12 @@ export async function adminUpdateUser(
       throw Errors.conflict("Cannot remove the last administrator");
     }
   }
+  // Resolve each section's own site BEFORE the tx (the content_item rows are
+  // already committed) so the scope rows are filed under the correct site.
+  const scopeSites = new Map<string, string>();
+  if (input.sections) {
+    for (const sectionId of input.sections) scopeSites.set(sectionId, await sectionSiteId(db, sectionId));
+  }
   await db.transaction(async (tx) => {
     if (input.name !== undefined) await tx.update(users).set({ name: input.name }).where(eq(users.id, userId));
     if (emailChanged) await tx.update(users).set({ email }).where(eq(users.id, userId));
@@ -194,7 +213,12 @@ export async function adminUpdateUser(
     }
     if (input.sections) {
       await tx.delete(userScope).where(eq(userScope.userId, userId));
-      for (const sectionId of input.sections) await tx.insert(userScope).values({ userId, sectionId }).onConflictDoNothing();
+      for (const sectionId of input.sections) {
+        await tx
+          .insert(userScope)
+          .values({ userId, sectionId, siteId: scopeSites.get(sectionId) ?? DEFAULT_SITE_ID })
+          .onConflictDoNothing();
+      }
     }
   });
 }
