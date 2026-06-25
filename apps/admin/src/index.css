@@ -190,6 +190,36 @@ body {
   border-color: rgb(var(--c-danger));
 }
 
+/* Auto-hide pane flyout (SidePane). Reveals quickly on hover; on mouse-out it
+   tucks back to the hidden position over 0.7s. `visibility` is delayed by the
+   same 0.7s on leave so the fade + slide stays on screen the whole way (without
+   the delay it would vanish instantly). The hover state shows it immediately. */
+.pb-flyout {
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.7s var(--ease),
+    transform 0.7s var(--ease),
+    visibility 0s linear 0.7s;
+}
+.pb-flyout[data-side="left"] {
+  transform: translateX(-0.5rem);
+}
+.pb-flyout[data-side="right"] {
+  transform: translateX(0.5rem);
+}
+.group:hover > .pb-flyout {
+  visibility: visible;
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+  transition:
+    opacity 0.15s var(--ease),
+    transform 0.15s var(--ease),
+    visibility 0s;
+}
+
 /* TipTap content */
 .prose-paperboy :where(p) { margin: 0 0 0.6em; }
 .prose-paperboy :where(p):last-child { margin-bottom: 0; }
