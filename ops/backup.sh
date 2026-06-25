@@ -2,10 +2,14 @@
 # Paperboy nightly backup: Postgres (custom format) + uploads volume, 14-day
 # rotation, ntfy alert on failure + daily OK ping. Installed by ops automation.
 set -euo pipefail
+# Backups are a full credential dump (argon2id hashes, encrypted TOTP secrets,
+# session/MCP tokens, delivery keys). Lock them down: owner-only files + dir.
+umask 077
 TOPIC=$(cat /home/hanschr/paperboy-ops/.ntfy-topic)
 DIR=/home/hanschr/paperboy-backups
 STAMP=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$DIR"
+chmod 700 "$DIR"
 
 notify() { # title, priority, tags, body
   curl -fsS -m 10 -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "https://ntfy.sh/$TOPIC" >/dev/null 2>&1 || true
@@ -15,13 +19,17 @@ fail() {
   exit 1
 }
 
-# 1. Database — custom format (pg_restore-able, compressed).
+# 1. Database — custom format (pg_restore-able, compressed). The host-side
+#    redirect creates the file under our umask 077 (mode 600); make it explicit.
 docker exec paperboy-db pg_dump -U paperboy -Fc paperboy > "$DIR/paperboy-$STAMP.dump" || fail "pg_dump failed"
+chmod 600 "$DIR/paperboy-$STAMP.dump"
 [ -s "$DIR/paperboy-$STAMP.dump" ] || fail "pg_dump produced an empty file"
 
-# 2. Uploads volume (originals + image-variant cache).
+# 2. Uploads volume (originals + image-variant cache). The container writes the
+#    tarball as root, so set the umask INSIDE it (the host cron user can't chmod a
+#    root-owned file) — result is a root-owned, mode-600 archive.
 docker run --rm -v paperboycms_paperboy-uploads:/data:ro -v "$DIR":/backup alpine \
-  tar czf "/backup/uploads-$STAMP.tar.gz" -C /data . || fail "uploads tar failed"
+  sh -c "umask 077; tar czf /backup/uploads-$STAMP.tar.gz -C /data ." || fail "uploads tar failed"
 
 # 3. Sanity: the dump must be readable by pg_restore (catches truncated writes).
 docker exec -i paperboy-db pg_restore --list < "$DIR/paperboy-$STAMP.dump" > /dev/null || fail "dump unreadable by pg_restore"
