@@ -1,10 +1,11 @@
 import { createServer as createHttpServer, type IncomingMessage } from "node:http";
-import { randomUUID, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { makeMcpHttpHandler } from "./http-handler.js";
 import {
   type AccessContext,
   adminCreateUser,
@@ -506,53 +507,22 @@ async function main(): Promise<void> {
     // `initialize` and replays it via the `mcp-session-id` header; that's what
     // carries the protocol's init state across separate requests.
     const sessions = new Map<string, StreamableHTTPServerTransport>();
-    const http = createHttpServer(async (req, res) => {
-      const path = (req.url ?? "/").split("?")[0];
-      if (path === "/health") {
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ ok: true }));
-        return;
-      }
-      if (path !== MCP_HTTP_PATH) {
-        res.writeHead(404, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: "not found" }));
-        return;
-      }
-      if (!(await bearerOk(req, userId))) {
-        res.writeHead(401, { "content-type": "application/json", "www-authenticate": "Bearer" });
-        res.end(JSON.stringify({ error: "unauthorized" }));
-        return;
-      }
-      try {
-        const sid = req.headers["mcp-session-id"];
-        const existing = typeof sid === "string" ? sessions.get(sid) : undefined;
-        if (existing) {
-          await existing.handleRequest(req, res);
-          return;
-        }
-        // No known session → start a new one (the request must be `initialize`;
-        // the transport replies with the right JSON-RPC error otherwise). All
-        // sessions act as the single configured user.
-        const transport: StreamableHTTPServerTransport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          enableJsonResponse: true,
-          onsessioninitialized: (id) => {
-            sessions.set(id, transport);
-          },
-        });
-        transport.onclose = () => {
-          if (transport.sessionId) sessions.delete(transport.sessionId);
-        };
-        const reqServer = buildServer();
-        await reqServer.connect(transport);
-        await transport.handleRequest(req, res);
-      } catch (err) {
-        console.error("[paperboy-mcp] request error:", err);
+    const handle = makeMcpHttpHandler({
+      httpPath: MCP_HTTP_PATH,
+      bearerOk: (req) => bearerOk(req, userId),
+      buildServer,
+      sessions,
+    });
+    const http = createHttpServer((req, res) => {
+      // The handler contains its own try/catch; this .catch is a last-resort
+      // backstop so a stray rejection can never become an unhandledRejection.
+      void handle(req, res).catch((err) => {
+        console.error("[paperboy-mcp] unhandled request error:", err);
         if (!res.headersSent) {
           res.writeHead(500, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "internal error" }));
         }
-      }
+      });
     });
     http.listen(MCP_HTTP_PORT, () => console.error(`[paperboy-mcp] ready on http :${MCP_HTTP_PORT}${MCP_HTTP_PATH}`));
   } else {
@@ -561,6 +531,12 @@ async function main(): Promise<void> {
     console.error("[paperboy-mcp] ready on stdio");
   }
 }
+// Last-resort backstop: on this long-lived remote process a stray rejection
+// must be logged and contained, never silently tear the process down.
+process.on("unhandledRejection", (reason) => {
+  console.error("[paperboy-mcp] unhandledRejection:", reason);
+});
+
 main().catch((err) => {
   console.error("[paperboy-mcp] fatal:", err);
   process.exit(1);
