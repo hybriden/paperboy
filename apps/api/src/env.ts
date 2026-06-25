@@ -36,7 +36,23 @@ const EnvSchema = z.object({
   // plus retries from ONE runner IP brush against 300, and the 429s surface as
   // flaky "treeitem not visible" failures; leave at 300 in production.
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+  // How much of the X-Forwarded-For chain to trust for req.ip (rate-limit keys +
+  // audit IPs). "true" trusts ALL hops (a client can then spoof its IP) — fine only
+  // when the API is unreachable except through a trusted proxy that overwrites XFF.
+  // Harden by setting the exact boundary: a hop COUNT ("1" = one trusted proxy) or
+  // a CSV of trusted proxy IPs/CIDRs. "false" = trust none (req.ip = socket peer).
+  TRUST_PROXY: z.string().default("true"),
 });
+
+/** Parse TRUST_PROXY into the shape Fastify's `trustProxy` accepts:
+ *  boolean | hop-count number | list of trusted proxy IPs/CIDRs. */
+export function parseTrustProxy(value: string): boolean | number | string[] {
+  const v = value.trim();
+  if (v === "true") return true;
+  if (v === "false") return false;
+  if (/^\d+$/.test(v)) return Number(v);
+  return v.split(",").map((s) => s.trim()).filter(Boolean);
+}
 
 export type Env = z.infer<typeof EnvSchema>;
 

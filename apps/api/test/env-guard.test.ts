@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadEnv } from "../src/env.js";
+import { loadEnv, parseTrustProxy } from "../src/env.js";
 
 // S2-H2: the production fail-fast guard must refuse ALL shipped placeholder
 // secrets — including the docker-compose `prod-*-please-override` defaults that
@@ -34,5 +34,19 @@ describe("loadEnv production secret guard", () => {
     expect(() =>
       loadEnv({ ...base, SESSION_SECRET: STRONG_SESSION, CSRF_SECRET: STRONG_CSRF }),
     ).not.toThrow();
+  });
+});
+
+describe("parseTrustProxy (M9: configurable trusted-proxy boundary)", () => {
+  it("maps true/false to booleans", () => {
+    expect(parseTrustProxy("true")).toBe(true);
+    expect(parseTrustProxy("false")).toBe(false);
+  });
+  it("maps a numeric string to a hop count", () => {
+    expect(parseTrustProxy("1")).toBe(1);
+    expect(parseTrustProxy("2")).toBe(2);
+  });
+  it("maps a CSV to a trimmed list of trusted proxies", () => {
+    expect(parseTrustProxy("10.0.0.0/8, 172.16.0.0/12")).toEqual(["10.0.0.0/8", "172.16.0.0/12"]);
   });
 });
