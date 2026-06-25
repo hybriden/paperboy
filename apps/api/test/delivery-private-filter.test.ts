@@ -70,4 +70,17 @@ describe("Delivery: private fields cannot be used as a filter/sort oracle", () =
     expect(ids(byHeading)).toEqual([docB]);
     expect(byHeading.json().total).toBe(1);
   });
+
+  it("full-text search does NOT match on private field text (M2)", async () => {
+    // "zzz" exists only in docA.seoNotes (delivery:"private") — a public search
+    // for it must return nothing, or the hit/no-hit signal is a content oracle.
+    const res = await s.app.inject({ method: "GET", url: "/api/v1/delivery/search?q=zzz", headers: pub });
+    expect(res.statusCode).toBe(200);
+    expect((res.json().items as unknown[]).length).toBe(0);
+  });
+
+  it("full-text search still matches PUBLIC field text (regression)", async () => {
+    const res = await s.app.inject({ method: "GET", url: "/api/v1/delivery/search?q=Heading", headers: pub });
+    expect(ids(res)).toContain(docA);
+  });
 });
