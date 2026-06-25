@@ -374,16 +374,16 @@ tool("list_content_types", "List all content types (fields annotated with the va
 tool("get_content_type", "Get a content type definition by name. Each field includes valueFormat + valueExample — the exact JSON shape update_content expects.", { name: z.string() },
   async ({ name }) => { need("content.read"); const def = await getContentType(db, name); return def ? withFieldFormats(def) : def; });
 tool("create_content_type", "Create a content type from a full ContentTypeDef object.", { definition: z.record(z.unknown()) },
-  ({ definition }) => createContentType(db, ctx, ContentTypeDef.parse(definition)));
+  async ({ definition }) => { const def = ContentTypeDef.parse(definition); const r = await createContentType(db, ctx, def); mcpAudit("contenttype.create", null, null, { name: def.name, kind: def.kind }); return r; });
 tool("update_content_type", "Update a content type (name and kind are immutable).", { name: z.string(), definition: z.record(z.unknown()) },
-  async ({ name, definition }) => (await updateContentType(db, ctx, name, ContentTypeDef.parse(definition))).next);
+  async ({ name, definition }) => { const r = await updateContentType(db, ctx, name, ContentTypeDef.parse(definition)); mcpAudit("contenttype.update", null, null, { name }); return r.next; });
 
 /* -------------------------------- media -------------------------------- */
 tool("list_assets", "List uploaded media assets.", {}, () => listAssets(db, ctx));
 tool("update_asset_alt", "Set an asset's alt text.", { documentId: docId, alt: z.string() },
-  ({ documentId, alt }) => updateAssetAlt(db, ctx, documentId, alt));
+  async ({ documentId, alt }) => { const r = await updateAssetAlt(db, ctx, documentId, alt); mcpAudit("asset.alt", documentId); return r; });
 tool("delete_asset", "Delete a media asset.", { documentId: docId },
-  async ({ documentId }) => { await deleteAsset(db, ctx, documentId); return { ok: true }; });
+  async ({ documentId }) => { await deleteAsset(db, ctx, documentId); mcpAudit("asset.delete", documentId); return { ok: true }; });
 tool(
   "search_stock_images",
   "Search the configured stock photo provider (Settings → Stock images; Unsplash). Returns photo candidates with id, description and attribution. To USE a photo: call import_stock_image with its id, then set_field the returned asset documentId on an image field.",
@@ -445,28 +445,28 @@ tool("delivery_start", "Read the configured start page (served at /).", { locale
 /* --------------------------------- site -------------------------------- */
 tool("get_site_config", "Get site config (current start page).", {}, () => getSiteConfig(db, ctx));
 tool("set_start_page", "Set (or clear with null) the page served at /.", { documentId: z.string().nullable() },
-  async ({ documentId }) => { await setStartPage(db, ctx, documentId); return { ok: true }; });
+  async ({ documentId }) => { await setStartPage(db, ctx, documentId); mcpAudit("site.start_page", documentId); return { ok: true }; });
 
 /* ---------------------------- platform admin --------------------------- */
 tool("list_users", "List users with roles and section scopes (admin).", {}, () => listUsers(db, ctx));
 tool("create_user", "Create a user (admin).", { email: z.string().email(), name: z.string(), password: z.string().min(10), roles: z.array(RoleName).min(1), sections: z.array(z.string()).optional() },
-  async (a) => ({ id: await adminCreateUser(db, ctx, a) }));
+  async (a) => { const id = await adminCreateUser(db, ctx, a); mcpAudit("user.create", null, null, { email: a.email, roles: a.roles }); return { id }; });
 tool("update_user", "Update a user's name/roles/sections (admin).", { id: z.string(), name: z.string().optional(), roles: z.array(RoleName).optional(), sections: z.array(z.string()).optional() },
-  async ({ id, ...rest }) => { await adminUpdateUser(db, ctx, id, rest); return { ok: true }; });
+  async ({ id, ...rest }) => { await adminUpdateUser(db, ctx, id, rest); mcpAudit("user.update", null, null, { id }); return { ok: true }; });
 tool("delete_user", "Delete a user (admin).", { id: z.string() },
-  async ({ id }) => { await adminDeleteUser(db, ctx, id); return { ok: true }; });
+  async ({ id }) => { await adminDeleteUser(db, ctx, id); mcpAudit("user.delete", null, null, { id }); return { ok: true }; });
 tool("list_delivery_keys", "List delivery API keys (admin).", {}, () => listDeliveryKeys(db, ctx));
 tool("create_delivery_key", "Create a delivery API key (admin). Returns the secret once.", { name: z.string(), type: z.enum(["public", "preview"]) },
-  ({ name, type }) => { need("deliverykey.manage"); return createDeliveryKey(db, ctx.siteId, name, type); });
+  async ({ name, type }) => { need("deliverykey.manage"); const r = await createDeliveryKey(db, ctx.siteId, name, type); mcpAudit("deliverykey.create", null, null, { name, type }); return r; });
 tool("rename_delivery_key", "Rename a delivery API key (admin).", { id: z.number(), name: z.string().min(1) },
-  async ({ id, name }) => { await renameDeliveryKey(db, ctx, id, name); return { ok: true }; });
+  async ({ id, name }) => { await renameDeliveryKey(db, ctx, id, name); mcpAudit("deliverykey.rename", null, null, { id, name }); return { ok: true }; });
 tool("revoke_delivery_key", "Revoke a delivery API key by id (admin).", { id: z.number() },
-  async ({ id }) => { await revokeDeliveryKey(db, ctx, id); return { ok: true }; });
+  async ({ id }) => { await revokeDeliveryKey(db, ctx, id); mcpAudit("deliverykey.revoke", null, null, { id }); return { ok: true }; });
 tool("list_webhooks", "List webhook subscriptions (admin).", {}, () => listWebhooks(db, ctx));
 tool("create_webhook", "Create a webhook (admin). Returns the signing secret once.", { name: z.string(), url: z.string(), events: z.array(z.string()).optional() },
-  (a) => createWebhook(db, ctx, a));
+  async (a) => { const r = await createWebhook(db, ctx, a); mcpAudit("webhook.create", null, null, { name: a.name }); return r; });
 tool("delete_webhook", "Delete a webhook by id (admin).", { id: z.number() },
-  async ({ id }) => { await deleteWebhook(db, ctx, id); return { ok: true }; });
+  async ({ id }) => { await deleteWebhook(db, ctx, id); mcpAudit("webhook.delete", null, null, { id }); return { ok: true }; });
 tool("list_audit", "Read the append-only audit log (admin). Filter by action prefix (e.g. 'content.'), actor user id, documentId, or ISO time range.",
   { limit: z.number().optional(), before: z.number().optional(), action: z.string().optional(), actorUserId: z.string().optional(), documentId: z.string().optional(), from: z.string().optional(), to: z.string().optional() },
   (a) => listAudit(db, ctx, a));
