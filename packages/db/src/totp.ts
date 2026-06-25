@@ -9,9 +9,17 @@ import { Secret, TOTP } from "otpauth";
 
 const ISSUER = "Paperboy";
 
-/** Stable key for encrypting TOTP secrets at rest (derived from the app secret). */
+const MFA_DEV_FALLBACK = "dev-mfa-secret-change-me-please-32x";
+
+/** Stable key for encrypting TOTP secrets at rest (derived from the app secret).
+ *  Uses `||` (not `??`) so the docker-compose `MFA_SECRET: ${MFA_SECRET:-}`
+ *  empty-string default falls through to SESSION_SECRET instead of deriving the
+ *  key from sha256("") — a public constant identical across every install. */
 function encKey(): Buffer {
-  const secret = process.env.MFA_SECRET ?? process.env.SESSION_SECRET ?? "dev-mfa-secret-change-me-please-32x";
+  const secret = process.env.MFA_SECRET || process.env.SESSION_SECRET || MFA_DEV_FALLBACK;
+  if (process.env.NODE_ENV === "production" && secret === MFA_DEV_FALLBACK) {
+    throw new Error("Refusing to derive the TOTP encryption key from the dev default: set MFA_SECRET or SESSION_SECRET in production");
+  }
   return createHash("sha256").update(secret).digest(); // 32 bytes for AES-256
 }
 
