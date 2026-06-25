@@ -592,17 +592,23 @@ async function slugTakenBySibling(
   parentId: string | null,
   loc: string,
   slug: string,
+  knownSiteId?: string,
 ): Promise<boolean> {
   // Scope siblings to the document's own site so two sites can each own a root
   // "/about" (slug uniqueness is per-site + per-parent + locale). For non-root
   // pages this is implied (siblings share a parent → a site); it matters for
   // roots (parentId === null), which would otherwise collide across sites.
-  const own = await db
-    .select({ siteId: contentItem.siteId })
-    .from(contentItem)
-    .where(eq(contentItem.documentId, documentId))
-    .limit(1);
-  const siteId = own[0]?.siteId;
+  // knownSiteId lets createContent pass the site directly — its content_item row
+  // isn't committed on this connection yet, so the self-lookup would miss it.
+  let siteId = knownSiteId;
+  if (!siteId) {
+    const own = await db
+      .select({ siteId: contentItem.siteId })
+      .from(contentItem)
+      .where(eq(contentItem.documentId, documentId))
+      .limit(1);
+    siteId = own[0]?.siteId;
+  }
   const siblings = await db
     .select({ documentId: contentItem.documentId })
     .from(contentItem)
@@ -663,12 +669,13 @@ async function autoSlug(
   parentId: string | null,
   loc: string,
   name: string,
+  knownSiteId?: string,
 ): Promise<string | null> {
   const base = slugify(name);
   if (!base) return null;
   for (let i = 0; i < 50; i++) {
     const candidate = i === 0 ? base : `${base}-${i + 1}`;
-    if (!(await slugTakenBySibling(db, documentId, parentId, loc, candidate))) return candidate;
+    if (!(await slugTakenBySibling(db, documentId, parentId, loc, candidate, knownSiteId))) return candidate;
   }
   return `${base}-${documentId.slice(0, 6).toLowerCase()}`;
 }
@@ -739,34 +746,43 @@ export async function createContent(
     throw Errors.forbidden("Cannot create content outside your sections");
   }
 
-  await db.insert(contentItem).values({
-    documentId,
-    type: type.name,
-    kind: type.kind,
-    parentId: req.parentId,
-    sortIndex: 0,
-    sectionId: effectiveSection,
-    // Children inherit the parent's site (loadAuthorized already confirmed the
-    // parent is in the active site); a new root belongs to the active site.
-    siteId: parent ? parent.siteId : ctx.siteId,
-    createdBy: ctx.userId,
-  });
-  await db.insert(contentVersion).values({
-    documentId,
-    locale: req.locale,
-    status: "draft",
-    isCurrentPublished: false,
-    versionNumber: 1,
-    name: req.name,
-    // Pages get a URL segment from their name right away (CMS-12 style) —
-    // uniquified among siblings; editors can change it in the URL chip.
-    slug: type.kind === "page" ? await autoSlug(db, documentId, req.parentId, req.locale, req.name) : null,
-    displayInNav: true,
-    data: {},
-    cv: 0,
-    createdBy: ctx.userId,
-    createdVia: ctx.via ?? null,
-    needsReview: ctx.via === "mcp" || ctx.via === "agent",
+  // Children inherit the parent's site (loadAuthorized already confirmed the
+  // parent is in the active site); a new root belongs to the active site.
+  const effectiveSiteId = parent ? parent.siteId : ctx.siteId;
+
+  // Atomic create: a per-(site, parent, locale) advisory lock serializes sibling
+  // slug allocation so two concurrent creates of the same name can't both pick the
+  // same segment (S2-M9 TOCTOU). autoSlug runs inside the tx and sees this row's
+  // own uncommitted item (so knownSiteId is passed) plus committed siblings.
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`slug:${effectiveSiteId}:${req.parentId ?? "root"}:${req.locale}`}))`);
+    await tx.insert(contentItem).values({
+      documentId,
+      type: type.name,
+      kind: type.kind,
+      parentId: req.parentId,
+      sortIndex: 0,
+      sectionId: effectiveSection,
+      siteId: effectiveSiteId,
+      createdBy: ctx.userId,
+    });
+    await tx.insert(contentVersion).values({
+      documentId,
+      locale: req.locale,
+      status: "draft",
+      isCurrentPublished: false,
+      versionNumber: 1,
+      name: req.name,
+      // Pages get a URL segment from their name right away (CMS-12 style) —
+      // uniquified among siblings; editors can change it in the URL chip.
+      slug: type.kind === "page" ? await autoSlug(db, documentId, req.parentId, req.locale, req.name, effectiveSiteId) : null,
+      displayInNav: true,
+      data: {},
+      cv: 0,
+      createdBy: ctx.userId,
+      createdVia: ctx.via ?? null,
+      needsReview: ctx.via === "mcp" || ctx.via === "agent",
+    });
   });
 
   return getContent(db, ctx, documentId, req.locale);
