@@ -44,13 +44,21 @@ const INSECURE_DEFAULTS = [
   "dev-session-secret-change-me-min-32-chars",
   "dev-csrf-secret-change-me-min-32-chars-long",
 ];
+// Any shipped placeholder must be refused in production — not just the two
+// .env.example dev-* strings above, but also the docker-compose
+// `prod-*-please-override` defaults a plain `docker compose up` injects.
+const PLACEHOLDER_SECRET = /change-me|please-override/i;
+
+function looksInsecure(secret: string): boolean {
+  return INSECURE_DEFAULTS.includes(secret) || PLACEHOLDER_SECRET.test(secret);
+}
 
 export function loadEnv(overrides: Partial<NodeJS.ProcessEnv> = {}): Env {
   const env = EnvSchema.parse({ ...process.env, ...overrides });
-  // Refuse to boot a production server with dev defaults (fail fast).
+  // Refuse to boot a production server with dev/placeholder secrets (fail fast).
   if (env.NODE_ENV === "production") {
-    if (INSECURE_DEFAULTS.includes(env.SESSION_SECRET) || INSECURE_DEFAULTS.includes(env.CSRF_SECRET)) {
-      throw new Error("Refusing to start: SESSION_SECRET/CSRF_SECRET must be set in production");
+    if (looksInsecure(env.SESSION_SECRET) || looksInsecure(env.CSRF_SECRET)) {
+      throw new Error("Refusing to start: SESSION_SECRET/CSRF_SECRET must be set to non-default values in production");
     }
     if (!env.COOKIE_SECURE && !env.ALLOW_INSECURE_COOKIES) {
       throw new Error(

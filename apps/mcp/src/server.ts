@@ -63,7 +63,7 @@ import {
   verifyLogin,
   verifyMcpToken,
 } from "@paperboy/db";
-import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, RoleName, aiAssist, fieldFormatHint } from "@paperboy/shared";
+import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, RoleName, aiAssist, fieldFormatHint, redactForLog } from "@paperboy/shared";
 import { z } from "zod";
 
 /**
@@ -162,7 +162,7 @@ function tool<S extends z.ZodRawShape>(
         // The error travels back in-band, but agents (and their loop guards)
         // routinely swallow it — ALSO leave a trail in docker logs, with the
         // args, so a failed agent run is diagnosable after the fact.
-        console.error(`[paperboy-mcp] tool ${name} failed: ${msg}\n  args: ${JSON.stringify(args)?.slice(0, 4000)}`);
+        console.error(`[paperboy-mcp] tool ${name} failed: ${msg}\n  args: ${JSON.stringify(redactForLog(args))?.slice(0, 4000)}`);
         return { content: [{ type: "text" as const, text: `Error: ${msg}` }], isError: true as const };
       }
     };

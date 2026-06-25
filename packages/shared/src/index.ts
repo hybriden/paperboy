@@ -5,3 +5,4 @@ export * from "./auth.js";
 export * from "./ai.js";
 export * from "./stock.js";
 export * from "./language.js";
+export * from "./redact.js";
