@@ -40,6 +40,10 @@ function setCacheHeaders(reply: FastifyReply, perspective: Perspective, cv: numb
   } else {
     reply.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
     reply.header("ETag", `W/"cv-${cv}"`);
+    // The delivery key (Authorization / x-api-key) selects BOTH the perspective and
+    // the SITE, so a shared/CDN cache must partition on it — otherwise one site's
+    // payload is served to another site's key at the same URL (per-site slugs collide).
+    reply.header("Vary", "Authorization, X-Api-Key");
   }
 }
 
