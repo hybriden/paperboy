@@ -1858,19 +1858,9 @@ export async function moveContent(
       if (newParentId === documentId) throw Errors.conflict("Cannot move a page under itself");
       const newParent = await loadAuthorized(db, ctx, newParentId); // scope-checks the destination
       if (newParent.kind !== "page") throw Errors.badRequest("Pages can only be nested under pages");
-      // Cycle prevention: walk up from the destination; reaching the moved page = its own descendant.
-      const guard = new Set<string>();
-      let cur: string | null = newParentId;
-      while (cur && !guard.has(cur)) {
-        guard.add(cur);
-        if (cur === documentId) throw Errors.conflict("Cannot move a page under its own descendant");
-        const rows: { parentId: string | null }[] = await db
-          .select({ parentId: contentItem.parentId })
-          .from(contentItem)
-          .where(eq(contentItem.documentId, cur))
-          .limit(1);
-        cur = rows[0]?.parentId ?? null;
-      }
+      // Acyclicity is re-checked INSIDE the write tx under a per-site lock (S2-M10),
+      // so a concurrent opposing reparent can't interleave between check and write
+      // and commit a cycle. (This pre-tx load only validates the destination/scope.)
       newSection = newParent.sectionId ?? newParent.documentId;
       if (!ctx.siteWide && !ctx.sections.includes(newSection)) {
         throw Errors.forbidden("Cannot move content into a section outside your scope");
@@ -1891,6 +1881,25 @@ export async function moveContent(
 
   await db.transaction(async (tx) => {
     if (reparent) {
+      // Serialize structural moves within the site so the acyclicity check and the
+      // reparent write are atomic — two opposing concurrent reparents can't both
+      // pass and form a cycle. The advisory xact lock auto-releases on commit/rollback.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`move:${ctx.siteId}`}))`);
+      if (targetParentId !== null) {
+        // Re-walk up from the destination against COMMITTED state under the lock.
+        const guard = new Set<string>();
+        let cur: string | null = targetParentId;
+        while (cur && !guard.has(cur)) {
+          guard.add(cur);
+          if (cur === documentId) throw Errors.conflict("Cannot move a page under its own descendant");
+          const rows: { parentId: string | null }[] = await tx
+            .select({ parentId: contentItem.parentId })
+            .from(contentItem)
+            .where(eq(contentItem.documentId, cur))
+            .limit(1);
+          cur = rows[0]?.parentId ?? null;
+        }
+      }
       await tx
         .update(contentItem)
         .set({ parentId: targetParentId, sectionId: newSection })
