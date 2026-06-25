@@ -7,12 +7,19 @@
 In progress — fixes land failing-test-first (per the bugfix law), one commit per finding/cluster.
 Full API suite green after each (**618 tests**), `pnpm -r typecheck` + `pnpm lint` clean.
 
-**Fixed (15):** all 10 highs — H1, H2, H3, H4, S2-H1, S2-H2, S2-H3, S2-H4, S3-H1, S3-H2 — plus mediums
-M1, M2, M12, S3-M6, S3-M7. New tests: `env-guard`, `totp-key`, `log-redact`, `multisite-author-scope`,
-`mcp-http-handler`, `delivery-private-filter`, `two-factor-bruteforce`, `webhook-ssrf`, + mcp-parity/
-delivery-query extensions. Ops shell hardening verified with `bash -n`.
+**Fixed (21):** all 10 highs — H1, H2, H3, H4, S2-H1, S2-H2, S2-H3, S2-H4, S3-H1, S3-H2 — plus mediums
+M1, M2, M3, M4, M6, M7, M10, M12, S3-M3, S3-M6, S3-M7. Full API suite green (**623 tests**), `pnpm -r
+typecheck` + `pnpm lint` clean. New tests: `env-guard`, `totp-key`, `log-redact`, `multisite-author-scope`,
+`mcp-http-handler`, `delivery-private-filter`, `two-factor-bruteforce`, `webhook-ssrf`, `seed-guard`,
+`agent-merge`, + mcp-parity / delivery-cache / media extensions. Ops shell hardening verified with `bash -n`.
 
-**Remaining:** mediums M3–M11 (minus M12) and the low tail — being worked in order.
+Two notes where the runbook was off: **M4** — oxlint does NOT actually flag the boolean `autoFocus`, so it
+did not break CI (fixed anyway as a real convention violation). **M7** — the transient-DB-fault failure has
+no isolated unit repro without db mocking (fixed + happy path verified).
+
+**Remaining:** mediums M5, M8, M9, M11, S2-M1–S2-M12, S3-M1/M2/M4/M5/M8, and the low tail — in order.
+Bigger ones flagged: S3-M2 (adds `@fastify/helmet` dep), S2-M9 (slug-unique needs a migration + denormalized
+column), S2-M10 (reparent-cycle needs tx + advisory lock).
 
 ## Method
 

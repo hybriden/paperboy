@@ -1,7 +1,7 @@
 import { type AccessContext, createContent, getAccessContext } from "@paperboy/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TOOLS } from "../src/agent.js";
-import { type Suite, authHeaders, login, setupApi } from "./helpers.js";
+import { type Suite, login, setupApi } from "./helpers.js";
 
 /**
  * M6: the in-product "Build from brief" agent's update_content tool omitted
