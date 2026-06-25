@@ -98,6 +98,16 @@ describe("Secure login (Argon2id, generic errors, lockout, sessions)", () => {
     expect(after.statusCode).toBe(401); // session no longer valid
   });
 
+  it("/logout requires CSRF (cookie alone is not enough)", async () => {
+    const ctx = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    // No x-csrf-token, no Origin → a cross-site forced logout must be refused.
+    const res = await s.app.inject({ method: "POST", url: "/api/v1/auth/logout", headers: { cookie: ctx.cookie } });
+    expect(res.statusCode).toBe(403);
+    // The session is still valid afterwards.
+    const me = await s.app.inject({ method: "GET", url: "/api/v1/auth/me", headers: { cookie: ctx.cookie } });
+    expect(me.statusCode).toBe(200);
+  });
+
   it("stores passwords as Argon2id hashes (never plaintext)", async () => {
     // Verify directly against the seeded user row.
     const { createDb } = await import("@paperboy/db");

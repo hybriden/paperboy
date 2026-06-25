@@ -104,7 +104,10 @@ export async function registerAuthRoutes(appBase: FastifyInstance): Promise<void
 
   app.post(
     "/logout",
-    { preHandler: requireAuth, schema: { tags: ["auth"], response: { 200: z.object({ ok: z.boolean() }) } } },
+    // requireCsrf (not requireAuth): logout mutates server state (destroys the
+    // session), so it gets the same CSRF + Origin/Referer gate as every other
+    // cookie-authenticated mutation.
+    { preHandler: requireCsrf, schema: { tags: ["auth"], response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req, reply) => {
       if (req.sessionToken) await destroySession(app.db, req.sessionToken);
       reply.clearCookie(app.cookieName, cookieOpts());
