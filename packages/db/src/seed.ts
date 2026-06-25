@@ -314,22 +314,40 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
 // `docker compose up` pulling in the init service has destroyed real data
 // before. The skip still applies migrations, so a normal compose up keeps the
 // schema current. Tests import seed() directly and stay unguarded.
+/**
+ * True if the database already holds real data the destructive reseed would wipe.
+ * The guard must cover the TRUNCATE blast radius — not just content_item: a
+ * configured-but-content-empty instance still holds users (hashed passwords),
+ * delivery keys, sites, etc., and silently wiping those is the data-loss class the
+ * guard exists to prevent. A fresh DB (tables absent) is safe to seed.
+ */
+export async function databaseHoldsData(sql: ReturnType<typeof createDb>["sql"]): Promise<boolean> {
+  try {
+    const rows = await sql`SELECT (
+      (SELECT count(*) FROM content_item) +
+      (SELECT count(*) FROM users) +
+      (SELECT count(*) FROM delivery_key)
+    )::int AS n`;
+    return (((rows[0] as { n?: number })?.n) ?? 0) > 0;
+  } catch {
+    return false; // a table doesn't exist yet → fresh database → safe to seed
+  }
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   (async () => {
     const url = process.env.DATABASE_URL;
     if (!url) throw new Error("DATABASE_URL is not set");
     if (process.env.FORCE_SEED !== "1") {
       const { sql: pg } = createDb(url);
-      let items = 0;
+      let holds = false;
       try {
-        const rows = await pg`SELECT count(*)::int AS n FROM content_item`;
-        items = (rows[0]?.n as number) ?? 0;
-      } catch {
-        items = 0; // table doesn't exist yet → fresh database → safe to seed
+        holds = await databaseHoldsData(pg);
+      } finally {
+        await pg.end();
       }
-      await pg.end();
-      if (items > 0) {
-        console.log(`Seed SKIPPED: this database already holds ${items} content items.`);
+      if (holds) {
+        console.log("Seed SKIPPED: this database already holds data (content, users or delivery keys).");
         console.log("A reseed TRUNCATES everything and regenerates IDs. If that is really");
         console.log("what you want: FORCE_SEED=1 docker compose run --rm init");
         await migrate(url); // keep forward-only migrations flowing
