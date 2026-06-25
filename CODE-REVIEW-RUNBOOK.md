@@ -2,6 +2,18 @@
 
 **Generated:** 2026-06-25 · **Branch:** `main` (HEAD `99111c0`) · **Scope:** full monorepo (~36k LOC)
 
+## Remediation status (branch `review-fixes`)
+
+In progress — fixes land failing-test-first (per the bugfix law), one commit per finding/cluster.
+Full API suite green after each (**618 tests**), `pnpm -r typecheck` + `pnpm lint` clean.
+
+**Fixed (15):** all 10 highs — H1, H2, H3, H4, S2-H1, S2-H2, S2-H3, S2-H4, S3-H1, S3-H2 — plus mediums
+M1, M2, M12, S3-M6, S3-M7. New tests: `env-guard`, `totp-key`, `log-redact`, `multisite-author-scope`,
+`mcp-http-handler`, `delivery-private-filter`, `two-factor-bruteforce`, `webhook-ssrf`, + mcp-parity/
+delivery-query extensions. Ops shell hardening verified with `bash -n`.
+
+**Remaining:** mediums M3–M11 (minus M12) and the low tail — being worked in order.
+
 ## Method
 
 Multi-agent review. 11 parallel finder lenses (security / correctness / contract / quality) swept the
