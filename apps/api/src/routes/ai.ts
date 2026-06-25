@@ -119,10 +119,17 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
       config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
       schema: {
         tags: ["ai"],
-        body: z.object({
-          texts: z.array(z.string().max(20_000)).max(100),
-          targetLocale: z.string().min(1).max(40),
-        }),
+        body: z
+          .object({
+            texts: z.array(z.string().max(20_000)).max(100),
+            targetLocale: z.string().min(1).max(40),
+          })
+          // Bound model spend: the per-item (20k) × per-batch (100) limits otherwise
+          // allow ~2M chars of model input per call. Cap the TOTAL (S3-L2).
+          .refine((b) => b.texts.reduce((n, t) => n + t.length, 0) <= 200_000, {
+            message: "Total text to translate exceeds 200000 characters — split into smaller batches",
+            path: ["texts"],
+          }),
         response: { 200: z.object({ results: z.array(z.string()), provider: z.enum(["anthropic", "fallback"]) }) },
       },
     },
