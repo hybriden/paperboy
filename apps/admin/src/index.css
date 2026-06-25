@@ -198,10 +198,12 @@ body {
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
+  /* ease-in-out so the 0.9s tuck-back is evenly paced (not front-loaded);
+     visibility is delayed the full duration so the glide stays on screen. */
   transition:
-    opacity 0.7s var(--ease),
-    transform 0.7s var(--ease),
-    visibility 0s linear 0.7s;
+    opacity 0.9s ease-in-out,
+    transform 0.9s ease-in-out,
+    visibility 0s linear 0.9s;
 }
 .pb-flyout[data-side="left"] {
   transform: translateX(-0.5rem);
