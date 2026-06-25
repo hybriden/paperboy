@@ -27,6 +27,12 @@ import { auditLog, contentItem, contentReference, contentType, contentVersion, l
 import { getAgentReviewRequired } from "./site.js";
 import { dispatchWebhooks } from "./webhooks.js";
 
+/** Postgres unique-constraint violation (SQLSTATE 23505) — used to turn a losing
+ *  concurrent write into a self-teaching 409 instead of an opaque 500. */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
+}
+
 /* ----------------------------- content types ----------------------------- */
 
 export async function listContentTypes(db: Database): Promise<ContentTypeDef[]> {
@@ -1186,20 +1192,30 @@ export async function updateContent(
         ? await autoSlug(db, documentId, item.parentId, loc, name)
         : fork.slug;
     }
-    await db.insert(contentVersion).values({
-      documentId,
-      locale: loc,
-      status: "draft",
-      isCurrentPublished: false,
-      versionNumber: maxV,
-      name,
-      slug,
-      displayInNav: req.displayInNav ?? base?.displayInNav ?? true,
-      data,
-      createdBy: ctx.userId,
-      createdVia: ctx.via ?? null,
-      needsReview: ctx.via === "mcp" || ctx.via === "agent",
-    });
+    try {
+      await db.insert(contentVersion).values({
+        documentId,
+        locale: loc,
+        status: "draft",
+        isCurrentPublished: false,
+        versionNumber: maxV,
+        name,
+        slug,
+        displayInNav: req.displayInNav ?? base?.displayInNav ?? true,
+        data,
+        createdBy: ctx.userId,
+        createdVia: ctx.via ?? null,
+        needsReview: ctx.via === "mcp" || ctx.via === "agent",
+      });
+    } catch (err) {
+      // A concurrent write seeded the single working draft first (the
+      // content_version_one_draft partial unique index held the invariant). Turn
+      // the raw 23505 into a self-teaching 409 instead of an opaque 500 (S2-L5).
+      if (isUniqueViolation(err)) {
+        throw Errors.conflict("A draft for this locale was just created by a concurrent edit — re-read the content and retry your update.");
+      }
+      throw err;
+    }
   }
 
   await rebuildReferences(db, documentId, loc, type, data);
@@ -1308,27 +1324,36 @@ async function promoteDraft(
   draftId: number,
   actorUserId: string | null,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    // Allocate the cache-version atomically with the promotion.
-    const cvRow = await tx.execute(sql`SELECT nextval('cv_seq') AS v`);
-    const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
-    // Demote previous published row for this variant.
-    await tx
-      .update(contentVersion)
-      .set({ isCurrentPublished: false })
-      .where(
-        and(
-          eq(contentVersion.documentId, documentId),
-          eq(contentVersion.locale, loc),
-          eq(contentVersion.isCurrentPublished, true),
-        ),
-      );
-    // Promote the draft to the live published version for this variant.
-    await tx
-      .update(contentVersion)
-      .set({ status: "published", isCurrentPublished: true, cv, createdBy: actorUserId, publishAt: null })
-      .where(eq(contentVersion.id, draftId));
-  });
+  try {
+    await db.transaction(async (tx) => {
+      // Allocate the cache-version atomically with the promotion.
+      const cvRow = await tx.execute(sql`SELECT nextval('cv_seq') AS v`);
+      const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
+      // Demote previous published row for this variant.
+      await tx
+        .update(contentVersion)
+        .set({ isCurrentPublished: false })
+        .where(
+          and(
+            eq(contentVersion.documentId, documentId),
+            eq(contentVersion.locale, loc),
+            eq(contentVersion.isCurrentPublished, true),
+          ),
+        );
+      // Promote the draft to the live published version for this variant.
+      await tx
+        .update(contentVersion)
+        .set({ status: "published", isCurrentPublished: true, cv, createdBy: actorUserId, publishAt: null })
+        .where(eq(contentVersion.id, draftId));
+    });
+  } catch (err) {
+    // A concurrent publish promoted this variant first (content_version_one_published
+    // held the single-published invariant). Self-teaching 409, not an opaque 500 (S2-L5).
+    if (isUniqueViolation(err)) {
+      throw Errors.conflict("This content was just published by a concurrent operation — re-read it and retry.");
+    }
+    throw err;
+  }
 }
 
 /**
