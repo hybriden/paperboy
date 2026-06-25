@@ -7,19 +7,23 @@
 In progress — fixes land failing-test-first (per the bugfix law), one commit per finding/cluster.
 Full API suite green after each (**618 tests**), `pnpm -r typecheck` + `pnpm lint` clean.
 
-**Fixed (21):** all 10 highs — H1, H2, H3, H4, S2-H1, S2-H2, S2-H3, S2-H4, S3-H1, S3-H2 — plus mediums
-M1, M2, M3, M4, M6, M7, M10, M12, S3-M3, S3-M6, S3-M7. Full API suite green (**623 tests**), `pnpm -r
-typecheck` + `pnpm lint` clean. New tests: `env-guard`, `totp-key`, `log-redact`, `multisite-author-scope`,
-`mcp-http-handler`, `delivery-private-filter`, `two-factor-bruteforce`, `webhook-ssrf`, `seed-guard`,
-`agent-merge`, + mcp-parity / delivery-cache / media extensions. Ops shell hardening verified with `bash -n`.
+**Fixed (27):** all 10 highs — H1, H2, H3, H4, S2-H1, S2-H2, S2-H3, S2-H4, S3-H1, S3-H2 — plus mediums
+M1, M2, M3, M4, M5, M6, M7, M8, M10, M12, S2-M5, S3-M3, S3-M6, S3-M7, and lows S2-L2, S2-L3, S2-L4.
+API suite green (**624 tests**), client (11) + preview (14) green, `pnpm -r typecheck` + `pnpm lint` clean.
+New tests: `env-guard`, `totp-key`, `log-redact`, `multisite-author-scope`, `mcp-http-handler`,
+`delivery-private-filter`, `two-factor-bruteforce`, `webhook-ssrf`, `seed-guard`, `agent-merge`,
+`client-fixes`, + mcp-parity / delivery-cache / media / auth-security extensions. Ops + preview verified by
+`bash -n` / build-inspection. Published packages bumped: client 0.1.5, preview 0.1.5.
 
 Two notes where the runbook was off: **M4** — oxlint does NOT actually flag the boolean `autoFocus`, so it
-did not break CI (fixed anyway as a real convention violation). **M7** — the transient-DB-fault failure has
-no isolated unit repro without db mocking (fixed + happy path verified).
+did not break CI (fixed anyway as a real convention violation). **M7** / **M8** — failures are transient/DoS
+with no cheap isolated unit repro; fixed + happy-path verified.
 
-**Remaining:** mediums M5, M8, M9, M11, S2-M1–S2-M12, S3-M1/M2/M4/M5/M8, and the low tail — in order.
-Bigger ones flagged: S3-M2 (adds `@fastify/helmet` dep), S2-M9 (slug-unique needs a migration + denormalized
-column), S2-M10 (reparent-cycle needs tx + advisory lock).
+**Remaining (36):** mediums M9, M11, S2-M1–M4, S2-M6–M12, S3-M1, S3-M2, S3-M4, S3-M5, S3-M8, and the low tail.
+These shift in character — flagged for a focused pass each: **migrations** (S2-M9 slug-unique denormalized
+column), **new dependency** (S3-M2 `@fastify/helmet`), **concurrency tx+locks** (S2-M10 reparent cycle, S2-M9),
+**admin-React** with no component-test harness in this repo (M11, S3-M4, S3-L4, S3-L5), **infra/config**
+(M9 trustProxy env knob, S3-M1 admin nginx headers, S3-M5 CI `permissions:`, S2-M2 PREVIEW_SECRET).
 
 ## Method
 
