@@ -7,23 +7,27 @@
 In progress — fixes land failing-test-first (per the bugfix law), one commit per finding/cluster.
 Full API suite green after each (**618 tests**), `pnpm -r typecheck` + `pnpm lint` clean.
 
-**Fixed (27):** all 10 highs — H1, H2, H3, H4, S2-H1, S2-H2, S2-H3, S2-H4, S3-H1, S3-H2 — plus mediums
-M1, M2, M3, M4, M5, M6, M7, M8, M10, M12, S2-M5, S3-M3, S3-M6, S3-M7, and lows S2-L2, S2-L3, S2-L4.
-API suite green (**624 tests**), client (11) + preview (14) green, `pnpm -r typecheck` + `pnpm lint` clean.
-New tests: `env-guard`, `totp-key`, `log-redact`, `multisite-author-scope`, `mcp-http-handler`,
-`delivery-private-filter`, `two-factor-bruteforce`, `webhook-ssrf`, `seed-guard`, `agent-merge`,
-`client-fixes`, + mcp-parity / delivery-cache / media / auth-security extensions. Ops + preview verified by
-`bash -n` / build-inspection. Published packages bumped: client 0.1.5, preview 0.1.5.
+**Fixed (36):** all 10 highs — H1, H2, H3, H4, S2-H1, S2-H2, S2-H3, S2-H4, S3-H1, S3-H2 — plus mediums
+M1, M2, M3, M4, M5, M6, M7, M8, M9 (partial), M10, M12, S2-M5, S2-M9, S2-M10, S3-M1, S3-M3, S3-M5, S3-M6,
+S3-M7, and lows S2-L2, S2-L3, S2-L4, S2-L5, S3-L2, S3-L3. API suite green (**632 tests**), client (11) +
+preview (14) green, `pnpm -r typecheck` + `pnpm lint` clean. Also fixed a **pre-existing pool leak**
+(`buildApp` never closed its Postgres pool — surfaced when the new `createContent` transaction raised the
+serial suite's peak connections to "too many clients").
 
-Two notes where the runbook was off: **M4** — oxlint does NOT actually flag the boolean `autoFocus`, so it
-did not break CI (fixed anyway as a real convention violation). **M7** / **M8** — failures are transient/DoS
-with no cheap isolated unit repro; fixed + happy-path verified.
+Tests added: env-guard, totp-key, log-redact, multisite-author-scope, mcp-http-handler, delivery-private-filter,
+two-factor-bruteforce, webhook-ssrf, seed-guard, agent-merge, client-fixes, reparent-cycle, slug-race,
+draft-seed-race, reauth-lockout, + mcp-parity / delivery-cache / media / auth-security / ai-translate
+extensions. Published packages bumped: client 0.1.5, preview 0.1.5.
 
-**Remaining (36):** mediums M9, M11, S2-M1–M4, S2-M6–M12, S3-M1, S3-M2, S3-M4, S3-M5, S3-M8, and the low tail.
-These shift in character — flagged for a focused pass each: **migrations** (S2-M9 slug-unique denormalized
-column), **new dependency** (S3-M2 `@fastify/helmet`), **concurrency tx+locks** (S2-M10 reparent cycle, S2-M9),
-**admin-React** with no component-test harness in this repo (M11, S3-M4, S3-L4, S3-L5), **infra/config**
-(M9 trustProxy env knob, S3-M1 admin nginx headers, S3-M5 CI `permissions:`, S2-M2 PREVIEW_SECRET).
+Runbook corrections found by running, not assuming: **M4** oxlint doesn't flag boolean `autoFocus` (no CI
+break; fixed anyway). **M7/M8** transient/DoS failures — fixed with happy-path verification, no isolated repro.
+**M9** partial — made `trustProxy` env-configurable (`TRUST_PROXY`); the deployment-side hardening (hop
+count / drop the public 8091 binding) is topology-specific and left to ops.
+
+**Remaining (~22):** **S2-M2** PREVIEW_SECRET prod guard (apps/web — no test harness here); **admin-React**
+M11, S3-M4, S3-L4, S3-L5 (no component-test harness — would need one stood up); **S3-M2** global security
+headers (adds `@fastify/helmet` dep); **S3-M8** stock-image redirect SSRF; and the low/quality tail
+(S3-L1 web CSP, S3-L6 action SHA-pin, S3-L7 stock streaming cap, plus sweep-2 quality items S2-M1/M3/M4/M6–M8/M11).
 
 ## Method
 
