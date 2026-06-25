@@ -1,5 +1,11 @@
 name: CI
 
+# Least privilege: CI only reads the repo. Without this block the workflow would
+# inherit the repo/org default GITHUB_TOKEN (often write-capable) while running
+# untrusted PR code (pnpm install lifecycle scripts, Vite/Next builds, docker build).
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]

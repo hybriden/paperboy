@@ -23,6 +23,11 @@ on:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC
   workflow_dispatch:
 
+# Least privilege: the eval only reads the repo (it drives the MCP server, asserts
+# invariants); it never writes back. Don't inherit a write-capable default token.
+permissions:
+  contents: read
+
 # GitHub forces JS actions onto Node 24 from 2026-06-16; opt in early so a
 # breakage is discovered while it's still a choice (revert this env to roll back).
 env:
