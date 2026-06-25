@@ -190,35 +190,31 @@ body {
   border-color: rgb(var(--c-danger));
 }
 
-/* Auto-hide pane flyout (SidePane). Reveals quickly on hover; on mouse-out it
-   tucks back to the hidden position over 0.7s. `visibility` is delayed by the
-   same 0.7s on leave so the fade + slide stays on screen the whole way (without
-   the delay it would vanish instantly). The hover state shows it immediately. */
+/* Auto-hide pane flyout (SidePane). Reveal/hide is driven by data-revealed
+   (set in JS, with a 1.5s grace before hiding). Hiding is a pure horizontal
+   roll back into the edge — no opacity change. Hidden = fully off behind the
+   rail; visibility flips only after the 0.9s roll finishes so it stays on
+   screen the whole way. */
 .pb-flyout {
   visibility: hidden;
-  opacity: 0;
   pointer-events: none;
-  /* ease-in-out so the 0.9s tuck-back is evenly paced (not front-loaded);
-     visibility is delayed the full duration so the glide stays on screen. */
   transition:
-    opacity 0.9s ease-in-out,
     transform 0.9s ease-in-out,
     visibility 0s linear 0.9s;
 }
 .pb-flyout[data-side="left"] {
-  transform: translateX(-0.5rem);
+  transform: translateX(-100%);
 }
 .pb-flyout[data-side="right"] {
-  transform: translateX(0.5rem);
+  transform: translateX(100%);
 }
-.group:hover > .pb-flyout {
+.pb-flyout[data-revealed="true"] {
   visibility: visible;
-  opacity: 1;
-  transform: translateX(0);
   pointer-events: auto;
+  transform: translateX(0);
+  /* roll out promptly on reveal — the grace delay only applies to hiding. */
   transition:
-    opacity 0.15s var(--ease),
-    transform 0.15s var(--ease),
+    transform 0.22s ease-out,
     visibility 0s;
 }
 
