@@ -713,6 +713,22 @@ export interface DeliveryListOptions {
 }
 
 /** Sort-key comparator: numbers numerically, everything else as strings (ISO dates compare correctly). */
+/** Word tokens under Postgres' 'simple' text-search config: lowercase, split on
+ *  non-alphanumeric. No stemming or stop-words (that's what 'simple' does), so a
+ *  whole-token membership check faithfully reproduces an AND-of-terms match. */
+function tokenizeSimple(s: string): string[] {
+  return s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** Flatten every string/number/boolean leaf of a (public) value into acc. */
+function collectStrings(v: unknown, acc: string[]): void {
+  if (v == null) return;
+  if (typeof v === "string") acc.push(v);
+  else if (typeof v === "number" || typeof v === "boolean") acc.push(String(v));
+  else if (Array.isArray(v)) for (const x of v) collectStrings(x, acc);
+  else if (typeof v === "object") for (const x of Object.values(v as Record<string, unknown>)) collectStrings(x, acc);
+}
+
 function compareKeys(a: unknown, b: unknown): number {
   if (a == null && b == null) return 0;
   if (a == null) return 1; // missing values sort last
@@ -844,6 +860,11 @@ export async function deliverySearch(
   const ctx = new DeliveryCtx(db, siteId);
   const chain = await ctx.localeChain(loc);
   const max = Math.min(Math.max(limit, 1), 100);
+  // The SQL prefilter scans the WHOLE version row (incl. delivery:"private" field
+  // text), so it only OVER-approximates the candidate set for ranking. We widen
+  // the window and then re-check each candidate against its SANITIZED PUBLIC text
+  // below, dropping any hit that matched ONLY on a private field — otherwise the
+  // hit/no-hit signal is a content-presence oracle over private data (M2).
   // Matches the expression GIN index in 0007_delivery_search.sql exactly.
   const rows = (await db.execute(sql`
     SELECT DISTINCT v.document_id AS id,
@@ -858,15 +879,30 @@ export async function deliverySearch(
       ${typeName ? sql`AND i.type = ${typeName}` : sql``}
     GROUP BY v.document_id
     ORDER BY rank DESC
-    LIMIT ${max * 3}
+    LIMIT ${max * 5}
   `)) as unknown as { id: string; rank: number }[];
   await ctx.primeVersions(rows.map((r) => r.id));
+  // Positive query terms under the 'simple' config (lowercase, word-token split,
+  // no stemming/stop-words). Negated (-term) words are dropped. A candidate is
+  // kept only if every positive term appears in its public text — and matching
+  // public-only text can never resurface private content, so this is leak-safe.
+  const terms = tokenizeSimple(q.split(/\s+/).filter((w) => !w.startsWith("-")).join(" "));
   const out: DeliveryContent[] = [];
   for (const r of rows) {
     if (out.length >= max) break;
-    // Chokepoint re-validates (publish window, perspective, locale fallback).
+    // Chokepoint re-validates (publish window, perspective, locale fallback) and
+    // returns PUBLIC fields only.
     const resolved = await resolveContent(ctx, perspective, r.id, loc, 0);
-    if (resolved) out.push(resolved);
+    if (!resolved) continue;
+    if (terms.length) {
+      const parts: string[] = [];
+      collectStrings(resolved.name, parts);
+      collectStrings(resolved.data, parts);
+      if (resolved.seo) collectStrings(resolved.seo, parts);
+      const hay = new Set(tokenizeSimple(parts.join(" ")));
+      if (!terms.every((t) => hay.has(t))) continue; // matched only on private text
+    }
+    out.push(resolved);
   }
   return { items: out, total: out.length };
 }
