@@ -757,11 +757,23 @@ export async function deliveryList(
     if (variant) candidates.push({ documentId: it.documentId, row: variant.row });
   }
 
+  // Field-visibility gate: filter/sort may only reference PUBLIC fields (plus the
+  // intrinsic name/slug/createdAt). Otherwise a public consumer could filter or
+  // sort by a delivery:"private" field and read the (sanitized) result set as an
+  // inference oracle over the hidden value. A non-public key is IGNORED (not
+  // rejected) so it gives no signal — same outcome as an unknown field. When the
+  // type is omitted (parentId-only listing) we can't resolve visibility, so only
+  // name/slug are honored. (H1 + M1.)
+  const def = typeName ? await ctx.type(typeName) : null;
+  const publicFields = new Set(def ? def.fields.filter((f) => f.delivery === "public").map((f) => f.name) : []);
+  const fieldAllowed = (field: string) => field === "name" || field === "slug" || publicFields.has(field);
+
   let filtered = candidates;
   if (opts.filter && Object.keys(opts.filter).length) {
     filtered = filtered.filter(({ row }) => {
       const data = row.data as Record<string, unknown>;
       for (const [field, want] of Object.entries(opts.filter!)) {
+        if (!fieldAllowed(field)) continue; // private/unknown key: no constraint, no oracle
         const have = field === "name" ? row.name : field === "slug" ? row.slug : data[field];
         const ok = Array.isArray(have) ? have.map(scalarToString).includes(want) : scalarToString(have) === want;
         if (!ok) return false;
@@ -770,7 +782,12 @@ export async function deliveryList(
     });
   }
 
-  if (opts.sort) {
+  const sortField = opts.sort ? (opts.sort.startsWith("-") ? opts.sort.slice(1) : opts.sort) : null;
+  const sortAllowed =
+    sortField === "name" ||
+    sortField === "createdAt" ||
+    (sortField != null && sortField.startsWith("data.") && publicFields.has(sortField.slice(5)));
+  if (opts.sort && sortAllowed) {
     const descending = opts.sort.startsWith("-");
     const key = descending ? opts.sort.slice(1) : opts.sort;
     const keyOf = (row: typeof contentVersion.$inferSelect): unknown => {
