@@ -1,6 +1,6 @@
-import { type AccessContext, createContent, createDb, getAccessContext, moveContent } from "@paperboy/db";
+import { type AccessContext, createContent, getAccessContext, loadAuthorized, moveContent } from "@paperboy/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Suite, TEST_DB, setupApi } from "./helpers.js";
+import { type Suite, login, setupApi } from "./helpers.js";
 
 /**
  * S2-M10: the reparent acyclicity walk ran OUTSIDE the mutating transaction with no
@@ -10,17 +10,16 @@ import { type Suite, TEST_DB, setupApi } from "./helpers.js";
  */
 describe("moveContent — concurrent opposing reparents cannot form a cycle", () => {
   let s: Suite;
-  const raw = createDb(TEST_DB);
   let ctx: AccessContext;
 
   beforeAll(async () => {
     s = await setupApi();
-    const rows = (await raw.sql`SELECT id FROM users WHERE email='admin@paperboy.test' LIMIT 1`) as Array<{ id: string }>;
-    ctx = await getAccessContext(s.app.db, rows[0]!.id);
+    const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
+    ctx = await getAccessContext(s.app.db, users.find((u) => u.email === "admin@paperboy.test")!.id);
   });
   afterAll(async () => {
     await s.app.close();
-    await raw.sql.end();
   });
 
   it("two opposing reparents settle with no parent cycle (exactly one wins)", async () => {
@@ -32,9 +31,8 @@ describe("moveContent — concurrent opposing reparents cannot form a cycle", ()
       moveContent(s.app.db, ctx, y, { parentId: x }),
     ]);
 
-    const parents = (await raw.sql`SELECT document_id, parent_id FROM content_item WHERE document_id IN (${x}, ${y})`) as Array<{ document_id: string; parent_id: string | null }>;
-    const px = parents.find((p) => p.document_id === x)?.parent_id ?? null;
-    const py = parents.find((p) => p.document_id === y)?.parent_id ?? null;
+    const px = (await loadAuthorized(s.app.db, ctx, x)).parentId;
+    const py = (await loadAuthorized(s.app.db, ctx, y)).parentId;
 
     expect(px === y && py === x).toBe(false); // no 2-node cycle
     expect(results.filter((r) => r.status === "fulfilled").length).toBe(1); // one move rejected
