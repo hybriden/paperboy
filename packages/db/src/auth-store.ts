@@ -19,6 +19,7 @@ import {
   generateBackupCodes,
   generateSecret,
   hashBackupCode,
+  matchTotpStep,
   totpUri,
   verifyTotp,
 } from "./totp.js";
@@ -357,19 +358,39 @@ export async function disableTotp(db: Database, userId: string, password: string
   await db.update(users).set({ totpSecret: null, totpEnabled: false, backupCodes: null }).where(eq(users.id, userId));
 }
 
-/** Verify a TOTP code OR consume a one-time backup code (used at the 2FA login step). */
+/**
+ * Verify a TOTP code OR consume a one-time backup code (the 2FA login step).
+ * For a 2FA account this is the SOLE factor, so it carries the same protections
+ * as the password path: a per-account lockout after repeated failures (H4), and
+ * single-use TOTP codes — a step <= the last accepted one is a replay (M12).
+ */
 export async function verifySecondFactor(db: Database, userId: string, code: string): Promise<boolean> {
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const user = rows[0];
   if (!user?.totpEnabled || !user.totpSecret) return false;
-  if (verifyTotp(decryptSecret(user.totpSecret), code)) return true;
+  // Locked: refuse even a correct code (matches verifyLogin), no enumeration.
+  if (user.lockedUntil && user.lockedUntil > new Date()) return false;
+
+  const clearLock = { failedAttempts: 0, lockedUntil: null as Date | null };
+  const step = matchTotpStep(decryptSecret(user.totpSecret), code);
+  if (step !== null) {
+    // Replay of an already-consumed (or older) step — reject without counting it
+    // as a brute-force guess (a legitimate double-submit shouldn't lock the user).
+    if (user.lastTotpStep != null && step <= user.lastTotpStep) return false;
+    await db.update(users).set({ ...clearLock, lastTotpStep: step }).where(eq(users.id, userId));
+    return true;
+  }
   // Fall back to a backup code (one-time): match its hash, then remove it.
   const hashes = Array.isArray(user.backupCodes) ? (user.backupCodes as string[]) : [];
   const used = hashBackupCode(code);
   if (hashes.includes(used)) {
-    await db.update(users).set({ backupCodes: hashes.filter((h) => h !== used) }).where(eq(users.id, userId));
+    await db.update(users).set({ ...clearLock, backupCodes: hashes.filter((h) => h !== used) }).where(eq(users.id, userId));
     return true;
   }
+  // Wrong code → count toward the per-account lockout (same policy as passwords).
+  const failed = user.failedAttempts + 1;
+  const locked = failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null;
+  await db.update(users).set({ failedAttempts: failed, lockedUntil: locked }).where(eq(users.id, userId));
   return false;
 }
 

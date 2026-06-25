@@ -36,11 +36,21 @@ export function currentCode(secret: string): string {
   return new TOTP({ issuer: ISSUER, algorithm: "SHA1", digits: 6, period: 30, secret: Secret.fromBase32(secret) }).generate();
 }
 
-export function verifyTotp(secret: string, code: string): boolean {
+const TOTP_PERIOD = 30;
+
+/** Validate a code and return the ABSOLUTE time-step it matched (for single-use
+ *  enforcement), or null if invalid. window:1 → ±30s tolerance (3 steps). */
+export function matchTotpStep(secret: string, code: string): number | null {
   const token = code.replace(/\s/g, "");
-  if (!/^\d{6}$/.test(token)) return false;
-  const totp = new TOTP({ issuer: ISSUER, algorithm: "SHA1", digits: 6, period: 30, secret: Secret.fromBase32(secret) });
-  return totp.validate({ token, window: 1 }) !== null; // ±30s tolerance
+  if (!/^\d{6}$/.test(token)) return null;
+  const totp = new TOTP({ issuer: ISSUER, algorithm: "SHA1", digits: 6, period: TOTP_PERIOD, secret: Secret.fromBase32(secret) });
+  const delta = totp.validate({ token, window: 1 }); // matched offset in steps, or null
+  if (delta === null) return null;
+  return Math.floor(Date.now() / 1000 / TOTP_PERIOD) + delta;
+}
+
+export function verifyTotp(secret: string, code: string): boolean {
+  return matchTotpStep(secret, code) !== null;
 }
 
 /** AES-256-GCM encrypt → "ivHex:tagHex:cipherHex". */
