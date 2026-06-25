@@ -40,7 +40,13 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  const db = opts.db ?? createDb(env.DATABASE_URL).db;
+  // Own the pool only when we created it (a caller-supplied db is the caller's to
+  // close). Close it on app shutdown so connections aren't leaked — harmless for a
+  // long-lived prod app, but essential for the test suite, where dozens of apps are
+  // built and torn down against one Postgres (else: "too many clients already").
+  const owned = opts.db ? null : createDb(env.DATABASE_URL);
+  const db = opts.db ?? owned!.db;
+  if (owned) app.addHook("onClose", async () => owned.sql.end());
   app.decorate("db", db);
   app.decorate("cookieSecure", env.COOKIE_SECURE);
   app.decorate("cookieName", env.COOKIE_SECURE ? "__Host-paperboy_sid" : "paperboy_sid");

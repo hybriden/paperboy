@@ -1,6 +1,6 @@
-import { type AccessContext, createContent, createDb, getAccessContext } from "@paperboy/db";
+import { type AccessContext, createContent, getAccessContext } from "@paperboy/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Suite, TEST_DB, setupApi } from "./helpers.js";
+import { type Suite, login, setupApi } from "./helpers.js";
 
 /**
  * S2-M9: sibling URL-segment uniqueness was an app-level check-then-act (autoSlug
@@ -11,17 +11,16 @@ import { type Suite, TEST_DB, setupApi } from "./helpers.js";
  */
 describe("createContent — concurrent same-name siblings get distinct slugs", () => {
   let s: Suite;
-  const raw = createDb(TEST_DB);
   let ctx: AccessContext;
 
   beforeAll(async () => {
     s = await setupApi();
-    const rows = (await raw.sql`SELECT id FROM users WHERE email='admin@paperboy.test' LIMIT 1`) as Array<{ id: string }>;
-    ctx = await getAccessContext(s.app.db, rows[0]!.id);
+    const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
+    ctx = await getAccessContext(s.app.db, users.find((u) => u.email === "admin@paperboy.test")!.id);
   });
   afterAll(async () => {
     await s.app.close();
-    await raw.sql.end();
   });
 
   it("6 concurrent root creates of the same name yield 6 distinct slugs", async () => {
@@ -29,11 +28,7 @@ describe("createContent — concurrent same-name siblings get distinct slugs", (
     const created = await Promise.all(
       Array.from({ length: N }, () => createContent(s.app.db, ctx, { type: "LandingPage", locale: "en", name: "Race Page", parentId: null })),
     );
-    const slugs: Array<string | null> = [];
-    for (const c of created) {
-      const row = (await raw.sql`SELECT slug FROM content_version WHERE document_id=${c.documentId} AND locale='en' LIMIT 1`) as Array<{ slug: string | null }>;
-      slugs.push(row[0]?.slug ?? null);
-    }
+    const slugs = created.map((c) => c.slug);
     expect(new Set(slugs).size).toBe(N); // all distinct — no collision
   });
 });
