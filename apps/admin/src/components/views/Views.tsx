@@ -16,8 +16,8 @@ import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, LanguagesPan
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
     <Surface elevation={1} padding="lg">
-      <div className="masthead tnum text-4xl leading-none text-fg">{value}</div>
-      <div className="mt-2 text-[11px] font-semibold uppercase tracking-wide text-muted">{label}</div>
+      <div className="masthead tnum text-[2.5rem] leading-none text-fg">{value}</div>
+      <div className="eyebrow mt-2.5">{label}</div>
     </Surface>
   );
 }
@@ -40,7 +40,7 @@ function scheduleTime(iso: string): string {
 function DashSection({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <section>
-      <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">{title}</h2>
+      <h2 className="eyebrow mb-2">{title}</h2>
       {hint && <p className="-mt-1 mb-2 text-xs text-muted">{hint}</p>}
       <Surface elevation={1} className="overflow-hidden">{children}</Surface>
     </section>
@@ -163,12 +163,21 @@ export function DashboardView() {
   const tidy = attention.length === 0 && altGaps.length === 0 && (hk?.unusedBlocks ?? 0) === 0 && (hk?.emptyTypes ?? 0) === 0;
 
   const skeleton = (n: number) => <SkeletonRows rows={n} />;
+  // Dateline for the masthead — a newspaper carries the date.
+  const today = new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
 
   return (
     <div className="h-full overflow-auto">
       <div className="mx-auto max-w-5xl animate-slide-up p-8">
-        <h1 className="masthead text-3xl text-fg">Newsroom dashboard</h1>
-        <p className="mb-7 mt-1 text-sm text-muted">Everything Paperboy is delivering, at a glance.</p>
+        <header className="mb-8 border-b border-line pb-6">
+          <div className="eyebrow flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>{today}</span>
+            <span aria-hidden className="text-line">/</span>
+            <span>The editor’s desk</span>
+          </div>
+          <h1 className="page-title mt-2">Newsroom dashboard</h1>
+          <p className="mt-1.5 text-sm text-muted">Everything Paperboy is delivering, at a glance.</p>
+        </header>
 
         <div className="mb-9 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <StatCard label="Top-level pages" value={pages.length} />
@@ -370,7 +379,7 @@ export function SettingsView() {
       <div className="flex h-full">
         {/* Left section nav */}
         <nav aria-label="Settings sections" className="w-56 shrink-0 overflow-auto border-r border-line bg-panel p-3">
-          <h1 className="mb-3 px-2 text-xl font-semibold tracking-[-0.02em] text-fg">Settings</h1>
+          <h1 className="masthead mb-3 px-2 text-xl text-fg">Settings</h1>
           {groups.map((g) => {
             const items = tabs.filter((t) => t.group === g);
             if (!items.length) return null;
@@ -397,7 +406,10 @@ export function SettingsView() {
         {/* Active section */}
         <section className="min-w-0 flex-1 overflow-auto">
           <div className="mx-auto max-w-4xl animate-slide-up p-8">
-            <h2 className="mb-5 text-2xl font-semibold tracking-[-0.02em] text-fg">{current?.label}</h2>
+            <header className="mb-6 border-b border-line pb-4">
+              <div className="eyebrow">Settings</div>
+              <h2 className="section-title mt-1.5">{current?.label}</h2>
+            </header>
             {current?.render()}
           </div>
         </section>

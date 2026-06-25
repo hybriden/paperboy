@@ -169,6 +169,18 @@ body {
   .col-rule {
     @apply border-line;
   }
+
+  /* Editorial header system — a small "dateline" eyebrow over a serif title,
+     the newsroom voice carried consistently across every screen. */
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-[0.16em] text-muted;
+  }
+  .page-title {
+    @apply font-display text-[1.75rem] font-semibold leading-[1.1] tracking-[-0.01em] text-fg;
+  }
+  .section-title {
+    @apply font-display text-2xl font-semibold leading-tight tracking-[-0.01em] text-fg;
+  }
 }
 
 /* Invalid form control (inline validation). Unlayered so it wins over the
