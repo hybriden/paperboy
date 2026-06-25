@@ -1704,22 +1704,36 @@ export async function runScheduledPublish(
       ),
     );
   for (const s of stale) {
-    await db.update(contentVersion).set({ isCurrentPublished: false }).where(eq(contentVersion.id, s.id));
-    const item = (
-      await db.select().from(contentItem).where(eq(contentItem.documentId, s.documentId)).limit(1)
-    )[0];
-    const urlPath = item && item.kind === "page" ? await computePath(db, s.documentId, s.locale) : null;
-    await dispatchWebhooks(db, {
-      event: "content.unpublished",
-      documentId: s.documentId,
-      type: item?.type ?? "",
-      kind: item?.kind ?? "",
-      locale: s.locale,
-      name: s.name,
-      urlPath,
-      at: new Date().toISOString(),
-    });
-    expired++;
+    // Per-row guard (mirrors the promote loop): one bad row must not abort the
+    // rest of the tick. Compute the path BEFORE demoting, so a failure can't leave
+    // a row demoted-without-its-unpublished-webhook (the next tick won't re-scan a
+    // no-longer-published row, so that event would be lost permanently).
+    try {
+      const item = (
+        await db.select().from(contentItem).where(eq(contentItem.documentId, s.documentId)).limit(1)
+      )[0];
+      const urlPath = item && item.kind === "page" ? await computePath(db, s.documentId, s.locale) : null;
+      await db.update(contentVersion).set({ isCurrentPublished: false }).where(eq(contentVersion.id, s.id));
+      await dispatchWebhooks(db, {
+        event: "content.unpublished",
+        documentId: s.documentId,
+        type: item?.type ?? "",
+        kind: item?.kind ?? "",
+        locale: s.locale,
+        name: s.name,
+        urlPath,
+        at: new Date().toISOString(),
+      });
+      expired++;
+    } catch (err) {
+      // Leave a trail (rule #6 spirit) and keep going; the row stays published and
+      // is retried next tick (it wasn't demoted if the failure was before the UPDATE).
+      await db
+        .insert(auditLog)
+        .values({ action: "content.schedule_failed", documentId: s.documentId, locale: s.locale, detail: { reason: err instanceof Error ? err.message : String(err) } })
+        .catch(() => undefined);
+      failed++;
+    }
   }
 
   return { published, expired, failed };
