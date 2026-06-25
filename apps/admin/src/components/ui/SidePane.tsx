@@ -67,12 +67,13 @@ export function AutoHideRail({
         <Icon.Chevron width={14} height={14} className={isLeft ? "" : "rotate-180"} />
         <span className="text-[11px] font-bold uppercase tracking-wider [writing-mode:vertical-rl]">{label}</span>
       </button>
-      {/* Flyout overlay — revealed on hover of the rail or itself. */}
+      {/* Flyout overlay — revealed on hover of the rail or itself. Quick to
+          appear; tucks back to the hidden position over 0.7s on mouse-out
+          (the slide/fade stays visible the whole way — see .pb-flyout). */}
       <div
         style={{ width }}
-        className={`invisible pointer-events-none absolute top-0 z-30 h-full opacity-0 shadow-panel transition-[opacity,transform] duration-150 group-hover:visible group-hover:pointer-events-auto group-hover:opacity-100 ${
-          isLeft ? "left-9 -translate-x-2 group-hover:translate-x-0" : "right-9 translate-x-2 group-hover:translate-x-0"
-        }`}
+        data-side={side}
+        className={`pb-flyout absolute top-0 z-30 h-full shadow-panel ${isLeft ? "left-9" : "right-9"}`}
       >
         {children}
       </div>
