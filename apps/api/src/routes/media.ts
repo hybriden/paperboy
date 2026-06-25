@@ -47,6 +47,9 @@ function serveFile(reply: FastifyReply, path: string, mime: string, size: number
   reply.header("Content-Length", String(size));
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Cache-Control", "public, max-age=31536000, immutable");
+  // Active-content formats (PDF can carry JS) must download, never render inline
+  // on a trusted same-origin — nosniff doesn't stop a genuine application/pdf.
+  if (mime === "application/pdf") reply.header("Content-Disposition", "attachment");
   return reply.send(createReadStream(path));
 }
 
