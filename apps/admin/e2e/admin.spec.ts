@@ -61,7 +61,7 @@ test("login form authenticates (smoke)", async ({ page }) => {
   await page.goto("/");
   await page.getByLabel("Email").fill("editor@paperboy.test");
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByLabel("Password").fill("Editor!Passw0rd");
+  await page.getByRole("textbox", { name: "Password" }).fill("Editor!Passw0rd");
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page.getByLabel("Account menu")).toBeVisible({ timeout: 15_000 });
 });
@@ -74,7 +74,7 @@ async function axeClean(page: Page, context: string) {
 
 test("login screen renders and passes axe", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Paperboy CMS" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Paperboy", level: 1 })).toBeVisible();
   await page.screenshot({ path: `${SHOT}/01-login.png` });
   await axeClean(page, "login");
 });
