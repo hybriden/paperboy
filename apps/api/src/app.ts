@@ -69,9 +69,11 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     decorateReply: false, // avoid colliding with @fastify/swagger-ui's static
     index: false,
     dotfiles: "deny",
-    setHeaders: (res) => {
+    setHeaders: (res, path) => {
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      // Force download for active-content formats so they never render inline.
+      if (path.toLowerCase().endsWith(".pdf")) res.setHeader("Content-Disposition", "attachment");
     },
   });
   await app.register(rateLimit, {

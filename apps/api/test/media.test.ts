@@ -4,6 +4,7 @@ import { PUBLIC_KEY, type Suite, authHeaders, login, setupApi } from "./helpers.
 // Minimal valid-ish payloads for magic-byte sniffing.
 const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 1)]);
 const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+const PDF = Buffer.concat([Buffer.from("%PDF-1.4\n"), Buffer.alloc(64, 0x20)]);
 
 /** Build a multipart/form-data body with a single file field. */
 function multipart(field: string, filename: string, contentType: string, data: Buffer) {
@@ -48,6 +49,16 @@ describe("Media: upload, serve, list, and the image field type", () => {
     expect(served.statusCode).toBe(200);
     expect(served.headers["content-type"]).toContain("image/png");
     expect(served.headers["x-content-type-options"]).toBe("nosniff");
+  });
+
+  it("serves an uploaded PDF as an attachment, not inline (M10: no active-content XSS)", async () => {
+    const res = await upload(s.app, admin, "doc.pdf", "application/pdf", PDF);
+    expect(res.statusCode).toBe(200);
+    const path = new URL(res.json().url).pathname;
+    const served = await s.app.inject({ method: "GET", url: path });
+    expect(served.statusCode).toBe(200);
+    expect(served.headers["content-type"]).toContain("application/pdf");
+    expect(served.headers["content-disposition"]).toBe("attachment");
   });
 
   it("rejects an SVG/HTML payload by MAGIC BYTES even if named .png (415)", async () => {
