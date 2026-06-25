@@ -9,5 +9,5 @@
  *
  *   import { parsePreviewMessage, patchMessage } from "@paperboycms/preview/protocol";
  */
-export * from "./protocol";
-export { initPreviewBridge, type PreviewBridgeOptions } from "./bridge";
+export * from "./protocol.js";
+export { initPreviewBridge, type PreviewBridgeOptions } from "./bridge.js";
