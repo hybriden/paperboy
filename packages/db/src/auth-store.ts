@@ -363,7 +363,7 @@ export async function beginTotpSetup(db: Database, userId: string): Promise<{ se
 /** Evict the user's sessions on a security-posture change. Keeps the current
  *  request's session (keepToken) so the actor isn't logged out mid-action; all
  *  OTHER sessions are dropped so a held/hijacked session can't outlive the change. */
-async function evictOtherSessions(db: Database, userId: string, keepToken?: string): Promise<void> {
+async function evictOtherSessions(db: Database, userId: string, keepToken?: string | null): Promise<void> {
   if (keepToken) {
     await db.delete(session).where(and(eq(session.userId, userId), ne(session.id, sha256(keepToken))));
   } else {
@@ -372,7 +372,7 @@ async function evictOtherSessions(db: Database, userId: string, keepToken?: stri
 }
 
 /** Confirm enrollment with a code → enable 2FA and issue one-time backup codes. */
-export async function enableTotp(db: Database, userId: string, code: string, keepSessionToken?: string): Promise<{ backupCodes: string[] }> {
+export async function enableTotp(db: Database, userId: string, code: string, keepSessionToken?: string | null): Promise<{ backupCodes: string[] }> {
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const user = rows[0];
   if (!user?.totpSecret) throw Errors.badRequest("Start 2FA setup first");
@@ -385,7 +385,7 @@ export async function enableTotp(db: Database, userId: string, code: string, kee
 }
 
 /** Disable 2FA (requires the account password — a re-auth gate). */
-export async function disableTotp(db: Database, userId: string, password: string, keepSessionToken?: string): Promise<void> {
+export async function disableTotp(db: Database, userId: string, password: string, keepSessionToken?: string | null): Promise<void> {
   await verifyReauth(db, userId, password); // same per-account lockout as login (S3-L3)
   await db.update(users).set({ totpSecret: null, totpEnabled: false, backupCodes: null }).where(eq(users.id, userId));
   await evictOtherSessions(db, userId, keepSessionToken); // posture change → drop other sessions (S2-L1)
