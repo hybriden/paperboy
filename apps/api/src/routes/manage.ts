@@ -543,7 +543,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       preHandler: [requirePermission("content.read")],
       schema: {
         tags: ["manage"],
-        querystring: z.object({ q: z.string(), limit: z.coerce.number().optional() }),
+        querystring: z.object({ q: z.string().min(1).max(200), limit: z.coerce.number().int().min(1).max(50).optional() }),
         response: {
           200: z.array(
             z.object({
