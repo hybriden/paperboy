@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
-import { and, asc, desc, eq, gte, like, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, like, lte, ne, sql } from "drizzle-orm";
 import {
   type Permission,
   ROLE_PERMISSIONS,
@@ -360,21 +360,35 @@ export async function beginTotpSetup(db: Database, userId: string): Promise<{ se
   return { secret, uri: totpUri(secret, user.email) };
 }
 
+/** Evict the user's sessions on a security-posture change. Keeps the current
+ *  request's session (keepToken) so the actor isn't logged out mid-action; all
+ *  OTHER sessions are dropped so a held/hijacked session can't outlive the change. */
+async function evictOtherSessions(db: Database, userId: string, keepToken?: string): Promise<void> {
+  if (keepToken) {
+    await db.delete(session).where(and(eq(session.userId, userId), ne(session.id, sha256(keepToken))));
+  } else {
+    await db.delete(session).where(eq(session.userId, userId));
+  }
+}
+
 /** Confirm enrollment with a code → enable 2FA and issue one-time backup codes. */
-export async function enableTotp(db: Database, userId: string, code: string): Promise<{ backupCodes: string[] }> {
+export async function enableTotp(db: Database, userId: string, code: string, keepSessionToken?: string): Promise<{ backupCodes: string[] }> {
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const user = rows[0];
   if (!user?.totpSecret) throw Errors.badRequest("Start 2FA setup first");
   if (!verifyTotp(decryptSecret(user.totpSecret), code)) throw Errors.unauthorized("Invalid code");
   const codes = generateBackupCodes();
   await db.update(users).set({ totpEnabled: true, backupCodes: codes.map(hashBackupCode) }).where(eq(users.id, userId));
+  // Turning 2FA on is a posture change — evict the user's other sessions (S2-L1).
+  await evictOtherSessions(db, userId, keepSessionToken);
   return { backupCodes: codes };
 }
 
 /** Disable 2FA (requires the account password — a re-auth gate). */
-export async function disableTotp(db: Database, userId: string, password: string): Promise<void> {
+export async function disableTotp(db: Database, userId: string, password: string, keepSessionToken?: string): Promise<void> {
   await verifyReauth(db, userId, password); // same per-account lockout as login (S3-L3)
   await db.update(users).set({ totpSecret: null, totpEnabled: false, backupCodes: null }).where(eq(users.id, userId));
+  await evictOtherSessions(db, userId, keepSessionToken); // posture change → drop other sessions (S2-L1)
 }
 
 /**

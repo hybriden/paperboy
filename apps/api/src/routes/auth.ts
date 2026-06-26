@@ -148,7 +148,7 @@ export async function registerAuthRoutes(appBase: FastifyInstance): Promise<void
     "/2fa/enable",
     { preHandler: requireCsrf, schema: { tags: ["auth"], body: z.object({ code: z.string().min(6).max(8) }), response: { 200: z.object({ backupCodes: z.array(z.string()) }) } } },
     async (req) => {
-      const r = await enableTotp(app.db, req.user!.id, req.body.code);
+      const r = await enableTotp(app.db, req.user!.id, req.body.code, req.sessionToken);
       await audit(app.db, { actorUserId: req.user!.id, action: "auth.2fa_enabled", ip: req.ip });
       return r;
     },
@@ -157,7 +157,7 @@ export async function registerAuthRoutes(appBase: FastifyInstance): Promise<void
     "/2fa/disable",
     { preHandler: requireCsrf, schema: { tags: ["auth"], body: z.object({ password: z.string().min(1).max(200) }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
-      await disableTotp(app.db, req.user!.id, req.body.password);
+      await disableTotp(app.db, req.user!.id, req.body.password, req.sessionToken);
       await audit(app.db, { actorUserId: req.user!.id, action: "auth.2fa_disabled", ip: req.ip });
       return { ok: true };
     },
