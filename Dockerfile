@@ -22,6 +22,9 @@ RUN pnpm --filter @paperboy/web build \
   && pnpm --filter @paperboy/admin build
 RUN mkdir -p /app/uploads
 ENV NODE_ENV=production
+# TODO(S2-M1): run as the non-root `node` user. Deferred — needs deploy-side
+# verification (Next's .next/cache write path + chowning the existing uploads
+# volume to uid 1000) that can't be exercised from the test suite.
 EXPOSE 8091 8092
 
 # ---------- admin: nginx serving the built SPA + proxying /api ----------

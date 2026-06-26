@@ -8,3 +8,8 @@
 proof
 .git
 *.log
+# Never bake local secrets into image layers (kept out of the registry); the
+# example template is safe to include.
+.env
+.env.*
+!.env.example
