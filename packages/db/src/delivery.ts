@@ -23,6 +23,11 @@ import { asset, contentItem, contentType, contentVersion, locale, site } from ".
 export type Perspective = "published" | "preview";
 
 const MAX_POPULATE_DEPTH = 4;
+// Per-request resolve budget (S2-M4): caps the TOTAL nodes one delivery read
+// expands so a wide reference/contentArea graph can't fan out into a resource-DoS
+// (O(B^depth) distinct resolves + SEO compute). Past the cap, nested refs come back
+// shallow ({documentId, type}) instead of recursing. Generous for real content.
+const MAX_RESOLVE_NODES = 500;
 
 class DeliveryCtx {
   types = new Map<string, ContentTypeDef>();
@@ -32,6 +37,12 @@ class DeliveryCtx {
   // re-querying per document per locale-chain step.
   versionsByDoc = new Map<string, (typeof contentVersion.$inferSelect)[]>();
   locales: (typeof locale.$inferSelect)[] | null = null;
+  // Total nodes resolved this request — the fan-out budget (S2-M4).
+  nodesResolved = 0;
+  /** Still within the per-request resolve budget? Past it, callers emit shallow refs. */
+  withinResolveBudget(): boolean {
+    return this.nodesResolved < MAX_RESOLVE_NODES;
+  }
   // Clock for the scheduled-publish window check (published perspective only).
   constructor(
     public db: Database,
@@ -323,7 +334,7 @@ async function sanitize(
       const rv = v as { documentId?: string; type?: string };
       if (!rv.documentId) {
         out[f.name] = null;
-      } else if (depth > 0) {
+      } else if (depth > 0 && ctx.withinResolveBudget()) {
         out[f.name] = await resolveContent(ctx, perspective, rv.documentId, loc, depth - 1);
       } else {
         out[f.name] = { documentId: rv.documentId, type: rv.type ?? null };
@@ -340,7 +351,7 @@ async function sanitize(
         if (b.ref) {
           // Shared block: resolve through the SAME chokepoint/perspective.
           const resolved =
-            depth > 0
+            depth > 0 && ctx.withinResolveBudget()
               ? await resolveContent(ctx, perspective, scalarToString(b.ref), loc, depth - 1)
               : { documentId: b.ref, type: blockType };
           if (resolved) blocks.push({ blockType, display, shared: true, content: resolved });
@@ -619,6 +630,7 @@ export async function resolveContent(
   if (!found) return null;
   const item = await ctx.item(documentId);
   if (!item) return null;
+  ctx.nodesResolved++; // count this node against the per-request fan-out budget (S2-M4)
   // localized:false fields are SHARED across language branches — fill gaps
   // from other visible variants before sanitizing (same chokepoint rules).
   const data = await fillNonLocalizedFields(
