@@ -5,7 +5,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import sharp from "sharp";
 import { z } from "zod";
 import { AI_TASKS, AiUnavailableError, aiAssist, aiImageAltText, aiTranslateBatch } from "@paperboy/shared";
-import { getAssetRow, getStoredAiKey, getStoredAiModel } from "@paperboy/db";
+import { AppError, getAssetRow, getStoredAiKey, getStoredAiModel } from "@paperboy/db";
 import { runContentAgent } from "../agent.js";
 import { requireAuth, requireCsrf, requirePermission } from "../security.js";
 
@@ -178,7 +178,12 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
           { parentId: req.body.parentId ?? null, locale: req.body.locale },
         );
       } catch (err) {
-        send({ type: "error", text: err instanceof Error ? err.message : "Agent failed" });
+        // This SSE route bypasses the global 500 sanitizer. Only forward AppError
+        // messages (intentional, self-teaching); collapse anything else to a generic
+        // string and log it, so an unexpected internal error can't leak past (L2).
+        // (Per-tool errors are handled inside the loop and are not seen here.)
+        req.log.error({ err }, "agent stream error");
+        send({ type: "error", text: err instanceof AppError ? err.message : "Agent failed" });
       } finally {
         reply.raw.end();
       }
