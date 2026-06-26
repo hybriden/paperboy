@@ -348,6 +348,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       qc.setQueryData(["content", documentId, locale], updated);
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // publish changes WIP/scheduled/review counts (S3-L4)
       setFieldErrors({});
       toast.success("Published", `“${updated.name}” is live in ${locale.toUpperCase()}.`);
     },
@@ -365,6 +366,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       qc.setQueryData(["content", documentId, locale], updated);
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["blocks"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // unpublish changes WIP/published counts (S3-L4)
       toast.success("Unpublished", `Removed from the public delivery API.`);
     },
     onError: (e) => toast.error("Couldn’t unpublish", (e as Error).message),
@@ -409,6 +411,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       setForm((prev) => (prev ? { ...prev, ...meta } : prev));
       formRef.current = formRef.current ? { ...formRef.current, ...meta } : formRef.current;
       qc.setQueryData(["content", documentId, locale], updated);
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // approval clears needs-review → dashboard review count (S3-L4)
       toast.success("Draft approved", "The agent-written draft is marked as reviewed.");
     },
     onError: (e) => toast.error("Couldn’t approve", (e as Error).message),
@@ -1452,12 +1455,14 @@ function ScheduleDialog({
   onDone: (updated: ContentDetail) => void;
 }) {
   const toast = useToast();
+  const qc = useQueryClient();
   const [pub, setPub] = useState(() => toLocalInput(publishAt));
   const [exp, setExp] = useState(() => toLocalInput(expireAt));
 
   const save = useMutation({
     mutationFn: (body: { publishAt: string | null; expireAt: string | null }) => api.schedule(documentId, locale, body),
     onSuccess: (updated) => {
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // scheduling changes the dashboard's scheduled count (S3-L4)
       toast.success(
         updated.publishAt ? "Publish scheduled" : updated.status === "published" ? "Published" : "Schedule updated",
         updated.publishAt
@@ -1932,9 +1937,9 @@ function SelectField({ id, field, types, value, disabled, onChange }: { id: stri
     const arr = Array.isArray(value) ? (value as string[]) : [];
     const toggle = (v: string) => onChange(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
     return (
-      <div className="flex flex-wrap gap-1.5" role="group" aria-labelledby={id}>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label={field.displayName}>
         {options.map((o) => (
-          <button key={o.value} type="button" disabled={disabled} onClick={() => toggle(o.value)}
+          <button key={o.value} type="button" disabled={disabled} aria-pressed={arr.includes(o.value)} onClick={() => toggle(o.value)}
             className={`rounded-full border px-2.5 py-0.5 text-xs ${arr.includes(o.value) ? "border-accent bg-accent/15 text-fg" : "border-line text-muted hover:bg-line/60"}`}>
             {o.label}
           </button>

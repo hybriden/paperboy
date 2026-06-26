@@ -3,15 +3,16 @@ import { draftMode } from "next/headers";
 import { PreviewBridge } from "../../components/PreviewBridge";
 import { Renderer } from "../../components/Renderer";
 import { fetchByPath, fetchList, fetchStart } from "../../lib/delivery";
+import { matchesPreviewSecret } from "../../lib/preview";
 
 export const dynamic = "force-dynamic";
 
-const PREVIEW_SECRET = process.env.PREVIEW_SECRET ?? "dev-preview-secret-change-me";
 /** Preview can be entered two ways: Next draft-mode cookie, OR a ?pb=<secret>
  *  query param. The query path avoids Secure cookies/redirects, so it works over
- *  plain HTTP and any host (the in-editor preview iframe uses it). */
+ *  plain HTTP and any host (the in-editor preview iframe uses it). The secret is
+ *  compared in constant time and the committed dev default never matches in prod. */
 function isPreview(enabled: boolean, sp: Record<string, string | string[] | undefined>): boolean {
-  return enabled || sp.pb === PREVIEW_SECRET;
+  return enabled || matchesPreviewSecret(typeof sp.pb === "string" ? sp.pb : undefined);
 }
 
 /** Empty path ("/{locale}") → the configured START PAGE; otherwise resolve the
