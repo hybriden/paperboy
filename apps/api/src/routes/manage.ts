@@ -453,7 +453,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         // Display metadata only (the served file uses the nanoid name above). Strip
         // control chars + path separators and cap the length, so unbounded/untrusted
         // text never reaches storage or any consumer (L8).
-        filename: (data.filename ?? "").replace(/[\x00-\x1f\x7f/\\]/g, "").slice(0, 255) || "file",
+        filename: (data.filename ?? "").replace(/[\p{Cc}/\\]/gu, "").slice(0, 255) || "file",
         mime: sniff.mime,
         size: buf.length,
         relativePath: `${MEDIA_PREFIX}/${fileName}`,
