@@ -36,6 +36,11 @@ describe("Content search (⌘K backend)", () => {
     expect(hits.some((h) => h.documentId === id)).toBe(true);
   });
 
+  it("rejects an over-long query at the route edge (S3-L3)", async () => {
+    const res = await s.app.inject({ method: "GET", url: `/api/v1/manage/content/search?q=${"a".repeat(201)}`, headers: authHeaders(ed) });
+    expect(res.statusCode).toBe(422);
+  });
+
   it("returns nothing for a non-matching query", async () => {
     const res = await s.app.inject({ method: "GET", url: "/api/v1/manage/content/search?q=zzqqnomatchxyz", headers: authHeaders(ed) });
     expect(res.statusCode).toBe(200);

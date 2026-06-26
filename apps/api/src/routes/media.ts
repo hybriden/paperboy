@@ -7,6 +7,13 @@ import { nanoid } from "nanoid";
 import sharp from "sharp";
 import { z } from "zod";
 
+// Decompression-bomb / resource-DoS hardening (M8): cap the decoded pixel count
+// (24 Mpix ≈ 6000×4000 — covers real photos, rejects bombs) and the libvips
+// thread pool so a burst of transform requests can't pin every core. An
+// over-limit source throws in sharp and falls back to serving the original below.
+const MAX_INPUT_PIXELS = 24_000_000;
+sharp.concurrency(2);
+
 /**
  * Media serving with on-the-fly image transforms:
  *
@@ -47,6 +54,9 @@ function serveFile(reply: FastifyReply, path: string, mime: string, size: number
   reply.header("Content-Length", String(size));
   reply.header("X-Content-Type-Options", "nosniff");
   reply.header("Cache-Control", "public, max-age=31536000, immutable");
+  // Active-content formats (PDF can carry JS) must download, never render inline
+  // on a trusted same-origin — nosniff doesn't stop a genuine application/pdf.
+  if (mime === "application/pdf") reply.header("Content-Disposition", "attachment");
   return reply.send(createReadStream(path));
 }
 
@@ -95,7 +105,7 @@ export async function registerMediaRoutes(appBase: FastifyInstance): Promise<voi
       let variant = await stat(variantPath).catch(() => null);
       if (!variant) {
         await mkdir(variantsDir, { recursive: true });
-        let img = sharp(originalPath, { failOn: "none" });
+        let img = sharp(originalPath, { failOn: "none", limitInputPixels: MAX_INPUT_PIXELS });
         if (width) img = img.resize({ width, withoutEnlargement: true });
         if (format === "webp") img = img.webp({ quality });
         else if (format === "avif") img = img.avif({ quality });

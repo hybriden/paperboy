@@ -153,6 +153,9 @@ export function mediaSrcset(url: string, widths: number[] = [320, 640, 1024, 160
   return widths.map((w) => `${mediaUrl(url, { w, format })} ${w}w`).join(", ");
 }
 
+/** Upper bound on the opt-in ETag cache so a long-lived consumer can't leak memory. */
+const ETAG_CACHE_MAX = 500;
+
 export function createClient(options: PaperboyClientOptions) {
   const base = options.baseUrl.replace(/\/+$/, "");
   const doFetch = options.fetch ?? globalThis.fetch;
@@ -162,7 +165,13 @@ export function createClient(options: PaperboyClientOptions) {
   async function request<T>(path: string, params: Record<string, string | number | undefined>): Promise<{ status: number; body: T | null }> {
     const search = new URLSearchParams();
     for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined && v !== "") search.set(k, String(v));
+      if (v === undefined) continue;
+      // Drop empty SCALAR options (absent locale/sort/etc.), but keep an explicit
+      // empty `data.<field>` filter — "" is a meaningful equality the server honors
+      // (match items whose field is empty/absent); dropping it would silently widen
+      // the result set (garbage-in / wrong-out).
+      if (v === "" && !k.startsWith("data.")) continue;
+      search.set(k, String(v));
     }
     const qs = search.toString();
     const url = `${base}/api/v1/delivery${path}${qs ? `?${qs}` : ""}`;
@@ -191,7 +200,14 @@ export function createClient(options: PaperboyClientOptions) {
 
     const body = (await res.json()) as T;
     const etag = res.headers.get("etag");
-    if (etags && etag) etags.set(url, { etag, body });
+    if (etags && etag) {
+      // Bounded LRU: cap the cache so a long-lived consumer browsing an unbounded
+      // URL/filter key space can't leak memory. Map keeps insertion order — drop
+      // the oldest when over the cap, and refresh recency by re-inserting on write.
+      etags.delete(url);
+      etags.set(url, { etag, body });
+      if (etags.size > ETAG_CACHE_MAX) etags.delete(etags.keys().next().value as string);
+    }
     return { status: res.status, body };
   }
 
@@ -325,7 +341,8 @@ function rtRenderNode(node: RtNode): string {
     case "paragraph":
       return `<p>${inner}</p>`;
     case "heading": {
-      const lvl = Math.min(Math.max(Number(node.attrs?.level ?? 2), 1), 6);
+      const n = Math.round(Number(node.attrs?.level));
+      const lvl = Number.isFinite(n) ? Math.min(Math.max(n, 1), 6) : 2; // non-numeric level → h2, never <hNaN>
       return `<h${lvl}>${inner}</h${lvl}>`;
     }
     case "bulletList":

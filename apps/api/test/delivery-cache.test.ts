@@ -43,6 +43,17 @@ describe("Delivery API — cache headers, ETag, conditional GET", () => {
     expect(res.headers.etag).toMatch(/^W\/"cv-\d+"$/);
   });
 
+  it("publicly-cacheable responses Vary on the credential (S3-M3: no cross-site cache bleed)", async () => {
+    // The delivery key carries BOTH the perspective and the site; it rides only in
+    // Authorization/x-api-key. A shared cache must partition on it, or one site's
+    // payload is served to another site's key at the same URL (per-site slugs collide).
+    const res = await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${s.ids.homeId}?locale=en`, headers: pub });
+    expect(res.statusCode).toBe(200);
+    const vary = String(res.headers.vary ?? "").toLowerCase();
+    expect(vary).toContain("authorization");
+    expect(vary).toContain("x-api-key");
+  });
+
   it("ETag is STABLE across two GETs of unchanged content", async () => {
     const a = await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${s.ids.homeId}?locale=en`, headers: pub });
     const b = await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${s.ids.homeId}?locale=en`, headers: pub });

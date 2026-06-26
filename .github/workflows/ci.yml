@@ -1,5 +1,11 @@
 name: CI
 
+# Least privilege: CI only reads the repo. Without this block the workflow would
+# inherit the repo/org default GITHUB_TOKEN (often write-capable) while running
+# untrusted PR code (pnpm install lifecycle scripts, Vite/Next builds, docker build).
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -96,6 +102,13 @@ jobs:
         env:
           COOKIE_SECURE: "false"
           ALLOW_INSECURE_COOKIES: "true"
+          # The stack runs NODE_ENV=production, so env.ts now refuses the
+          # compose `prod-*-please-override` placeholder secrets (S2-H2). Supply
+          # real (non-placeholder) test secrets so the api boots — exactly what
+          # any production deploy must now do. MFA_SECRET pins the TOTP key.
+          SESSION_SECRET: "ci-e2e-session-secret-not-a-placeholder"
+          CSRF_SECRET: "ci-e2e-csrf-secret-not-a-placeholder"
+          MFA_SECRET: "ci-e2e-mfa-secret-not-a-placeholder"
           # 30 tests + retries from one runner IP — the production limits
           # (10 logins/min, 300 requests/min) would turn a single slow test
           # into a 429 cascade that reads as flaky "element not visible".

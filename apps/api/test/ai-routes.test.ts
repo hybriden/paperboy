@@ -39,7 +39,7 @@ describe("AI routes — no provider key", () => {
     expect(r.json()).toEqual({ result: "A long headline about something", provider: "fallback" });
   });
 
-  for (const task of ["improve", "rewrite", "translate", "variants", "alt_text", "write", "schema_fields"]) {
+  for (const task of ["improve", "rewrite", "translate", "variants", "write", "schema_fields"]) {
     it(`/ai/assist: '${task}' answers 409 with a self-teaching message`, async () => {
       const r = await s.app.inject({
         method: "POST",
@@ -51,6 +51,12 @@ describe("AI routes — no provider key", () => {
       expect(r.json().message).toContain("Settings → AI");
     });
   }
+
+  it("/ai/assist: 'alt_text' is refused and points to the vision route (L1)", async () => {
+    const r = await s.app.inject({ method: "POST", url: "/api/v1/ai/assist", headers: authHeaders(ed), payload: { task: "alt_text", input: "photo.jpg" } });
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().message).toMatch(/\/ai\/alt-text|vision/i);
+  });
 
   it("/ai/alt-text requires a key (409), auth (401), and an existing asset", async () => {
     const noAuth = await s.app.inject({ method: "POST", url: "/api/v1/ai/alt-text", payload: { documentId: "x" } });

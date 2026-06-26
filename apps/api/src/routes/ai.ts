@@ -5,7 +5,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import sharp from "sharp";
 import { z } from "zod";
 import { AI_TASKS, AiUnavailableError, aiAssist, aiImageAltText, aiTranslateBatch } from "@paperboy/shared";
-import { getAssetRow, getStoredAiKey, getStoredAiModel } from "@paperboy/db";
+import { AppError, getAssetRow, getStoredAiKey, getStoredAiModel } from "@paperboy/db";
 import { runContentAgent } from "../agent.js";
 import { requireAuth, requireCsrf, requirePermission } from "../security.js";
 
@@ -119,10 +119,17 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
       config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
       schema: {
         tags: ["ai"],
-        body: z.object({
-          texts: z.array(z.string().max(20_000)).max(100),
-          targetLocale: z.string().min(1).max(40),
-        }),
+        body: z
+          .object({
+            texts: z.array(z.string().max(20_000)).max(100),
+            targetLocale: z.string().min(1).max(40),
+          })
+          // Bound model spend: the per-item (20k) × per-batch (100) limits otherwise
+          // allow ~2M chars of model input per call. Cap the TOTAL (S3-L2).
+          .refine((b) => b.texts.reduce((n, t) => n + t.length, 0) <= 200_000, {
+            message: "Total text to translate exceeds 200000 characters — split into smaller batches",
+            path: ["texts"],
+          }),
         response: { 200: z.object({ results: z.array(z.string()), provider: z.enum(["anthropic", "fallback"]) }) },
       },
     },
@@ -171,7 +178,12 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
           { parentId: req.body.parentId ?? null, locale: req.body.locale },
         );
       } catch (err) {
-        send({ type: "error", text: err instanceof Error ? err.message : "Agent failed" });
+        // This SSE route bypasses the global 500 sanitizer. Only forward AppError
+        // messages (intentional, self-teaching); collapse anything else to a generic
+        // string and log it, so an unexpected internal error can't leak past (L2).
+        // (Per-tool errors are handled inside the loop and are not seen here.)
+        req.log.error({ err }, "agent stream error");
+        send({ type: "error", text: err instanceof AppError ? err.message : "Agent failed" });
       } finally {
         reply.raw.end();
       }

@@ -81,7 +81,7 @@ import {
   getDashboard,
   renameSite,
 } from "@paperboy/db";
-import { unlink, writeFile } from "node:fs/promises";
+import { readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   Asset,
@@ -450,7 +450,10 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       await writeFile(join(app.uploadsDir, fileName), buf); // safe: server-generated name
       const rec = await insertAsset(app.db, req.accessCtx!, {
         documentId,
-        filename: data.filename,
+        // Display metadata only (the served file uses the nanoid name above). Strip
+        // control chars + path separators and cap the length, so unbounded/untrusted
+        // text never reaches storage or any consumer (L8).
+        filename: (data.filename ?? "").replace(/[\p{Cc}/\\]/gu, "").slice(0, 255) || "file",
         mime: sniff.mime,
         size: buf.length,
         relativePath: `${MEDIA_PREFIX}/${fileName}`,
@@ -475,6 +478,12 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       const fileName = relativePath.replace(`${MEDIA_PREFIX}/`, "");
       if (fileName && !fileName.includes("/") && !fileName.includes("..")) {
         await unlink(join(app.uploadsDir, fileName)).catch(() => undefined);
+        // Also remove every cached transform variant (`<file>.w..q..fmt`), or the
+        // derived bytes stay publicly servable from _variants/ after delete (S3-M3).
+        const variantsDir = join(app.uploadsDir, "_variants");
+        for (const v of await readdir(variantsDir).catch(() => [] as string[])) {
+          if (v.startsWith(`${fileName}.`)) await unlink(join(variantsDir, v)).catch(() => undefined);
+        }
       }
       await audit(app.db, { actorUserId: req.user!.id, action: "asset.delete", documentId: req.params.documentId, ip: req.ip });
       return { ok: true };
@@ -537,7 +546,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       preHandler: [requirePermission("content.read")],
       schema: {
         tags: ["manage"],
-        querystring: z.object({ q: z.string(), limit: z.coerce.number().optional() }),
+        querystring: z.object({ q: z.string().min(1).max(200), limit: z.coerce.number().int().min(1).max(50).optional() }),
         response: {
           200: z.array(
             z.object({

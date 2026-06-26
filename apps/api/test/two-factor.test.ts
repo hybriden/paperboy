@@ -79,7 +79,10 @@ describe("Two-factor authentication (TOTP)", () => {
     expect(res.json().mfaRequired).toBe(true);
     expect(res.json().passwordRequired).toBeUndefined();
     const mfaToken = res.json().mfaToken as string;
-    const ok = await s.app.inject({ method: "POST", url: "/api/v1/auth/login/mfa", payload: { mfaToken, code: currentCode(secret) } });
+    // Use a backup code here: the previous test already consumed the current TOTP
+    // time-step, and codes are now single-use (M12), so reusing currentCode would
+    // be a replay. A backup code still proves the passwordless email+code path.
+    const ok = await s.app.inject({ method: "POST", url: "/api/v1/auth/login/mfa", payload: { mfaToken, code: backupCodes[9] } });
     expect(ok.statusCode).toBe(200);
     expect(ok.json().user.email).toBe(creds.email);
     expect(ok.cookies.find((c) => c.name.includes("paperboy_sid"))).toBeTruthy();

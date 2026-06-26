@@ -39,8 +39,11 @@ describe("Webhooks (HMAC-signed publish events)", () => {
   let editor: Awaited<ReturnType<typeof login>>;
   let stub: Awaited<ReturnType<typeof startStub>>;
   let secret: string;
+  const savedPrivateFlag = process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE;
 
   beforeAll(async () => {
+    // This suite delivers to a loopback stub server — allow private targets.
+    process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE = "true";
     s = await setupApi();
     admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
     editor = await login(s.app, "editor@paperboy.test", "Editor!Passw0rd");
@@ -58,6 +61,8 @@ describe("Webhooks (HMAC-signed publish events)", () => {
   afterAll(async () => {
     await s.app.close();
     stub.server.close();
+    if (savedPrivateFlag === undefined) delete process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE;
+    else process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE = savedPrivateFlag;
   });
 
   it("requires webhook.manage to register (editor forbidden)", async () => {

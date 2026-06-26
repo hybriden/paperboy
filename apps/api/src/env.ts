@@ -36,7 +36,23 @@ const EnvSchema = z.object({
   // plus retries from ONE runner IP brush against 300, and the 429s surface as
   // flaky "treeitem not visible" failures; leave at 300 in production.
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+  // How much of the X-Forwarded-For chain to trust for req.ip (rate-limit keys +
+  // audit IPs). "true" trusts ALL hops (a client can then spoof its IP) — fine only
+  // when the API is unreachable except through a trusted proxy that overwrites XFF.
+  // Harden by setting the exact boundary: a hop COUNT ("1" = one trusted proxy) or
+  // a CSV of trusted proxy IPs/CIDRs. "false" = trust none (req.ip = socket peer).
+  TRUST_PROXY: z.string().default("true"),
 });
+
+/** Parse TRUST_PROXY into the shape Fastify's `trustProxy` accepts:
+ *  boolean | hop-count number | list of trusted proxy IPs/CIDRs. */
+export function parseTrustProxy(value: string): boolean | number | string[] {
+  const v = value.trim();
+  if (v === "true") return true;
+  if (v === "false") return false;
+  if (/^\d+$/.test(v)) return Number(v);
+  return v.split(",").map((s) => s.trim()).filter(Boolean);
+}
 
 export type Env = z.infer<typeof EnvSchema>;
 
@@ -44,13 +60,21 @@ const INSECURE_DEFAULTS = [
   "dev-session-secret-change-me-min-32-chars",
   "dev-csrf-secret-change-me-min-32-chars-long",
 ];
+// Any shipped placeholder must be refused in production — not just the two
+// .env.example dev-* strings above, but also the docker-compose
+// `prod-*-please-override` defaults a plain `docker compose up` injects.
+const PLACEHOLDER_SECRET = /change-me|please-override/i;
+
+function looksInsecure(secret: string): boolean {
+  return INSECURE_DEFAULTS.includes(secret) || PLACEHOLDER_SECRET.test(secret);
+}
 
 export function loadEnv(overrides: Partial<NodeJS.ProcessEnv> = {}): Env {
   const env = EnvSchema.parse({ ...process.env, ...overrides });
-  // Refuse to boot a production server with dev defaults (fail fast).
+  // Refuse to boot a production server with dev/placeholder secrets (fail fast).
   if (env.NODE_ENV === "production") {
-    if (INSECURE_DEFAULTS.includes(env.SESSION_SECRET) || INSECURE_DEFAULTS.includes(env.CSRF_SECRET)) {
-      throw new Error("Refusing to start: SESSION_SECRET/CSRF_SECRET must be set in production");
+    if (looksInsecure(env.SESSION_SECRET) || looksInsecure(env.CSRF_SECRET)) {
+      throw new Error("Refusing to start: SESSION_SECRET/CSRF_SECRET must be set to non-default values in production");
     }
     if (!env.COOKIE_SECURE && !env.ALLOW_INSECURE_COOKIES) {
       throw new Error(

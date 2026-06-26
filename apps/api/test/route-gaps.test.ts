@@ -11,12 +11,18 @@ import { type Suite, authHeaders, login, setupApi } from "./helpers.js";
 describe("Route gaps — admin CRUD edges", () => {
   let s: Suite;
   let admin: Awaited<ReturnType<typeof login>>;
+  const savedPrivateFlag = process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE;
   beforeAll(async () => {
+    // This suite registers a webhook to a non-resolving example host; it isn't
+    // testing the SSRF egress guard, so allow private/unresolvable targets.
+    process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE = "true";
     s = await setupApi();
     admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
   });
   afterAll(async () => {
     await s.app.close();
+    if (savedPrivateFlag === undefined) delete process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE;
+    else process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE = savedPrivateFlag;
   });
 
   /* --------------------------- delivery keys ---------------------------- */

@@ -114,6 +114,19 @@ describe("AI content agent (build from brief)", () => {
     expect(got.json().data.heading).toBe("Agent Article");
   });
 
+  it("sanitizes an unexpected (non-AppError) stream failure instead of leaking it (L2)", async () => {
+    s.app.aiConfig.apiKey = "sk-test";
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (!(url instanceof Request ? url.url : String(url)).includes("api.anthropic.com")) return realFetch(url as never, init as never);
+      throw new Error("SENSITIVE-INTERNAL-DETAIL postgres://secret@host");
+    }) as typeof fetch;
+
+    const res = await s.app.inject({ method: "POST", url: "/api/v1/ai/agent", headers: authHeaders(ed), payload: { brief: "Make me a page about spring", locale: "en" } });
+    const err = sse(res.payload).find((e) => e.type === "error");
+    expect(err?.text).toBe("Agent failed");
+    expect(res.payload).not.toContain("SENSITIVE-INTERNAL-DETAIL");
+  });
+
   it("has no publish tool: a scripted publish attempt fails without touching content", async () => {
     s.app.aiConfig.apiKey = "sk-test";
     const turns = [

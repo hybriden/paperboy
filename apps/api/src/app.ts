@@ -15,7 +15,7 @@ import {
   validatorCompiler,
 } from "fastify-type-provider-zod";
 import { ZodError } from "zod";
-import type { Env } from "./env.js";
+import { type Env, parseTrustProxy } from "./env.js";
 import { registerAiRoutes } from "./routes/ai.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDeliveryRoutes } from "./routes/delivery.js";
@@ -34,13 +34,22 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   const { env } = opts;
   const app = Fastify({
     logger: env.NODE_ENV === "test" ? false : { level: "info" },
-    trustProxy: true,
+    // Configurable trusted-proxy boundary (M9): default "true" preserves behaviour,
+    // but operators can pin a hop count / CIDR list so req.ip can't be spoofed via
+    // X-Forwarded-For. (req.ip backs the IP rate-limits and audit-log IPs.)
+    trustProxy: parseTrustProxy(env.TRUST_PROXY),
   }).withTypeProvider<ZodTypeProvider>();
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
-  const db = opts.db ?? createDb(env.DATABASE_URL).db;
+  // Own the pool only when we created it (a caller-supplied db is the caller's to
+  // close). Close it on app shutdown so connections aren't leaked — harmless for a
+  // long-lived prod app, but essential for the test suite, where dozens of apps are
+  // built and torn down against one Postgres (else: "too many clients already").
+  const owned = opts.db ? null : createDb(env.DATABASE_URL);
+  const db = opts.db ?? owned!.db;
+  if (owned) app.addHook("onClose", async () => owned.sql.end());
   app.decorate("db", db);
   app.decorate("cookieSecure", env.COOKIE_SECURE);
   app.decorate("cookieName", env.COOKIE_SECURE ? "__Host-paperboy_sid" : "paperboy_sid");
@@ -53,6 +62,17 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   mkdirSync(env.UPLOADS_DIR, { recursive: true });
   process.env.MEDIA_PUBLIC_BASE = env.MEDIA_PUBLIC_BASE;
   app.decorate("uploadsDir", env.UPLOADS_DIR);
+
+  // Baseline security headers on EVERY response (S3-M2) — done inline rather than
+  // pulling in @fastify/helmet. HSTS only when cookies are Secure (i.e. real HTTPS),
+  // so a non-TLS internal/demo deploy isn't told to force https. A CSP is left to
+  // the edge/frontends (a meaningful one for the JSON API + Swagger UI needs nonces).
+  app.addHook("onSend", async (_req, reply) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("Referrer-Policy", "no-referrer");
+    reply.header("X-Frame-Options", "DENY");
+    if (env.COOKIE_SECURE) reply.header("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+  });
   app.decorate("aiConfig", { apiKey: env.ANTHROPIC_API_KEY, model: env.AI_MODEL });
   app.decorate("stockConfig", { unsplashKey: env.UNSPLASH_ACCESS_KEY });
 
@@ -69,9 +89,11 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     decorateReply: false, // avoid colliding with @fastify/swagger-ui's static
     index: false,
     dotfiles: "deny",
-    setHeaders: (res) => {
+    setHeaders: (res, path) => {
       res.setHeader("X-Content-Type-Options", "nosniff");
       res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      // Force download for active-content formats so they never render inline.
+      if (path.toLowerCase().endsWith(".pdf")) res.setHeader("Content-Disposition", "attachment");
     },
   });
   await app.register(rateLimit, {

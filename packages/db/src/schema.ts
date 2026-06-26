@@ -188,6 +188,8 @@ export const users = pgTable("users", {
   totpSecret: text("totp_secret"),
   totpEnabled: boolean("totp_enabled").notNull().default(false),
   backupCodes: jsonb("backup_codes"),
+  // Last accepted TOTP time-step — a code with step <= this is a replay (M12).
+  lastTotpStep: bigint("last_totp_step", { mode: "number" }),
 });
 
 export const userRole = pgTable(

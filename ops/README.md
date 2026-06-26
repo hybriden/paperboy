@@ -18,9 +18,14 @@ runbook with it. The alert channel is a private ntfy.sh topic read from
 DUMP=$(ls -1t ~/paperboy-backups/paperboy-*.dump | head -1)
 docker exec paperboy-db psql -U paperboy -d postgres -c "CREATE DATABASE restore_target;"
 docker exec -i paperboy-db pg_restore -U paperboy -d restore_target --no-owner < "$DUMP"
-# uploads:
+
+# uploads: quiesce writers and REPLACE (not merge) the volume, so the result is
+# exactly the backup — `tar x` overlays files and would otherwise leave orphans
+# from the corrupted state, and a live api would be writing the same paths.
+docker compose stop api web
 docker run --rm -v paperboycms_paperboy-uploads:/data -v ~/paperboy-backups:/backup alpine \
-  tar xzf /backup/uploads-<stamp>.tar.gz -C /data
+  sh -c "find /data -mindepth 1 -delete && tar xzf /backup/uploads-<stamp>.tar.gz -C /data"
+docker compose start api web
 ```
 
 The restore path was drilled on 2026-06-06 (counts matched live exactly).

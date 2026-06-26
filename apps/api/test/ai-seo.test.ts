@@ -83,6 +83,8 @@ describe("SEO fields + AI editorial assistant", () => {
     // lives at POST /ai/alt-text and sends the actual image.
     const res = await s.app.inject({ method: "POST", url: "/api/v1/ai/assist", headers: authHeaders(ed), payload: { task: "alt_text", input: "red-mountain-sunrise.jpg" } });
     expect(res.statusCode).toBe(409);
-    expect(res.json().message).toContain("Settings → AI");
+    // Now points to the dedicated vision route (correct regardless of key), rather
+    // than the generic no-key message (L1).
+    expect(res.json().message).toMatch(/\/ai\/alt-text|vision/i);
   });
 });

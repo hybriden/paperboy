@@ -1,4 +1,6 @@
 import { createHmac } from "node:crypto";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import { desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
@@ -30,6 +32,56 @@ export function signPayload(secret: string, body: string): string {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
 }
 
+/** True for non-routable / internal addresses that a webhook must never target
+ *  (SSRF): loopback, RFC1918, link-local incl. the 169.254.169.254 cloud-metadata
+ *  IP, CGNAT, unique-local, and the unspecified address — IPv4 and IPv6. */
+function isInternalAddress(ip: string): boolean {
+  if (isIP(ip) === 4) {
+    const [a, b] = ip.split(".").map(Number);
+    if (a === 127 || a === 0 || a === 10) return true; // loopback, "this host", 10/8
+    if (a === 172 && b! >= 16 && b! <= 31) return true; // 172.16/12
+    if (a === 192 && b === 168) return true; // 192.168/16
+    if (a === 169 && b === 254) return true; // link-local incl. IMDS 169.254.169.254
+    if (a === 100 && b! >= 64 && b! <= 127) return true; // CGNAT 100.64/10
+    return false;
+  }
+  const v = ip.toLowerCase();
+  if (v === "::1" || v === "::") return true; // loopback / unspecified
+  if (v.startsWith("::ffff:")) return isInternalAddress(v.slice(7)); // IPv4-mapped
+  if (v.startsWith("fe80")) return true; // link-local
+  if (v.startsWith("fc") || v.startsWith("fd")) return true; // unique-local fc00::/7
+  return false;
+}
+
+/** Deny-by-default egress guard for webhook URLs (H3). Requires http(s) and a
+ *  PUBLIC host (DNS-resolved, so a hostname can't hide an internal IP, and the
+ *  dispatch-time re-check closes DNS-rebinding). PAPERBOY_WEBHOOK_ALLOW_PRIVATE=true
+ *  is an explicit escape hatch for deployments with legitimate internal targets. */
+async function assertPublicWebhookUrl(rawUrl: string): Promise<void> {
+  let u: URL;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    throw Errors.badRequest("Webhook URL must be a valid http(s) URL");
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw Errors.badRequest("Webhook URL must be a valid http(s) URL");
+  if (process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE === "true") return;
+  const host = u.hostname;
+  let addrs: string[];
+  if (isIP(host)) {
+    addrs = [host];
+  } else {
+    try {
+      addrs = (await lookup(host, { all: true })).map((r) => r.address);
+    } catch {
+      throw Errors.badRequest("Webhook URL host could not be resolved");
+    }
+  }
+  if (!addrs.length || addrs.some(isInternalAddress)) {
+    throw Errors.badRequest("Webhook URL must point to a public host (loopback/link-local/private addresses are not allowed)");
+  }
+}
+
 export async function listWebhooks(db: Database, ctx: AccessContext) {
   requirePermission(ctx, "webhook.manage");
   const rows = await db.select().from(webhook).orderBy(desc(webhook.id));
@@ -52,12 +104,7 @@ export async function createWebhook(
   input: { name: string; url: string; events?: string[] },
 ): Promise<{ id: number; secret: string }> {
   requirePermission(ctx, "webhook.manage");
-  try {
-    const u = new URL(input.url);
-    if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("bad protocol");
-  } catch {
-    throw Errors.badRequest("Webhook URL must be a valid http(s) URL");
-  }
+  await assertPublicWebhookUrl(input.url);
   const secret = `whsec_${nanoid(32)}`;
   const rows = await db
     .insert(webhook)
@@ -93,6 +140,9 @@ export async function dispatchWebhooks(
       let status: number | null = null;
       let error: string | null = null;
       try {
+        // Re-check at dispatch time — this is the real egress boundary and closes
+        // DNS-rebinding (a host that resolved public at create time, internal now).
+        await assertPublicWebhookUrl(h.url);
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), WEBHOOK_TIMEOUT_MS);
         try {
