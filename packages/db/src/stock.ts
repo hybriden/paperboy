@@ -158,7 +158,7 @@ export async function importStockImage(
     throw Errors.badRequest(`Stock image download blocked: unexpected host "${host}" for provider ${active.provider.displayName}`);
   }
 
-  const buf = await downloadBytes(resolved.downloadUrl, active.provider.displayName);
+  const buf = await downloadBytes(resolved.downloadUrl, active.provider.displayName, (h) => active.provider.isDownloadHostAllowed(h));
   const sniff = sniffUpload(buf);
   if (!sniff || !sniff.mime.startsWith("image/")) {
     throw new AppError(415, "unsupported_media", `${active.provider.displayName} returned a file that is not a supported image (PNG, JPEG, GIF, WEBP) — try a different photo.`);
@@ -182,17 +182,40 @@ function sourceSlug(meta: AssetSourceMeta): string {
   return `${meta.provider}-${meta.providerId}`.replace(/[^a-zA-Z0-9._-]/g, "");
 }
 
-async function downloadBytes(url: string, providerName: string): Promise<Buffer> {
+/**
+ * Download image bytes, following redirects MANUALLY so each hop's host is
+ * re-checked against the provider allowlist (S3-M8). undici follows 3xx by default,
+ * which would let an allowlisted host redirect the server to an internal target —
+ * the pre-fetch host check then guards nothing. Exported for the redirect test.
+ */
+export async function downloadBytes(
+  url: string,
+  providerName: string,
+  isHostAllowed: (hostname: string) => boolean,
+): Promise<Buffer> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), 15_000);
   try {
-    const res = await fetch(url, { signal: ac.signal });
-    if (!res.ok) throw Errors.badRequest(`${providerName} image download failed (${res.status}) — try again or pick a different photo.`);
-    const bytes = Buffer.from(await res.arrayBuffer());
-    if (bytes.length > MAX_IMPORT_BYTES) {
-      throw new AppError(413, "too_large", `${providerName} image is larger than the 5 MB asset limit — pick a different photo.`);
+    let current = url;
+    for (let hop = 0; hop < 5; hop++) {
+      if (!isHostAllowed(new URL(current).hostname)) {
+        throw Errors.badRequest(`${providerName} image download blocked: untrusted redirect host "${new URL(current).hostname}".`);
+      }
+      const res = await fetch(current, { signal: ac.signal, redirect: "manual" });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get("location");
+        if (!loc) throw Errors.badRequest(`${providerName} image download failed (redirect without a location).`);
+        current = new URL(loc, current).toString(); // re-checked at the top of the next hop
+        continue;
+      }
+      if (!res.ok) throw Errors.badRequest(`${providerName} image download failed (${res.status}) — try again or pick a different photo.`);
+      const bytes = Buffer.from(await res.arrayBuffer());
+      if (bytes.length > MAX_IMPORT_BYTES) {
+        throw new AppError(413, "too_large", `${providerName} image is larger than the 5 MB asset limit — pick a different photo.`);
+      }
+      return bytes;
     }
-    return bytes;
+    throw Errors.badRequest(`${providerName} image download failed (too many redirects).`);
   } finally {
     clearTimeout(timer);
   }
