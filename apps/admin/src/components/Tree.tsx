@@ -681,6 +681,12 @@ function CreateDialog(props: {
   const qc = useQueryClient();
   const [type, setType] = useState(props.types[0]?.name ?? "");
   const [name, setName] = useState("");
+  // Focus the name input on mount (replaces autoFocus — the a11y-clean pattern
+  // used by the sibling CreateBlockDialog).
+  const nameRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    nameRef.current?.focus();
+  }, []);
   // The dialog can mount before the types query resolves; the select would then
   // SHOW the first option while the state stays "" — Create disabled forever.
   useEffect(() => {
@@ -703,7 +709,7 @@ function CreateDialog(props: {
           {props.types.map((t) => <option key={t.name} value={t.name}>{t.displayName} ({t.kind})</option>)}
         </select>
         <label className="field-label" htmlFor="cname">Name</label>
-        <input id="cname" aria-label="Name" className="field-input mb-4" value={name} autoFocus onChange={(e) => setName(e.target.value)} placeholder="e.g. About us" />
+        <input ref={nameRef} id="cname" aria-label="Name" className="field-input mb-4" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. About us" />
         {create.isError && <p role="alert" className="mb-3 text-sm text-danger">{(create.error as Error).message}</p>}
         <div className="flex justify-end gap-2">
           <button className="btn-ghost" onClick={props.onClose}>Cancel</button>

@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
-import { and, asc, desc, eq, gte, like, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, like, lte, ne, sql } from "drizzle-orm";
 import {
   type Permission,
   ROLE_PERMISSIONS,
@@ -12,13 +12,14 @@ import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { getDefaultSite } from "./sites.js";
-import { auditLog, deliveryKey, session, userRole, userScope, users } from "./schema.js";
+import { DEFAULT_SITE_ID, auditLog, contentItem, deliveryKey, session, userRole, userScope, users } from "./schema.js";
 import {
   decryptSecret,
   encryptSecret,
   generateBackupCodes,
   generateSecret,
   hashBackupCode,
+  matchTotpStep,
   totpUri,
   verifyTotp,
 } from "./totp.js";
@@ -52,6 +53,18 @@ export function constantTimeEqual(a: string, b: string): boolean {
 
 /* --------------------------------- users ---------------------------------- */
 
+/** A section is a top-level content_item; its scope must be stored under that
+ *  document's OWN site, not the column DEFAULT — getAccessContext filters scopes
+ *  by the active site, so a mismatched site_id silently hides the assignment. */
+async function sectionSiteId(db: Database, sectionId: string): Promise<string> {
+  const rows = await db
+    .select({ siteId: contentItem.siteId })
+    .from(contentItem)
+    .where(eq(contentItem.documentId, sectionId))
+    .limit(1);
+  return rows[0]?.siteId ?? DEFAULT_SITE_ID;
+}
+
 export async function createUser(
   db: Database,
   input: {
@@ -69,7 +82,8 @@ export async function createUser(
     await db.insert(userRole).values({ userId: id, role }).onConflictDoNothing();
   }
   for (const sectionId of input.sections ?? []) {
-    await db.insert(userScope).values({ userId: id, sectionId }).onConflictDoNothing();
+    const siteId = await sectionSiteId(db, sectionId);
+    await db.insert(userScope).values({ userId: id, sectionId, siteId }).onConflictDoNothing();
   }
   return id;
 }
@@ -185,6 +199,12 @@ export async function adminUpdateUser(
       throw Errors.conflict("Cannot remove the last administrator");
     }
   }
+  // Resolve each section's own site BEFORE the tx (the content_item rows are
+  // already committed) so the scope rows are filed under the correct site.
+  const scopeSites = new Map<string, string>();
+  if (input.sections) {
+    for (const sectionId of input.sections) scopeSites.set(sectionId, await sectionSiteId(db, sectionId));
+  }
   await db.transaction(async (tx) => {
     if (input.name !== undefined) await tx.update(users).set({ name: input.name }).where(eq(users.id, userId));
     if (emailChanged) await tx.update(users).set({ email }).where(eq(users.id, userId));
@@ -194,7 +214,12 @@ export async function adminUpdateUser(
     }
     if (input.sections) {
       await tx.delete(userScope).where(eq(userScope.userId, userId));
-      for (const sectionId of input.sections) await tx.insert(userScope).values({ userId, sectionId }).onConflictDoNothing();
+      for (const sectionId of input.sections) {
+        await tx
+          .insert(userScope)
+          .values({ userId, sectionId, siteId: scopeSites.get(sectionId) ?? DEFAULT_SITE_ID })
+          .onConflictDoNothing();
+      }
     }
   });
 }
@@ -215,6 +240,33 @@ export async function adminDeleteUser(db: Database, ctx: AccessContext, userId: 
 }
 
 /** Self-service password change: verify the current password, then re-hash. */
+/**
+ * Re-verify the account password for a sensitive action (change-password,
+ * disable-2FA) WITH the same per-account lockout as login (S3-L3) — otherwise a
+ * session holder could brute-force the password on these unguarded reauth paths.
+ * Throws a generic unauthorized on any failure (locked, wrong, or unknown).
+ */
+async function verifyReauth(db: Database, userId: string, password: string): Promise<void> {
+  const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
+  const user = rows[0];
+  const generic = Errors.unauthorized("Current password is incorrect");
+  if (!user) throw generic;
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    await argon2.verify(user.passwordHash, password).catch(() => false); // match the verify path's timing
+    throw generic;
+  }
+  const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
+  if (!ok) {
+    const failed = user.failedAttempts + 1;
+    const locked = failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null;
+    await db.update(users).set({ failedAttempts: failed, lockedUntil: locked }).where(eq(users.id, user.id));
+    throw generic;
+  }
+  if (user.failedAttempts > 0 || user.lockedUntil) {
+    await db.update(users).set({ failedAttempts: 0, lockedUntil: null }).where(eq(users.id, user.id));
+  }
+}
+
 export async function changePassword(
   db: Database,
   userId: string,
@@ -222,11 +274,7 @@ export async function changePassword(
   newPassword: string,
 ): Promise<void> {
   if (newPassword.length < 10) throw Errors.badRequest("New password must be at least 10 characters");
-  const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  const user = rows[0];
-  if (!user) throw Errors.unauthorized();
-  const ok = await argon2.verify(user.passwordHash, oldPassword).catch(() => false);
-  if (!ok) throw Errors.unauthorized("Current password is incorrect");
+  await verifyReauth(db, userId, oldPassword);
   const passwordHash = await argon2.hash(newPassword, ARGON2_OPTS);
   await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
   // Invalidate all OTHER sessions (keep none — force re-login everywhere).
@@ -312,40 +360,70 @@ export async function beginTotpSetup(db: Database, userId: string): Promise<{ se
   return { secret, uri: totpUri(secret, user.email) };
 }
 
+/** Evict the user's sessions on a security-posture change. Keeps the current
+ *  request's session (keepToken) so the actor isn't logged out mid-action; all
+ *  OTHER sessions are dropped so a held/hijacked session can't outlive the change. */
+async function evictOtherSessions(db: Database, userId: string, keepToken?: string | null): Promise<void> {
+  if (keepToken) {
+    await db.delete(session).where(and(eq(session.userId, userId), ne(session.id, sha256(keepToken))));
+  } else {
+    await db.delete(session).where(eq(session.userId, userId));
+  }
+}
+
 /** Confirm enrollment with a code → enable 2FA and issue one-time backup codes. */
-export async function enableTotp(db: Database, userId: string, code: string): Promise<{ backupCodes: string[] }> {
+export async function enableTotp(db: Database, userId: string, code: string, keepSessionToken?: string | null): Promise<{ backupCodes: string[] }> {
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const user = rows[0];
   if (!user?.totpSecret) throw Errors.badRequest("Start 2FA setup first");
   if (!verifyTotp(decryptSecret(user.totpSecret), code)) throw Errors.unauthorized("Invalid code");
   const codes = generateBackupCodes();
   await db.update(users).set({ totpEnabled: true, backupCodes: codes.map(hashBackupCode) }).where(eq(users.id, userId));
+  // Turning 2FA on is a posture change — evict the user's other sessions (S2-L1).
+  await evictOtherSessions(db, userId, keepSessionToken);
   return { backupCodes: codes };
 }
 
 /** Disable 2FA (requires the account password — a re-auth gate). */
-export async function disableTotp(db: Database, userId: string, password: string): Promise<void> {
-  const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  const user = rows[0];
-  if (!user) throw Errors.unauthorized();
-  const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
-  if (!ok) throw Errors.unauthorized("Password is incorrect");
+export async function disableTotp(db: Database, userId: string, password: string, keepSessionToken?: string | null): Promise<void> {
+  await verifyReauth(db, userId, password); // same per-account lockout as login (S3-L3)
   await db.update(users).set({ totpSecret: null, totpEnabled: false, backupCodes: null }).where(eq(users.id, userId));
+  await evictOtherSessions(db, userId, keepSessionToken); // posture change → drop other sessions (S2-L1)
 }
 
-/** Verify a TOTP code OR consume a one-time backup code (used at the 2FA login step). */
+/**
+ * Verify a TOTP code OR consume a one-time backup code (the 2FA login step).
+ * For a 2FA account this is the SOLE factor, so it carries the same protections
+ * as the password path: a per-account lockout after repeated failures (H4), and
+ * single-use TOTP codes — a step <= the last accepted one is a replay (M12).
+ */
 export async function verifySecondFactor(db: Database, userId: string, code: string): Promise<boolean> {
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const user = rows[0];
   if (!user?.totpEnabled || !user.totpSecret) return false;
-  if (verifyTotp(decryptSecret(user.totpSecret), code)) return true;
+  // Locked: refuse even a correct code (matches verifyLogin), no enumeration.
+  if (user.lockedUntil && user.lockedUntil > new Date()) return false;
+
+  const clearLock = { failedAttempts: 0, lockedUntil: null as Date | null };
+  const step = matchTotpStep(decryptSecret(user.totpSecret), code);
+  if (step !== null) {
+    // Replay of an already-consumed (or older) step — reject without counting it
+    // as a brute-force guess (a legitimate double-submit shouldn't lock the user).
+    if (user.lastTotpStep != null && step <= user.lastTotpStep) return false;
+    await db.update(users).set({ ...clearLock, lastTotpStep: step }).where(eq(users.id, userId));
+    return true;
+  }
   // Fall back to a backup code (one-time): match its hash, then remove it.
   const hashes = Array.isArray(user.backupCodes) ? (user.backupCodes as string[]) : [];
   const used = hashBackupCode(code);
   if (hashes.includes(used)) {
-    await db.update(users).set({ backupCodes: hashes.filter((h) => h !== used) }).where(eq(users.id, userId));
+    await db.update(users).set({ ...clearLock, backupCodes: hashes.filter((h) => h !== used) }).where(eq(users.id, userId));
     return true;
   }
+  // Wrong code → count toward the per-account lockout (same policy as passwords).
+  const failed = user.failedAttempts + 1;
+  const locked = failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null;
+  await db.update(users).set({ failedAttempts: failed, lockedUntil: locked }).where(eq(users.id, userId));
   return false;
 }
 

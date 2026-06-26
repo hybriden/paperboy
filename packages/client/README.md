@@ -49,3 +49,37 @@ const srcset = mediaSrcset(post!.data.image as string); // 320/640/1024/1600w we
   `{ cache: "no-store" }` for draft-mode freshness (see `apps/web/app/lib/delivery.ts`,
   which is this client in production shape).
 - Preview keys see drafts. Never ship one to a browser.
+
+## Rendering & SEO helpers
+
+The client also ships schema-driven render helpers so a frontend switches on the
+declared field type instead of sniffing values:
+
+```ts
+import {
+  renderRichText, isRichTextDoc,   // TipTap JSON → sanitized HTML (XSS-safe)
+  contentAreas, blockData,         // iterate a content area's blocks
+  renderKind,                      // map a field to a render kind via fieldTypes
+  pbAreaAttrs,                     // data-pb-* attrs for the on-page-editing bridge
+} from "@paperboycms/client";
+
+const post = await cms.byPath("/blog/hello");
+// Every delivery item carries `fieldTypes` (declared type per public field) so an
+// empty richtext field still renders as richtext, never as "".
+for (const block of contentAreas(post!.data.body)) {
+  const data = blockData(block); // shared vs inline, normalized
+}
+const html = renderRichText(post!.data.intro); // safe to set via innerHTML
+```
+
+### SEO
+
+Every PAGE item carries a server-computed `seo` block (`DeliverySeo`): normalized
+meta/canonical/robots, Open Graph + Twitter, per-`@type` JSON-LD, and breadcrumbs —
+computed **post-sanitize** (private fields can't leak), with preview always `noindex`.
+
+```ts
+import type { DeliverySeo } from "@paperboycms/client";
+const seo = post!.seo; // null on non-page kinds
+// URLs in `seo` are relative — absolutize against your site origin before emitting.
+```

@@ -14,5 +14,5 @@ export * from "./stock.js";
 export * from "./totp.js";
 export * from "./mcp-tokens.js";
 export { migrate } from "./migrate.js";
-export { seed, type SeedResult } from "./seed.js";
+export { seed, databaseHoldsData, type SeedResult } from "./seed.js";
 export * as schemaTables from "./schema.js";

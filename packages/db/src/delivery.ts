@@ -23,6 +23,11 @@ import { asset, contentItem, contentType, contentVersion, locale, site } from ".
 export type Perspective = "published" | "preview";
 
 const MAX_POPULATE_DEPTH = 4;
+// Per-request resolve budget (S2-M4): caps the TOTAL nodes one delivery read
+// expands so a wide reference/contentArea graph can't fan out into a resource-DoS
+// (O(B^depth) distinct resolves + SEO compute). Past the cap, nested refs come back
+// shallow ({documentId, type}) instead of recursing. Generous for real content.
+const MAX_RESOLVE_NODES = 500;
 
 class DeliveryCtx {
   types = new Map<string, ContentTypeDef>();
@@ -32,6 +37,12 @@ class DeliveryCtx {
   // re-querying per document per locale-chain step.
   versionsByDoc = new Map<string, (typeof contentVersion.$inferSelect)[]>();
   locales: (typeof locale.$inferSelect)[] | null = null;
+  // Total nodes resolved this request — the fan-out budget (S2-M4).
+  nodesResolved = 0;
+  /** Still within the per-request resolve budget? Past it, callers emit shallow refs. */
+  withinResolveBudget(): boolean {
+    return this.nodesResolved < MAX_RESOLVE_NODES;
+  }
   // Clock for the scheduled-publish window check (published perspective only).
   constructor(
     public db: Database,
@@ -323,7 +334,7 @@ async function sanitize(
       const rv = v as { documentId?: string; type?: string };
       if (!rv.documentId) {
         out[f.name] = null;
-      } else if (depth > 0) {
+      } else if (depth > 0 && ctx.withinResolveBudget()) {
         out[f.name] = await resolveContent(ctx, perspective, rv.documentId, loc, depth - 1);
       } else {
         out[f.name] = { documentId: rv.documentId, type: rv.type ?? null };
@@ -340,7 +351,7 @@ async function sanitize(
         if (b.ref) {
           // Shared block: resolve through the SAME chokepoint/perspective.
           const resolved =
-            depth > 0
+            depth > 0 && ctx.withinResolveBudget()
               ? await resolveContent(ctx, perspective, scalarToString(b.ref), loc, depth - 1)
               : { documentId: b.ref, type: blockType };
           if (resolved) blocks.push({ blockType, display, shared: true, content: resolved });
@@ -619,6 +630,7 @@ export async function resolveContent(
   if (!found) return null;
   const item = await ctx.item(documentId);
   if (!item) return null;
+  ctx.nodesResolved++; // count this node against the per-request fan-out budget (S2-M4)
   // localized:false fields are SHARED across language branches — fill gaps
   // from other visible variants before sanitizing (same chokepoint rules).
   const data = await fillNonLocalizedFields(
@@ -713,6 +725,22 @@ export interface DeliveryListOptions {
 }
 
 /** Sort-key comparator: numbers numerically, everything else as strings (ISO dates compare correctly). */
+/** Word tokens under Postgres' 'simple' text-search config: lowercase, split on
+ *  non-alphanumeric. No stemming or stop-words (that's what 'simple' does), so a
+ *  whole-token membership check faithfully reproduces an AND-of-terms match. */
+function tokenizeSimple(s: string): string[] {
+  return s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+}
+
+/** Flatten every string/number/boolean leaf of a (public) value into acc. */
+function collectStrings(v: unknown, acc: string[]): void {
+  if (v == null) return;
+  if (typeof v === "string") acc.push(v);
+  else if (typeof v === "number" || typeof v === "boolean") acc.push(String(v));
+  else if (Array.isArray(v)) for (const x of v) collectStrings(x, acc);
+  else if (typeof v === "object") for (const x of Object.values(v as Record<string, unknown>)) collectStrings(x, acc);
+}
+
 function compareKeys(a: unknown, b: unknown): number {
   if (a == null && b == null) return 0;
   if (a == null) return 1; // missing values sort last
@@ -757,11 +785,23 @@ export async function deliveryList(
     if (variant) candidates.push({ documentId: it.documentId, row: variant.row });
   }
 
+  // Field-visibility gate: filter/sort may only reference PUBLIC fields (plus the
+  // intrinsic name/slug/createdAt). Otherwise a public consumer could filter or
+  // sort by a delivery:"private" field and read the (sanitized) result set as an
+  // inference oracle over the hidden value. A non-public key is IGNORED (not
+  // rejected) so it gives no signal — same outcome as an unknown field. When the
+  // type is omitted (parentId-only listing) we can't resolve visibility, so only
+  // name/slug are honored. (H1 + M1.)
+  const def = typeName ? await ctx.type(typeName) : null;
+  const publicFields = new Set(def ? def.fields.filter((f) => f.delivery === "public").map((f) => f.name) : []);
+  const fieldAllowed = (field: string) => field === "name" || field === "slug" || publicFields.has(field);
+
   let filtered = candidates;
   if (opts.filter && Object.keys(opts.filter).length) {
     filtered = filtered.filter(({ row }) => {
       const data = row.data as Record<string, unknown>;
       for (const [field, want] of Object.entries(opts.filter!)) {
+        if (!fieldAllowed(field)) continue; // private/unknown key: no constraint, no oracle
         const have = field === "name" ? row.name : field === "slug" ? row.slug : data[field];
         const ok = Array.isArray(have) ? have.map(scalarToString).includes(want) : scalarToString(have) === want;
         if (!ok) return false;
@@ -770,7 +810,12 @@ export async function deliveryList(
     });
   }
 
-  if (opts.sort) {
+  const sortField = opts.sort ? (opts.sort.startsWith("-") ? opts.sort.slice(1) : opts.sort) : null;
+  const sortAllowed =
+    sortField === "name" ||
+    sortField === "createdAt" ||
+    (sortField != null && sortField.startsWith("data.") && publicFields.has(sortField.slice(5)));
+  if (opts.sort && sortAllowed) {
     const descending = opts.sort.startsWith("-");
     const key = descending ? opts.sort.slice(1) : opts.sort;
     const keyOf = (row: typeof contentVersion.$inferSelect): unknown => {
@@ -827,6 +872,11 @@ export async function deliverySearch(
   const ctx = new DeliveryCtx(db, siteId);
   const chain = await ctx.localeChain(loc);
   const max = Math.min(Math.max(limit, 1), 100);
+  // The SQL prefilter scans the WHOLE version row (incl. delivery:"private" field
+  // text), so it only OVER-approximates the candidate set for ranking. We widen
+  // the window and then re-check each candidate against its SANITIZED PUBLIC text
+  // below, dropping any hit that matched ONLY on a private field — otherwise the
+  // hit/no-hit signal is a content-presence oracle over private data (M2).
   // Matches the expression GIN index in 0007_delivery_search.sql exactly.
   const rows = (await db.execute(sql`
     SELECT DISTINCT v.document_id AS id,
@@ -841,15 +891,30 @@ export async function deliverySearch(
       ${typeName ? sql`AND i.type = ${typeName}` : sql``}
     GROUP BY v.document_id
     ORDER BY rank DESC
-    LIMIT ${max * 3}
+    LIMIT ${max * 5}
   `)) as unknown as { id: string; rank: number }[];
   await ctx.primeVersions(rows.map((r) => r.id));
+  // Positive query terms under the 'simple' config (lowercase, word-token split,
+  // no stemming/stop-words). Negated (-term) words are dropped. A candidate is
+  // kept only if every positive term appears in its public text — and matching
+  // public-only text can never resurface private content, so this is leak-safe.
+  const terms = tokenizeSimple(q.split(/\s+/).filter((w) => !w.startsWith("-")).join(" "));
   const out: DeliveryContent[] = [];
   for (const r of rows) {
     if (out.length >= max) break;
-    // Chokepoint re-validates (publish window, perspective, locale fallback).
+    // Chokepoint re-validates (publish window, perspective, locale fallback) and
+    // returns PUBLIC fields only.
     const resolved = await resolveContent(ctx, perspective, r.id, loc, 0);
-    if (resolved) out.push(resolved);
+    if (!resolved) continue;
+    if (terms.length) {
+      const parts: string[] = [];
+      collectStrings(resolved.name, parts);
+      collectStrings(resolved.data, parts);
+      if (resolved.seo) collectStrings(resolved.seo, parts);
+      const hay = new Set(tokenizeSimple(parts.join(" ")));
+      if (!terms.every((t) => hay.has(t))) continue; // matched only on private text
+    }
+    out.push(resolved);
   }
   return { items: out, total: out.length };
 }

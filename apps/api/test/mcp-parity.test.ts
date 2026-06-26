@@ -170,6 +170,14 @@ describe("MCP parity: real stdio server vs the API", () => {
     expect(rows.some((r) => r.ip === "mcp")).toBe(true);
   });
 
+  it("platform/admin MCP writes also leave an ip='mcp' audit trail (H2)", async () => {
+    const res = await mcp.call("create_delivery_key", { name: "mcp-audit-key", type: "public" });
+    expect(res.isError, res.text.slice(0, 200)).toBe(false);
+    const audit = await s.app.inject({ method: "GET", url: "/api/v1/manage/audit?action=deliverykey.create", headers: authHeaders(admin) });
+    const rows = audit.json() as Array<{ ip: string | null; action: string }>;
+    expect(rows.some((r) => r.ip === "mcp")).toBe(true);
+  }, 60_000);
+
   it("delivery_list parity with GET /delivery/content (items + total, pagination)", async () => {
     const viaMcp = await mcp.call("delivery_list", { type: "BlogPost", limit: 2 });
     const m = viaMcp.json as { items: Array<{ documentId: string }>; total: number };

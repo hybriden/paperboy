@@ -27,6 +27,12 @@ import { auditLog, contentItem, contentReference, contentType, contentVersion, l
 import { getAgentReviewRequired } from "./site.js";
 import { dispatchWebhooks } from "./webhooks.js";
 
+/** Postgres unique-constraint violation (SQLSTATE 23505) — used to turn a losing
+ *  concurrent write into a self-teaching 409 instead of an opaque 500. */
+function isUniqueViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
+}
+
 /* ----------------------------- content types ----------------------------- */
 
 export async function listContentTypes(db: Database): Promise<ContentTypeDef[]> {
@@ -592,17 +598,23 @@ async function slugTakenBySibling(
   parentId: string | null,
   loc: string,
   slug: string,
+  knownSiteId?: string,
 ): Promise<boolean> {
   // Scope siblings to the document's own site so two sites can each own a root
   // "/about" (slug uniqueness is per-site + per-parent + locale). For non-root
   // pages this is implied (siblings share a parent → a site); it matters for
   // roots (parentId === null), which would otherwise collide across sites.
-  const own = await db
-    .select({ siteId: contentItem.siteId })
-    .from(contentItem)
-    .where(eq(contentItem.documentId, documentId))
-    .limit(1);
-  const siteId = own[0]?.siteId;
+  // knownSiteId lets createContent pass the site directly — its content_item row
+  // isn't committed on this connection yet, so the self-lookup would miss it.
+  let siteId = knownSiteId;
+  if (!siteId) {
+    const own = await db
+      .select({ siteId: contentItem.siteId })
+      .from(contentItem)
+      .where(eq(contentItem.documentId, documentId))
+      .limit(1);
+    siteId = own[0]?.siteId;
+  }
   const siblings = await db
     .select({ documentId: contentItem.documentId })
     .from(contentItem)
@@ -663,12 +675,13 @@ async function autoSlug(
   parentId: string | null,
   loc: string,
   name: string,
+  knownSiteId?: string,
 ): Promise<string | null> {
   const base = slugify(name);
   if (!base) return null;
   for (let i = 0; i < 50; i++) {
     const candidate = i === 0 ? base : `${base}-${i + 1}`;
-    if (!(await slugTakenBySibling(db, documentId, parentId, loc, candidate))) return candidate;
+    if (!(await slugTakenBySibling(db, documentId, parentId, loc, candidate, knownSiteId))) return candidate;
   }
   return `${base}-${documentId.slice(0, 6).toLowerCase()}`;
 }
@@ -739,34 +752,43 @@ export async function createContent(
     throw Errors.forbidden("Cannot create content outside your sections");
   }
 
-  await db.insert(contentItem).values({
-    documentId,
-    type: type.name,
-    kind: type.kind,
-    parentId: req.parentId,
-    sortIndex: 0,
-    sectionId: effectiveSection,
-    // Children inherit the parent's site (loadAuthorized already confirmed the
-    // parent is in the active site); a new root belongs to the active site.
-    siteId: parent ? parent.siteId : ctx.siteId,
-    createdBy: ctx.userId,
-  });
-  await db.insert(contentVersion).values({
-    documentId,
-    locale: req.locale,
-    status: "draft",
-    isCurrentPublished: false,
-    versionNumber: 1,
-    name: req.name,
-    // Pages get a URL segment from their name right away (CMS-12 style) —
-    // uniquified among siblings; editors can change it in the URL chip.
-    slug: type.kind === "page" ? await autoSlug(db, documentId, req.parentId, req.locale, req.name) : null,
-    displayInNav: true,
-    data: {},
-    cv: 0,
-    createdBy: ctx.userId,
-    createdVia: ctx.via ?? null,
-    needsReview: ctx.via === "mcp" || ctx.via === "agent",
+  // Children inherit the parent's site (loadAuthorized already confirmed the
+  // parent is in the active site); a new root belongs to the active site.
+  const effectiveSiteId = parent ? parent.siteId : ctx.siteId;
+
+  // Atomic create: a per-(site, parent, locale) advisory lock serializes sibling
+  // slug allocation so two concurrent creates of the same name can't both pick the
+  // same segment (S2-M9 TOCTOU). autoSlug runs inside the tx and sees this row's
+  // own uncommitted item (so knownSiteId is passed) plus committed siblings.
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`slug:${effectiveSiteId}:${req.parentId ?? "root"}:${req.locale}`}))`);
+    await tx.insert(contentItem).values({
+      documentId,
+      type: type.name,
+      kind: type.kind,
+      parentId: req.parentId,
+      sortIndex: 0,
+      sectionId: effectiveSection,
+      siteId: effectiveSiteId,
+      createdBy: ctx.userId,
+    });
+    await tx.insert(contentVersion).values({
+      documentId,
+      locale: req.locale,
+      status: "draft",
+      isCurrentPublished: false,
+      versionNumber: 1,
+      name: req.name,
+      // Pages get a URL segment from their name right away (CMS-12 style) —
+      // uniquified among siblings; editors can change it in the URL chip.
+      slug: type.kind === "page" ? await autoSlug(db, documentId, req.parentId, req.locale, req.name, effectiveSiteId) : null,
+      displayInNav: true,
+      data: {},
+      cv: 0,
+      createdBy: ctx.userId,
+      createdVia: ctx.via ?? null,
+      needsReview: ctx.via === "mcp" || ctx.via === "agent",
+    });
   });
 
   return getContent(db, ctx, documentId, req.locale);
@@ -1170,20 +1192,30 @@ export async function updateContent(
         ? await autoSlug(db, documentId, item.parentId, loc, name)
         : fork.slug;
     }
-    await db.insert(contentVersion).values({
-      documentId,
-      locale: loc,
-      status: "draft",
-      isCurrentPublished: false,
-      versionNumber: maxV,
-      name,
-      slug,
-      displayInNav: req.displayInNav ?? base?.displayInNav ?? true,
-      data,
-      createdBy: ctx.userId,
-      createdVia: ctx.via ?? null,
-      needsReview: ctx.via === "mcp" || ctx.via === "agent",
-    });
+    try {
+      await db.insert(contentVersion).values({
+        documentId,
+        locale: loc,
+        status: "draft",
+        isCurrentPublished: false,
+        versionNumber: maxV,
+        name,
+        slug,
+        displayInNav: req.displayInNav ?? base?.displayInNav ?? true,
+        data,
+        createdBy: ctx.userId,
+        createdVia: ctx.via ?? null,
+        needsReview: ctx.via === "mcp" || ctx.via === "agent",
+      });
+    } catch (err) {
+      // A concurrent write seeded the single working draft first (the
+      // content_version_one_draft partial unique index held the invariant). Turn
+      // the raw 23505 into a self-teaching 409 instead of an opaque 500 (S2-L5).
+      if (isUniqueViolation(err)) {
+        throw Errors.conflict("A draft for this locale was just created by a concurrent edit — re-read the content and retry your update.");
+      }
+      throw err;
+    }
   }
 
   await rebuildReferences(db, documentId, loc, type, data);
@@ -1292,27 +1324,36 @@ async function promoteDraft(
   draftId: number,
   actorUserId: string | null,
 ): Promise<void> {
-  await db.transaction(async (tx) => {
-    // Allocate the cache-version atomically with the promotion.
-    const cvRow = await tx.execute(sql`SELECT nextval('cv_seq') AS v`);
-    const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
-    // Demote previous published row for this variant.
-    await tx
-      .update(contentVersion)
-      .set({ isCurrentPublished: false })
-      .where(
-        and(
-          eq(contentVersion.documentId, documentId),
-          eq(contentVersion.locale, loc),
-          eq(contentVersion.isCurrentPublished, true),
-        ),
-      );
-    // Promote the draft to the live published version for this variant.
-    await tx
-      .update(contentVersion)
-      .set({ status: "published", isCurrentPublished: true, cv, createdBy: actorUserId, publishAt: null })
-      .where(eq(contentVersion.id, draftId));
-  });
+  try {
+    await db.transaction(async (tx) => {
+      // Allocate the cache-version atomically with the promotion.
+      const cvRow = await tx.execute(sql`SELECT nextval('cv_seq') AS v`);
+      const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
+      // Demote previous published row for this variant.
+      await tx
+        .update(contentVersion)
+        .set({ isCurrentPublished: false })
+        .where(
+          and(
+            eq(contentVersion.documentId, documentId),
+            eq(contentVersion.locale, loc),
+            eq(contentVersion.isCurrentPublished, true),
+          ),
+        );
+      // Promote the draft to the live published version for this variant.
+      await tx
+        .update(contentVersion)
+        .set({ status: "published", isCurrentPublished: true, cv, createdBy: actorUserId, publishAt: null })
+        .where(eq(contentVersion.id, draftId));
+    });
+  } catch (err) {
+    // A concurrent publish promoted this variant first (content_version_one_published
+    // held the single-published invariant). Self-teaching 409, not an opaque 500 (S2-L5).
+    if (isUniqueViolation(err)) {
+      throw Errors.conflict("This content was just published by a concurrent operation — re-read it and retry.");
+    }
+    throw err;
+  }
 }
 
 /**
@@ -1687,7 +1728,14 @@ export async function runScheduledPublish(
         at: new Date().toISOString(),
       });
       published++;
-    } catch {
+    } catch (err) {
+      // Leave a trail rather than swallow it (rule #6 spirit) — mirrors the
+      // validation branch and the expire loop, so a failed scheduled publish is
+      // diagnosable from the audit log (L7).
+      await db
+        .insert(auditLog)
+        .values({ action: "content.schedule_failed", documentId: d.documentId, locale: d.locale, detail: { reason: err instanceof Error ? err.message : String(err) } })
+        .catch(() => undefined);
       failed++;
     }
   }
@@ -1704,22 +1752,36 @@ export async function runScheduledPublish(
       ),
     );
   for (const s of stale) {
-    await db.update(contentVersion).set({ isCurrentPublished: false }).where(eq(contentVersion.id, s.id));
-    const item = (
-      await db.select().from(contentItem).where(eq(contentItem.documentId, s.documentId)).limit(1)
-    )[0];
-    const urlPath = item && item.kind === "page" ? await computePath(db, s.documentId, s.locale) : null;
-    await dispatchWebhooks(db, {
-      event: "content.unpublished",
-      documentId: s.documentId,
-      type: item?.type ?? "",
-      kind: item?.kind ?? "",
-      locale: s.locale,
-      name: s.name,
-      urlPath,
-      at: new Date().toISOString(),
-    });
-    expired++;
+    // Per-row guard (mirrors the promote loop): one bad row must not abort the
+    // rest of the tick. Compute the path BEFORE demoting, so a failure can't leave
+    // a row demoted-without-its-unpublished-webhook (the next tick won't re-scan a
+    // no-longer-published row, so that event would be lost permanently).
+    try {
+      const item = (
+        await db.select().from(contentItem).where(eq(contentItem.documentId, s.documentId)).limit(1)
+      )[0];
+      const urlPath = item && item.kind === "page" ? await computePath(db, s.documentId, s.locale) : null;
+      await db.update(contentVersion).set({ isCurrentPublished: false }).where(eq(contentVersion.id, s.id));
+      await dispatchWebhooks(db, {
+        event: "content.unpublished",
+        documentId: s.documentId,
+        type: item?.type ?? "",
+        kind: item?.kind ?? "",
+        locale: s.locale,
+        name: s.name,
+        urlPath,
+        at: new Date().toISOString(),
+      });
+      expired++;
+    } catch (err) {
+      // Leave a trail (rule #6 spirit) and keep going; the row stays published and
+      // is retried next tick (it wasn't demoted if the failure was before the UPDATE).
+      await db
+        .insert(auditLog)
+        .values({ action: "content.schedule_failed", documentId: s.documentId, locale: s.locale, detail: { reason: err instanceof Error ? err.message : String(err) } })
+        .catch(() => undefined);
+      failed++;
+    }
   }
 
   return { published, expired, failed };
@@ -1844,19 +1906,9 @@ export async function moveContent(
       if (newParentId === documentId) throw Errors.conflict("Cannot move a page under itself");
       const newParent = await loadAuthorized(db, ctx, newParentId); // scope-checks the destination
       if (newParent.kind !== "page") throw Errors.badRequest("Pages can only be nested under pages");
-      // Cycle prevention: walk up from the destination; reaching the moved page = its own descendant.
-      const guard = new Set<string>();
-      let cur: string | null = newParentId;
-      while (cur && !guard.has(cur)) {
-        guard.add(cur);
-        if (cur === documentId) throw Errors.conflict("Cannot move a page under its own descendant");
-        const rows: { parentId: string | null }[] = await db
-          .select({ parentId: contentItem.parentId })
-          .from(contentItem)
-          .where(eq(contentItem.documentId, cur))
-          .limit(1);
-        cur = rows[0]?.parentId ?? null;
-      }
+      // Acyclicity is re-checked INSIDE the write tx under a per-site lock (S2-M10),
+      // so a concurrent opposing reparent can't interleave between check and write
+      // and commit a cycle. (This pre-tx load only validates the destination/scope.)
       newSection = newParent.sectionId ?? newParent.documentId;
       if (!ctx.siteWide && !ctx.sections.includes(newSection)) {
         throw Errors.forbidden("Cannot move content into a section outside your scope");
@@ -1877,6 +1929,25 @@ export async function moveContent(
 
   await db.transaction(async (tx) => {
     if (reparent) {
+      // Serialize structural moves within the site so the acyclicity check and the
+      // reparent write are atomic — two opposing concurrent reparents can't both
+      // pass and form a cycle. The advisory xact lock auto-releases on commit/rollback.
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`move:${ctx.siteId}`}))`);
+      if (targetParentId !== null) {
+        // Re-walk up from the destination against COMMITTED state under the lock.
+        const guard = new Set<string>();
+        let cur: string | null = targetParentId;
+        while (cur && !guard.has(cur)) {
+          guard.add(cur);
+          if (cur === documentId) throw Errors.conflict("Cannot move a page under its own descendant");
+          const rows: { parentId: string | null }[] = await tx
+            .select({ parentId: contentItem.parentId })
+            .from(contentItem)
+            .where(eq(contentItem.documentId, cur))
+            .limit(1);
+          cur = rows[0]?.parentId ?? null;
+        }
+      }
       await tx
         .update(contentItem)
         .set({ parentId: targetParentId, sectionId: newSection })
@@ -2339,7 +2410,12 @@ export async function restoreContent(
     if (p[0]?.deletedAt) throw Errors.conflict("Restore the parent page first");
   }
 
-  // Restore the item + descendants that were trashed in the same sweep.
+  // Restore the item + ONLY the descendants trashed in the SAME sweep. softDelete
+  // stamps one shared `deletedAt` across a sweep and skips already-trashed nodes,
+  // so a descendant with a different timestamp was trashed separately (earlier) and
+  // must stay trashed (S2-M8) — restoring it would resurrect content the user never
+  // asked back. Scope both the walk and the update to the parent's sweep timestamp.
+  const ts = item.deletedAt;
   const ids = [documentId];
   const visited = new Set<string>([documentId]);
   let frontier = [documentId];
@@ -2347,12 +2423,12 @@ export async function restoreContent(
     const kids = await db
       .select({ documentId: contentItem.documentId })
       .from(contentItem)
-      .where(inArray(contentItem.parentId, frontier));
+      .where(and(inArray(contentItem.parentId, frontier), eq(contentItem.deletedAt, ts)));
     const next = kids.map((k) => k.documentId).filter((id) => !visited.has(id));
     next.forEach((id) => { visited.add(id); ids.push(id); });
     frontier = next;
   }
-  await db.update(contentItem).set({ deletedAt: null }).where(inArray(contentItem.documentId, ids));
+  await db.update(contentItem).set({ deletedAt: null }).where(and(inArray(contentItem.documentId, ids), eq(contentItem.deletedAt, ts)));
   return { restored: ids.length };
 }
 

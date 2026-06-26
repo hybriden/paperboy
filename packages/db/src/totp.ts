@@ -9,9 +9,17 @@ import { Secret, TOTP } from "otpauth";
 
 const ISSUER = "Paperboy";
 
-/** Stable key for encrypting TOTP secrets at rest (derived from the app secret). */
+const MFA_DEV_FALLBACK = "dev-mfa-secret-change-me-please-32x";
+
+/** Stable key for encrypting TOTP secrets at rest (derived from the app secret).
+ *  Uses `||` (not `??`) so the docker-compose `MFA_SECRET: ${MFA_SECRET:-}`
+ *  empty-string default falls through to SESSION_SECRET instead of deriving the
+ *  key from sha256("") — a public constant identical across every install. */
 function encKey(): Buffer {
-  const secret = process.env.MFA_SECRET ?? process.env.SESSION_SECRET ?? "dev-mfa-secret-change-me-please-32x";
+  const secret = process.env.MFA_SECRET || process.env.SESSION_SECRET || MFA_DEV_FALLBACK;
+  if (process.env.NODE_ENV === "production" && secret === MFA_DEV_FALLBACK) {
+    throw new Error("Refusing to derive the TOTP encryption key from the dev default: set MFA_SECRET or SESSION_SECRET in production");
+  }
   return createHash("sha256").update(secret).digest(); // 32 bytes for AES-256
 }
 
@@ -28,11 +36,21 @@ export function currentCode(secret: string): string {
   return new TOTP({ issuer: ISSUER, algorithm: "SHA1", digits: 6, period: 30, secret: Secret.fromBase32(secret) }).generate();
 }
 
-export function verifyTotp(secret: string, code: string): boolean {
+const TOTP_PERIOD = 30;
+
+/** Validate a code and return the ABSOLUTE time-step it matched (for single-use
+ *  enforcement), or null if invalid. window:1 → ±30s tolerance (3 steps). */
+export function matchTotpStep(secret: string, code: string): number | null {
   const token = code.replace(/\s/g, "");
-  if (!/^\d{6}$/.test(token)) return false;
-  const totp = new TOTP({ issuer: ISSUER, algorithm: "SHA1", digits: 6, period: 30, secret: Secret.fromBase32(secret) });
-  return totp.validate({ token, window: 1 }) !== null; // ±30s tolerance
+  if (!/^\d{6}$/.test(token)) return null;
+  const totp = new TOTP({ issuer: ISSUER, algorithm: "SHA1", digits: 6, period: TOTP_PERIOD, secret: Secret.fromBase32(secret) });
+  const delta = totp.validate({ token, window: 1 }); // matched offset in steps, or null
+  if (delta === null) return null;
+  return Math.floor(Date.now() / 1000 / TOTP_PERIOD) + delta;
+}
+
+export function verifyTotp(secret: string, code: string): boolean {
+  return matchTotpStep(secret, code) !== null;
 }
 
 /** AES-256-GCM encrypt → "ivHex:tagHex:cipherHex". */

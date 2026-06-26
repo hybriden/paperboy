@@ -121,7 +121,9 @@ async function ListBlockTeasers({ d, locale, preview, edit }: { d: Record<string
 function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; locale: string; preview: boolean }) {
   const d = blockData(b);
   // data-pb-* markers let the editor's preview map a click back to this block.
-  const edit = { "data-pb-block-index": index, "data-pb-block-type": b.blockType, "data-pb-shared": b.shared ? "true" : undefined };
+  // Only the attributes declared in @paperboycms/preview's ATTR contract — the
+  // former data-pb-shared was undeclared and read by nothing (L5).
+  const edit = { "data-pb-block-index": index, "data-pb-block-type": b.blockType };
   if (b.blockType === "HeroBlock") {
     const img = d.heroImage as { url?: string; alt?: string } | null | undefined;
     const cta = asText(d.ctaUrl);

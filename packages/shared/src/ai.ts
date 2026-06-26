@@ -195,6 +195,15 @@ function normalizeVariants(raw: string): string {
 }
 
 export async function aiAssist(req: AiRequest, cfg: AiConfig): Promise<AiResult> {
+  // Alt text must be derived from the IMAGE, not text. /ai/assist + MCP ai_assist
+  // only have the filename here; generating from it would be image-blind output
+  // dressed up as a real result (rule #1). Route callers to the dedicated vision
+  // endpoint regardless of whether a key is configured (L1).
+  if (req.task === "alt_text") {
+    throw new AiUnavailableError(
+      "Alt text must come from the image itself — call POST /ai/alt-text (vision), which sends the image bytes. /ai/assist only sees the filename.",
+    );
+  }
   const needsModel = REQUIRES_MODEL.has(req.task);
   if (!cfg.apiKey) {
     if (needsModel) throw new AiUnavailableError();

@@ -33,7 +33,12 @@ if [ "${use:-0}" -ge 90 ]; then
   alert disk "Disk ${use}% full on the Paperboy box" "df / shows ${use}% — prune backups/variants or grow the disk"
 else clear_state disk; fi
 
-# Yesterday's backup must exist (catches a silently-removed cron).
+# Yesterday's backup must exist (catches a silently-removed cron). BOTH halves of
+# the backup are required for a full restore, so monitor each independently — a
+# silently-failing uploads tar must not hide behind a healthy pg dump.
 if ! find /home/hanschr/paperboy-backups -name "paperboy-*.dump" -mtime -2 2>/dev/null | grep -q .; then
   alert backup "Paperboy backup is stale" "No pg dump newer than 48h in paperboy-backups/"
 else clear_state backup; fi
+if ! find /home/hanschr/paperboy-backups -name "uploads-*.tar.gz" -mtime -2 2>/dev/null | grep -q .; then
+  alert backup_uploads "Paperboy uploads backup is stale" "No uploads tarball newer than 48h in paperboy-backups/"
+else clear_state backup_uploads; fi

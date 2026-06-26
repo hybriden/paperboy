@@ -39,7 +39,9 @@ describe("aiAssist — no API key", () => {
     expect(sum.result).toBe("First sentence.");
   });
 
-  for (const task of ["improve", "rewrite", "translate", "variants", "alt_text", "write"] as const) {
+  // alt_text is refused on a DEDICATED path (points to the vision route) — see the
+  // "with a key" describe; the loop covers the other model-requiring tasks.
+  for (const task of ["improve", "rewrite", "translate", "variants", "write"] as const) {
     it(`refuses '${task}' with a self-teaching error instead of fake success`, async () => {
       await expect(aiAssist({ task, input: "some text", targetLocale: "nb" }, NO_KEY)).rejects.toThrow(AiUnavailableError);
       await expect(aiAssist({ task, input: "some text", targetLocale: "nb" }, NO_KEY)).rejects.toThrow(/Settings → AI/);
@@ -57,6 +59,10 @@ describe("aiAssist — provider failure with a key", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 500 }));
     const r = await aiAssist({ task: "meta_title", input: "Resilient title. More." }, { apiKey: "k", model: "m" });
     expect(r).toEqual({ result: "Resilient title", provider: "fallback" });
+  });
+
+  it("refuses alt_text (text-only) and points to the vision route, even with a key (L1)", async () => {
+    await expect(aiAssist({ task: "alt_text", input: "photo.jpg" }, { apiKey: "k", model: "m" })).rejects.toThrow(/\/ai\/alt-text|vision/i);
   });
 });
 

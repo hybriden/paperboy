@@ -55,7 +55,7 @@ interface AgentTool {
 
 const loc = z.string().optional().describe("Locale code (default 'en')");
 
-const TOOLS: AgentTool[] = [
+export const TOOLS: AgentTool[] = [
   {
     name: "list_content_types",
     description: "List all content types (name, kind, fields). ALWAYS call this first to learn the model.",
@@ -128,6 +128,10 @@ const TOOLS: AgentTool[] = [
         slug: a.slug as string | null | undefined,
         displayInNav: a.displayInNav as boolean | undefined,
         data: a.data as Record<string, unknown>,
+        // Merge by default (agent-API rule #5): a full replace silently drops
+        // fields set by prior calls and bricks the next publish. Mirrors the MCP
+        // update_content default.
+        merge: true,
       }),
   },
   {
