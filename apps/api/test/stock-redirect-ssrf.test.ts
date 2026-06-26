@@ -26,6 +26,15 @@ describe("stock download re-validates redirect hosts (SSRF)", () => {
         res.end(Buffer.from([1, 2, 3, 4]));
         return;
       }
+      if (req.url === "/big") {
+        // Stream > 5 MB in 1 MB chunks with NO Content-Length (chunked) — the cap
+        // must be enforced as bytes arrive, not after buffering the whole body.
+        res.writeHead(200, { "content-type": "image/png" });
+        const chunk = Buffer.alloc(1024 * 1024, 0);
+        for (let i = 0; i < 6; i++) res.write(chunk);
+        res.end();
+        return;
+      }
       res.writeHead(404).end();
     });
     await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
@@ -42,5 +51,9 @@ describe("stock download re-validates redirect hosts (SSRF)", () => {
   it("downloads normally when no redirect leaves the allowlist", async () => {
     const buf = await downloadBytes(`http://127.0.0.1:${port}/img`, "Test", allowed);
     expect(buf.length).toBe(4);
+  });
+
+  it("enforces the 5 MB cap on a Content-Length-less streamed body (S3-L7)", async () => {
+    await expect(downloadBytes(`http://127.0.0.1:${port}/big`, "Test", allowed)).rejects.toThrow(/5 MB|larger/i);
   });
 });

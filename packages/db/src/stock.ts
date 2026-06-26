@@ -209,11 +209,27 @@ export async function downloadBytes(
         continue;
       }
       if (!res.ok) throw Errors.badRequest(`${providerName} image download failed (${res.status}) — try again or pick a different photo.`);
-      const bytes = Buffer.from(await res.arrayBuffer());
-      if (bytes.length > MAX_IMPORT_BYTES) {
-        throw new AppError(413, "too_large", `${providerName} image is larger than the 5 MB asset limit — pick a different photo.`);
+      const tooLarge = () => new AppError(413, "too_large", `${providerName} image is larger than the 5 MB asset limit — pick a different photo.`);
+      // Reject early on a declared oversize, before reading a single byte.
+      const declared = Number(res.headers.get("content-length"));
+      if (Number.isFinite(declared) && declared > MAX_IMPORT_BYTES) throw tooLarge();
+      // Stream + enforce the cap as bytes arrive, so a missing/lying Content-Length
+      // can't make us buffer an unbounded body into memory (S3-L7).
+      const reader = res.body?.getReader();
+      if (!reader) return Buffer.alloc(0);
+      const chunks: Buffer[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.byteLength;
+        if (total > MAX_IMPORT_BYTES) {
+          ac.abort(); // stop pulling more bytes
+          throw tooLarge();
+        }
+        chunks.push(Buffer.from(value));
       }
-      return bytes;
+      return Buffer.concat(chunks);
     }
     throw Errors.badRequest(`${providerName} image download failed (too many redirects).`);
   } finally {
