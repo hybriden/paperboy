@@ -683,6 +683,7 @@ function ChipSelect({
           <button
             key={o}
             type="button"
+            aria-pressed={value.includes(o)}
             onClick={() => toggle(o)}
             className={`rounded-full border px-2.5 py-0.5 text-xs ${value.includes(o) ? "border-accent bg-accent/15 text-fg" : "border-line text-muted hover:bg-line/60"}`}
           >

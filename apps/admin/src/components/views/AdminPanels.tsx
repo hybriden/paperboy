@@ -894,7 +894,7 @@ function UserDialog({
           <span className="field-label">Roles</span>
           <div className="flex flex-wrap gap-1.5">
             {ROLES.map((r) => (
-              <button key={r} type="button" onClick={() => toggleRole(r)}
+              <button key={r} type="button" aria-pressed={roles.includes(r)} onClick={() => toggleRole(r)}
                 className={`rounded-full border px-2.5 py-0.5 text-xs ${roles.includes(r) ? "border-accent bg-accent/15 text-fg" : "border-line text-muted hover:bg-line/60"}`}>{r}</button>
             ))}
           </div>

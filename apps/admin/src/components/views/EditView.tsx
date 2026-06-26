@@ -179,7 +179,12 @@ export function EditView() {
 }
 
 function Welcome({ onClearCrumb }: { onClearCrumb: () => void }) {
-  onClearCrumb();
+  // Clear the breadcrumb in an effect, not during render — calling the ancestor's
+  // setCrumb mid-render is a render-phase update to a different component (React 19
+  // warns + schedules an extra pass). Matches the other views' useEffect pattern (M11).
+  useEffect(() => {
+    onClearCrumb();
+  }, [onClearCrumb]);
   return (
     <div className="grid h-full place-items-center p-10 text-center">
       <div className="max-w-md animate-slide-up">
