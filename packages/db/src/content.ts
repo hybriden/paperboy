@@ -2403,7 +2403,12 @@ export async function restoreContent(
     if (p[0]?.deletedAt) throw Errors.conflict("Restore the parent page first");
   }
 
-  // Restore the item + descendants that were trashed in the same sweep.
+  // Restore the item + ONLY the descendants trashed in the SAME sweep. softDelete
+  // stamps one shared `deletedAt` across a sweep and skips already-trashed nodes,
+  // so a descendant with a different timestamp was trashed separately (earlier) and
+  // must stay trashed (S2-M8) — restoring it would resurrect content the user never
+  // asked back. Scope both the walk and the update to the parent's sweep timestamp.
+  const ts = item.deletedAt;
   const ids = [documentId];
   const visited = new Set<string>([documentId]);
   let frontier = [documentId];
@@ -2411,12 +2416,12 @@ export async function restoreContent(
     const kids = await db
       .select({ documentId: contentItem.documentId })
       .from(contentItem)
-      .where(inArray(contentItem.parentId, frontier));
+      .where(and(inArray(contentItem.parentId, frontier), eq(contentItem.deletedAt, ts)));
     const next = kids.map((k) => k.documentId).filter((id) => !visited.has(id));
     next.forEach((id) => { visited.add(id); ids.push(id); });
     frontier = next;
   }
-  await db.update(contentItem).set({ deletedAt: null }).where(inArray(contentItem.documentId, ids));
+  await db.update(contentItem).set({ deletedAt: null }).where(and(inArray(contentItem.documentId, ids), eq(contentItem.deletedAt, ts)));
   return { restored: ids.length };
 }
 
