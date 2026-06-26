@@ -1,8 +1,7 @@
 import { draftMode } from "next/headers";
 import { type NextRequest, NextResponse } from "next/server";
 import { fetchByPath, fetchBySlug } from "../../lib/delivery";
-
-const PREVIEW_SECRET = process.env.PREVIEW_SECRET ?? "dev-preview-secret-change-me";
+import { matchesPreviewSecret, safeRedirectLocation } from "../../lib/preview";
 
 /**
  * Draft-mode entry. Validates the shared secret AND that the target resolves to
@@ -17,7 +16,7 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   const path = searchParams.get("path");
   const slug = searchParams.get("slug");
 
-  if (secret !== PREVIEW_SECRET) {
+  if (!matchesPreviewSecret(secret)) {
     return new NextResponse("Invalid preview secret", { status: 401 });
   }
 
@@ -33,9 +32,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   if (!redirectTo) return new NextResponse("No such content", { status: 404 });
 
   (await draftMode()).enable();
-  // Build the absolute URL from the forwarded host (NOT req.url, whose host is
-  // Next's internal bind address → would emit localhost and break LAN/domain).
-  const proto = req.headers.get("x-forwarded-proto") ?? "http";
-  const host = req.headers.get("host") ?? new URL(req.url).host;
-  return NextResponse.redirect(new URL(redirectTo, `${proto}://${host}`));
+  // RELATIVE Location: the browser resolves it against the origin it actually
+  // connected to, so we neither trust the spoofable Host header (open redirect,
+  // S2-M12) nor emit Next's internal bind address. safeRedirectLocation collapses
+  // leading slashes so a crafted locale can't make it protocol-relative.
+  return new NextResponse(null, { status: 307, headers: { Location: safeRedirectLocation(redirectTo) } });
 }
