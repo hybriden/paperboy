@@ -61,6 +61,16 @@ describe("Media: upload, serve, list, and the image field type", () => {
     expect(served.headers["content-disposition"]).toBe("attachment");
   });
 
+  it("sanitizes the stored filename — no path separators, bounded length (L8)", async () => {
+    const nasty = `../../../etc/passwd${"A".repeat(300)}.png`;
+    const res = await upload(s.app, admin, nasty, "image/png", PNG);
+    expect(res.statusCode).toBe(200);
+    const fn = res.json().filename as string;
+    expect(fn).not.toContain("/");
+    expect(fn).not.toContain("\\");
+    expect(fn.length).toBeLessThanOrEqual(255);
+  });
+
   it("rejects an SVG/HTML payload by MAGIC BYTES even if named .png (415)", async () => {
     const res = await upload(s.app, admin, "evil.png", "image/png", SVG);
     expect(res.statusCode).toBe(415);
