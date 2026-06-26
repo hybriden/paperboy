@@ -1728,7 +1728,14 @@ export async function runScheduledPublish(
         at: new Date().toISOString(),
       });
       published++;
-    } catch {
+    } catch (err) {
+      // Leave a trail rather than swallow it (rule #6 spirit) — mirrors the
+      // validation branch and the expire loop, so a failed scheduled publish is
+      // diagnosable from the audit log (L7).
+      await db
+        .insert(auditLog)
+        .values({ action: "content.schedule_failed", documentId: d.documentId, locale: d.locale, detail: { reason: err instanceof Error ? err.message : String(err) } })
+        .catch(() => undefined);
       failed++;
     }
   }
