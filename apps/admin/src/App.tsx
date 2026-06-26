@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import type { SessionUser } from "@paperboy/shared";
@@ -11,6 +12,7 @@ import { UserContext } from "./lib/user.js";
 export function App() {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const qc = useQueryClient();
 
   useEffect(() => {
     // Restore the active site (multisite) before any content query runs.
@@ -18,6 +20,7 @@ export function App() {
     setUnauthorizedHandler(() => {
       setCsrf(null);
       setUser(null);
+      qc.clear(); // drop one principal's RBAC/site-scoped cache at the auth boundary (S3-M4)
     });
     api
       .me()
@@ -28,7 +31,7 @@ export function App() {
       .catch(() => setUser(null))
       .finally(() => setLoading(false));
     return () => setUnauthorizedHandler(null);
-  }, []);
+  }, [qc]);
 
   async function logout() {
     try {
@@ -36,7 +39,15 @@ export function App() {
     } finally {
       setCsrf(null);
       setUser(null);
+      qc.clear(); // no previous-session data survives into the next login (S3-M4)
     }
+  }
+
+  // Clear any stale cache before a fresh principal's data loads (e.g. the SPA was
+  // opened with a different live session cookie than the last in-memory user).
+  function onLogin(u: SessionUser) {
+    qc.clear();
+    setUser(u);
   }
 
   if (loading) {
@@ -46,7 +57,7 @@ export function App() {
       </div>
     );
   }
-  if (!user) return <Login onLogin={setUser} />;
+  if (!user) return <Login onLogin={onLogin} />;
 
   return (
     <UserContext.Provider value={{ user, logout }}>
