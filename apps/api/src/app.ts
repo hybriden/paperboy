@@ -62,6 +62,17 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   mkdirSync(env.UPLOADS_DIR, { recursive: true });
   process.env.MEDIA_PUBLIC_BASE = env.MEDIA_PUBLIC_BASE;
   app.decorate("uploadsDir", env.UPLOADS_DIR);
+
+  // Baseline security headers on EVERY response (S3-M2) — done inline rather than
+  // pulling in @fastify/helmet. HSTS only when cookies are Secure (i.e. real HTTPS),
+  // so a non-TLS internal/demo deploy isn't told to force https. A CSP is left to
+  // the edge/frontends (a meaningful one for the JSON API + Swagger UI needs nonces).
+  app.addHook("onSend", async (_req, reply) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("Referrer-Policy", "no-referrer");
+    reply.header("X-Frame-Options", "DENY");
+    if (env.COOKIE_SECURE) reply.header("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+  });
   app.decorate("aiConfig", { apiKey: env.ANTHROPIC_API_KEY, model: env.AI_MODEL });
   app.decorate("stockConfig", { unsplashKey: env.UNSPLASH_ACCESS_KEY });
 
