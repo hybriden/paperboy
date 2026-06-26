@@ -24,10 +24,21 @@ break; fixed anyway). **M7/M8** transient/DoS failures — fixed with happy-path
 **M9** partial — made `trustProxy` env-configurable (`TRUST_PROXY`); the deployment-side hardening (hop
 count / drop the public 8091 binding) is topology-specific and left to ops.
 
-**Remaining (~22):** **S2-M2** PREVIEW_SECRET prod guard (apps/web — no test harness here); **admin-React**
-M11, S3-M4, S3-L4, S3-L5 (no component-test harness — would need one stood up); **S3-M2** global security
-headers (adds `@fastify/helmet` dep); **S3-M8** stock-image redirect SSRF; and the low/quality tail
-(S3-L1 web CSP, S3-L6 action SHA-pin, S3-L7 stock streaming cap, plus sweep-2 quality items S2-M1/M3/M4/M6–M8/M11).
+**Group A cleared (10 more):** S2-M4 (delivery fan-out budget), S2-M8 (restore sweep scoping), S2-L1 (2FA
+session eviction), S3-M3 (asset variant cleanup on delete — the earlier "S3-M3" commit was actually S2-M3
+Vary; both are now genuinely done), S3-M8 (stock redirect SSRF), S3-L7 (stock streaming cap), L1 (alt_text →
+vision route), L2 (agent SSE error sanitize), L3 (mgmt search bounds), L8 (filename sanitize). Each red→green;
+concurrency/SSRF races verified red by disabling the fix. Full suite **642** + client 11 + preview 14, lint +
+typecheck clean.
+
+**Remaining (~17):**
+- **apps/web (4)** — no test harness here: S2-M2 PREVIEW_SECRET prod guard, S2-M11 `?pb` draft exposure,
+  S2-M12 draft-redirect open-redirect, S3-L1 web CSP.
+- **admin-React (6)** — no component-test harness (only Playwright e2e): M11 render-phase setCrumb, S3-M4
+  query-cache clear on auth, S3-L4/S3-L5 dashboard invalidation, S2-M6/S2-M7 a11y (axe-e2e-testable).
+- **S3-M2** global security headers (adds `@fastify/helmet`).
+- **Config/docs (4):** S2-M1 Dockerfile `.env`/root, S3-L6 action SHA-pin, L4 client README, L5 data-pb-shared.
+- **Latent/untestable (2):** L6 ticker single-instance guard, L7 promote-loop audit trail.
 
 ## Method
 
