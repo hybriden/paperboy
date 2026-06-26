@@ -125,36 +125,48 @@ describe("Stock images: config (encrypted, write-only), search, import", () => {
     expect(rows.some((r) => r.documentId === asset.documentId)).toBe(true);
   });
 
+  // Each download-path test below uses its OWN photo id: stock import is
+  // idempotent per provider photo, so re-importing "abc123" would return the
+  // asset stored by the import test above instead of exercising the download.
   it("an alt override wins over the provider description", async () => {
-    const res = await s.app.inject({ method: "POST", url: "/api/v1/manage/stock/import", headers: authHeaders(admin), payload: { providerId: "abc123", alt: "Custom alt" } });
-    expect(res.statusCode).toBe(200);
-    expect(res.json().alt).toBe("Custom alt");
+    knobs.photo = { ...PHOTO, id: "alt-override" };
+    try {
+      const res = await s.app.inject({ method: "POST", url: "/api/v1/manage/stock/import", headers: authHeaders(admin), payload: { providerId: "alt-override", alt: "Custom alt" } });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().alt).toBe("Custom alt");
+    } finally {
+      knobs.photo = PHOTO;
+    }
   });
 
   it("rejects non-image bytes from the provider by magic sniff (415, nothing persisted)", async () => {
+    knobs.photo = { ...PHOTO, id: "sniff-bad" };
     knobs.imageBytes = Buffer.from("<html>not an image, definitely</html>");
     try {
-      const res = await s.app.inject({ method: "POST", url: "/api/v1/manage/stock/import", headers: authHeaders(admin), payload: { providerId: "abc123" } });
+      const res = await s.app.inject({ method: "POST", url: "/api/v1/manage/stock/import", headers: authHeaders(admin), payload: { providerId: "sniff-bad" } });
       expect(res.statusCode).toBe(415);
     } finally {
       knobs.imageBytes = PNG;
+      knobs.photo = PHOTO;
     }
   });
 
   it("rejects downloads over the 5 MB asset cap (413)", async () => {
+    knobs.photo = { ...PHOTO, id: "too-big" };
     knobs.imageBytes = Buffer.concat([PNG, Buffer.alloc(6 * 1024 * 1024, 2)]);
     try {
-      const res = await s.app.inject({ method: "POST", url: "/api/v1/manage/stock/import", headers: authHeaders(admin), payload: { providerId: "abc123" } });
+      const res = await s.app.inject({ method: "POST", url: "/api/v1/manage/stock/import", headers: authHeaders(admin), payload: { providerId: "too-big" } });
       expect(res.statusCode).toBe(413);
     } finally {
       knobs.imageBytes = PNG;
+      knobs.photo = PHOTO;
     }
   });
 
   it("SSRF guard: refuses a download URL outside the provider's hosts (400)", async () => {
-    knobs.photo = { ...PHOTO, urls: { ...PHOTO.urls, regular: "https://evil.example.com/grab?x=1" } };
+    knobs.photo = { ...PHOTO, id: "ssrf", urls: { ...PHOTO.urls, regular: "https://evil.example.com/grab?x=1" } };
     try {
-      const res = await s.app.inject({ method: "POST", url: "/api/v1/manage/stock/import", headers: authHeaders(admin), payload: { providerId: "abc123" } });
+      const res = await s.app.inject({ method: "POST", url: "/api/v1/manage/stock/import", headers: authHeaders(admin), payload: { providerId: "ssrf" } });
       expect(res.statusCode).toBe(400);
       expect(res.json().message).toContain("evil.example.com");
     } finally {

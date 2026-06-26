@@ -9,7 +9,7 @@ import {
 } from "@paperboy/shared";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { type AssetRecord, insertAsset } from "./assets.js";
+import { type AssetRecord, findAssetBySource, insertAsset } from "./assets.js";
 import type { Database } from "./client.js";
 import { AppError, Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
@@ -150,6 +150,13 @@ export async function importStockImage(
   if (!active) throw Errors.badRequest(UNCONFIGURED);
 
   const resolved = await fromProvider(active.provider.resolve(input.providerId, { apiKey: active.apiKey }));
+
+  // Idempotent import: if this exact provider photo is already in the active
+  // site's library, return it instead of downloading + inserting a byte-identical
+  // copy. Agents re-running the same "find a photo of X" task would otherwise pile
+  // up duplicates (every duplicate in production arrived this way via MCP).
+  const existing = await findAssetBySource(db, ctx, resolved.sourceMeta.provider, resolved.sourceMeta.providerId);
+  if (existing) return existing;
 
   // SSRF defense-in-depth: only ever download from the provider's own hosts.
   // (The URL came from the provider API, never from the user/agent.)

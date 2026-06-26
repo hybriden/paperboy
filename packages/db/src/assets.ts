@@ -1,5 +1,5 @@
 import type { AssetSourceMeta } from "@paperboy/shared";
-import { and, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
@@ -86,6 +86,33 @@ export async function listAssets(db: Database, ctx: AccessContext): Promise<Asse
     .where(eq(asset.siteId, ctx.siteId))
     .orderBy(desc(asset.createdAt), desc(asset.id));
   return rows.map(toRecord);
+}
+
+/**
+ * Find an asset already imported from a given provider photo in the active site,
+ * or null. Used to keep stock import idempotent — re-importing the same photo
+ * returns the existing asset instead of a byte-identical duplicate. Site-scoped
+ * (per-site media, D2); returns the earliest copy if more than one exists.
+ */
+export async function findAssetBySource(
+  db: Database,
+  ctx: AccessContext,
+  provider: string,
+  providerId: string,
+): Promise<AssetRecord | null> {
+  const rows = await db
+    .select()
+    .from(asset)
+    .where(
+      and(
+        eq(asset.siteId, ctx.siteId),
+        sql`${asset.sourceMeta}->>'provider' = ${provider}`,
+        sql`${asset.sourceMeta}->>'providerId' = ${providerId}`,
+      ),
+    )
+    .orderBy(asc(asset.id))
+    .limit(1);
+  return rows[0] ? toRecord(rows[0]) : null;
 }
 
 export async function getAssetRecord(db: Database, documentId: string): Promise<AssetRecord> {
