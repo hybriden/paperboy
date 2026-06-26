@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { buildContentSecurityPolicy } from "./app/lib/csp";
 
 /**
  * Dynamic CSP frame-ancestors so the admin can embed the preview iframe on ANY
@@ -20,7 +21,7 @@ export function middleware(req: NextRequest) {
     "http://localhost:8093",
     ...extra,
   ].filter(Boolean).join(" ");
-  res.headers.set("Content-Security-Policy", `frame-ancestors ${ancestors}`);
+  res.headers.set("Content-Security-Policy", buildContentSecurityPolicy(ancestors));
   return res;
 }
 

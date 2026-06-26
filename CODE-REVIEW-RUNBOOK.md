@@ -29,21 +29,25 @@ security headers, inline — no helmet dep), S2-M1 (`.env` out of image layers),
 (data-pb-shared dropped), L7 (promote-loop audit). Each code fix red→green (races verified red by disabling
 the fix); config/docs by inspection. Full suite **643** + client 11 + preview 14, lint + typecheck clean.
 
-### Done: ~51 of 63 findings — all Highs, all Mediums except the harness-blocked ones, most Lows.
+### Done: ~60 of 63 findings — all Highs, all Mediums, all Lows except 3 deploy/latent items.
 
-**Remaining (12) — all blocked on a harness or a deploy step, not on logic:**
-- **apps/web (4)** — `apps/web` has a `test` script but no test files; needs a Next test harness stood up first:
-  S2-M2 PREVIEW_SECRET prod guard, S2-M11 `?pb` draft exposure, S2-M12 draft-redirect open-redirect, S3-L1 web CSP.
-- **admin-React (6)** — no component-test harness (only Playwright+axe e2e): M11 render-phase setCrumb, S3-M4
-  query-cache clear on auth, S3-L4/S3-L5 dashboard invalidation, S2-M6/S2-M7 a11y (the a11y two are axe-e2e-testable).
-- **Deploy/CI, can't verify from the suite (2):** S2-M1 *run-as-non-root* half (TODO in Dockerfile — needs Next
-  `.next/cache` + uploads-volume ownership checks on a real build); S3-L6 SHA-pin (needs the verified
-  `pnpm/action-setup@v6` commit SHA — a guessed SHA breaks CI).
-- **Latent, untestable here (1):** L6 ticker single-instance guard (needs a session advisory lock on a reserved
-  connection held across the tick's webhook calls; project ships single-container, so no multi-replica to test).
+**PR #15 (merged):** ~51 findings — see the sweep sections above.
 
-Everything left needs your call: stand up the **apps/web** + **admin component** test harnesses (unlocks 10),
-or accept inspection-only fixes for them.
+**PR #16 (apps/web + admin, 10):**
+- **apps/web (4):** S2-M2 (dev PREVIEW_SECRET never matches in prod), S2-M11 (constant-time `?pb` compare),
+  S2-M12 (relative draft redirect — no Host open-redirect), S3-L1 (CSP object-src/base-uri). Unit-tested via
+  extracted helpers (`apps/web/app/lib/preview.ts`, `csp.ts`); `next build` verified.
+- **admin (6):** S3-M4 (query-cache clear on auth), M11 (Welcome useEffect), S2-M6 (group aria-label), S2-M7
+  (chip aria-pressed), S3-L4 (publish/unpublish/approve/schedule → `["dashboard"]`), S3-L5 (alt save/delete →
+  `["dashboard"]`). Per repo convention these UI behaviours are gated by the Playwright+axe e2e in CI;
+  verified locally with typecheck + lint + admin build.
+
+**Remaining (3) — deploy/CI/latent, deliberately deferred (each documented inline):**
+- **S2-M1** *run-as-non-root* half — `TODO` in the Dockerfile; needs a real build to verify Next's `.next/cache`
+  writes + chowning the existing uploads volume. (The `.env`-out-of-layers half shipped in #15.)
+- **S3-L6** — SHA-pin `pnpm/action-setup@v6`; needs the verified commit SHA (a guessed one breaks CI).
+- **L6** — ticker single-instance guard; latent on a single-container deploy, needs a reserved-connection
+  advisory lock held across the tick with no multi-replica setup to test against.
 
 ## Method
 

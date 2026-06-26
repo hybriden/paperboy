@@ -97,6 +97,7 @@ export function MediaTab() {
     mutationFn: (v: { id: string; alt: string }) => api.updateAssetAlt(v.id, v.alt),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // alt text drives the dashboard missingAlt count (S3-L5)
       setEditing(null);
       toast.success("Alt text saved");
     },
@@ -105,6 +106,7 @@ export function MediaTab() {
     mutationFn: (id: string) => api.deleteAsset(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["assets"] });
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // a deleted image changes the missingAlt count (S3-L5)
       setEditing(null);
       toast.success("Image deleted");
     },
