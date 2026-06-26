@@ -81,7 +81,7 @@ import {
   getDashboard,
   renameSite,
 } from "@paperboy/db";
-import { unlink, writeFile } from "node:fs/promises";
+import { readdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   Asset,
@@ -475,6 +475,12 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       const fileName = relativePath.replace(`${MEDIA_PREFIX}/`, "");
       if (fileName && !fileName.includes("/") && !fileName.includes("..")) {
         await unlink(join(app.uploadsDir, fileName)).catch(() => undefined);
+        // Also remove every cached transform variant (`<file>.w..q..fmt`), or the
+        // derived bytes stay publicly servable from _variants/ after delete (S3-M3).
+        const variantsDir = join(app.uploadsDir, "_variants");
+        for (const v of await readdir(variantsDir).catch(() => [] as string[])) {
+          if (v.startsWith(`${fileName}.`)) await unlink(join(variantsDir, v)).catch(() => undefined);
+        }
       }
       await audit(app.db, { actorUserId: req.user!.id, action: "asset.delete", documentId: req.params.documentId, ip: req.ip });
       return { ok: true };
