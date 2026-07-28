@@ -243,6 +243,42 @@ login rate limit.
 > `scripts/setup.sh`, the API refuses to boot and the seed refuses to run rather than
 > falling back to the placeholder secrets committed here.
 
+## Backups (read this before you put real content in)
+
+Nothing backs itself up. `ops/backup.sh` is a working reference: nightly `pg_dump -Fc`
+of the database **plus** a tar of the uploads volume, 14-day rotation, and an alert on
+failure. Install it on the host and cron it:
+
+```bash
+cp ops/backup.sh ops/monitor.sh ~/paperboy-ops/
+echo "https://ntfy.sh/<your-private-topic>" | sed 's#.*/##' > ~/paperboy-ops/.ntfy-topic
+crontab -e   # 30 3 * * * /home/you/paperboy-ops/backup.sh >> /home/you/paperboy-ops/backup.log 2>&1
+             # */5 * * * * /home/you/paperboy-ops/monitor.sh >> /home/you/paperboy-ops/monitor.log 2>&1
+```
+
+Two things it deliberately refuses to do quietly:
+
+- **It will not "succeed" with an empty media archive.** The uploads volume name carries
+  Compose's project prefix (your directory name), so a renamed checkout or a `-p` flag
+  points at a *different* volume — and `docker run -v` would happily **create an empty
+  one**. The script resolves the real name from Compose, asserts the volume already
+  exists, and compares the archive's entry count against the live file count.
+- **Backups are a full credential dump** — argon2id hashes, encrypted TOTP secrets,
+  session/MCP tokens, delivery keys. It writes mode-600 files into a 700 directory.
+  Treat the backup directory as being as sensitive as the database itself.
+
+**Restore is in [`ops/README.md`](ops/README.md)**, and the important part is that the
+app reads a fixed database name (`…/paperboy`, hardcoded in `docker-compose.yml`) — so
+a restore must *swap into* that name, which the runbook does via `ALTER DATABASE …
+RENAME`. Restoring into a side database leaves the app on the broken one. Verify both
+archives before you delete anything, and use the same timestamp for the dump and the
+uploads tar so rows and media match.
+
+> Known gap, stated plainly: backups land on the **same disk** as the data. They
+> survive `rm -rf`, a reseed and Postgres corruption — not a disk failure. Add one
+> `rclone copy ~/paperboy-backups remote:paperboy` line to `backup.sh` once you have a
+> bucket.
+
 ## Docs
 - **`CLAUDE.md`** — how to develop & deploy safely (and how AI agents should work in the repo).
 - **`STACK.md`** — the stack and the reasoning behind each choice.
