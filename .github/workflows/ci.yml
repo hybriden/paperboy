@@ -41,12 +41,12 @@ jobs:
           --health-retries 10
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
         # version comes from "packageManager" in package.json
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: pnpm
@@ -60,8 +60,12 @@ jobs:
       - name: Typecheck
         run: pnpm -r typecheck
 
-      - name: API tests (Vitest + Postgres)
-        run: pnpm --filter @paperboy/api test
+      # Runs WITH coverage so the thresholds in apps/api/vitest.config.ts are
+      # enforced here, not just measurable locally. This one suite covers
+      # apps/api + packages/db + packages/shared (it drives real HTTP against a
+      # real Postgres), so a drop in any of the three fails the build.
+      - name: API tests + coverage (Vitest + Postgres)
+        run: pnpm --filter @paperboy/api test:coverage
         env:
           # The suite migrates + seeds this database itself (isolated per run).
           TEST_DATABASE_URL: postgresql://paperboy:paperboy@localhost:5433/paperboy_test
@@ -69,22 +73,55 @@ jobs:
       - name: Admin unit tests (Vitest)
         run: pnpm --filter @paperboy/admin test
 
+      # @paperboycms/client and @paperboycms/preview are PUBLISHED to npm and
+      # apps/web's specs pin the data-pb-* markers the preview bridge reads —
+      # until this step existed all three were gated only by a manual local run.
+      - name: Package + web tests (client, preview, web)
+        run: pnpm --filter @paperboycms/client --filter @paperboycms/preview --filter @paperboy/web test
+
       - name: Build admin (Vite)
         run: pnpm --filter @paperboy/admin build
 
       - name: Build web (Next.js)
         run: pnpm --filter @paperboy/web build
 
+  # The README's literal quickstart, in a clean checkout, with NO extra env.
+  # This exists because the documented command provably could not boot: compose's
+  # placeholder secrets are refused under NODE_ENV=production, so api crash-looped
+  # and web/admin (which wait on service_healthy) never started. Every other job
+  # supplies its own secrets, so none of them would ever have caught it.
+  quickstart:
+    name: quickstart (the documented path, clean checkout)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - name: Run the documented setup step
+        run: ./scripts/setup.sh
+
+      - name: Bring up the documented stack (no extra env)
+        run: docker compose up -d --build --wait
+
+      - name: The three documented URLs must answer
+        run: |
+          curl --retry 20 --retry-delay 3 --retry-all-errors -fsS http://localhost:8091/health/ready
+          curl --retry 20 --retry-delay 3 --retry-all-errors -fsS -o /dev/null http://localhost:8090/
+          curl --retry 20 --retry-delay 3 --retry-all-errors -fsS -o /dev/null http://localhost:8092/
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+
   e2e:
     name: e2e (Playwright vs composed stack)
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: pnpm
@@ -109,6 +146,15 @@ jobs:
           SESSION_SECRET: "ci-e2e-session-secret-not-a-placeholder"
           CSRF_SECRET: "ci-e2e-csrf-secret-not-a-placeholder"
           MFA_SECRET: "ci-e2e-mfa-secret-not-a-placeholder"
+          # Signs/verifies the admin's short-lived preview tokens. The api and web
+          # services must agree, or the in-editor preview iframe has no way in.
+          PREVIEW_SECRET: "ci-e2e-preview-secret-not-a-placeholder"
+          # The stack also runs `init` (seed) under NODE_ENV=production, where the
+          # seed now refuses the published demo credentials and omits the
+          # editor/author/viewer logins. The e2e specs log in AS those fixtures, so
+          # this throwaway stack opts in explicitly — which is the whole point of
+          # the flag: a real deploy has to make the same choice consciously.
+          ALLOW_DEMO_CREDENTIALS: "true"
           # 30 tests + retries from one runner IP — the production limits
           # (10 logins/min, 300 requests/min) would turn a single slow test
           # into a 429 cascade that reads as flaky "element not visible".
@@ -129,7 +175,7 @@ jobs:
 
       - name: Upload traces/screenshots (on failure)
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: playwright-artifacts
           path: |

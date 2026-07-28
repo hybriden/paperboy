@@ -21,10 +21,10 @@ export function textToDoc(text: string): Doc {
 }
 
 /** Lazy-loaded TipTap rich text (ProseMirror bundle only loads when an RTE field is shown). */
-export function RichText({ id, value, onChange }: { id: string; value: unknown; onChange: (doc: unknown) => void }) {
+export function RichText({ id, value, onChange, disabled = false }: { id: string; value: unknown; onChange: (doc: unknown) => void; disabled?: boolean }) {
   return (
     <Suspense fallback={<div className="h-[150px] animate-pulse rounded-[var(--radius)] bg-line/40" />}>
-      <Editor id={id} value={value} onChange={onChange} />
+      <Editor id={id} value={value} onChange={onChange} disabled={disabled} />
     </Suspense>
   );
 }

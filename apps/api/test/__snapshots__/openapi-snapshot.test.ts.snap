@@ -654,6 +654,18 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "GET /api/v1/manage/preview-token": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "expiresAt",
+      "token",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "GET /api/v1/manage/site": {
     "requestBodyRequired": [],
     "requiredParams": [],
@@ -901,6 +913,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
   "POST /api/v1/auth/2fa/enable": {
     "requestBodyRequired": [
       "code",
+      "password",
     ],
     "requiredParams": [],
     "response200Props": [

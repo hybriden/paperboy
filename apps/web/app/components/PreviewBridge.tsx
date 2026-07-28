@@ -11,7 +11,11 @@ import { initPreviewBridge } from "@paperboycms/preview";
  * frontend, Neoteric, and the CMS admin all share one contract instead of
  * hand-rolled copies that drift.
  */
-export function PreviewBridge() {
-  useEffect(() => initPreviewBridge({ accent: "#c8362f" }), []);
+export function PreviewBridge({ parentOrigin }: { parentOrigin?: string }) {
+  // parentOrigin pins the admin the bridge will talk to: inbound messages must
+  // come from it, and outbound ones are addressed to it instead of "*". The bridge
+  // always requires event.source to BE the embedding window, so this is
+  // defence-in-depth — but it is what a customer copying this file should do.
+  useEffect(() => initPreviewBridge({ accent: "#c8362f", parentOrigin }), [parentOrigin]);
   return null;
 }

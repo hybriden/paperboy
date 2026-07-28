@@ -18,6 +18,52 @@ import { eq, sql } from "drizzle-orm";
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
+// The seeded logins and delivery keys are demo FIXTURES, and this file ships in a
+// public repo — so every one of these strings is a published constant.
+const DEFAULT_ADMIN_EMAIL = "admin@paperboy.test";
+const DEFAULT_ADMIN_PASSWORD = "Admin!Passw0rd";
+const DEFAULT_PUBLIC_KEY = "pk_live_seed_public_key_value";
+const DEFAULT_PREVIEW_KEY = "prv_seed_preview_key_value";
+const PLACEHOLDER_CREDENTIAL = /change-me|please-override/i;
+
+/** Is this run allowed to create the published demo credentials? */
+function demoCredentialsAllowed(): boolean {
+  return process.env.NODE_ENV !== "production" || process.env.ALLOW_DEMO_CREDENTIALS === "true";
+}
+
+/**
+ * Refuse to populate a PRODUCTION database with world-known credentials.
+ *
+ * FORCE_SEED guards the destructive half (never wipe a populated DB). This guards
+ * the constructive half, which was open: a first seed would happily create
+ * `admin@paperboy.test / Admin!Passw0rd` plus a preview delivery key granting
+ * every draft — all published in this repo. The editor/author/viewer logins took
+ * no env var at all, so no amount of operator diligence removed them; production
+ * now simply doesn't get them (see `demoCredentialsAllowed`).
+ *
+ * Runs BEFORE migrate/connect so a refusal can never have touched the database.
+ */
+function assertSeedCredentialsSafe(): void {
+  if (demoCredentialsAllowed()) return;
+
+  const weak = (
+    [
+      ["SEED_ADMIN_PASSWORD", process.env.SEED_ADMIN_PASSWORD, DEFAULT_ADMIN_PASSWORD],
+      ["PAPERBOY_PUBLIC_KEY", process.env.PAPERBOY_PUBLIC_KEY, DEFAULT_PUBLIC_KEY],
+      ["PAPERBOY_PREVIEW_KEY", process.env.PAPERBOY_PREVIEW_KEY, DEFAULT_PREVIEW_KEY],
+    ] as const
+  )
+    .filter(([, value, shipped]) => !value || value === shipped || PLACEHOLDER_CREDENTIAL.test(value))
+    .map(([name]) => name);
+
+  if (weak.length === 0) return;
+  throw new Error(
+    `Refusing to seed a production database with published demo credentials: ${weak.join(", ")} ${
+      weak.length === 1 ? "is" : "are"
+    } unset or still a shipped default. These strings are committed in a public repo, so seeding them would hand anyone who reads it an admin login and preview (all-drafts) delivery access. Fix: run \`./scripts/setup.sh\` (or \`.\\scripts\\setup.ps1\` on Windows) to generate real values into .env, then re-run. Or set ALLOW_DEMO_CREDENTIALS=true if this really is a throwaway demo/CI stack.`,
+  );
+}
+
 // --- SEO pane: search + social metadata, shared by every page type ---------
 
 // The out-of-the-box page model: LandingPage (block canvas), ArticlePage
@@ -147,6 +193,7 @@ export interface SeedResult {
 export async function seed(connectionString?: string): Promise<SeedResult> {
   const url = connectionString ?? process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
+  assertSeedCredentialsSafe(); // before migrate/connect — a refusal must touch nothing
   await migrate(url);
   const { db, sql: pg } = createDb(url);
 
@@ -280,12 +327,18 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
   });
 
   // --- Users (all four roles) -------------------------------------------
-  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? "admin@paperboy.test";
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? "Admin!Passw0rd";
+  const adminEmail = process.env.SEED_ADMIN_EMAIL ?? DEFAULT_ADMIN_EMAIL;
+  const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? DEFAULT_ADMIN_PASSWORD;
   await createUser(db, { email: adminEmail, name: "Site Admin", password: adminPassword, roles: ["Admin"] });
-  await createUser(db, { email: "editor@paperboy.test", name: "Ed Editor", password: "Editor!Passw0rd", roles: ["Editor"] });
-  await createUser(db, { email: "author@paperboy.test", name: "Andy Author", password: "Author!Passw0rd", roles: ["Author"], sections: [authorZoneId] });
-  await createUser(db, { email: "viewer@paperboy.test", name: "Val Viewer", password: "Viewer!Passw0rd", roles: ["Viewer"] });
+  // Demo logins are fixtures with published passwords — and because roles are
+  // global and siteWide, `editor@paperboy.test` carries content.publish on EVERY
+  // site. Production gets the admin only; the test/e2e suites and any stack that
+  // sets ALLOW_DEMO_CREDENTIALS=true still get all four.
+  if (demoCredentialsAllowed()) {
+    await createUser(db, { email: "editor@paperboy.test", name: "Ed Editor", password: "Editor!Passw0rd", roles: ["Editor"] });
+    await createUser(db, { email: "author@paperboy.test", name: "Andy Author", password: "Author!Passw0rd", roles: ["Author"], sections: [authorZoneId] });
+    await createUser(db, { email: "viewer@paperboy.test", name: "Val Viewer", password: "Viewer!Passw0rd", roles: ["Viewer"] });
+  }
 
   // --- Delivery keys (deterministic from env so the web app can use them) -
   const publicKey = process.env.PAPERBOY_PUBLIC_KEY ?? "pk_live_seed_public_key_value";
@@ -304,7 +357,12 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
   console.log(`  Author Zone    documentId=${authorZoneId}`);
   console.log(`  Secret draft   documentId=${secretId}`);
   console.log(`  Shared card    documentId=${cardId}`);
-  console.log(`  Admin login    ${adminEmail} / ${adminPassword}`);
+  // Never echo a real production password into `docker logs`.
+  console.log(
+    demoCredentialsAllowed()
+      ? `  Admin login    ${adminEmail} / ${adminPassword}`
+      : `  Admin login    ${adminEmail} / (from SEED_ADMIN_PASSWORD — not logged)`,
+  );
   await pg.end();
   return { homeId, authorZoneId, secretId, cardId, blogId, postIds };
 }

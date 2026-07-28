@@ -1,6 +1,6 @@
 {
   "name": "@paperboycms/client",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Typed client for the Paperboy headless CMS Delivery API — lists, search, media variants, render helpers, optional ETag cache. Zero dependencies, no codegen.",
   "license": "MIT",
   "repository": {
@@ -30,7 +30,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepublishOnly": "tsc -p tsconfig.json",
+    "prepublishOnly": "vitest run && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "lint": "echo 'lint: client (typecheck covers it)'"

@@ -44,6 +44,7 @@ import {
   revokeDeliveryKey,
   softDelete,
   MEDIA_PREFIX,
+  removeAssetFiles,
   deliveryFlagDelta,
   deleteVariant,
   discardDraft,
@@ -80,8 +81,9 @@ import {
   deleteSite,
   getDashboard,
   renameSite,
+  resolveDefaultLocale,
 } from "@paperboy/db";
-import { readdir, unlink, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   Asset,
@@ -102,6 +104,7 @@ import {
   UpdateFolderRequest,
   sniffUpload,
 } from "@paperboy/shared";
+import { mintPreviewToken } from "@paperboy/shared/preview-token";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { nanoid } from "nanoid";
@@ -143,6 +146,14 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   app.get(
     "/content-types-usage",
     {
+      // Authenticated-only, deliberately: the admin's type panel shows these counts
+      // to Editors, so gating on contenttype.manage (Admin-only) would break a
+      // legitimate caller.
+      // KNOWN GAP (not fixed): contentTypeUsage full-scans every content_version's
+      // JSONB with no WHERE and no site filter — measured ~113 MiB / 600 ms on a
+      // 500-document corpus. Any authenticated user can loop it, and the aggregate
+      // counts span every site. Needs a GIN-backed aggregate or a cache, not a
+      // permission change.
       schema: {
         tags: ["manage"],
         response: { 200: z.record(z.object({ items: z.number(), inlineIn: z.number() })) },
@@ -294,7 +305,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content/:documentId",
     { schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: ContentDetail } } },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       return getContent(app.db, req.accessCtx!, req.params.documentId, locale);
     },
   );
@@ -304,7 +315,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content/:documentId",
     { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, body: UpdateContentRequest, response: { 200: ContentDetail } } },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const updated = await updateContent(app.db, req.accessCtx!, req.params.documentId, locale, req.body);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.update", documentId: req.params.documentId, locale, ip: req.ip });
       return updated;
@@ -316,7 +327,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content/:documentId/publish",
     { preHandler: [requireCsrf, requirePermission("content.publish")], schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: ContentDetail } } },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await publishContent(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.publish", documentId: req.params.documentId, locale, ip: req.ip });
       emitContentEvent("content.published", { documentId: r.documentId, type: r.type, kind: r.kind, locale, name: r.name, urlPath: r.urlPath });
@@ -338,7 +349,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       },
     },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await schedulePublish(app.db, req.accessCtx!, req.params.documentId, locale, {
         publishAt: req.body.publishAt ? new Date(req.body.publishAt) : null,
         expireAt: req.body.expireAt ? new Date(req.body.expireAt) : null,
@@ -359,7 +370,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content/:documentId/unpublish",
     { preHandler: [requireCsrf, requirePermission("content.publish")], schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: ContentDetail } } },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await unpublishContent(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.unpublish", documentId: req.params.documentId, locale, ip: req.ip });
       emitContentEvent("content.unpublished", { documentId: r.documentId, type: r.type, kind: r.kind, locale, name: r.name, urlPath: r.urlPath });
@@ -371,7 +382,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content/:documentId/review",
     { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: ContentDetail } } },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await markReviewed(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.review", documentId: req.params.documentId, locale, ip: req.ip });
       return r;
@@ -381,7 +392,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content/:documentId/discard-draft",
     { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       await discardDraft(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.discard_draft", documentId: req.params.documentId, locale, ip: req.ip });
       return { ok: true };
@@ -394,7 +405,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content/:documentId/variant",
     { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: z.object({ ok: z.boolean(), deleted: z.number() }) } } },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await deleteVariant(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.delete_variant", documentId: req.params.documentId, locale, ip: req.ip });
       return r;
@@ -473,18 +484,9 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/assets/:documentId",
     { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], params: DocParams, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
-      const { relativePath } = await deleteAsset(app.db, req.accessCtx!, req.params.documentId);
-      // Best-effort file unlink (the DB row is the source of truth; a leftover file is harmless).
-      const fileName = relativePath.replace(`${MEDIA_PREFIX}/`, "");
-      if (fileName && !fileName.includes("/") && !fileName.includes("..")) {
-        await unlink(join(app.uploadsDir, fileName)).catch(() => undefined);
-        // Also remove every cached transform variant (`<file>.w..q..fmt`), or the
-        // derived bytes stay publicly servable from _variants/ after delete (S3-M3).
-        const variantsDir = join(app.uploadsDir, "_variants");
-        for (const v of await readdir(variantsDir).catch(() => [] as string[])) {
-          if (v.startsWith(`${fileName}.`)) await unlink(join(variantsDir, v)).catch(() => undefined);
-        }
-      }
+      // uploadsDir passed → deleteAsset unlinks the bytes itself, so the API and
+      // MCP surfaces erase identically.
+      await deleteAsset(app.db, req.accessCtx!, req.params.documentId, app.uploadsDir);
       await audit(app.db, { actorUserId: req.user!.id, action: "asset.delete", documentId: req.params.documentId, ip: req.ip });
       return { ok: true };
     },
@@ -569,7 +571,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content/:documentId/versions",
     { schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: z.array(z.object({ id: z.number(), versionNumber: z.number(), status: z.string(), isCurrentPublished: z.boolean(), name: z.string(), createdAt: z.string(), createdBy: z.string().nullable(), publishAt: z.string().nullable(), expireAt: z.string().nullable() })) } } },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const rows = await listVersions(app.db, req.accessCtx!, req.params.documentId, locale);
       return rows.map((r) => ({
         ...r,
@@ -605,7 +607,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       },
     },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       return getVersion(app.db, req.accessCtx!, req.params.documentId, locale, req.params.versionId);
     },
   );
@@ -716,12 +718,65 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
+  /* ---------------------------- preview token ---------------------------- */
+  /**
+   * Mint a short-lived token for the in-editor preview iframe.
+   *
+   * Session-authenticated (this router requires auth), so only a signed-in editor
+   * can obtain one — which is the difference that matters: the admin used to carry
+   * the long-lived PREVIEW_SECRET itself, inlined into its unauthenticated JS
+   * bundle, so anyone who fetched that bundle could read every draft forever.
+   *
+   * `content.read` because seeing drafts is a read of unpublished content — AND
+   * `siteWide`, because the token is not scoped to a document or section. The
+   * preview perspective it unlocks is KEY-scoped (the frontend uses the preview
+   * delivery key), so it cannot express "only this Author's sections": a
+   * section-scoped Author who got one could read every unpublished draft in the
+   * site, which is exactly the escalation `needDelivery` blocks on the MCP side
+   * (apps/mcp/src/server.ts). Same rule, same reason, both surfaces.
+   *
+   * Minting is audited: this is a bearer credential for all site drafts, and
+   * because it is stateless there is no revocation and no other server-side
+   * artifact — the audit row is the only trail an incident review would have.
+   */
+  app.get(
+    "/preview-token",
+    {
+      preHandler: requirePermission("content.read"),
+      schema: {
+        tags: ["manage"],
+        response: { 200: z.object({ token: z.string(), expiresAt: z.number() }) },
+      },
+    },
+    async (req) => {
+      if (!req.accessCtx!.siteWide) {
+        throw new AppError(
+          403,
+          "forbidden",
+          "Live preview needs a token that grants draft access across the whole site, and your account is limited to specific sections — so it isn't available for your role. You can still edit and publish normally; ask an administrator if you need preview.",
+        );
+      }
+      const secret = app.previewSecret;
+      if (!secret) {
+        // Self-teaching: name the variable and both places it has to be set.
+        throw new AppError(
+          503,
+          "unavailable",
+          "In-editor preview is not configured: set PREVIEW_SECRET (min 16 chars) on BOTH the api and the frontend — the api signs preview tokens with it and the frontend verifies them. scripts/setup.sh generates one.",
+        );
+      }
+      const minted = mintPreviewToken(secret);
+      await audit(app.db, { actorUserId: req.user!.id, action: "preview.token_minted", ip: req.ip });
+      return minted;
+    },
+  );
+
   /* ------------------------------ duplicate ----------------------------- */
   app.post(
     "/content/:documentId/duplicate",
     { preHandler: [requireCsrf, requirePermission("content.create")], schema: { tags: ["manage"], params: DocParams, querystring: LocaleQuery, response: { 200: ContentDetail } } },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const created = await cloneContent(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.duplicate", documentId: created.documentId, ip: req.ip, detail: { from: req.params.documentId } });
       return created;
@@ -733,7 +788,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content/:documentId/versions/:versionId/restore",
     { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: z.object({ documentId: z.string(), versionId: z.coerce.number() }), querystring: LocaleQuery, response: { 200: ContentDetail } } },
     async (req) => {
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await restoreVersion(app.db, req.accessCtx!, req.params.documentId, locale, req.params.versionId);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.version_restore", documentId: req.params.documentId, locale, ip: req.ip, detail: { versionId: req.params.versionId } });
       return r;
@@ -1133,6 +1188,9 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
     async (req) => {
       const r = await deleteSite(app.db, req.accessCtx!, req.params.id, req.query.confirm);
+      // Rows are gone; now the bytes. Without this every image of a deleted site
+      // stayed downloadable at its previously-published URL forever.
+      for (const path of r.assetPaths) await removeAssetFiles(app.uploadsDir, path);
       await audit(app.db, {
         actorUserId: req.user!.id,
         action: "site.delete",

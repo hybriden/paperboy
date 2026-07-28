@@ -25,6 +25,7 @@ import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { localeIndicator } from "../lib/locale-indicator.js";
 import { TypeIcon, useTypeIconName } from "../lib/typeIcons.js";
+import { useConfirm } from "./ui/confirm.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Skeleton } from "./ui/skeleton.js";
 import { Surface } from "./ui/surface.js";
@@ -409,6 +410,9 @@ function Row(props: LevelProps & { node: TreeNode }) {
   // it's permanent and not recoverable from Trash. Used to re-translate: delete
   // the wrong variant, then the editor's "Translate from …" offer reappears.
   const [confirmDelVariant, setConfirmDelVariant] = useState(false);
+  // Trashing a page unpublishes its whole subtree — same class of action as the
+  // variant delete above, so it gets the same kind of gate.
+  const confirm = useConfirm();
   const deleteVariant = useMutation({
     mutationFn: () => api.deleteVariant(node.documentId, locale),
     onSuccess: () => {
@@ -551,7 +555,22 @@ function Row(props: LevelProps & { node: TreeNode }) {
             {canDelete && ind.translated && Object.keys(node.locales).length > 1 && (
               <CtxItem destructive onSelect={() => setConfirmDelVariant(true)}>Delete {locale.toUpperCase()} version</CtxItem>
             )}
-            {canDelete && <CtxItem destructive onSelect={() => trash.mutate()}>Move to trash</CtxItem>}
+            {canDelete && (
+              <CtxItem
+                destructive
+                onSelect={() =>
+                  confirm.ask({
+                    title: `Move “${node.name}” to trash?`,
+                    description:
+                      "This unpublishes the page and its whole subtree, so it disappears from the live site immediately. You can restore it from Trash.",
+                    confirmLabel: "Move to trash",
+                    onConfirm: () => trash.mutate(),
+                  })
+                }
+              >
+                Move to trash
+              </CtxItem>
+            )}
           </Ctx.Content>
         </Ctx.Portal>
       </Ctx.Root>
@@ -575,6 +594,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
           </DialogContent>
         </Dialog>
       )}
+      {confirm.dialog}
       </div>
       {node.hasChildren && isOpen && depth < MAX_TREE_DEPTH && !props.ancestors.has(node.documentId) && (
         <Level

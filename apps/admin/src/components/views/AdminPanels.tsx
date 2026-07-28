@@ -39,6 +39,9 @@ export function TwoFactorPanel() {
   const [code, setCode] = useState("");
   const [backupCodes, setBackupCodes] = useState<string[]>([]);
   const [disablePw, setDisablePw] = useState("");
+  // Enabling 2FA re-auths too, so a stolen session can't enrol its own
+  // authenticator and lock the real owner out of a passwordless-login account.
+  const [enablePw, setEnablePw] = useState("");
   const codeRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (step === "qr") codeRef.current?.focus(); }, [step]);
 
@@ -48,8 +51,8 @@ export function TwoFactorPanel() {
     onError: (e) => toast.error("Couldn’t start setup", (e as Error).message),
   });
   const enable = useMutation({
-    mutationFn: () => api.mfaEnable(code.trim()),
-    onSuccess: (r) => { setBackupCodes(r.backupCodes); setStep("backup"); setCode(""); void qc.invalidateQueries({ queryKey: ["mfa-status"] }); },
+    mutationFn: () => api.mfaEnable(code.trim(), enablePw),
+    onSuccess: (r) => { setBackupCodes(r.backupCodes); setStep("backup"); setCode(""); setEnablePw(""); void qc.invalidateQueries({ queryKey: ["mfa-status"] }); },
     onError: (e) => { toast.error("Couldn’t enable 2FA", (e as Error).message); setCode(""); },
   });
   const disable = useMutation({
@@ -63,7 +66,17 @@ export function TwoFactorPanel() {
   return (
     <PanelShell title="Two-factor authentication" hint="Require a time-based code from an authenticator app at sign-in.">
       <div className="p-4 text-sm">
-        {enabled && step !== "backup" ? (
+        {/* Error/loading FIRST. `status.data?.enabled` is undefined on a failed
+            fetch, which fell through to the "Two-factor is off" branch below and
+            told a user who HAS 2FA on that they don't — while offering to enrol
+            again. Unknown state must read as unknown. */}
+        {status.isError ? (
+          <p className="text-danger">
+            Couldn’t read your two-factor status. This panel isn’t showing your real setting — reload to try again.
+          </p>
+        ) : status.isLoading ? (
+          <p className="text-muted" aria-busy="true">Checking your two-factor status…</p>
+        ) : enabled && step !== "backup" ? (
           <div className="space-y-3">
             <p className="flex items-center gap-2 text-published"><span className="h-2 w-2 rounded-full bg-published" /> 2FA is <strong>on</strong>. {status.data?.backupCodesRemaining} backup codes remaining.</p>
             <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); disable.mutate(); }}>
@@ -85,11 +98,13 @@ export function TwoFactorPanel() {
               <div className="space-y-2 text-xs">
                 <div className="text-muted">Can’t scan? Enter this key manually:</div>
                 <code className="block break-all rounded bg-line/60 px-2 py-1 font-mono">{secret}</code>
-                <form className="flex items-end gap-2 pt-2" onSubmit={(e) => { e.preventDefault(); enable.mutate(); }}>
+                <form className="flex flex-wrap items-end gap-2 pt-2" onSubmit={(e) => { e.preventDefault(); enable.mutate(); }}>
                   <label><span className="field-label">6-digit code</span>
                     <input ref={codeRef} aria-label="6-digit code" className="field-input w-32 text-center font-mono tracking-widest" value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" /></label>
-                  <button className="btn-primary" disabled={enable.isPending || code.trim().length < 6}>{enable.isPending ? "…" : "Verify & enable"}</button>
-                  <button type="button" className="btn-ghost" onClick={() => { setStep("idle"); setCode(""); }}>Cancel</button>
+                  <label><span className="field-label">Your password</span>
+                    <input aria-label="Confirm your password to enable" className="field-input w-44" type="password" autoComplete="current-password" value={enablePw} onChange={(e) => setEnablePw(e.target.value)} /></label>
+                  <button className="btn-primary" disabled={enable.isPending || code.trim().length < 6 || !enablePw}>{enable.isPending ? "…" : "Verify & enable"}</button>
+                  <button type="button" className="btn-ghost" onClick={() => { setStep("idle"); setCode(""); setEnablePw(""); }}>Cancel</button>
                 </form>
               </div>
             </div>
@@ -1086,8 +1101,12 @@ export function McpTokensPanel() {
           aria-label="Require human review before agents publish"
           type="checkbox"
           className="mt-0.5"
-          checked={review.data?.required ?? false}
-          disabled={toggleReview.isPending || review.isLoading}
+          // FAILS CLOSED. `?? false` rendered an UNCHECKED, ENABLED box whenever
+          // the query hadn't resolved or had failed — so a safety gate that was ON
+          // looked OFF, and toggling it then WROTE that false value. Unknown state
+          // must not be presented as "off", and must not be writable.
+          checked={review.data?.required ?? true}
+          disabled={toggleReview.isPending || review.isLoading || review.isError || review.data === undefined}
           onChange={(e) => toggleReview.mutate(e.target.checked)}
         />
         <span>
@@ -1096,6 +1115,11 @@ export function McpTokensPanel() {
             Drafts written via MCP carry a 🤖 needs-review flag. With this on, an agent can’t publish its own
             unreviewed draft — a human approves it in the editor (or simply edits it) first. Human publishing is never gated.
           </span>
+          {review.isError && (
+            <span className="mt-1 block text-xs text-danger">
+              Couldn’t read the current setting, so it’s shown as on and locked. Reload to try again.
+            </span>
+          )}
         </span>
       </label>
     </PanelShell>

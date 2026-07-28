@@ -113,7 +113,7 @@ export async function deleteSite(
   ctx: AccessContext,
   siteId: string,
   confirmSlug: string | undefined,
-): Promise<{ site: Site; contentItems: number; assets: number; deliveryKeys: number }> {
+): Promise<{ site: Site; contentItems: number; assets: number; assetPaths: string[]; deliveryKeys: number }> {
   requirePermission(ctx, "user.manage");
   const existing = await getSiteById(db, siteId);
   if (!existing) throw Errors.notFound("Site");
@@ -130,6 +130,7 @@ export async function deleteSite(
   const docs = await db.select({ documentId: contentItem.documentId }).from(contentItem).where(eq(contentItem.siteId, siteId));
   const docIds = docs.map((d) => d.documentId);
   let assets = 0;
+  let assetPaths: string[] = [];
   let keys = 0;
   await db.transaction(async (tx) => {
     if (docIds.length > 0) {
@@ -137,11 +138,19 @@ export async function deleteSite(
       await tx.delete(contentVersion).where(inArray(contentVersion.documentId, docIds));
       await tx.delete(contentItem).where(eq(contentItem.siteId, siteId));
     }
-    assets = (await tx.delete(asset).where(eq(asset.siteId, siteId)).returning({ id: asset.documentId })).length;
+    // Return the PATHS, not just a count: the caller owns the filesystem and must
+    // unlink them. Deleting only the rows left every image publicly downloadable
+    // at its old URL forever (the media mount serves by filename, no DB lookup),
+    // so a site delete could not satisfy a right-to-erasure request.
+    // `url` IS the stored relative path (see deleteAsset, which returns it as
+    // relativePath) — the column is named url, there is no relativePath column.
+    const removed = await tx.delete(asset).where(eq(asset.siteId, siteId)).returning({ url: asset.url });
+    assetPaths = removed.map((r) => r.url);
+    assets = removed.length;
     await tx.delete(folder).where(eq(folder.siteId, siteId));
     keys = (await tx.delete(deliveryKey).where(eq(deliveryKey.siteId, siteId)).returning({ id: deliveryKey.id })).length;
     await tx.delete(userScope).where(eq(userScope.siteId, siteId));
     await tx.delete(site).where(eq(site.id, siteId));
   });
-  return { site: existing, contentItems: docIds.length, assets, deliveryKeys: keys };
+  return { site: existing, contentItems: docIds.length, assets, assetPaths, deliveryKeys: keys };
 }

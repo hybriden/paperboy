@@ -7,6 +7,7 @@ import {
   type CreateContentRequest,
   type TreeNode,
   type UpdateContentRequest,
+  type BlockTypeResolver,
   coerceData,
   dataSchemaFor,
   detectContentLanguage,
@@ -23,7 +24,7 @@ import {
   loadAuthorized,
   requirePermission,
 } from "./scope.js";
-import { auditLog, contentItem, contentReference, contentType, contentVersion, locale } from "./schema.js";
+import { auditLog, contentItem, contentReference, contentType, contentVersion, locale, site } from "./schema.js";
 import { getAgentReviewRequired } from "./site.js";
 import { dispatchWebhooks } from "./webhooks.js";
 
@@ -158,6 +159,19 @@ export async function findReferencingDocuments(
   return [...byDoc.values()];
 }
 
+/**
+ * Sync block-type lookup for `coerceData`'s content-area recursion.
+ *
+ * coerceData is pure/sync (it lives in packages/shared and is shared by the API,
+ * MCP and admin), so it can't query — it takes a resolver. One extra read of the
+ * (small, cached-by-Postgres) content_type table per write is the cost of having
+ * the coercion chokepoint reach INSIDE blocks instead of stopping at the top level.
+ */
+async function blockTypeResolver(db: Database): Promise<BlockTypeResolver> {
+  const byName = new Map((await listContentTypes(db)).map((t) => [t.name, t]));
+  return (name: string) => byName.get(name);
+}
+
 export async function getContentType(db: Database, name: string): Promise<ContentTypeDef> {
   const rows = await db.select().from(contentType).where(eq(contentType.name, name)).limit(1);
   if (!rows[0]) {
@@ -261,6 +275,29 @@ export async function getDefaultLocale(db: Database): Promise<string> {
   const rows = await db.select().from(locale).where(eq(locale.isDefault, true)).limit(1);
   if (!rows[0]) throw Errors.badRequest("No default locale configured");
   return rows[0].code;
+}
+
+/**
+ * The locale a request means when it doesn't say — for `siteId` if given.
+ *
+ * Every route used to spell this as `req.query.locale ?? "en"` (27 places), which
+ * made "en" an unconfigurable pivot: a Norwegian instance that added `nb` and set
+ * the site's defaultLocale still resolved to `en`, so `getContent` returned a blank
+ * non-persisted scaffold for every page, the editor offered to translate FROM the
+ * real content, and the first save materialised an orphan `en` version. Delivery
+ * calls without `?locale=` returned nothing.
+ *
+ * Order: the site's own `defaultLocale` → the globally default locale → "en" as an
+ * absolute last resort (a brand-new database before any locale row exists).
+ */
+export async function resolveDefaultLocale(db: Database, siteId?: string): Promise<string> {
+  if (siteId) {
+    const rows = await db.select({ defaultLocale: site.defaultLocale }).from(site).where(eq(site.id, siteId)).limit(1);
+    const code = rows[0]?.defaultLocale;
+    if (code) return code;
+  }
+  const rows = await db.select({ code: locale.code }).from(locale).where(eq(locale.isDefault, true)).limit(1);
+  return rows[0]?.code ?? "en";
 }
 
 /** All locales incl. disabled — powers the Languages management view. */
@@ -469,8 +506,23 @@ export async function listBlocks(db: Database, ctx: AccessContext): Promise<Bloc
 
 /* ------------------------------ URL paths --------------------------------- */
 
+/**
+ * Anything a READ can run on: the pool handle, or an already-open transaction.
+ *
+ * This exists because `createContent` called `autoSlug(db, …)` from INSIDE
+ * `db.transaction(...)`. That asks the pool for a SECOND connection while the
+ * transaction still holds the first — so at `max: 10` (client.ts), ten concurrent
+ * creates each held one connection and waited for an eleventh that could never
+ * arrive. postgres.js queues instead of erroring, so the whole API — delivery,
+ * login, health — hung indefinitely with no timeout and no recovery until restart.
+ * Ten simultaneous editors, one bulk import, or one agent doing Promise.all over ten
+ * pages was enough. Read helpers therefore take a Queryable and callers inside a
+ * transaction pass `tx`.
+ */
+type Queryable = Database | Parameters<Parameters<Database["transaction"]>[0]>[0];
+
 /** Working slug for the editor's perspective (draft, else current published, else latest). */
-async function workingSlug(db: Database, documentId: string, loc: string): Promise<string | null> {
+async function workingSlug(db: Queryable, documentId: string, loc: string): Promise<string | null> {
   const rows = await db
     .select()
     .from(contentVersion)
@@ -593,7 +645,7 @@ export async function computePath(db: Database, documentId: string, loc: string)
 
 /** True when a page sibling (same parent + locale) already uses this segment. */
 async function slugTakenBySibling(
-  db: Database,
+  db: Queryable,
   documentId: string,
   parentId: string | null,
   loc: string,
@@ -670,7 +722,7 @@ export function slugify(name: string): string | null {
  * Renames never touch an EXISTING slug (URL stability) — this only fills null.
  */
 async function autoSlug(
-  db: Database,
+  db: Queryable,
   documentId: string,
   parentId: string | null,
   loc: string,
@@ -781,7 +833,7 @@ export async function createContent(
       name: req.name,
       // Pages get a URL segment from their name right away (CMS-12 style) —
       // uniquified among siblings; editors can change it in the URL chip.
-      slug: type.kind === "page" ? await autoSlug(db, documentId, req.parentId, req.locale, req.name, effectiveSiteId) : null,
+      slug: type.kind === "page" ? await autoSlug(tx, documentId, req.parentId, req.locale, req.name, effectiveSiteId) : null,
       displayInNav: true,
       data: {},
       cv: 0,
@@ -1080,7 +1132,7 @@ export async function updateContent(
   const merged = req.merge ? { ...(await workingData(db, documentId, loc)), ...req.data } : req.data;
   // Tolerant coercion: fix the unambiguous field-shape mistakes agents make
   // (single block → array, doc → text, string → doc) before validating.
-  const data = coerceData(type, merged, loc);
+  const data = coerceData(type, merged, loc, await blockTypeResolver(db));
 
   // Draft save: relaxed validation (required fields not enforced). On failure
   // the message names each field's expected JSON shape (with an example), so an
@@ -1795,9 +1847,18 @@ export async function unpublishContent(
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.publish");
   await loadAuthorized(db, ctx, documentId);
+  // Allocate a fresh cv on the way out, even though the row is leaving the public
+  // set. Delivery derives its ETag from the cv of the rows it returned, so an
+  // unpublish that bumped nothing produced a BYTE-IDENTICAL ETag for the list the
+  // item just left: the next conditional GET 304'd, and because the response
+  // carries `stale-while-revalidate`, the CDN kept refreshing its own freshness and
+  // served the withdrawn content indefinitely. Withdrawal has to move the version
+  // counter for the same reason publishing does.
+  const cvRow = await db.execute(sql`SELECT nextval('cv_seq') AS v`);
+  const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
   await db
     .update(contentVersion)
-    .set({ isCurrentPublished: false })
+    .set({ isCurrentPublished: false, cv })
     .where(
       and(
         eq(contentVersion.documentId, documentId),
@@ -1959,7 +2020,16 @@ export async function moveContent(
         const kids = await tx
           .select({ documentId: contentItem.documentId })
           .from(contentItem)
-          .where(and(inArray(contentItem.parentId, frontier), isNull(contentItem.deletedAt)));
+          .where(
+            and(
+              inArray(contentItem.parentId, frontier),
+              // Children inherit their parent's site, so a cross-site child should
+              // be impossible — belt-and-braces so a stray row can never have its
+              // section rewritten from another tenant's move.
+              eq(contentItem.siteId, item.siteId),
+              isNull(contentItem.deletedAt),
+            ),
+          );
         const next = kids.map((k) => k.documentId).filter((id) => !visited.has(id));
         next.forEach((id) => visited.add(id));
         if (next.length) {
@@ -1976,6 +2046,10 @@ export async function moveContent(
       .where(
         and(
           targetParentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, targetParentId),
+          // MUST be site-filtered: `isNull(parentId)` matches the roots of EVERY
+          // site, so without this a reorder in one site renumbered every other
+          // site's root order (and their nav + deliveryList ordering with it).
+          eq(contentItem.siteId, item.siteId),
           isNull(contentItem.deletedAt),
         ),
       )
@@ -2216,7 +2290,7 @@ export async function restoreVersion(
   // Coerce on restore too: a historic version may predate the richtext
   // sanitizer and still contain editor-breaking TipTap (one such node blanks
   // the whole doc in the admin), so it must not re-enter the working draft raw.
-  const data = coerceData(type, src.data as Record<string, unknown>, loc);
+  const data = coerceData(type, src.data as Record<string, unknown>, loc, await blockTypeResolver(db));
   // Slug must stay unique among page siblings (the source slug may now collide).
   if (item.kind === "page" && src.slug) {
     await assertSlugUnique(db, documentId, item.parentId, loc, src.slug);
@@ -2299,13 +2373,21 @@ export async function cloneContent(
     parentId: src.parentId,
     sortIndex: (src.sortIndex ?? 0) + 1,
     sectionId: newSection,
+    // Inherit the SOURCE's site and folder. Omitting siteId let the column
+    // DEFAULT ('site_default') apply, so duplicating inside any other site wrote
+    // the copy into the Default site — and the getContent below then 404'd on the
+    // active-site check, leaving an orphan copy in another tenant's tree.
+    siteId: src.siteId,
+    folderId: src.folderId,
     createdBy: ctx.userId,
   });
   let count = 0;
+  // Resolved ONCE for the whole clone, not per locale.
+  const blockTypes = await blockTypeResolver(db);
   for (const [code, row] of byLocale) {
     // Coerce on clone for the same reason as restoreVersion: the source data
     // may predate the richtext sanitizer.
-    const data = coerceData(type, row.data as Record<string, unknown>, code);
+    const data = coerceData(type, row.data as Record<string, unknown>, code, blockTypes);
     await db.insert(contentVersion).values({
       documentId: newId,
       locale: code,
@@ -2387,9 +2469,14 @@ export async function softDelete(
   const now = new Date();
   await db.transaction(async (tx) => {
     await tx.update(contentItem).set({ deletedAt: now }).where(inArray(contentItem.documentId, ids));
+    // Bump cv on the way out, same reason as unpublishContent: delivery's ETag is
+    // derived from the cv of the rows it returned, so trashing without bumping left
+    // the ETag byte-identical and a CDN kept serving the trashed pages.
+    const cvRow = await tx.execute(sql`SELECT nextval('cv_seq') AS v`);
+    const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
     await tx
       .update(contentVersion)
-      .set({ isCurrentPublished: false })
+      .set({ isCurrentPublished: false, cv })
       .where(and(inArray(contentVersion.documentId, ids), eq(contentVersion.isCurrentPublished, true)));
   });
   return { trashed: ids.length };

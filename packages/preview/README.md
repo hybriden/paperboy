@@ -12,9 +12,29 @@ Call `initPreviewBridge()` once, only in preview, and mark your editable DOM:
 import { initPreviewBridge } from "@paperboycms/preview";
 
 if (inPreviewMode) {
-  const teardown = initPreviewBridge();
+  const teardown = initPreviewBridge({
+    // RECOMMENDED: the origin of the admin that embeds this preview.
+    parentOrigin: "https://cms.example.com",
+  });
 }
 ```
+
+### Sender trust (read this)
+
+`paperboy:patch` applies `element.innerHTML = …`, so the bridge's message handler is
+an HTML injection sink. It therefore **only accepts messages whose `event.source` is
+the window it posts to** (the parent, or your `target`). A message with a foreign
+source — or none at all — is ignored. This matters because framing rules don't cover
+it: any page can `window.open(previewUrl)` and postMessage into the handle it gets
+back without ever embedding you.
+
+`parentOrigin` is optional and additive. Setting it:
+- requires inbound messages to come from that exact origin, and
+- addresses outbound messages to it instead of `"*"`, so field text and caret
+  snippets can't be delivered to some other origin.
+
+**Mount the bridge in preview mode only.** On a published page it would be a live
+`innerHTML` sink for the lifetime of every visitor's session.
 
 ```html
 <h1 data-pb-field="heading">…</h1>

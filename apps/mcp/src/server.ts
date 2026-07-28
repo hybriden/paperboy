@@ -62,6 +62,8 @@ import {
   updateContent,
   updateContentType,
   verifyLogin,
+  mcpTokenState,
+  resolveDefaultLocale,
   verifyMcpToken,
 } from "@paperboy/db";
 import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, RoleName, aiAssist, fieldFormatHint, redactForLog } from "@paperboy/shared";
@@ -111,13 +113,29 @@ function bearerOf(req: IncomingMessage): string | null {
 async function bearerOk(req: IncomingMessage, bootUserId: string): Promise<boolean> {
   const presented = bearerOf(req);
   if (!presented) return false;
+
+  // The DATABASE IS CONSULTED FIRST, so revocation always wins. This used to
+  // constant-time-compare against the in-memory boot token before looking
+  // anything up, which meant revoking that token in Settings → MCP had no effect
+  // on the running server: the admin saw "revoked" while the holder kept full
+  // access until someone restarted the container.
+  const found = await mcpTokenState(db, presented);
+  if (found.state === "revoked") return false;
+  if (found.state === "active") {
+    if (found.userId !== bootUserId) return false;
+    await verifyMcpToken(db, presented); // stamp last-used
+    return true;
+  }
+
+  // Unknown to the database: an env-only MCP_TOKEN with no row. Legitimate (it is
+  // how a bare `MCP_TOKEN=… docker compose up mcp` works), and rotated by
+  // restarting with a new value rather than by revoking a row.
   if (MCP_TOKEN) {
     const got = Buffer.from(presented);
     const want = Buffer.from(MCP_TOKEN);
     if (got.length === want.length && timingSafeEqual(got, want)) return true;
   }
-  const userId = await verifyMcpToken(db, presented); // hashed lookup; null when unknown/revoked
-  return userId !== null && userId === bootUserId;
+  return false;
 }
 
 const { db } = createDb(DATABASE_URL);
@@ -129,6 +147,28 @@ function need(perm: Permission): void {
   if (!ctx.permissions.includes(perm)) throw new Error(`Missing permission: ${perm}`);
 }
 const persp = (preview?: boolean): "preview" | "published" => (preview ? "preview" : "published");
+
+/**
+ * Authorize a delivery_* read.
+ *
+ * On the HTTP API these reads are authorized by `verifyDeliveryKey` — a public key
+ * gets published content, a preview key gets drafts. MCP has no delivery key, and
+ * used to substitute NOTHING: every delivery tool called the chokepoint directly,
+ * so any token (even a Viewer's, or a section-scoped Author's) could read every
+ * unpublished draft in the site with `preview: true`.
+ *
+ * The delivery chokepoint is key-scoped, not section-scoped, so it cannot express
+ * "only this Author's sections". Hence: content.read for any perspective, and the
+ * PREVIEW perspective additionally requires site-wide read.
+ */
+function needDelivery(preview?: boolean): void {
+  need("content.read");
+  if (preview && !ctx.siteWide) {
+    throw new Error(
+      "The preview perspective (unpublished drafts) requires site-wide read access, and your account is limited to specific sections. Use list_content / get_content instead — they enforce your section scope. Omit `preview` (or set it to false) to read published content through delivery_*.",
+    );
+  }
+}
 
 /** Omitted locale → the document's safe locale (default-locale variant, else
  *  its sole locale, else a self-teaching error) — never a silent fork of a
@@ -216,7 +256,7 @@ tool(
     allowTypeMismatch: z.boolean().optional().describe("Set true ONLY for a deliberate sub-page whose type differs from the parent list page's listedType"),
   },
   async ({ type, parentId, locale, name, data, slug, allowTypeMismatch }) => {
-    const shell = await createContent(db, ctx, { type, parentId: parentId ?? null, locale: locale ?? "en", name, allowTypeMismatch });
+    const shell = await createContent(db, ctx, { type, parentId: parentId ?? null, locale: (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), name, allowTypeMismatch });
     mcpAudit("content.create", shell.documentId, shell.locale);
     // Persist initial data through the SAME coerce/validate chokepoint as
     // update_content (rule #3) — don't silently drop a body the caller sent
@@ -383,7 +423,7 @@ tool("list_assets", "List uploaded media assets.", {}, () => listAssets(db, ctx)
 tool("update_asset_alt", "Set an asset's alt text.", { documentId: docId, alt: z.string() },
   async ({ documentId, alt }) => { const r = await updateAssetAlt(db, ctx, documentId, alt); mcpAudit("asset.alt", documentId); return r; });
 tool("delete_asset", "Delete a media asset.", { documentId: docId },
-  async ({ documentId }) => { await deleteAsset(db, ctx, documentId); mcpAudit("asset.delete", documentId); return { ok: true }; });
+  async ({ documentId }) => { await deleteAsset(db, ctx, documentId, UPLOADS_DIR); mcpAudit("asset.delete", documentId); return { ok: true }; });
 tool(
   "search_stock_images",
   "Search the configured stock photo provider (Settings → Stock images; Unsplash). Returns photo candidates with id, description and attribution. To USE a photo: call import_stock_image with its id, then set_field the returned asset documentId on an image field.",
@@ -414,11 +454,11 @@ tool(
 /* ------------------------------ delivery (read) ------------------------ */
 const delv = { locale: loc, populate: z.number().min(0).max(4).optional(), preview: z.boolean().optional().describe("Use the preview perspective (drafts)") };
 tool("delivery_get_by_id", "Read delivered content by documentId (no-leak chokepoint).", { documentId: docId, ...delv },
-  ({ documentId, locale, populate, preview }) => deliveryGetById(db, persp(preview), ctx.siteId, documentId, locale ?? "en", populate));
+  async ({ documentId, locale, populate, preview }) => { needDelivery(preview); return deliveryGetById(db, persp(preview), ctx.siteId, documentId, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate); });
 tool("delivery_get_by_slug", "Read delivered content by slug.", { slug: z.string(), ...delv },
-  ({ slug, locale, populate, preview }) => deliveryGetBySlug(db, persp(preview), ctx.siteId, slug, locale ?? "en", populate));
+  async ({ slug, locale, populate, preview }) => { needDelivery(preview); return deliveryGetBySlug(db, persp(preview), ctx.siteId, slug, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate); });
 tool("delivery_get_by_path", "Read delivered content by hierarchical URL path (e.g. /home/about).", { path: z.string(), ...delv },
-  ({ path, locale, populate, preview }) => deliveryGetByPath(db, persp(preview), ctx.siteId, path.split("/").filter(Boolean), locale ?? "en", populate));
+  async ({ path, locale, populate, preview }) => { needDelivery(preview); return deliveryGetByPath(db, persp(preview), ctx.siteId, path.split("/").filter(Boolean), (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate); });
 tool(
   "delivery_list",
   "List delivered content of a type. Supports pagination (limit/offset), sorting (sort: 'name' | 'createdAt' | 'data.<field>', prefix '-' for descending) and equality filters on data fields. Returns { items, total }.",
@@ -430,17 +470,16 @@ tool(
     sort: z.string().optional().describe("name | createdAt | data.<field>; prefix - for descending"),
     filter: z.record(z.string()).optional().describe("Equality filters on data fields, e.g. {\"author\": \"Jane\"}"),
   },
-  ({ type, locale, populate, preview, limit, offset, sort, filter }) =>
-    deliveryList(db, persp(preview), ctx.siteId, type, locale ?? "en", populate, undefined, { limit, offset, sort, filter }));
+  async ({ type, locale, populate, preview, limit, offset, sort, filter }) => { needDelivery(preview); return deliveryList(db, persp(preview), ctx.siteId, type, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate, undefined, { limit, offset, sort, filter }); });
 tool(
   "delivery_search",
   "Full-text search over delivered content (name + field text). Returns { items, total } resolved through the same no-leak chokepoint.",
   { query: z.string().min(1).max(200), type: z.string().optional(), locale: loc, limit: z.number().int().min(1).max(100).optional(), preview: z.boolean().optional() },
-  ({ query, type, locale, limit, preview }) => deliverySearch(db, persp(preview), ctx.siteId, query, locale ?? "en", type, limit));
+  async ({ query, type, locale, limit, preview }) => { needDelivery(preview); return deliverySearch(db, persp(preview), ctx.siteId, query, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), type, limit); });
 tool("delivery_global", "Read a delivered global singleton by type.", { type: z.string(), locale: loc, preview: z.boolean().optional() },
-  ({ type, locale, preview }) => deliveryGlobal(db, persp(preview), ctx.siteId, type, locale ?? "en"));
+  async ({ type, locale, preview }) => { needDelivery(preview); return deliveryGlobal(db, persp(preview), ctx.siteId, type, (locale ?? (await resolveDefaultLocale(db, ctx.siteId)))); });
 tool("delivery_start", "Read the configured start page (served at /).", { locale: loc, populate: z.number().min(0).max(4).optional(), preview: z.boolean().optional() },
-  ({ locale, populate, preview }) => deliveryStartPage(db, persp(preview), ctx.siteId, locale ?? "en", populate));
+  async ({ locale, populate, preview }) => { needDelivery(preview); return deliveryStartPage(db, persp(preview), ctx.siteId, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate); });
 
 /* --------------------------------- site -------------------------------- */
 tool("get_site_config", "Get site config (current start page).", {}, () => getSiteConfig(db, ctx));
@@ -509,7 +548,17 @@ async function main(): Promise<void> {
     const sessions = new Map<string, StreamableHTTPServerTransport>();
     const handle = makeMcpHttpHandler({
       httpPath: MCP_HTTP_PATH,
-      bearerOk: (req) => bearerOk(req, userId),
+      bearerOk: async (req) => {
+        if (!(await bearerOk(req, userId))) return false;
+        // Re-resolve the identity's roles/scopes per request. `ctx` was captured
+        // once at boot, so demoting the MCP user, narrowing its sections or
+        // removing a role changed nothing until someone restarted the container.
+        // Safe to reassign: bearerOk has just proven this request belongs to the
+        // SAME user the process authenticated as, so concurrent requests can only
+        // ever install an identical identity — never another user's.
+        ctx = { ...(await getAccessContext(db, userId)), via: "mcp" };
+        return true;
+      },
       buildServer,
       sessions,
     });

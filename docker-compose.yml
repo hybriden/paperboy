@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: paperboy
       POSTGRES_DB: paperboy
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - paperboy-pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -29,10 +29,17 @@ services:
     command: ["pnpm", "--filter", "@paperboy/db", "seed"]
     environment:
       DATABASE_URL: postgresql://paperboy:paperboy@db:5432/paperboy
-      SEED_ADMIN_EMAIL: admin@paperboy.test
+      SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-admin@paperboy.test}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-Admin!Passw0rd}
       PAPERBOY_PUBLIC_KEY: ${PAPERBOY_PUBLIC_KEY:-pk_live_seed_public_key_value}
       PAPERBOY_PREVIEW_KEY: ${PAPERBOY_PREVIEW_KEY:-prv_seed_preview_key_value}
+      # The image sets NODE_ENV=production, so seeding a FRESH database refuses
+      # these published demo defaults and omits the editor/author/viewer logins.
+      # Set ALLOW_DEMO_CREDENTIALS=true for a throwaway demo, or (better) give the
+      # three values above real generated ones — `scripts/setup.sh` does that.
+      # A database that already holds data is skipped entirely, so this never
+      # blocks an existing deploy.
+      ALLOW_DEMO_CREDENTIALS: ${ALLOW_DEMO_CREDENTIALS:-}
     depends_on:
       db:
         condition: service_healthy
@@ -57,6 +64,15 @@ services:
       MFA_SECRET: ${MFA_SECRET:-}
       MEDIA_PUBLIC_BASE: ${MEDIA_PUBLIC_BASE:-} # empty = relative media URLs (same-origin via each app's proxy; works on any host)
       UPLOADS_DIR: /app/uploads
+      # Signs the short-lived preview tokens the admin's iframe uses. MUST be the
+      # same value the `web` service verifies with. Unset ⇒ in-editor preview is
+      # unavailable (the mint route 503s and says so).
+      PREVIEW_SECRET: ${PREVIEW_SECRET:-}
+      # How much of the X-Forwarded-For chain to trust for req.ip (rate-limit keys
+      # and audit IPs). "true" trusts ALL hops, so a client that can reach this
+      # container directly can spoof its IP and defeat every per-IP limit. Set the
+      # real boundary: "1" = exactly one trusted proxy in front.
+      TRUST_PROXY: ${TRUST_PROXY:-1}
       # AI assistant: passes through from the host if set; falls back to offline heuristics otherwise.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-claude-haiku-4-5-20251001}
@@ -76,7 +92,9 @@ services:
     volumes:
       - paperboy-uploads:/app/uploads
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8091/health"]
+      # /health/ready (DB-aware), not the static /health — otherwise the
+      # container reports healthy while Postgres is unreachable.
+      test: ["CMD", "wget", "-qO-", "http://localhost:8091/health/ready"]
       interval: 5s
       timeout: 5s
       retries: 12
@@ -110,7 +128,8 @@ services:
       args:
         # Public origin of the web frontend; the preview iframe loads pages from here.
         VITE_WEB_URL: ${VITE_WEB_URL:-}
-        VITE_PREVIEW_SECRET: ${PREVIEW_SECRET:-dev-preview-secret-change-me}
+        # Deliberately NO preview secret here — see the Dockerfile. The admin gets a
+        # short-lived token from the API at runtime instead.
     image: paperboy/admin:latest
     restart: unless-stopped
     depends_on:

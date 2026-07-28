@@ -371,8 +371,17 @@ async function evictOtherSessions(db: Database, userId: string, keepToken?: stri
   }
 }
 
-/** Confirm enrollment with a code → enable 2FA and issue one-time backup codes. */
-export async function enableTotp(db: Database, userId: string, code: string, keepSessionToken?: string | null): Promise<{ backupCodes: string[] }> {
+/**
+ * Confirm enrollment with a code → enable 2FA and issue one-time backup codes.
+ *
+ * Requires the account PASSWORD, exactly like disableTotp. Without it a stolen
+ * session could enrol the attacker's own authenticator, and the evictOtherSessions
+ * below would then sign the real owner out — permanently, because a 2FA account
+ * logs in passwordlessly (email → code), so the owner's password no longer reaches
+ * any login path and /2fa/disable needs a session they can't obtain.
+ */
+export async function enableTotp(db: Database, userId: string, code: string, password: string, keepSessionToken?: string | null): Promise<{ backupCodes: string[] }> {
+  await verifyReauth(db, userId, password); // same per-account lockout as login (S3-L3)
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const user = rows[0];
   if (!user?.totpSecret) throw Errors.badRequest("Start 2FA setup first");
