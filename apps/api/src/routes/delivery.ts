@@ -82,8 +82,16 @@ function deliverItem<T extends { cv: number }>(
 export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<void> {
   const app = appBase.withTypeProvider<ZodTypeProvider>();
 
-  // Attach perspective + site early so a missing/invalid key fails before any DB read.
-  app.addHook("onRequest", async (req) => {
+  // Attach perspective + site before any handler runs.
+  //
+  // preHandler, NOT onRequest: @fastify/rate-limit installs its check as a
+  // per-route hook, and Fastify runs instance-level onRequest hooks first — so
+  // resolving here on onRequest short-circuited the limiter for every REJECTED
+  // request. Measured: 700 requests with invalid keys → 700x 401, zero 429s, i.e.
+  // unmetered delivery-key guessing plus unmetered load on the credential lookup
+  // (itself a DB query). preHandler still precedes every handler, so nothing is
+  // read before the key is validated.
+  app.addHook("preHandler", async (req) => {
     const { perspective, siteId } = await resolveCredential(app, req);
     req.perspective = perspective;
     req.deliverySiteId = siteId;
@@ -160,6 +168,13 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const { items, total } = await deliverySearch(app.db, perspective, req.deliverySiteId!, req.query.q, (req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!))), req.query.type, req.query.limit);
       // Search results change with content — short public cache only.
       reply.header("Cache-Control", perspective === "preview" ? "private, no-store" : "public, max-age=30");
+      // MUST partition on the credential like every other delivery response. This
+      // route set Cache-Control by hand and so skipped the `Vary` that
+      // setCacheHeaders adds, leaving `public, max-age=30` with no Vary at all —
+      // so a shared cache would serve one site's search results (or a preview
+      // key's drafts) to another site's key at the same URL. Same reason, same
+      // header; only the max-age differs.
+      if (perspective !== "preview") reply.header("Vary", "Authorization, X-Api-Key");
       return { items, total };
     },
   );

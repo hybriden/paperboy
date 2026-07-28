@@ -27,8 +27,15 @@ export function middleware(req: NextRequest) {
       req.cookies.has(DRAFT_COOKIE),
     hostname,
     adminOrigins: (process.env.ADMIN_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    isProduction: process.env.NODE_ENV === "production",
   });
   res.headers.set("Content-Security-Policy", buildContentSecurityPolicy(ancestors));
+  // The policy now varies per request, so any shared cache MUST partition on the
+  // header that decides it. Without this a CDN pins whichever policy it cached
+  // first: either the preview pane blanks for editors, or the relaxed
+  // frame-ancestors gets re-served to the public — the exact thing scoping it was
+  // meant to prevent. Frontends adopting this pattern need the same header.
+  res.headers.set("Vary", "Sec-Fetch-Dest");
   return res;
 }
 

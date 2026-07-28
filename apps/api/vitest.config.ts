@@ -23,11 +23,11 @@ export default defineConfig({
       exclude: ["**/*.d.ts", "**/seed.ts", "**/migrate.ts"],
       reporter: ["text-summary", "json-summary", "html"],
       reportsDirectory: "./coverage",
-      // Set just under the measured baseline (2026-07-28: 93.24% lines/statements,
-      // 92.94% functions, 82.73% branches) so a real regression fails CI while
+      // Set just under the measured baseline so a real regression fails CI while
       // normal churn doesn't. RATCHET ONLY: raise these as coverage rises, never
       // lower them to make a red run go green — fix or cover the code instead.
-      thresholds: { lines: 92, statements: 92, functions: 91, branches: 81 },
+      // Measured 2026-07-28: 93.78% lines/statements, 93.8% functions, 83.37% branches.
+      thresholds: { lines: 93, statements: 93, functions: 93, branches: 83 },
     },
   },
 });
