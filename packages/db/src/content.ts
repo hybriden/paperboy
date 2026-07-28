@@ -1053,15 +1053,28 @@ async function assertAllowedTypes(db: Database, type: ContentTypeDef, data: Reco
         throw Errors.validation(`Field "${f.name}" does not allow references to "${rt}"`);
       }
     }
-    if (f.type === "contentArea" && f.allowedBlocks.length && Array.isArray(v)) {
+    if (f.type === "contentArea" && Array.isArray(v)) {
       for (const b of v as Array<{ blockType?: string }>) {
         const bt = b?.blockType;
-        if (bt && !f.allowedBlocks.includes(bt)) {
+        if (!bt) continue;
+        // An UNKNOWN blockType is rejected regardless of allowedBlocks. The default
+        // `allowedBlocks: []` documents "any block", which used to mean "no check at
+        // all": {blockType:"HerooBlock", inline:{titel:"Hi"}} saved 200, PUBLISHED
+        // 200, and delivered `data:{}, fieldTypes:{}` — the inline payload silently
+        // vanished. Three successes and a blank page is the retry loop rule #1 exists
+        // to prevent, so the type must at least exist. Self-teaching (rule #2).
+        const known = await db.select({ name: contentType.name, kind: contentType.kind }).from(contentType).where(eq(contentType.name, bt)).limit(1);
+        if (!known[0]) {
+          const installed = (await db.select({ name: contentType.name }).from(contentType).where(inArray(contentType.kind, ["block", "page"])).orderBy(asc(contentType.name))).map((r) => r.name);
+          throw Errors.validation(
+            `Content area "${f.name}" got blockType "${bt}", which is not an installed content type — its inline data would be silently dropped at delivery. Available: ${installed.join(", ")}. (Create that block type first, or use one of these.)`,
+          );
+        }
+        if (f.allowedBlocks.length && !f.allowedBlocks.includes(bt)) {
           // `allowedBlocks` constrains BLOCK types only. A page dropped into a
           // content area is rendered as a teaser (Optimizely-style) and is
           // always placeable — its type name is never in allowedBlocks.
-          const btDef = await db.select().from(contentType).where(eq(contentType.name, bt)).limit(1);
-          if (btDef[0]?.kind === "page") continue;
+          if (known[0].kind === "page") continue;
           throw Errors.validation(`Content area "${f.name}" does not allow block "${bt}"`);
         }
       }
