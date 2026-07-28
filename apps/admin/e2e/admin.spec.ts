@@ -662,12 +662,45 @@ test("visual editing: a preview 'edit' message switches tab + focuses the field/
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
   await expect(editorName(page)).toHaveValue("Home");
-  // Simulate the preview iframe asking to edit the SEO meta title → switches to SEO tab + focuses it.
-  await page.evaluate(() => window.postMessage({ type: "paperboy:edit", field: "metaTitle" }, "*"));
+
+  // The message must come FROM THE PREVIEW IFRAME. The editor's handler now checks
+  // event.origin against the configured preview origin, because `paperboy:drop`
+  // appends a block and lets autosave commit it — an unvalidated handler is a write
+  // primitive that any page which window.open()s the admin could drive, with CSRF
+  // unable to see it. So this posts from inside the iframe (origin = the web app,
+  // source = the iframe window), exactly as @paperboycms/preview does. Posting from
+  // the admin page itself is now correctly ignored, which is the point.
+  await page.getByRole("button", { name: "Side by side" }).click();
+  const previewFrame = await (async () => {
+    for (let i = 0; i < 40; i++) {
+      const f = page.frames().find((fr) => /:8092(\/|$)/.test(fr.url()));
+      if (f) return f;
+      await page.waitForTimeout(250);
+    }
+    throw new Error(`preview iframe never appeared; frames: ${page.frames().map((f) => f.url()).join(", ")}`);
+  })();
+
+  // SEO meta title → switches to the SEO tab and focuses the field.
+  await previewFrame.evaluate(() => window.parent.postMessage({ type: "paperboy:edit", field: "metaTitle" }, "*"));
   await expect(page.locator("#f-metaTitle")).toBeFocused({ timeout: 5000 });
+
   // A block click scrolls to that block row in the content area.
-  await page.evaluate(() => window.postMessage({ type: "paperboy:edit", field: "mainArea", blockIndex: 0 }, "*"));
+  await previewFrame.evaluate(() =>
+    window.parent.postMessage({ type: "paperboy:edit", field: "mainArea", blockIndex: 0 }, "*"),
+  );
   await expect(page.locator("#pb-block-0")).toBeVisible({ timeout: 5000 });
+});
+
+test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
+  await login(page);
+  await page.getByRole("treeitem", { name: /Home/ }).click();
+  await expect(editorName(page)).toHaveValue("Home");
+  // Same payload as above, posted by the admin page to itself. Before the origin
+  // check this focused the field; any page holding a window handle to the admin
+  // could therefore drive the editor (including paperboy:drop, which writes).
+  await page.evaluate(() => window.postMessage({ type: "paperboy:edit", field: "metaTitle" }, "*"));
+  await page.waitForTimeout(1000);
+  await expect(page.locator("#f-metaTitle")).not.toBeFocused();
 });
 
 test("editor has a dedicated SEO tab with meta + OpenGraph fields", async ({ page }) => {
