@@ -937,15 +937,18 @@ export async function deliverySearch(
   // the window and then re-check each candidate against its SANITIZED PUBLIC text
   // below, dropping any hit that matched ONLY on a private field — otherwise the
   // hit/no-hit signal is a content-presence oracle over private data (M2).
-  // Matches the expression GIN index in 0007_delivery_search.sql exactly.
+  // Matches against the STORED generated tsvector column + its GIN index
+  // (0017_delivery_search_tsvector.sql). Ranking reads the same column, so a
+  // candidate row's `data` JSONB is never re-tokenized at query time — that
+  // recomputation, not a missing index, was the cost here (295.9ms → 17.6ms on
+  // 40k versions). The column's expression is the migration's single source of
+  // truth; don't inline to_tsvector(...) again or the index stops being used.
   const rows = (await db.execute(sql`
     SELECT DISTINCT v.document_id AS id,
-           MAX(ts_rank(to_tsvector('simple', coalesce(v.name,'') || ' ' || coalesce(v.data::text,'')),
-                       websearch_to_tsquery('simple', ${q}))) AS rank
+           MAX(ts_rank(v.fts, websearch_to_tsquery('simple', ${q}))) AS rank
     FROM content_version v
     JOIN content_item i ON i.document_id = v.document_id AND i.deleted_at IS NULL AND i.site_id = ${siteId}
-    WHERE to_tsvector('simple', coalesce(v.name,'') || ' ' || coalesce(v.data::text,''))
-          @@ websearch_to_tsquery('simple', ${q})
+    WHERE v.fts @@ websearch_to_tsquery('simple', ${q})
       AND v.locale IN (${sql.join(chain.map((c) => sql`${c}`), sql`, `)})
       AND ${perspective === "published" ? sql`v.is_current_published` : sql`(v.status = 'draft' OR v.is_current_published)`}
       ${typeName ? sql`AND i.type = ${typeName}` : sql``}

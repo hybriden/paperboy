@@ -309,7 +309,16 @@ export const api = {
   update: (
     documentId: string,
     locale: string,
-    body: { name?: string; slug?: string | null; displayInNav?: boolean; data: Record<string, unknown> },
+    body: {
+      name?: string;
+      slug?: string | null;
+      displayInNav?: boolean;
+      data: Record<string, unknown>;
+      /** Optimistic-concurrency token from the ContentDetail this edit is based
+       *  on. The server refuses (409) rather than overwriting a concurrent
+       *  editor; omit only where a clobber is genuinely preferable. */
+      revision?: number;
+    },
   ) => request<ContentDetail>("PUT", `/manage/content/${documentId}?locale=${locale}`, body),
   publish: (documentId: string, locale: string) =>
     request<ContentDetail>("POST", `/manage/content/${documentId}/publish?locale=${locale}`),
