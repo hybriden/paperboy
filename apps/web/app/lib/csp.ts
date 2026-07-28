@@ -33,6 +33,8 @@ export function frameAncestorsFor(input: {
   hostname: string;
   /** Extra admin origins from ADMIN_ORIGINS. */
   adminOrigins: string[];
+  /** Production? Then the localhost dev origins are omitted (see below). */
+  isProduction?: boolean;
 }): string {
   // "frame" covers the legacy <frame>; absent header → fall back to the preview
   // credential so pre-Sec-Fetch-Dest browsers can still preview.
@@ -44,12 +46,17 @@ export function frameAncestorsFor(input: {
 
   // Host-agnostic: the admin shares our hostname on :8090 in the default compose
   // topology, so localhost / a LAN IP / a domain all work with no configuration.
+  // localhost:8090/8093 are the DEV admin/MCP origins. Shipping them in a
+  // production policy means any process listening on those ports on a visitor's
+  // own machine may frame the customer's HTTPS site, which is a real (if niche)
+  // clickjacking vector and pure dead weight in production. A production deploy
+  // names its admin via ADMIN_ORIGINS.
+  const devOrigins = input.isProduction ? [] : ["http://localhost:8090", "http://localhost:8093"];
   return [
     "'self'",
     input.hostname ? `http://${input.hostname}:8090` : "",
     input.hostname ? `https://${input.hostname}:8090` : "",
-    "http://localhost:8090",
-    "http://localhost:8093",
+    ...devOrigins,
     ...input.adminOrigins,
   ]
     .filter(Boolean)
