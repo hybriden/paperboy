@@ -1,6 +1,6 @@
 {
   "name": "@paperboycms/preview",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Framework-agnostic on-page-editing bridge for the Paperboy headless CMS preview iframe — click-to-edit, drag-drop blocks, live patch. Zero runtime dependencies.",
   "license": "MIT",
   "repository": {
@@ -35,7 +35,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepublishOnly": "tsc -p tsconfig.json",
+    "prepublishOnly": "vitest run && tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "lint": "echo 'lint: preview (typecheck covers it)'"

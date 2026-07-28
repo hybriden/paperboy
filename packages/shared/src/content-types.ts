@@ -47,8 +47,25 @@ export const FieldValidation = z.object({
 export type FieldValidation = z.infer<typeof FieldValidation>;
 
 /** A structured link value. */
+/**
+ * Schemes a stored link may use. Same rule the richtext renderer already enforces
+ * (`rtSafeHref` in packages/client) — but that guard is unreachable for a STRUCTURED
+ * link field, whose `href` used to be accepted and delivered verbatim. So
+ * `javascript:` / `data:` survived the write and reached every consumer; React
+ * happens to neutralise `javascript:` hrefs, but @paperboycms/client is published for
+ * arbitrary frontends (Astro `set:html`, Vue, vanilla) where it is live stored XSS on
+ * the customer's public site. Rejected at the WRITE chokepoint, not patched at render.
+ */
+const SAFE_HREF = /^(https?:|mailto:|tel:|\/|#)/i;
+
 export const LinkValue = z.object({
-  href: z.string().max(2000),
+  href: z
+    .string()
+    .max(2000)
+    .refine((h) => h === "" || SAFE_HREF.test(h.trim()), {
+      message:
+        'Link href must start with http://, https://, mailto:, tel:, "/" or "#" — other schemes (javascript:, data:) are rejected because they execute in the visitor\'s browser. Example: {"href":"https://example.com","text":"Example"}',
+    }),
   text: z.string().max(300).optional(),
   target: z.enum(["_self", "_blank"]).optional(),
   title: z.string().max(300).optional(),
@@ -892,10 +909,73 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
   }
 }
 
-export function coerceData(type: ContentTypeDef, data: Record<string, unknown>, locale?: string): Record<string, unknown> {
+/**
+ * Resolve a BLOCK content type by name, so a content area's inline data can be
+ * coerced with the block's own field definitions.
+ */
+export type BlockTypeResolver = (name: string) => ContentTypeDef | undefined;
+
+/** Guards against a block type that (transitively) allows itself. */
+const MAX_INLINE_DEPTH = 10;
+
+/**
+ * Coerce one inline block's data with its OWN type definition. Only `inline` is
+ * touched; the envelope (key/blockType/display/shared/ref) is structural and passes
+ * through untouched. An unknown blockType is left alone rather than guessed at —
+ * coercing against the wrong schema would be exactly the meaning-destroying
+ * transform rule #1 forbids.
+ */
+function coerceInlineBlock(
+  value: unknown,
+  locale: string | undefined,
+  blockTypes: BlockTypeResolver,
+  depth: number,
+): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const b = value as Record<string, unknown>;
+  const inline = b.inline;
+  if (!inline || typeof inline !== "object" || Array.isArray(inline)) return value;
+  const def = typeof b.blockType === "string" ? blockTypes(b.blockType) : undefined;
+  if (!def) return value;
+  return { ...b, inline: coerceDataAtDepth(def, inline as Record<string, unknown>, locale, blockTypes, depth) };
+}
+
+function coerceDataAtDepth(
+  type: ContentTypeDef,
+  data: Record<string, unknown>,
+  locale: string | undefined,
+  blockTypes: BlockTypeResolver | undefined,
+  depth: number,
+): Record<string, unknown> {
   const out: Record<string, unknown> = { ...data };
-  for (const f of type.fields) if (f.name in out) out[f.name] = coerceFieldValue(f, out[f.name], locale);
+  for (const f of type.fields) {
+    if (!(f.name in out)) continue;
+    out[f.name] = coerceFieldValue(f, out[f.name], locale);
+    // Recurse into content areas so the chokepoint covers the WHOLE document, not
+    // just its first level. Without this, a block's richtext field kept raw
+    // Markdown (persisted, 200 OK, then rendered blank) while the identical
+    // top-level field was correctly parsed — see shared-coerce-blocks.test.ts.
+    if (f.type === "contentArea" && blockTypes && depth < MAX_INLINE_DEPTH && Array.isArray(out[f.name])) {
+      out[f.name] = (out[f.name] as unknown[]).map((b) => coerceInlineBlock(b, locale, blockTypes, depth + 1));
+    }
+  }
   return out;
+}
+
+/**
+ * The tolerant-coercion chokepoint (agent-API rule #3): every write path funnels
+ * through here so an agent mistake is absorbed in ONE place, or rejected.
+ *
+ * Pass `blockTypes` to also coerce content-area INLINE block data. It is optional
+ * only so existing callers keep compiling; every real write path should supply it.
+ */
+export function coerceData(
+  type: ContentTypeDef,
+  data: Record<string, unknown>,
+  locale?: string,
+  blockTypes?: BlockTypeResolver,
+): Record<string, unknown> {
+  return coerceDataAtDepth(type, data, locale, blockTypes, 0);
 }
 
 function applyStringValidation(base: z.ZodString, f: FieldDef, strict: boolean): z.ZodTypeAny {

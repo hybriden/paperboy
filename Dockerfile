@@ -14,10 +14,13 @@ RUN pnpm install --frozen-lockfile
 # EMPTY so the preview pane derives the web origin from the host the admin is
 # loaded on (localhost / LAN IP / domain) at runtime instead of hard-coding it.
 ARG VITE_WEB_URL=
-ARG VITE_PREVIEW_SECRET=dev-preview-secret-change-me
+# NO VITE_PREVIEW_SECRET. Vite inlines VITE_* as string literals at build time and
+# nginx serves /assets/ unauthenticated, so passing the preview secret here
+# PUBLISHED it: anyone who fetched the admin's JS could read every draft forever.
+# The admin now asks the API for a short-lived token instead
+# (GET /manage/preview-token → ?pbt=…), and the secret stays server-side.
 ENV VITE_API_URL=/ \
-    VITE_WEB_URL=${VITE_WEB_URL} \
-    VITE_PREVIEW_SECRET=${VITE_PREVIEW_SECRET}
+    VITE_WEB_URL=${VITE_WEB_URL}
 RUN pnpm --filter @paperboy/web build \
   && pnpm --filter @paperboy/admin build
 RUN mkdir -p /app/uploads

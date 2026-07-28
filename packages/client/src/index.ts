@@ -432,12 +432,27 @@ const looksLikeBlocks = (v: unknown): v is AreaBlock[] =>
 
 /**
  * Every content-area field on a delivered item's `data`, keyed by field name.
- * Content types are data, so areas can be named anything — a non-empty array of
- * blocks is detected by shape; an EMPTY array is shape-identical to any other
- * empty list, so it only counts when conventionally named (…Area, e.g.
- * `mainArea`). This keeps an empty `tags: []` from looking like a content area.
+ *
+ * PASS `fieldTypes` (delivered alongside `data` on every item). It is the declared
+ * type per public field, and switching on the schema instead of sniffing values is
+ * exactly what it exists for: detection is then exact for areas named anything, and
+ * an area that is currently EMPTY is still an area.
+ *
+ * Omitting it falls back to a value-shape heuristic, kept only so already-deployed
+ * frontends don't break. The heuristic cannot see an empty area unless the field is
+ * conventionally named (`…Area`) — an empty `sections: []` is shape-identical to an
+ * empty `tags: []` — so a page whose areas are all empty renders no drop zones and
+ * cannot be composed by on-page drag-and-drop.
  */
-export function contentAreas(data: Record<string, unknown>): { field: string; blocks: AreaBlock[] }[] {
+export function contentAreas(
+  data: Record<string, unknown>,
+  fieldTypes?: Record<string, string>,
+): { field: string; blocks: AreaBlock[] }[] {
+  if (fieldTypes) {
+    return Object.entries(data)
+      .filter(([field, v]) => fieldTypes[field] === "contentArea" && Array.isArray(v))
+      .map(([field, v]) => ({ field, blocks: v as AreaBlock[] }));
+  }
   return Object.entries(data)
     .filter(([field, v]) => looksLikeBlocks(v) || (Array.isArray(v) && v.length === 0 && /area$/i.test(field)))
     .map(([field, v]) => ({ field, blocks: v as AreaBlock[] }));

@@ -35,11 +35,13 @@ interface Props {
   onChange: (next: BlockInstance[]) => void;
   types: ContentTypeDef[];
   sharedBlocks: { documentId: string; name: string; type: string }[];
+  /** Read-only (no content.update). Hides the palette and locks every control. */
+  disabled?: boolean;
 }
 
 const DISPLAY_OPTIONS: BlockDisplayOption[] = ["automatic", "full", "wide", "narrow"];
 
-export function ContentArea({ field, value, onChange, types, sharedBlocks }: Props) {
+export function ContentArea({ field, value, onChange, types, sharedBlocks, disabled = false }: Props) {
   const blocks = value ?? [];
   const allowed = field.allowedBlocks.length
     ? types.filter((t) => field.allowedBlocks.includes(t.name))
@@ -188,7 +190,10 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-      {/* Block palette — click to add (drag the grip on a block to reorder). */}
+      {/* Block palette — click to add (drag the grip on a block to reorder).
+          Hidden entirely when read-only; offering controls that can only produce a
+          403 is worse than not showing them. */}
+      {!disabled && (
       <div className="mb-2 flex flex-wrap gap-1.5" aria-label="Block palette">
         {allowed.map((t) => (
           <button
@@ -204,7 +209,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
         {sharedBlocks.length > 0 && (
           <details className="relative">
             <summary className="btn-subtle cursor-pointer list-none px-2 py-1 text-xs">+ Shared block</summary>
-            <div className="absolute z-10 mt-1 w-56 rounded border border-line bg-white p-1 shadow-panel">
+            <div className="absolute z-10 mt-1 w-56 rounded border border-line bg-panel text-fg p-1 shadow-panel">
               {sharedBlocks.map((b) => (
                 <button key={b.documentId} className="block w-full truncate rounded px-2 py-1 text-left text-xs hover:bg-canvas"
                   onClick={() => addShared(b.documentId, b.type)}>
@@ -215,12 +220,14 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
           </details>
         )}
       </div>
+      )}
 
       {/* Content area */}
       <div
         data-testid={`content-area-${field.name}`}
         className={`rounded-md border-2 border-dashed p-2 transition-colors ${dropOver ? "border-accent bg-accent/10" : "border-line bg-canvas/60"}`}
         onDragOver={(e) => {
+          if (disabled) return;
           if (e.dataTransfer.types.includes("application/x-paperboy") || e.dataTransfer.types.includes("Files")) {
             e.preventDefault();
             setDropOver(true);
@@ -231,7 +238,13 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
       >
         {blocks.length === 0 ? (
           <p className="px-2 py-6 text-center text-sm text-muted">
-            {dropOver ? "Drop it here" : "Click a block above to add it, or drag in a shared block (Assets pane), a page (content tree — shown as a teaser), or an image (library or your desktop)."}
+            {dropOver
+              ? "Drop it here"
+              : disabled
+                // The palette is hidden when read-only, so don't tell the user to
+                // "click a block above" — there is nothing above.
+                ? "You don\u2019t have permission to edit this area."
+                : "Click a block above to add it, or drag in a shared block (Assets pane), a page (content tree — shown as a teaser), or an image (library or your desktop)."}
           </p>
         ) : (
           <SortableContext items={blocks.map((b) => b.key)} strategy={verticalListSortingStrategy}>
@@ -249,6 +262,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks }: Pro
                   onUpdate={(patch) => updateBlock(b.key, patch)}
                   onRemove={() => removeBlock(b.key)}
                   onMove={(d) => move(b.key, d)}
+                  disabled={disabled}
                 />
               ))}
             </ul>
@@ -328,6 +342,7 @@ function SortableBlock({
   onUpdate,
   onRemove,
   onMove,
+  disabled = false,
 }: {
   block: BlockInstance;
   index: number;
@@ -336,8 +351,9 @@ function SortableBlock({
   onUpdate: (patch: Partial<BlockInstance>) => void;
   onRemove: () => void;
   onMove: (d: -1 | 1) => void;
+  disabled?: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.key });
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.key, disabled });
   const style = { transform: CSS.Transform.toString(transform), transition };
   const isShared = block.ref !== null;
   // A referenced PAGE renders as a teaser on the site (not as a block).
@@ -361,20 +377,22 @@ function SortableBlock({
           className="ml-auto rounded border border-line bg-panel px-1 py-0.5 text-xs text-fg"
           value={block.display}
           aria-label="Display option"
+          disabled={disabled}
           onChange={(e) => onUpdate({ display: e.target.value as BlockDisplayOption })}
         >
           {DISPLAY_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
         </select>
         <div className="flex items-center gap-0.5">
-          <button className="rounded p-1 text-muted hover:bg-line" aria-label="Move up" onClick={() => onMove(-1)}><Icon.Up width={14} height={14} /></button>
-          <button className="rounded p-1 text-muted hover:bg-line" aria-label="Move down" onClick={() => onMove(1)}><Icon.Down width={14} height={14} /></button>
-          <button className="rounded p-1 text-danger hover:bg-danger/10" aria-label="Remove block" onClick={onRemove}><Icon.Trash width={14} height={14} /></button>
+          <button className="rounded p-1 text-muted hover:bg-line disabled:opacity-40" aria-label="Move up" disabled={disabled} onClick={() => onMove(-1)}><Icon.Up width={14} height={14} /></button>
+          <button className="rounded p-1 text-muted hover:bg-line disabled:opacity-40" aria-label="Move down" disabled={disabled} onClick={() => onMove(1)}><Icon.Down width={14} height={14} /></button>
+          <button className="rounded p-1 text-danger hover:bg-danger/10 disabled:opacity-40" aria-label="Remove block" disabled={disabled} onClick={onRemove}><Icon.Trash width={14} height={14} /></button>
         </div>
       </div>
       {!isShared && type && (
         <div className="space-y-2 p-2.5">
           {type.fields.map((f) => (
             <BlockField key={f.name} field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
+              disabled={disabled}
               onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })} />
           ))}
         </div>
@@ -389,40 +407,40 @@ function SortableBlock({
   );
 }
 
-function BlockField({ field, fieldId, value, onChange }: { field: FieldDef; fieldId: string; value: unknown; onChange: (v: unknown) => void }) {
+function BlockField({ field, fieldId, value, onChange, disabled = false }: { field: FieldDef; fieldId: string; value: unknown; onChange: (v: unknown) => void; disabled?: boolean }) {
   const id = fieldId;
   return (
     <div>
       <label className="field-label text-[12px]" htmlFor={id}>{field.displayName}</label>
       {field.type === "text" && (
-        <input id={id} aria-label={field.displayName} className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} />
+        <input disabled={disabled} id={id} aria-label={field.displayName} className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} />
       )}
       {field.type === "markdown" && (
-        <MarkdownEditor id={id} value={(value as string) ?? ""} onChange={(v) => onChange(v)} minHeight={160} />
+        <MarkdownEditor id={id} value={(value as string) ?? ""} onChange={(v) => onChange(v)} minHeight={160} disabled={disabled} />
       )}
-      {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} />}
+      {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} disabled={disabled} />}
       {field.type === "boolean" && (
-        <input id={id} aria-label={field.displayName} type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
+        <input disabled={disabled} id={id} aria-label={field.displayName} type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
       )}
       {field.type === "number" && (
-        <input id={id} aria-label={field.displayName} type="number" className="field-input py-1" value={(value as number) ?? ""} onChange={(e) => onChange(Number(e.target.value))} />
+        <input disabled={disabled} id={id} aria-label={field.displayName} type="number" className="field-input py-1" value={(value as number) ?? ""} onChange={(e) => onChange(Number(e.target.value))} />
       )}
       {field.type === "datetime" && (
-        <input id={id} aria-label={field.displayName} type="datetime-local" className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)} />
+        <input disabled={disabled} id={id} aria-label={field.displayName} type="datetime-local" className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)} />
       )}
       {field.type === "select" && (
-        <select id={id} className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+        <select disabled={disabled} id={id} className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)}>
           <option value="">— choose —</option>
           {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       )}
       {field.type === "link" && (
-        <input id={id} aria-label={field.displayName} className="field-input py-1" placeholder="https://… or /path"
+        <input disabled={disabled} id={id} aria-label={field.displayName} className="field-input py-1" placeholder="https://… or /path"
           value={((value as { href?: string } | null) ?? {}).href ?? ""}
           onChange={(e) => onChange(e.target.value ? { ...(value as object), href: e.target.value } : null)} />
       )}
-      {field.type === "reference" && <ReferenceField id={id} value={value} onChange={onChange} />}
-      {field.type === "image" && <ImageField id={id} value={value} onChange={onChange} />}
+      {field.type === "reference" && <ReferenceField id={id} value={value} onChange={onChange} disabled={disabled} />}
+      {field.type === "image" && <ImageField id={id} value={value} onChange={onChange} disabled={disabled} />}
     </div>
   );
 }

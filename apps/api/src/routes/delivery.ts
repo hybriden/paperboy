@@ -8,6 +8,7 @@ import {
   deliveryList,
   deliverySearch,
   deliveryStartPage,
+  resolveDefaultLocale,
   verifyDeliveryKey,
 } from "@paperboy/db";
 import { DeliveryContent } from "@paperboy/shared";
@@ -120,7 +121,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
         return reply.code(400).send({ error: "Provide a type and/or a parentId." });
       }
       const perspective = req.perspective!;
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!));
       // `data.<field>=value` query params become equality filters.
       const filter: Record<string, string> = {};
       for (const [k, v] of Object.entries(req.query)) {
@@ -156,7 +157,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     },
     async (req, reply) => {
       const perspective = req.perspective!;
-      const { items, total } = await deliverySearch(app.db, perspective, req.deliverySiteId!, req.query.q, req.query.locale ?? "en", req.query.type, req.query.limit);
+      const { items, total } = await deliverySearch(app.db, perspective, req.deliverySiteId!, req.query.q, (req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!))), req.query.type, req.query.limit);
       // Search results change with content — short public cache only.
       reply.header("Cache-Control", perspective === "preview" ? "private, no-store" : "public, max-age=30");
       return { items, total };
@@ -175,7 +176,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     },
     async (req, reply) => {
       const perspective = req.perspective!;
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!));
       const result = await deliveryStartPage(app.db, perspective, req.deliverySiteId!, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No start page configured" });
       return deliverItem(req, reply, perspective, result);
@@ -194,7 +195,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     },
     async (req, reply) => {
       const perspective = req.perspective!;
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!));
       const result = await deliveryGetBySlug(app.db, perspective, req.deliverySiteId!, req.query.slug, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No published content for that slug" });
       return deliverItem(req, reply, perspective, result);
@@ -213,7 +214,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     },
     async (req, reply) => {
       const perspective = req.perspective!;
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!));
       const segments = req.query.path.split("/").filter(Boolean);
       const result = await deliveryGetByPath(app.db, perspective, req.deliverySiteId!, segments, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No content at that path" });
@@ -234,7 +235,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     },
     async (req, reply) => {
       const perspective = req.perspective!;
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!));
       const result = await deliveryGetById(app.db, perspective, req.deliverySiteId!, req.params.documentId, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "Not found or not published" });
       return deliverItem(req, reply, perspective, result);
@@ -254,7 +255,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     },
     async (req, reply) => {
       const perspective = req.perspective!;
-      const locale = req.query.locale ?? "en";
+      const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!));
       const global = await deliveryGlobal(app.db, perspective, req.deliverySiteId!, req.params.type, locale);
       if (!global) return reply.code(404).send({ error: "not_found", message: "No such global" });
       setCacheHeaders(reply, perspective, global.cv);
