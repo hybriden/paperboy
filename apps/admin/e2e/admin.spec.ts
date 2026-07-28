@@ -700,7 +700,10 @@ test("visual editing: the admin IGNORES an edit message that is not from the pre
   // could therefore drive the editor (including paperboy:drop, which writes).
   await page.evaluate(() => window.postMessage({ type: "paperboy:edit", field: "metaTitle" }, "*"));
   await page.waitForTimeout(1000);
-  await expect(page.locator("#f-metaTitle")).not.toBeFocused();
+  // A rejected message means the editor never switched to the SEO tab, so the field
+  // is not rendered at all. Assert ABSENCE — `not.toBeFocused()` errors on a missing
+  // element rather than passing, which is what made the first version of this fail.
+  await expect(page.locator("#f-metaTitle")).toHaveCount(0);
 });
 
 test("editor has a dedicated SEO tab with meta + OpenGraph fields", async ({ page }) => {
