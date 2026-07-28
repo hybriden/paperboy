@@ -39,6 +39,23 @@ class DeliveryCtx {
   locales: (typeof locale.$inferSelect)[] | null = null;
   // Total nodes resolved this request — the fan-out budget (S2-M4).
   nodesResolved = 0;
+  /**
+   * Highest `cv` of ANY row resolved this request — the cache version of the whole
+   * representation, not just its root row.
+   *
+   * The ETag used to be the root item's own `cv`, which changes only when that item
+   * is republished. So a 304 was returned for representations that demonstrably
+   * changed: republishing an embedded shared block, renaming an ancestor (which moves
+   * `urlPath`, `seo.canonicalPath` and the breadcrumb), or republishing SiteSettings
+   * (which changes `og.siteName` on EVERY page). With `stale-while-revalidate`, each
+   * revalidation refreshed the CDN's own freshness, so the stale copy was served
+   * indefinitely — and @paperboycms/client's etagCache did the same in-process.
+   *
+   * `variantRow` is the single funnel every resolved row passes through — nested
+   * references, the ancestor slug walk, breadcrumbs and siteName — so folding the max
+   * in there covers the entire graph without threading anything.
+   */
+  maxCv = 0;
   /** Still within the per-request resolve budget? Past it, callers emit shallow refs. */
   withinResolveBudget(): boolean {
     return this.nodesResolved < MAX_RESOLVE_NODES;
@@ -231,7 +248,11 @@ async function variantRow(
   const all = await ctx.docVersions(documentId);
   for (const code of await ctx.localeChain(loc)) {
     const row = rowForLocale(all, perspective, code, ctx.now);
-    if (row) return { row, usedLocale: code };
+    if (row) {
+      // Every resolved row bumps the request's cache version — see ctx.maxCv.
+      if (row.cv > ctx.maxCv) ctx.maxCv = row.cv;
+      return { row, usedLocale: code };
+    }
   }
   return null;
 }
@@ -678,7 +699,9 @@ export async function resolveContent(
     name: found.row.name,
     slug: found.row.slug,
     urlPath,
-    cv: found.row.cv,
+    // The graph's cache version, not just this row's — everything embedded above
+    // has already passed through variantRow by now. See DeliveryCtx.maxCv.
+    cv: Math.max(found.row.cv, ctx.maxCv),
     data: sanitized,
     // Public field types so a frontend renders by schema type, not value shape.
     fieldTypes: def ? publicFieldTypes(def) : {},

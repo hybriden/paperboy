@@ -103,6 +103,35 @@ describe("pages in content areas → teasers", () => {
   });
 
   it("blocks are still constrained by allowedBlocks (exemption is pages only)", async () => {
+    // QuoteBlock must actually EXIST for this to test allowedBlocks rather than the
+    // unknown-type guard — it isn't seeded, so install it first. (Before this, the
+    // test used an uninstalled name and so never exercised the allowlist at all.)
+    const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content-types",
+      headers: authHeaders(admin),
+      payload: {
+        name: "QuoteBlock",
+        displayName: "Quote Block",
+        kind: "block",
+        fields: [
+          {
+            name: "quote",
+            displayName: "Quote",
+            type: "text",
+            localized: true,
+            required: false,
+            delivery: "public",
+            allowedBlocks: [],
+            allowedTypes: [],
+            group: "Content",
+          },
+        ],
+      },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+
     const res = await s.app.inject({
       method: "PUT",
       url: `/api/v1/manage/content/${hostId}?locale=en`,
@@ -113,6 +142,21 @@ describe("pages in content areas → teasers", () => {
       },
     });
     expect(res.statusCode).toBe(422);
+    // Installed, but not in LandingPage.mainArea's allowedBlocks → the allowlist path.
     expect(res.json().message).toContain("does not allow block");
+  });
+
+  it("an UNINSTALLED blockType is refused with the not-installed reason", async () => {
+    const res = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${hostId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: {
+        merge: true,
+        data: { mainArea: [{ key: "x2", blockType: "NoSuchBlock", display: "automatic", inline: { a: 1 }, ref: null }] },
+      },
+    });
+    expect(res.statusCode).toBe(422);
+    expect(res.json().message).toMatch(/not an installed content type/i);
   });
 });
