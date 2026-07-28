@@ -310,13 +310,17 @@ export function PreviewPane({
               <div className="pointer-events-auto absolute inset-x-0 bottom-0 border-t border-line bg-panel/95 p-3 text-xs text-muted">
                 <strong className="text-fg">Preview looks empty?</strong> Your frontend at{" "}
                 <code className="font-mono">{targetOrigin}</code> may be refusing to be framed. It must allow this
-                admin as a frame ancestor:
+                admin as a frame ancestor — scoped to the framed request, so the public site stays unframable:
                 <code className="mt-1 block break-all rounded bg-line/50 px-2 py-1 font-mono">
-                  Content-Security-Policy: frame-ancestors {window.location.origin}
+                  {`Content-Security-Policy: frame-ancestors ${window.location.origin}`}
+                  <br />
+                  {"// only when Sec-Fetch-Dest: iframe — otherwise frame-ancestors 'none'"}
                 </code>
                 <span className="mt-1 block">
                   and must NOT send <code className="font-mono">X-Frame-Options: DENY</code> (it blocks framing on its
-                  own). Paperboy can’t set headers on another origin — this has to change on the frontend.
+                  own, and can’t express “only the CMS”). Paperboy can’t set headers on another origin — this has to
+                  change on the frontend; <code className="font-mono">apps/web/middleware.ts</code> is a working
+                  example.
                 </span>
               </div>
             )}

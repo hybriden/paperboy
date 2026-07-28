@@ -1,0 +1,14 @@
+-- Optimistic concurrency for the working draft.
+--
+-- `updateContent` mutates the single working draft row in place, so two editors
+-- (or an editor and an MCP agent) on one document overwrite each other with no
+-- error and no version-history trace — the losing edit is unrecoverable.
+--
+-- `revision` is bumped on every in-place draft write. A caller that read the
+-- document sends the revision back, the UPDATE matches on it, and a write from a
+-- stale snapshot affects zero rows → 409 instead of a silent clobber.
+--
+-- Additive and idempotent; DEFAULT 1 backfills existing rows so pre-migration
+-- drafts get a valid token immediately. Sending no revision keeps working
+-- (last-write-wins) so already-deployed API clients are unaffected.
+ALTER TABLE content_version ADD COLUMN IF NOT EXISTS revision integer NOT NULL DEFAULT 1;
