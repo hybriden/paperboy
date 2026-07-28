@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
-import { originOf } from "../lib/preview-origin.js";
+import { isPreviewOrigin, originOf } from "../lib/preview-origin.js";
 import { Surface } from "./ui/surface.js";
 
 /**
@@ -121,6 +121,33 @@ export function PreviewPane({
   // preview that catches the drag in the admin, then forward the pointer (in the
   // iframe's own coords) so the bridge can hit-test the content area under it.
   const [drag, setDrag] = useState<{ payload: unknown } | null>(null);
+  /**
+   * Did the preview actually load? A frontend that refuses framing
+   * (`frame-ancestors 'none'` or `X-Frame-Options: DENY`) renders an EMPTY iframe and
+   * reports only a console error the editor never sees — so the pane looked broken
+   * with no explanation. We can't read a cross-origin frame to check, and no error
+   * event fires, so this infers it from silence: @paperboycms/preview posts
+   * `paperboy:preview-ready` on load, and if nothing arrives we show an actionable
+   * hint ALONGSIDE the iframe rather than replacing it (the frontend may simply not
+   * run the bridge, in which case the preview is fine and the hint is just advice).
+   */
+  const [bridgeSeen, setBridgeSeen] = useState(false);
+  const [quiet, setQuiet] = useState(false);
+  useEffect(() => {
+    const onReady = (e: MessageEvent) => {
+      if (isPreviewOrigin(e.origin, targetOrigin) && (e.data as { type?: string })?.type === "paperboy:preview-ready") {
+        setBridgeSeen(true);
+      }
+    };
+    window.addEventListener("message", onReady);
+    return () => window.removeEventListener("message", onReady);
+  }, [targetOrigin]);
+  useEffect(() => {
+    setQuiet(false);
+    setBridgeSeen(false);
+    const t = setTimeout(() => setQuiet(true), 4000);
+    return () => clearTimeout(t);
+  }, [nonce, device, urlPath, locale]);
   useEffect(() => {
     const onStart = (e: Event) => {
       const payload = (e as CustomEvent).detail;
@@ -267,6 +294,7 @@ export function PreviewPane({
           }}
         >
           {src ? (
+            <>
             <iframe
               key={device}
               ref={iframeRef}
@@ -275,6 +303,24 @@ export function PreviewPane({
               className="border border-line bg-white shadow-panel"
               style={{ width: "100%", height: "100%", border: 0 }}
             />
+            {quiet && !bridgeSeen && targetOrigin && (
+              // Advice, not a verdict — the frontend may simply not run the bridge.
+              // But a refused frame is by far the most common cause of a blank pane,
+              // and the browser only reports it to a console the editor never opens.
+              <div className="pointer-events-auto absolute inset-x-0 bottom-0 border-t border-line bg-panel/95 p-3 text-xs text-muted">
+                <strong className="text-fg">Preview looks empty?</strong> Your frontend at{" "}
+                <code className="font-mono">{targetOrigin}</code> may be refusing to be framed. It must allow this
+                admin as a frame ancestor:
+                <code className="mt-1 block break-all rounded bg-line/50 px-2 py-1 font-mono">
+                  Content-Security-Policy: frame-ancestors {window.location.origin}
+                </code>
+                <span className="mt-1 block">
+                  and must NOT send <code className="font-mono">X-Frame-Options: DENY</code> (it blocks framing on its
+                  own). Paperboy can’t set headers on another origin — this has to change on the frontend.
+                </span>
+              </div>
+            )}
+            </>
           ) : (
             // Show the SERVER's reason, never a guessed one. This used to hardcode
             // "the server has no PREVIEW_SECRET configured", which became a lie the
