@@ -90,14 +90,33 @@ class DeliveryCtx {
     return rows;
   }
 
-  /** Bulk-prime version rows for many documents in ONE query (batches the N+1). */
-  async primeVersions(documentIds: string[]): Promise<void> {
+  /**
+   * Bulk-prime version rows for many documents in ONE query (batches the N+1).
+   *
+   * `perspective` narrows what is fetched, and it matters a lot: under the PUBLISHED
+   * perspective `selectRow` can only ever return an `isCurrentPublished` row, so
+   * history rows are unreachable — yet this used to fetch every version of every
+   * candidate, with all columns, including the full `data` JSONB. Measured on 2,000
+   * articles (≈6 versions each): 12,009 rows and ~42 MB of heap for a single
+   * `?limit=10` request, and ~1 GB RSS at 20 concurrent — enough to OOM the container
+   * and take the admin and login down with it, on a 600 req/min PUBLIC key.
+   *
+   * PREVIEW still needs everything: its last-resort fallback is "the latest version of
+   * any status", which keeps an unpublished page previewable and can legitimately be a
+   * history row. A DeliveryCtx is built per request and carries one perspective, so
+   * caching the narrowed set is safe.
+   */
+  async primeVersions(documentIds: string[], perspective: Perspective): Promise<void> {
     const missing = documentIds.filter((id) => !this.versionsByDoc.has(id));
     if (!missing.length) return;
     const rows = await this.db
       .select()
       .from(contentVersion)
-      .where(inArray(contentVersion.documentId, missing));
+      .where(
+        perspective === "published"
+          ? and(inArray(contentVersion.documentId, missing), eq(contentVersion.isCurrentPublished, true))
+          : inArray(contentVersion.documentId, missing),
+      );
     const grouped = new Map<string, (typeof contentVersion.$inferSelect)[]>();
     for (const id of missing) grouped.set(id, []);
     for (const r of rows) grouped.get(r.documentId)?.push(r);
@@ -815,7 +834,7 @@ export async function deliveryList(
     .from(contentItem)
     .where(and(...conds))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
-  await ctx.primeVersions(items.map((i) => i.documentId)); // one query, not N
+  await ctx.primeVersions(items.map((i) => i.documentId), perspective); // one query, not N
 
   // Visibility, filtering and sorting all read the CHOKEPOINT's own version
   // selection (variantRow: perspective + publish window + locale fallback) —
@@ -934,7 +953,7 @@ export async function deliverySearch(
     ORDER BY rank DESC
     LIMIT ${max * 5}
   `)) as unknown as { id: string; rank: number }[];
-  await ctx.primeVersions(rows.map((r) => r.id));
+  await ctx.primeVersions(rows.map((r) => r.id), perspective);
   // Positive query terms under the 'simple' config (lowercase, word-token split,
   // no stemming/stop-words). Negated (-term) words are dropped. A candidate is
   // kept only if every positive term appears in its public text — and matching
@@ -997,7 +1016,7 @@ export async function deliveryGetByPath(
       )
       .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
 
-    await ctx.primeVersions(children.map((c) => c.documentId)); // batch this level's sibling versions
+    await ctx.primeVersions(children.map((c) => c.documentId), perspective); // batch this level's sibling versions
     let matched: string | null = null;
     for (const child of children) {
       // Resolve through the perspective chokepoint — draft-only children are
