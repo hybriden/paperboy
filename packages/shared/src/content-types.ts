@@ -56,13 +56,30 @@ export type FieldValidation = z.infer<typeof FieldValidation>;
  * arbitrary frontends (Astro `set:html`, Vue, vanilla) where it is live stored XSS on
  * the customer's public site. Rejected at the WRITE chokepoint, not patched at render.
  */
-const SAFE_HREF = /^(https?:|mailto:|tel:|\/|#)/i;
+/**
+ * Is this URL safe to store and deliver?
+ *
+ * The check is on the SCHEME, not a prefix allowlist. A schemeless value is a
+ * relative URL ("about", "docs/x", "/path", "#anchor", "?q=1") and cannot execute
+ * anything, so it is allowed — a prefix allowlist rejected plain relative links like
+ * "x", which the richtext sanitizer's own fixture uses. Only an explicit
+ * non-navigational scheme (javascript:, data:, vbscript:, file:, …) is dangerous.
+ */
+const SAFE_URL_SCHEMES = new Set(["http:", "https:", "mailto:", "tel:"]);
+
+export function isSafeUrl(raw: string): boolean {
+  const v = raw.trim();
+  if (v === "") return true; // cleared input, not a link
+  const scheme = /^([a-z][a-z0-9+.-]*:)/i.exec(v);
+  if (!scheme) return true; // relative / anchor / query — no scheme to abuse
+  return SAFE_URL_SCHEMES.has(scheme[1]!.toLowerCase());
+}
 
 export const LinkValue = z.object({
   href: z
     .string()
     .max(2000)
-    .refine((h) => h === "" || SAFE_HREF.test(h.trim()), {
+    .refine((h) => isSafeUrl(h), {
       message:
         'Link href must start with http://, https://, mailto:, tel:, "/" or "#" — other schemes (javascript:, data:) are rejected because they execute in the visitor\'s browser. Example: {"href":"https://example.com","text":"Example"}',
     }),
@@ -640,7 +657,10 @@ function inlineDescendants(nodes: RtNode[]): RtNode[] {
 /** True when an image node carries a usable src (PM requires the attribute). */
 function validImage(n: RtNode): boolean {
   const src = (n.attrs as RtNode | undefined)?.src;
-  return typeof src === "string" && src !== "";
+  // Scheme-checked, not merely non-empty: an image node used to accept any string,
+  // so `src: "javascript:…"` / `data:text/html;…` survived the write chokepoint and
+  // was delivered verbatim by the PUBLIC Delivery API.
+  return typeof src === "string" && src !== "" && isSafeUrl(src);
 }
 
 /** Collect valid image descendants of RAW (pre-sanitize) nodes, aliased. */
@@ -690,7 +710,20 @@ function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] 
       node.marks = (node.marks as RtNode[])
         .filter((m) => m && typeof m === "object")
         .map((m) => ({ ...m, type: MARK_ALIASES[m.type as string] ?? m.type }))
-        .filter((m) => RICHTEXT_MARKS.has(m.type as string));
+        .filter((m) => RICHTEXT_MARKS.has(m.type as string))
+        // Marks were filtered by TYPE only — never by attrs — so a `link` mark
+        // carrying `javascript:`/`data:` passed the chokepoint and was served by the
+        // public Delivery API. The structured `link` field already rejects these
+        // (isSafeUrl), on the stated rule "rejected at the WRITE chokepoint, not
+        // patched at render"; richtext was relying on one consumer's renderer
+        // (rtSafeHref in @paperboycms/client), which leaves every other frontend —
+        // Astro set:html, Vue, generateHTML — with live stored XSS. Drop the MARK,
+        // keep the text: losing a bad link is not losing content.
+        .filter((m) => {
+          if (m.type !== "link") return true;
+          const href = ((m as RtNode).attrs as RtNode | undefined)?.href;
+          return typeof href === "string" && isSafeUrl(href);
+        });
     }
     if (type === "text") {
       // PM forbids empty text nodes; a text node never has content.
