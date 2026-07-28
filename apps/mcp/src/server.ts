@@ -302,15 +302,18 @@ tool(
     "By default `data` is MERGED over the current draft — fields you omit are kept.",
     "Pass merge:false to REPLACE the whole map (then you must send every required field,",
     "or the next publish will fail validation).",
+    "With merge:false, also pass the `revision` you got from get_content: the write is",
+    "then refused (409) if a human editor changed the draft meanwhile, instead of",
+    "overwriting them. Merged writes don't need it — they read current data at write time.",
   ].join(" "),
-  { documentId: docId, locale: loc, name: z.string().optional(), slug: z.string().nullable().optional(), displayInNav: z.boolean().optional(), data: z.record(z.unknown()), merge: z.boolean().optional().describe("Default true: shallow-merge data over the current draft. false = replace the whole field map"), allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately write text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)") },
+  { documentId: docId, locale: loc, name: z.string().optional(), slug: z.string().nullable().optional(), displayInNav: z.boolean().optional(), data: z.record(z.unknown()), merge: z.boolean().optional().describe("Default true: shallow-merge data over the current draft. false = replace the whole field map"), revision: z.number().int().nonnegative().optional().describe("Optimistic concurrency: the `revision` from get_content. If a human (or another agent) has changed the draft since, the write is refused instead of overwriting their work. Recommended whenever merge:false"), allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately write text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)") },
   // merge defaults to TRUE here (agent-facing surface): a full replace that
   // silently drops required fields like `intro` passes the relaxed draft
   // validation but bricks every subsequent publish — the worst failure mode
   // an agent can hit. Replace semantics stay available via merge:false.
-  async ({ documentId, locale, name, slug, displayInNav, data, merge, allowLanguageMismatch }) => {
+  async ({ documentId, locale, name, slug, displayInNav, data, merge, revision, allowLanguageMismatch }) => {
     const l = await locFor(documentId, locale);
-    const updated = await updateContent(db, ctx, documentId, l, { name, slug, displayInNav, data, merge: merge ?? true, allowLanguageMismatch });
+    const updated = await updateContent(db, ctx, documentId, l, { name, slug, displayInNav, data, merge: merge ?? true, revision, allowLanguageMismatch });
     mcpAudit("content.update", documentId, l);
     return updated;
   });

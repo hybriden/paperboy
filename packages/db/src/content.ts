@@ -915,6 +915,9 @@ export async function getContent(
       updatedBy: null,
       updatedVia: null,
       needsReview: false,
+      // Nothing stored for this locale yet, so there is no draft to conflict
+      // with; the first save inserts (and races on the one-draft index instead).
+      revision: 0,
     };
   }
 
@@ -940,6 +943,10 @@ export async function getContent(
     updatedBy: working.createdBy,
     updatedVia: (working.createdVia as "mcp" | "agent" | "web" | null) ?? null,
     needsReview: working.needsReview,
+    // The token belongs to the DRAFT row (the only row updateContent mutates in
+    // place). When there is no draft yet, 0 means "expect an insert" — matching a
+    // published row's own revision here would let a save target the wrong row.
+    revision: draft ? draft.revision : 0,
   };
 }
 
@@ -1220,13 +1227,18 @@ export async function updateContent(
   if (existing[0]) {
     const name = req.name ?? existing[0].name;
     const slug = req.slug !== undefined ? req.slug : await backfillSlug(existing[0].slug, name);
-    await db
+    // Optimistic concurrency (see migration 0016). The revision match lives in the
+    // WHERE clause, not in a JS comparison against the row we read above: two
+    // concurrent saves would both pass a check-then-write and the second would
+    // still clobber. Matching in the UPDATE makes the loser affect zero rows.
+    const updated = await db
       .update(contentVersion)
       .set({
         name,
         slug,
         displayInNav: req.displayInNav ?? existing[0].displayInNav,
         data,
+        revision: sql`${contentVersion.revision} + 1`,
         createdBy: ctx.userId,
         createdAt: new Date(),
         // Provenance: an agent (mcp) write flags the draft for human review; a
@@ -1234,7 +1246,24 @@ export async function updateContent(
         createdVia: ctx.via ?? null,
         needsReview: ctx.via === "mcp" || ctx.via === "agent",
       })
-      .where(eq(contentVersion.id, existing[0].id));
+      .where(
+        and(
+          eq(contentVersion.id, existing[0].id),
+          req.revision === undefined ? undefined : eq(contentVersion.revision, req.revision),
+        ),
+      )
+      .returning({ id: contentVersion.id });
+    if (!updated[0]) {
+      // Self-teaching (rule #2): name the cause, the surface that moved it, and
+      // the one-step recovery. This message is what an editor and an agent both
+      // read to recover, so it has to carry the whole recipe.
+      throw Errors.conflict(
+        `This content was changed by someone else since you loaded it (revision ${req.revision} is no longer current). ` +
+          `Your save was refused so their work isn't overwritten. ` +
+          `Re-read the content (GET /manage/content/${documentId}?locale=${loc}), re-apply your change to the fresh data, and save again with the new revision. ` +
+          `To patch a single field without a revision conflict, send merge: true — it merges over whatever is current.`,
+      );
+    }
   } else {
     // No working draft yet (editing a published OR an unpublished item): seed a
     // draft from the best available base — the live published version, else the
