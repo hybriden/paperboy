@@ -121,6 +121,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // field name, shown inline beneath the offending field.
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  // A save was refused because another editor (or an MCP agent) changed this
+  // draft first. Sticky until reloaded or saved successfully — autosave keeps
+  // retrying and would otherwise flash a toast the editor never connects to
+  // "nothing I type is being stored any more".
+  const [conflict, setConflict] = useState(false);
   const [tab, setTab] = useState("Content");
   // Editor view — the Episerver-style trio. Persisted so it survives
   // re-renders/remounts (e.g. toggling a side pane remounts the editor):
@@ -204,7 +209,17 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       const p = pendingRef.current;
       if (p) {
         void api
-          .update(documentId, locale, { name: p.name, slug: p.slug, displayInNav: p.displayInNav, data: p.data })
+          // Revision-checked like every other save. Nobody is left to see a 409
+          // here, so this trades the departing editor's last sub-second of typing
+          // for not silently overwriting a colleague's whole save — the strictly
+          // smaller loss, and the only one of the two that is recoverable.
+          .update(documentId, locale, {
+            name: p.name,
+            slug: p.slug,
+            displayInNav: p.displayInNav,
+            data: p.data,
+            revision: p.revision,
+          })
           .catch(() => undefined);
         pendingRef.current = null;
       }
@@ -268,9 +283,14 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         slug: f.slug,
         displayInNav: f.displayInNav,
         data: f.data,
+        // Autosave sends the WHOLE data map from the snapshot loaded on mount, so
+        // without this token a save silently overwrites whatever another editor
+        // (or an MCP agent) wrote in the meantime.
+        revision: f.revision,
       }),
     onSuccess: (updated) => {
       setSaveState("saved");
+      setConflict(false);
       setFieldErrors({});
       // Keep the query cache authoritative so switching away and back shows the
       // latest saved state (not the initial fetch).
@@ -286,6 +306,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         hasUnpublishedChanges: updated.hasUnpublishedChanges,
         publishAt: updated.publishAt,
         expireAt: updated.expireAt,
+        // Advance the concurrency token, or the NEXT autosave conflicts with our
+        // own previous one. Server-computed and never user-edited, like the rest
+        // of this block, so syncing it can't clobber anything the editor typed.
+        revision: updated.revision,
       };
       setForm((prev) => (prev ? { ...prev, ...meta } : prev));
       formRef.current = formRef.current ? { ...formRef.current, ...meta } : formRef.current;
@@ -300,6 +324,15 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     },
     onError: (e) => {
       setSaveState("error");
+      // A concurrent edit is not a validation failure: the editor's own text is
+      // still fine and still on screen. Surface it as a standing banner with a
+      // reload, never as a transient toast — a 4-second toast during autosave is
+      // exactly how someone keeps typing into a document that can no longer save.
+      if (e instanceof ApiError && e.status === 409) {
+        setConflict(true);
+        toast.error("Someone else changed this page", "Your changes are not saved — see the banner above the editor.");
+        return;
+      }
       const inline = applyFieldErrors(e);
       toast.error("Couldn’t save", inline ? "Some fields need attention — see the highlighted fields." : (e as Error).message);
     },
@@ -1042,6 +1075,32 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           )}
         </div>
       </div>
+
+      {/* Concurrent-edit conflict. Deliberately NOT auto-reloading: the editor's
+          own unsaved text is still on screen and reloading would destroy it. They
+          get told what happened, and choose when to take the other version. */}
+      {conflict && (
+        <div
+          role="alert"
+          className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-danger/10 px-4 py-2 text-sm"
+        >
+          <span className="text-fg">
+            <strong>Someone else changed this page while you were editing.</strong> Your changes are still here but are{" "}
+            <strong>not being saved</strong> — copy anything you need, then reload to get their version.
+          </span>
+          <button
+            type="button"
+            className="btn-subtle"
+            onClick={() => {
+              setConflict(false);
+              loadedKey.current = null; // let the load effect re-seed the form
+              void qc.invalidateQueries({ queryKey: ["content", documentId, locale] });
+            }}
+          >
+            Reload their version
+          </button>
+        </div>
+      )}
 
       {/* Untranslated-locale → offer an AI translation seeded from any locale with content */}
       {untranslated && canTranslate && !hideTranslateOffer && (

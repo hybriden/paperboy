@@ -61,6 +61,11 @@ export const ContentDetail = z.object({
   updatedVia: z.enum(["mcp", "agent", "web"]).nullable(),
   /** Agent-written drafts carry this until a human edits or approves (see docs/POSITIONING.md). */
   needsReview: z.boolean(),
+  /** Optimistic-concurrency token for the working draft. Send it back as
+   *  `revision` on update and a save from a stale snapshot is refused (409)
+   *  instead of silently overwriting a concurrent editor. 0 = no stored version
+   *  for this locale yet. */
+  revision: z.number(),
 });
 export type ContentDetail = z.infer<typeof ContentDetail>;
 
@@ -145,6 +150,11 @@ export const UpdateContentRequest = z.object({
   /** When true, `data` is shallow-merged over the current working draft instead
    *  of replacing it — so a caller can patch one field without resending all. */
   merge: z.boolean().optional(),
+  /** Optimistic concurrency: the `revision` from the ContentDetail this write is
+   *  based on. If the working draft has moved since (another editor, or an MCP
+   *  agent), the write is refused with 409 rather than overwriting them. Omit to
+   *  keep the old last-write-wins behaviour (existing clients are unaffected). */
+  revision: z.number().int().nonnegative().optional(),
   /** Escape hatch for the agent write-time language guard: when true, an agent
    *  may write text whose language differs from the locale branch (the guard
    *  otherwise refuses, so Norwegian content can't silently land on the 'en'

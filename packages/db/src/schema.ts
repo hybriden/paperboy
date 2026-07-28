@@ -110,6 +110,9 @@ export const contentVersion = pgTable(
     createdVia: text("created_via"),
     // Agent-written drafts carry a review flag until a human edits or approves.
     needsReview: boolean("needs_review").notNull().default(false),
+    // Optimistic-concurrency token: bumped on every in-place draft write, so a
+    // save from a stale snapshot can be refused instead of clobbering (0016).
+    revision: integer("revision").notNull().default(1),
   },
   (t) => ({
     docLocaleIdx: index("content_version_doc_locale_idx").on(t.documentId, t.locale),
