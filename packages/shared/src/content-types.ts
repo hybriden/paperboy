@@ -644,6 +644,34 @@ const LIST_PARENTS = new Set(["bulletList", "orderedList"]);
 
 type RtNode = Record<string, unknown>;
 
+/**
+ * Sanitize a node's marks IN PLACE: drop non-objects, alias types, keep only allowed
+ * mark types, and drop a `link` whose href isn't safe.
+ *
+ * An empty result KEEPS the empty array — that is the pinned contract ("unknown marks
+ * dropped, array kept"), and both call sites must agree on it or hoisting an image
+ * breaks the sanitizer's fixpoint.
+ *
+ * There is exactly ONE of these on purpose. The per-node walk and the image-hoist path
+ * each had their own copy, and when the href check was added to only one, an image
+ * lifted out of an invalid container kept an unfiltered `javascript:` link mark — the
+ * hole the check exists to close. The fixpoint property test (sanitize∘sanitize ===
+ * sanitize) is what surfaced the divergence.
+ */
+function sanitizeMarksInPlace(node: RtNode): void {
+  if (!Array.isArray(node.marks)) return;
+  const marks = (node.marks as RtNode[])
+    .filter((m) => m && typeof m === "object")
+    .map((m) => ({ ...m, type: MARK_ALIASES[m.type as string] ?? m.type }))
+    .filter((m) => RICHTEXT_MARKS.has(m.type as string))
+    .filter((m) => {
+      if (m.type !== "link") return true;
+      const href = ((m as RtNode).attrs as RtNode | undefined)?.href;
+      return typeof href === "string" && isSafeUrl(href);
+    });
+  node.marks = marks;
+}
+
 /** Collect the inline (text/hardBreak) descendants of arbitrarily-nested nodes. */
 function inlineDescendants(nodes: RtNode[]): RtNode[] {
   const out: RtNode[] = [];
@@ -675,15 +703,9 @@ function collectImages(children: unknown): RtNode[] {
       if (validImage(n)) {
         const img: RtNode = { ...n, type: "image" };
         delete img.content;
-        // Same mark treatment as the per-node pass — a hoisted image must be
-        // byte-identical to what re-sanitizing would produce (fixpoint).
-        if (Array.isArray(img.marks)) {
-          img.marks = (img.marks as RtNode[])
-            .filter((m) => m && typeof m === "object")
-            .map((m) => ({ ...m, type: MARK_ALIASES[m.type as string] ?? m.type }))
-            .filter((m) => RICHTEXT_MARKS.has(m.type as string));
-          if (!(img.marks as RtNode[]).length) delete img.marks;
-        }
+        // Same helper as the per-node pass — a hoisted image must be byte-identical
+        // to what re-sanitizing would produce (fixpoint), marks included.
+        sanitizeMarksInPlace(img);
         out.push(img);
       }
     } else {
@@ -706,25 +728,7 @@ function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] 
     const rawType = typeof node.type === "string" ? node.type : "";
     const type = NODE_ALIASES[rawType] ?? rawType;
     node.type = type;
-    if (Array.isArray(node.marks)) {
-      node.marks = (node.marks as RtNode[])
-        .filter((m) => m && typeof m === "object")
-        .map((m) => ({ ...m, type: MARK_ALIASES[m.type as string] ?? m.type }))
-        .filter((m) => RICHTEXT_MARKS.has(m.type as string))
-        // Marks were filtered by TYPE only — never by attrs — so a `link` mark
-        // carrying `javascript:`/`data:` passed the chokepoint and was served by the
-        // public Delivery API. The structured `link` field already rejects these
-        // (isSafeUrl), on the stated rule "rejected at the WRITE chokepoint, not
-        // patched at render"; richtext was relying on one consumer's renderer
-        // (rtSafeHref in @paperboycms/client), which leaves every other frontend —
-        // Astro set:html, Vue, generateHTML — with live stored XSS. Drop the MARK,
-        // keep the text: losing a bad link is not losing content.
-        .filter((m) => {
-          if (m.type !== "link") return true;
-          const href = ((m as RtNode).attrs as RtNode | undefined)?.href;
-          return typeof href === "string" && isSafeUrl(href);
-        });
-    }
+    sanitizeMarksInPlace(node);
     if (type === "text") {
       // PM forbids empty text nodes; a text node never has content.
       if (typeof node.text !== "string" || node.text === "") continue;

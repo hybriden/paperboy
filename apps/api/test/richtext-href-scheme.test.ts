@@ -127,6 +127,28 @@ describe("richtext link marks are scheme-checked at the write chokepoint", () =>
     expect(linkHrefs(coerceFieldValue(richtext, nested))).toEqual([]);
   });
 
+  it("an image HOISTED out of an invalid container also loses its unsafe mark", () => {
+    // The hoist path (collectImages) had its OWN copy of the mark filter, so adding
+    // the href check to only the per-node walk left this hole open: an image lifted
+    // out of a container that can't hold it kept a `javascript:` link mark. The
+    // fast-check fixpoint property (sanitize∘sanitize === sanitize) is what exposed
+    // the divergence — both paths now share one helper.
+    const hoisted = doc([
+      { type: "heading", content: [{ type: "image", attrs: { src: "/ok.png" }, marks: [{ type: "link", attrs: { href: "javascript:alert(1)" } }] }] },
+    ]);
+    const out = coerceFieldValue(richtext, hoisted);
+    expect(linkHrefs(out), "the lifted image kept an unsafe link mark").toEqual([]);
+    expect(imageSrcs(out), "the image itself should survive the lift").toEqual(["/ok.png"]);
+  });
+
+  it("sanitizing is idempotent for a hoisted image (single-pass fixpoint)", () => {
+    const hoisted = doc([
+      { type: "heading", content: [{ type: "image", attrs: { src: "/ok.png" }, marks: [{ type: "link", attrs: undefined }] }] },
+    ]);
+    const once = coerceFieldValue(richtext, hoisted);
+    expect(coerceFieldValue(richtext, once)).toEqual(once);
+  });
+
   it("the sanitized value still validates as a richtext doc (both strict and draft)", () => {
     const out = coerceFieldValue(richtext, doc([linked("click me", "javascript:alert(1)")]));
     expect(dataSchemaFor(TYPE, true).safeParse({ body: out }).success).toBe(true);
