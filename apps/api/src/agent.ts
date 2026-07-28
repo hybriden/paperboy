@@ -5,6 +5,8 @@ import {
   type Database,
   createContent,
   getContent,
+  resolveDefaultLocale,
+  resolveRequestedLocale,
   getContentType,
   getTree,
   listContentTypes,
@@ -90,7 +92,11 @@ export const TOOLS: AgentTool[] = [
     name: "get_content",
     description: "Read a content item's working version (draft else published) for a locale.",
     schema: z.object({ documentId: z.string(), locale: loc }),
-    run: (a, d) => getContent(d.db, d.ctx, a.documentId as string, (a.locale as string | undefined) ?? "en"),
+    run: async (a, d) =>
+      // resolveRequestedLocale, not `?? "en"`: the document's own site decides the
+      // default, and a locale-less call on a document with no variant there fails
+      // loudly instead of silently reading an empty branch.
+      getContent(d.db, d.ctx, a.documentId as string, await resolveRequestedLocale(d.db, a.documentId as string, a.locale as string | undefined)),
   },
   {
     name: "create_content",
@@ -105,7 +111,8 @@ export const TOOLS: AgentTool[] = [
       const created = await createContent(d.db, d.ctx, {
         type: a.type as string,
         parentId: (a.parentId as string | null | undefined) ?? null,
-        locale: (a.locale as string | undefined) ?? "en",
+        // A NEW document has no variants yet, so this resolves to the site default.
+        locale: (a.locale as string | undefined) ?? (await resolveDefaultLocale(d.db, d.ctx.siteId)),
         name: a.name as string,
       });
       return created;
@@ -122,8 +129,8 @@ export const TOOLS: AgentTool[] = [
       displayInNav: z.boolean().optional(),
       data: z.record(z.unknown()).describe("Field values keyed by field name; see the field-format rules"),
     }),
-    run: (a, d) =>
-      updateContent(d.db, d.ctx, a.documentId as string, (a.locale as string | undefined) ?? "en", {
+    run: async (a, d) =>
+      updateContent(d.db, d.ctx, a.documentId as string, await resolveRequestedLocale(d.db, a.documentId as string, a.locale as string | undefined), {
         name: a.name as string | undefined,
         slug: a.slug as string | null | undefined,
         displayInNav: a.displayInNav as boolean | undefined,
