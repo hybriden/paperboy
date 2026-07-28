@@ -16,9 +16,12 @@ alert() { # key, title, body
 }
 clear_state() { rm -f "$STATE/$1"; }
 
-# API health (local — independent of Cloudflare).
-if ! curl -fsS -m 10 http://localhost:8091/health | grep -q '"ok"'; then
-  alert api "Paperboy API unhealthy" "http://localhost:8091/health failed on the box"
+# API health (local — independent of Cloudflare). /health/ready, NOT /health:
+# /health is a static {"status":"ok"} that answers fine while Postgres is down or
+# the pool is exhausted, so it would have reported healthy through a real outage.
+# /health/ready pings the DB and 503s when it can't.
+if ! curl -fsS -m 10 http://localhost:8091/health/ready | grep -q '"ready"'; then
+  alert api "Paperboy API not ready" "http://localhost:8091/health/ready failed on the box (API up but DB unreachable?)"
 else clear_state api; fi
 
 # Public site + admin through the front door.

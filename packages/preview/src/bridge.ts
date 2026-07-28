@@ -28,6 +28,17 @@ export interface PreviewBridgeOptions {
   accent?: string;
   /** Show the "Preview — click to edit" badge. Default: true. */
   badge?: boolean;
+  /**
+   * Origin of the embedding admin, e.g. "https://cms.example.com". Optional and
+   * additive (omit it and nothing changes for already-deployed frontends), but
+   * RECOMMENDED: when set, inbound messages must come from this origin, and
+   * outbound messages are addressed to it instead of "*" — so field text and
+   * caret snippets can't leak to whatever origin happens to be the parent.
+   *
+   * Regardless of this option, the bridge only ever accepts messages whose
+   * `event.source` IS the target window (see `fromParent`).
+   */
+  parentOrigin?: string;
 }
 
 const EDITABLE = `[${ATTR.field}],[${ATTR.blockIndex}]`;
@@ -38,6 +49,24 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   const target = options.target ?? win.parent;
   const accent = options.accent ?? "#0077BC";
   const showBadge = options.badge ?? true;
+  /** Where outbound messages are addressed. "*" only when no parentOrigin is given. */
+  const postOrigin = options.parentOrigin ?? "*";
+
+  /**
+   * Is this message really from the admin that embedded us?
+   *
+   * `paperboy:patch` ends in `el.innerHTML = …`, so this handler is an HTML
+   * injection sink. Framing rules (CSP frame-ancestors) don't protect it: any page
+   * can `window.open(previewUrl)`, hold the returned handle, and postMessage into
+   * it without ever framing it. So identity is checked on the WINDOW HANDLE — a
+   * foreign sender has a different `source`, and one that can't be attributed at
+   * all (no source) is refused too.
+   */
+  const fromParent = (e: MessageEvent): boolean => {
+    if (e.source !== target) return false;
+    if (options.parentOrigin !== undefined && e.origin !== options.parentOrigin) return false;
+    return true;
+  };
 
   // ---- injected chrome (styles + optional badge); consumers ship no CSS ----
   const style = doc.createElement("style");
@@ -109,7 +138,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     e.preventDefault();
     e.stopPropagation();
     tracked = el;
-    target?.postMessage({ type: "paperboy:edit", ...describe(el), click: { x: e.clientX, y: e.clientY }, caret: caretAt(e, el) }, "*");
+    target?.postMessage({ type: "paperboy:edit", ...describe(el), click: { x: e.clientX, y: e.clientY }, caret: caretAt(e, el) }, postOrigin);
   };
 
   // ---- preview → admin: drag a shared block / page onto a content area ----
@@ -168,7 +197,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     setDropZone(null);
     if (!zone || payload == null) return;
     e.preventDefault();
-    target?.postMessage({ type: "paperboy:drop", field: checkAreaValue(zone), payload }, "*");
+    target?.postMessage({ type: "paperboy:drop", field: checkAreaValue(zone), payload }, postOrigin);
   };
 
   // ---- track the picked element's rect on scroll/resize; persist scroll ----
@@ -180,7 +209,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
         raf = false;
         if (tracked?.isConnected) {
           const { field, blockIndex, rect } = describe(tracked);
-          target?.postMessage({ type: "paperboy:rect", field, blockIndex, rect }, "*");
+          target?.postMessage({ type: "paperboy:rect", field, blockIndex, rect }, postOrigin);
         }
       });
     }
@@ -190,6 +219,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   // ---- admin → preview: live patch + focus ----
   let focusTimer: ReturnType<typeof setTimeout> | undefined;
   const onMessage = (e: MessageEvent) => {
+    if (!fromParent(e)) return; // sender check BEFORE parsing — see fromParent
     const msg = parsePreviewMessage(e.data);
     if (!msg) return;
     if (msg.type === "paperboy:patch") {
@@ -223,7 +253,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       const el = doc.elementFromPoint(msg.x, msg.y) as HTMLElement | null;
       const zone = el?.closest(`[${ATTR.area}]`) as HTMLElement | null;
       setDropZone(null);
-      if (zone) target?.postMessage({ type: "paperboy:drop", field: checkAreaValue(zone), payload: msg.payload }, "*");
+      if (zone) target?.postMessage({ type: "paperboy:drop", field: checkAreaValue(zone), payload: msg.payload }, postOrigin);
     }
   };
 
@@ -242,7 +272,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     if (saved) win.scrollTo(0, Number(saved));
   } catch { /* ignore */ }
 
-  target?.postMessage({ type: "paperboy:preview-ready", version: PROTOCOL_VERSION }, "*");
+  target?.postMessage({ type: "paperboy:preview-ready", version: PROTOCOL_VERSION }, postOrigin);
 
   return function teardown() {
     doc.removeEventListener("click", onClick, true);

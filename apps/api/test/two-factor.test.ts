@@ -43,9 +43,9 @@ describe("Two-factor authentication (TOTP)", () => {
     expect(setup.json().uri).toContain("otpauth://totp/");
 
     // Wrong code is rejected.
-    expect((await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/enable", headers: authHeaders(admin), payload: { code: "000000" } })).statusCode).toBe(401);
+    expect((await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/enable", headers: authHeaders(admin), payload: { code: "000000", password: "Admin!Passw0rd" } })).statusCode).toBe(401);
 
-    const enable = await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/enable", headers: authHeaders(admin), payload: { code: currentCode(secret) } });
+    const enable = await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/enable", headers: authHeaders(admin), payload: { code: currentCode(secret), password: "Admin!Passw0rd" } });
     expect(enable.statusCode).toBe(200);
     backupCodes = enable.json().backupCodes;
     expect(backupCodes).toHaveLength(10);

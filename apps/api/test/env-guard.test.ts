@@ -37,6 +37,45 @@ describe("loadEnv production secret guard", () => {
   });
 });
 
+// MFA_SECRET was outside the guard entirely (absent from EnvSchema), so a deploy
+// could paste a shipped placeholder into it and boot. It is the AES-256-GCM KEK
+// for users.totp_secret AND the stored AI/stock keys (packages/db/src/totp.ts
+// encKey), and TOTP login is PASSWORDLESS — so a public-constant MFA_SECRET means
+// anyone who reads one users row can mint valid codes and own the CMS.
+// Found live 2026-07-28: MFA_SECRET was byte-for-byte the compose
+// `prod-session-secret-please-override-32+chars` placeholder, which is committed
+// in a public repo. Nothing objected, because nothing looked.
+describe("loadEnv production guard on MFA_SECRET", () => {
+  const strong = { SESSION_SECRET: STRONG_SESSION, CSRF_SECRET: STRONG_CSRF };
+
+  it("refuses the exact placeholder found on the live box", () => {
+    expect(() =>
+      loadEnv({ ...base, ...strong, MFA_SECRET: "prod-session-secret-please-override-32+chars" }),
+    ).toThrow(/MFA_SECRET/);
+  });
+
+  it("refuses a change-me placeholder MFA_SECRET", () => {
+    expect(() => loadEnv({ ...base, ...strong, MFA_SECRET: "dev-mfa-secret-change-me-please-32x" })).toThrow(
+      /MFA_SECRET/,
+    );
+  });
+
+  it("accepts a genuinely strong MFA_SECRET", () => {
+    expect(() =>
+      loadEnv({ ...base, ...strong, MFA_SECRET: "a-genuinely-strong-mfa-secret-value-x" }),
+    ).not.toThrow();
+  });
+
+  it("treats an empty MFA_SECRET as unset — compose ships `MFA_SECRET: ${MFA_SECRET:-}`", () => {
+    // Empty must fall through to the SESSION_SECRET fallback, not trip min-length.
+    expect(() => loadEnv({ ...base, ...strong, MFA_SECRET: "" })).not.toThrow();
+  });
+
+  it("refuses a too-short MFA_SECRET in any environment", () => {
+    expect(() => loadEnv({ ...base, ...strong, MFA_SECRET: "short" })).toThrow();
+  });
+});
+
 describe("parseTrustProxy (M9: configurable trusted-proxy boundary)", () => {
   it("maps true/false to booleans", () => {
     expect(parseTrustProxy("true")).toBe(true);

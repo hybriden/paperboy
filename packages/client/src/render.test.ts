@@ -49,7 +49,37 @@ describe("blockData / contentAreas", () => {
     expect(blockData({ blockType: "X" })).toEqual({});
   });
 
-  it("contentAreas: non-empty detected by shape (any name); empty only when …Area", () => {
+  // fieldTypes is the SCHEMA — it exists precisely so frontends stop guessing from
+  // values. Passing it makes area detection exact regardless of the field's name.
+  // Without it the old /area$/i heuristic found an EMPTY area only when the field
+  // happened to be called "…Area", so a customer whose area is named `sections`
+  // got no data-pb-area marker on a fresh page: nothing rendered, and on-page
+  // drag-and-drop onto that page was impossible.
+  it("contentAreas: fieldTypes identifies areas by schema, whatever they are named", () => {
+    const data = {
+      sections: [], // an EMPTY area not named "…Area" — the case that used to be missed
+      tags: [],
+      stuff: [{ blockType: "CardBlock", shared: false, data: {} }],
+      heading: "x",
+    };
+    const fieldTypes = {
+      sections: "contentArea",
+      tags: "text",
+      stuff: "contentArea",
+      heading: "text",
+    } as const;
+    expect(contentAreas(data, fieldTypes).map((a) => `${a.field}(${a.blocks.length})`)).toEqual([
+      "sections(0)",
+      "stuff(1)",
+    ]);
+  });
+
+  it("contentAreas: fieldTypes EXCLUDES a non-area field even when it holds block-shaped values", () => {
+    const data = { related: [{ blockType: "CardBlock", shared: false, data: {} }] };
+    expect(contentAreas(data, { related: "reference" }).map((a) => a.field)).toEqual([]);
+  });
+
+  it("contentAreas: without fieldTypes, falls back to the shape heuristic (back-compat)", () => {
     const data = {
       mainArea: [],
       tags: [],

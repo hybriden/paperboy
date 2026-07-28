@@ -25,7 +25,11 @@ docker exec -i paperboy-db pg_restore -U paperboy -d restore_target --no-owner <
 docker compose stop api web
 docker run --rm -v paperboycms_paperboy-uploads:/data -v ~/paperboy-backups:/backup alpine \
   sh -c "find /data -mindepth 1 -delete && tar xzf /backup/uploads-<stamp>.tar.gz -C /data"
-docker compose start api web
+# NEVER `docker compose start api web` here. `start` also starts depends_on
+# services — including `init`, as the CONTAINER it was last created from — and a
+# stale pre-guard init container re-running its unguarded seed is exactly what
+# wiped production on 2026-06-06. `up -d --no-deps` touches only these two.
+docker compose up -d --no-deps api web
 ```
 
 The restore path was drilled on 2026-06-06 (counts matched live exactly).

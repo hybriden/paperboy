@@ -15,6 +15,14 @@ Guidance for Claude / contributors. Read this before changing or deploying anyth
 - `packages/preview` — `@paperboycms/preview` (published to npm): the framework-agnostic on-page-editing bridge for the preview iframe, zero runtime dependencies. Single source of truth for the admin↔frontend postMessage protocol (`paperboy:edit/drop/rect/patch/focus`) and the `data-pb-*` DOM contract; the admin and `apps/web` both import it — never re-declare message shapes elsewhere.
 - `evals/` — model-driven MCP usability eval. Every push/PR runs it with the deterministic `--mock` driver (real MCP tool calls, no paid API — failures are real agent-surface regressions, not model flake); the weekly schedule/manual dispatch runs a real model (needs `ANTHROPIC_API_KEY` secret). `ops/` — reference copies of the production backup/monitor scripts.
 
+## First run
+`./scripts/setup.sh` (or `.\scripts\setup.ps1`) generates `.env` with unique secrets and
+your own admin password, then `docker compose up -d`. **The setup step is required, not
+optional**: the API refuses to boot on the `prod-…-please-override` secrets compose ships,
+and the seed refuses the published demo login — both are committed in this public repo. It
+is safe to re-run (an existing `.env` is never overwritten). A CI job runs exactly this
+path in a clean checkout, because nothing else would catch the quickstart breaking.
+
 ## ⚠️ Deploy safety (most important rule)
 The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds — **wiping all data and regenerating IDs** — but the CLI is GUARDED: on a database that already holds content it skips the wipe (and still applies migrations) unless `FORCE_SEED=1`. The guard exists because a plain `docker compose up <svc>` pulling in `init` caused real data loss; treat it as a seatbelt, not an invitation.
 
@@ -35,7 +43,13 @@ The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds
 - Browser: argon2id + opaque server-side session cookie (`__Host-paperboy_sid` when `COOKIE_SECURE=true`) + CSRF double-submit + rate-limit/lockout.
 - **`COOKIE_SECURE=true` requires HTTPS** — http://localhost logins will fail (cookie dropped). Test the admin over an https host.
 - 2FA: **passwordless email + TOTP** (a 2FA-enabled account logs in with email → code, no password). TOTP gates the browser login only; service paths (`verifyLogin`) check the password.
+- **Enabling 2FA requires the account password**, not just a session — same `verifyReauth` gate as disabling it. Because login is passwordless once 2FA is on, a stolen session could otherwise enrol its own authenticator and lock the real owner out permanently.
+- **`MFA_SECRET` goes through the same placeholder guard as `SESSION_SECRET`/`CSRF_SECRET`.** It is the AES-256-GCM KEK for `users.totp_secret` and the stored AI/stock keys, so a shipped-constant value turns one leaked `users` row into a full takeover. (Found live 2026-07-28: it was byte-for-byte the compose `prod-…-please-override` placeholder, which is committed in this public repo. Unset is fine — it falls back to `SESSION_SECRET`.)
+- **The seed refuses to create the published demo credentials in production.** `admin@paperboy.test / Admin!Passw0rd`, the editor/author/viewer logins and the two seeded delivery keys are all public constants; under `NODE_ENV=production` the seed demands real values and creates ONLY the admin. `ALLOW_DEMO_CREDENTIALS=true` opts a throwaway demo/CI stack back in. A database that already holds data is skipped before this runs, so it can't block an existing deploy.
+- **The preview secret never reaches the browser.** The admin asks the API for a short-lived signed token (`GET /manage/preview-token`, session-authenticated) and passes it as `?pbt=`; the frontend verifies it with the same `PREVIEW_SECRET`, which must be set on BOTH api and web. `?pb=<secret>` still works for server-side callers. Do **not** reintroduce `VITE_PREVIEW_SECRET` — Vite inlines `VITE_*` at build time and nginx serves `/assets/` unauthenticated, so that published the secret (verified live).
 - MCP: a **token** (Settings → MCP, `MCP_TOKEN` env) or email+password; authenticates AS a user and inherits its RBAC.
+- **MCP token revocation takes effect immediately.** The presented bearer is resolved through the DB *before* any constant-time compare against the in-memory boot `MCP_TOKEN`, so a token revoked in Settings → MCP stops working without a restart; `AccessContext` is also re-resolved per HTTP request, so role/scope changes apply live. An env-only `MCP_TOKEN` with no DB row still works (rotate it by restarting).
+- **The `delivery_*` MCP tools are RBAC-gated** (`content.read`), and the **preview perspective additionally requires site-wide read** — the delivery chokepoint is key-scoped, not section-scoped, so a section-scoped user calling it with `preview:true` would otherwise read every draft in the site. Published-perspective reads stay open to any `content.read` holder (a public delivery key would serve the same bytes).
 
 ## Content model
 - Content types are **data** (`content_type` table), not hardcoded. Kinds: `page` / `block` / `global`.
@@ -69,6 +83,7 @@ Every rule below traces to a real agent run that broke. Do not regress them.
 1. **Never garbage-in-success-out.** Coerce input only when the transform is meaning-preserving; otherwise REJECT. A destructive write that returns success gaslights the agent into a retry loop (real incident: a TipTap doc sent to a markdown field was flattened by gluing text nodes together with no separators — persisted, "success", agent looped 9× and aborted).
 2. **Errors must be self-teaching.** Name the field, the expected JSON shape, and a copyable example (`fieldFormatHint` / `formatDataValidation`). The error text is the only context an agent reliably reads mid-loop — it must be enough to self-correct in one step.
 3. **All tolerant coercion lives in ONE chokepoint** — `coerceFieldValue` (packages/shared), shared by API + MCP + admin, test-pinned in `update-ergonomics.test.ts`. Mistakes it absorbs (each from a real run): self-keyed wrap `{field: v}`, locale-map wrap `{en: v}`, TipTap doc → real Markdown (structure kept) / separated plain text, string → TipTap doc, single block → array, resolved asset object → documentId, richtext outside the editor schema → normalized. Add new agent mistakes HERE, with a test.
+   **The chokepoint reaches the WHOLE document, not just its top level.** `coerceData` takes a `BlockTypeResolver` and recurses into content-area `inline` block data (depth-capped), because it previously stopped at the first level: a block's `richtext` field kept raw Markdown — persisted, 200 OK, rendered blank — while the identical top-level field was correctly parsed. Pinned by `shared-coerce-blocks.test.ts` + `inline-block-coercion.test.ts`. **Still open:** strict *validation* of `inline` against the block's own schema (and rejecting an unknown `blockType`) is not implemented — `dataSchemaFor` still stops at the wrapper.
 4. **Offer flat single-string params for long content** (`set_field`). Long strings nested inside record params (`data`) get mangled to `{}` by some clients' tool-call JSON repair — a flat top-level string survives. Steer to it in tool descriptions and in the relevant error messages.
 5. **Safe defaults over correct-but-sharp semantics.** MCP `update_content` merges by default (a full replace silently drops required fields and bricks the next publish). Pages auto-slug from their name (an agent that forgets the slug otherwise creates unreachable content).
 6. **Every failed agent run must leave a trail.** MCP tool errors log to stdout WITH truncated args (`docker logs`); every MCP write audit-logs like the API routes (`ip='mcp'`). Two incidents were undiagnosable because errors only travelled in-band and the client swallowed them.
@@ -79,6 +94,16 @@ Every bugfix STARTS with a test that reproduces the exact reported failure — s
 
 ## Testing
 - API: `pnpm --filter @paperboy/api test` (Vitest + a real Postgres test DB; isolated).
+- **Coverage is measured AND enforced.** `pnpm test:coverage` runs the API suite with v8
+  coverage over `apps/api/src` + `packages/db/src` + `packages/shared/src` (the suite drives
+  real HTTP against a real Postgres, so it exercises all three — `allowExternal: true` is what
+  lets the two out-of-root packages be counted). CI runs this variant, so the thresholds in
+  `apps/api/vitest.config.ts` gate the build. Baseline 2026-07-28: **93.3% lines/statements,
+  92.9% functions, 82.9% branches**; thresholds sit just under it. **Ratchet only** — raise them
+  as coverage rises, never lower them to make a red run go green.
+- CI also runs the suites that used to be manual-only: `packages/client` and
+  `packages/preview` (both PUBLISHED to npm) and `apps/web`. `prepublishOnly` runs the
+  package's own tests before either one can ship.
 - **Contract-freeze layers** (all in `apps/api/test/`): `shared-*.test.ts` are pure unit/property tests of packages/shared (no DB — richtext sanitizer fixpoint, coercion matrix); `delivery-contract` + `openapi-snapshot` pin delivered JSON shapes and the API surface as snapshots — a failing snapshot means you changed a PUBLIC CONTRACT: review the diff and update the snapshot deliberately in the same commit, never blind `--update`; `mcp-parity` spawns the real stdio MCP server and locks the tool surface, write parity, and self-teaching error shapes.
 - e2e: `pnpm --filter @paperboy/admin test:e2e` (Playwright + axe). Run against the live deploy with `ADMIN_URL=https://<host>` (needed because `COOKIE_SECURE` breaks http login). Don't run the full data-mutating suite against a live instance you care about.
 - Always typecheck before deploying: `pnpm -r typecheck`.

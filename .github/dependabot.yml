@@ -1,0 +1,29 @@
+version: 2
+
+# Workflow actions are SHA-pinned (supply-chain: a moved tag can't silently
+# change what CI runs). A pin that nobody bumps rots into a stale, unpatched
+# action, so Dependabot owns the bumps — it rewrites both the SHA and the
+# trailing `# vX` comment.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # One PR per ecosystem-wide group keeps the pnpm workspace lockfile
+    # consistent; security fixes still come through as their own PRs.
+    groups:
+      dev-dependencies:
+        dependency-type: development
+        patterns: ["*"]
+      production-dependencies:
+        dependency-type: production
+        patterns: ["*"]

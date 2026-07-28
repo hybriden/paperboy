@@ -27,7 +27,7 @@ describe("toggling 2FA evicts the user's other sessions", () => {
     // Enrol + enable 2FA using the ACTING session.
     const setup = await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/setup", headers: authHeaders(acting) });
     const secret = setup.json().secret as string;
-    const enable = await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/enable", headers: authHeaders(acting), payload: { code: currentCode(secret) } });
+    const enable = await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/enable", headers: authHeaders(acting), payload: { code: currentCode(secret), password: "Editor!Passw0rd" } });
     expect(enable.statusCode).toBe(200);
 
     // The OTHER session is now rejected…

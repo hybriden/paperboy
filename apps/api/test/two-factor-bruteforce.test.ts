@@ -19,7 +19,7 @@ describe("2FA login hardening: single-use TOTP + per-account lockout", () => {
     editor = await login(s.app, creds.email, creds.password);
     const setup = await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/setup", headers: authHeaders(editor) });
     secret = setup.json().secret as string;
-    const enable = await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/enable", headers: authHeaders(editor), payload: { code: currentCode(secret) } });
+    const enable = await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/enable", headers: authHeaders(editor), payload: { code: currentCode(secret), password: "Editor!Passw0rd" } });
     expect(enable.statusCode).toBe(200);
   });
   afterAll(async () => {

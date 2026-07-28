@@ -10,7 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo 'lint: api (typecheck covers it)'",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@fastify/cookie": "^11.0.2",
@@ -32,6 +33,7 @@
   "devDependencies": {
     "@paperboycms/client": "workspace:^",
     "@types/node": "^22",
+    "@vitest/coverage-v8": "^2.1.8",
     "fast-check": "^4.8.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",

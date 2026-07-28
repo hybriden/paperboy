@@ -62,6 +62,9 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   mkdirSync(env.UPLOADS_DIR, { recursive: true });
   process.env.MEDIA_PUBLIC_BASE = env.MEDIA_PUBLIC_BASE;
   app.decorate("uploadsDir", env.UPLOADS_DIR);
+  // Signs the short-lived preview tokens the admin's iframe uses. Server-side
+  // only — it must never be inlined into the admin bundle again.
+  app.decorate("previewSecret", env.PREVIEW_SECRET);
 
   // Baseline security headers on EVERY response (S3-M2) — done inline rather than
   // pulling in @fastify/helmet. HSTS only when cookies are Secure (i.e. real HTTPS),

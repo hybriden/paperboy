@@ -2,9 +2,19 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
+import { originOf } from "../lib/preview-origin.js";
 import { Surface } from "./ui/surface.js";
 
-const PREVIEW_SECRET = (import.meta.env.VITE_PREVIEW_SECRET as string) ?? "dev-preview-secret-change-me";
+/**
+ * How long before expiry we refresh the preview token. The API mints 15-minute
+ * tokens; refreshing at 10 keeps a long editing session from loading a preview with
+ * an already-dead token.
+ *
+ * There is deliberately NO build-time secret here any more. VITE_PREVIEW_SECRET
+ * inlined the long-lived PREVIEW_SECRET into this bundle, which nginx serves with
+ * no auth — so anyone who fetched the admin's JS could read every draft, forever.
+ */
+const PREVIEW_TOKEN_REFRESH_MS = 10 * 60 * 1000;
 
 /** Fallback web origin when no preview URL is configured in Settings: derive it
  *  from the host the admin is loaded on (works on localhost, LAN IP or domain). */
@@ -13,6 +23,17 @@ function fallbackWebUrl(): string {
   if (env) return env;
   if (typeof window !== "undefined") return `${window.location.protocol}//${window.location.hostname}:8092`;
   return "http://localhost:8092";
+}
+
+/**
+ * Origin of the preview frontend — the ONLY origin the admin exchanges bridge
+ * messages with. Used to address outbound posts (never "*", which would hand draft
+ * content to whatever the iframe has navigated to) and to authenticate inbound
+ * ones (see Editor's message handler). Null only if no origin can be determined,
+ * in which case callers must fail closed.
+ */
+export function previewOrigin(site: { previewBaseUrl: string } | undefined): string | null {
+  return originOf(site?.previewBaseUrl || fallbackWebUrl());
 }
 
 /**
@@ -75,12 +96,26 @@ export function PreviewPane({
   const [device, setDevice] = useState<Device>("desktop");
   const [nonce, setNonce] = useState(0);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  // Preview origin is configured in Settings → Site; fall back to the
+  // build-time/derived host if it hasn't been set yet.
+  const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
+  // Every post below is addressed to THIS origin, never "*": a wildcard would
+  // deliver draft content (patchMessage carries the rendered field html) to
+  // whatever the iframe currently holds — and an editor clicking an external link
+  // inside the preview is enough to make that a third party. Null = unknown
+  // origin, in which case we post nothing rather than broadcasting.
+  const targetOrigin = previewOrigin(site.data);
+  const postToPreview = (message: unknown): void => {
+    if (!targetOrigin) return;
+    iframeRef.current?.contentWindow?.postMessage(message, targetOrigin);
+  };
   // Reload the iframe whenever the editor saves (near-live preview).
   useEffect(() => { if (refreshSignal > 0) setNonce((n) => n + 1); }, [refreshSignal]);
   // Editor → preview: when a property is focused, scroll to + highlight its region.
   useEffect(() => {
-    if (focusField?.field) iframeRef.current?.contentWindow?.postMessage(focusMessage(focusField.field), "*");
-  }, [focusField]);
+    if (focusField?.field) postToPreview(focusMessage(focusField.field));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusField, targetOrigin]);
   // Dragging a shared block from the Assets pane: a CROSS-ORIGIN preview iframe
   // never receives the parent's drag events, so we show an overlay over the
   // preview that catches the drag in the admin, then forward the pointer (in the
@@ -90,11 +125,11 @@ export function PreviewPane({
     const onStart = (e: Event) => {
       const payload = (e as CustomEvent).detail;
       setDrag({ payload });
-      iframeRef.current?.contentWindow?.postMessage(dragSourceMessage(payload), "*");
+      postToPreview(dragSourceMessage(payload));
     };
     const onEnd = () => {
       setDrag(null);
-      iframeRef.current?.contentWindow?.postMessage(dragEndMessage(), "*");
+      postToPreview(dragEndMessage());
     };
     window.addEventListener("pb:dragsource", onStart);
     window.addEventListener("pb:dragend", onEnd);
@@ -102,17 +137,16 @@ export function PreviewPane({
       window.removeEventListener("pb:dragsource", onStart);
       window.removeEventListener("pb:dragend", onEnd);
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetOrigin]);
   // Editor → preview: live-update the clicked field's rendered content so the
   // page reflects overlay typing WITHOUT a full iframe reload.
   useEffect(() => {
     if (livePatch?.field) {
-      iframeRef.current?.contentWindow?.postMessage(
-        patchMessage(livePatch.field, { text: livePatch.text, html: livePatch.html }),
-        "*",
-      );
+      postToPreview(patchMessage(livePatch.field, { text: livePatch.text, html: livePatch.html }));
     }
-  }, [livePatch]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livePatch, targetOrigin]);
   // Esc closes the on-page overlay (when focus is on the admin side).
   useEffect(() => {
     if (!overlay) return;
@@ -133,14 +167,23 @@ export function PreviewPane({
     measure();
     return () => ro.disconnect();
   }, []);
-  // Preview origin is configured in Settings → Site; fall back
-  // to the build-time/derived host if it hasn't been set yet.
-  const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
   const isStart = !!documentId && site.data?.startPageId === documentId;
   const path = isStart ? "" : urlPath && urlPath !== "/" ? urlPath : "";
-  // Load the page directly with a ?pb=<secret> preview param (no /api/draft
-  // redirect, no Secure cookie) — works over plain HTTP and any host.
-  const src = `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pb=${encodeURIComponent(PREVIEW_SECRET)}&n=${nonce}`;
+  // Load the page directly with a ?pbt=<token> preview param (no /api/draft
+  // redirect, no Secure cookie) — works over plain HTTP and any host. The token is
+  // minted per session by the API; a cross-origin iframe can't rely on cookies,
+  // which is why this rides in the query string at all.
+  const previewToken = useQuery({
+    queryKey: ["preview-token"],
+    queryFn: ({ signal }) => api.previewToken(signal),
+    refetchInterval: PREVIEW_TOKEN_REFRESH_MS,
+    refetchOnMount: false,
+    staleTime: PREVIEW_TOKEN_REFRESH_MS,
+    retry: false,
+  });
+  const src = previewToken.data
+    ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(previewToken.data.token)}&n=${nonce}`
+    : null;
 
   // Fit the device viewport to the pane WIDTH (the dimension that matters for a
   // desktop layout), then make the iframe tall enough to FILL the pane height so
@@ -223,14 +266,28 @@ export function PreviewPane({
             transformOrigin: "top left",
           }}
         >
-          <iframe
-            key={device}
-            ref={iframeRef}
-            title="Content preview"
-            src={src}
-            className="border border-line bg-white shadow-panel"
-            style={{ width: "100%", height: "100%", border: 0 }}
-          />
+          {src ? (
+            <iframe
+              key={device}
+              ref={iframeRef}
+              title="Content preview"
+              src={src}
+              className="border border-line bg-white shadow-panel"
+              style={{ width: "100%", height: "100%", border: 0 }}
+            />
+          ) : (
+            // Show the SERVER's reason, never a guessed one. This used to hardcode
+            // "the server has no PREVIEW_SECRET configured", which became a lie the
+            // moment the mint route also started returning 403 for section-scoped
+            // roles — telling an Author to go fix a config that is perfectly fine.
+            // Both messages are written to be read by the person seeing them.
+            <div className="flex h-full items-center justify-center border border-line bg-panel p-6 text-center text-sm text-muted">
+              {previewToken.isError
+                ? ((previewToken.error as Error | undefined)?.message ??
+                  "Preview isn’t available right now.")
+                : "Preparing preview…"}
+            </div>
+          )}
         </div>
         )}
         {/* Drop catcher: a cross-origin preview iframe can't receive the parent's
@@ -245,7 +302,7 @@ export function PreviewPane({
               e.preventDefault();
               e.dataTransfer.dropEffect = "copy";
               const r = stageRef.current?.getBoundingClientRect();
-              if (r) iframeRef.current?.contentWindow?.postMessage(dragAtMessage((e.clientX - r.left - tx) / scale, (e.clientY - r.top) / scale), "*");
+              if (r) postToPreview(dragAtMessage((e.clientX - r.left - tx) / scale, (e.clientY - r.top) / scale));
             }}
             onDrop={(e) => {
               e.preventDefault();
@@ -253,7 +310,7 @@ export function PreviewPane({
               let payload: unknown = drag.payload;
               const raw = e.dataTransfer.getData("application/x-paperboy");
               if (raw) { try { payload = JSON.parse(raw); } catch { /* fall back to broadcast payload */ } }
-              if (r) iframeRef.current?.contentWindow?.postMessage(dropAtMessage((e.clientX - r.left - tx) / scale, (e.clientY - r.top) / scale, payload), "*");
+              if (r) postToPreview(dropAtMessage((e.clientX - r.left - tx) / scale, (e.clientY - r.top) / scale, payload));
               setDrag(null);
             }}
           >

@@ -12,7 +12,11 @@ import { Renderer } from "./Renderer";
 //  3. A POPULATED area had no data-pb-area wrapper at all, so dragging a shared
 //     block onto a page that already has blocks could never hit a drop zone.
 
+// Delivery emits `fieldTypes` (declared type per PUBLIC field) on every item, and
+// the Renderer identifies content areas from it. `mainArea` is declared by default
+// so these fixtures match a real delivered payload; extra types merge on top.
 function page(data: Record<string, unknown>, fieldTypes: Record<string, string> = {}): DeliveryContent {
+  const types = { mainArea: "contentArea", ...fieldTypes };
   return {
     documentId: "doc1",
     type: "StandardPage",
@@ -23,7 +27,7 @@ function page(data: Record<string, unknown>, fieldTypes: Record<string, string> 
     urlPath: "/test",
     cv: 1,
     data,
-    fieldTypes,
+    fieldTypes: types,
     seo: null,
   };
 }

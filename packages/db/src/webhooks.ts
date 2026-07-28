@@ -82,6 +82,37 @@ async function assertPublicWebhookUrl(rawUrl: string): Promise<void> {
   }
 }
 
+/**
+ * POST, following redirects MANUALLY so every hop's host is re-checked.
+ *
+ * undici follows 3xx by default, which made the pre-fetch host check pointless: an
+ * allowlisted public host could answer `302 → http://169.254.169.254/…` and the
+ * signed POST would go there. And because the response status is persisted on the
+ * webhook row (and readable via listWebhooks), that turned into a blind
+ * host/port-scan oracle for the deployment's internal network.
+ *
+ * Same discipline as stock.ts's downloadBytes (S3-M8), which fixed this for image
+ * downloads but was never applied here. `assertAllowed` is injected so it can be
+ * tested without controlling DNS.
+ */
+export async function postFollowingRedirectsSafely(
+  url: string,
+  init: RequestInit,
+  assertAllowed: (url: string) => Promise<void>,
+  maxHops = 3,
+): Promise<Response> {
+  let current = url;
+  for (let hop = 0; hop < maxHops; hop++) {
+    await assertAllowed(current); // re-checked for EVERY hop, including the first
+    const res = await fetch(current, { ...init, redirect: "manual" });
+    if (res.status < 300 || res.status >= 400) return res;
+    const location = res.headers.get("location");
+    if (!location) throw Errors.badRequest("Webhook delivery failed: redirect without a location header");
+    current = new URL(location, current).toString(); // validated at the top of the next hop
+  }
+  throw Errors.badRequest(`Webhook delivery failed: too many redirects (>${maxHops})`);
+}
+
 export async function listWebhooks(db: Database, ctx: AccessContext) {
   requirePermission(ctx, "webhook.manage");
   const rows = await db.select().from(webhook).orderBy(desc(webhook.id));
@@ -140,22 +171,27 @@ export async function dispatchWebhooks(
       let status: number | null = null;
       let error: string | null = null;
       try {
-        // Re-check at dispatch time — this is the real egress boundary and closes
-        // DNS-rebinding (a host that resolved public at create time, internal now).
-        await assertPublicWebhookUrl(h.url);
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), WEBHOOK_TIMEOUT_MS);
         try {
-          const res = await fetch(h.url, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-              "x-paperboy-event": payload.event,
-              "x-paperboy-signature": signPayload(h.secret, body),
+          // assertPublicWebhookUrl runs per hop (not just once before the fetch):
+          // it is the real egress boundary, and it closes both DNS rebinding — a
+          // host that resolved public at create time and internal now — and
+          // redirect-based SSRF.
+          const res = await postFollowingRedirectsSafely(
+            h.url,
+            {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-paperboy-event": payload.event,
+                "x-paperboy-signature": signPayload(h.secret, body),
+              },
+              body,
+              signal: ac.signal,
             },
-            body,
-            signal: ac.signal,
-          });
+            assertPublicWebhookUrl,
+          );
           status = res.status;
         } finally {
           clearTimeout(timer);

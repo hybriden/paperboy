@@ -119,11 +119,22 @@ the right area, edits patch live. Protocol and details in
 
 ## Quickstart (Docker)
 ```bash
+./scripts/setup.sh              # generates .env: unique secrets + your admin password
 docker compose up -d            # db → init(migrate+seed) → api → web → admin
-# Admin   http://localhost:8090   (admin@paperboy.test / Admin!Passw0rd)
+# Admin   http://localhost:8090   (login printed by setup.sh — save it)
 # API     http://localhost:8091   (OpenAPI UI at /docs)
 # Web     http://localhost:8092
 ```
+`setup.sh` is required, not optional, and it is safe to re-run (an existing `.env` is
+never overwritten). Paperboy refuses to boot on the placeholder secrets committed in
+this repo, and refuses to seed a production database with the published demo login —
+both are public constants, so booting on them would mean anyone could log in. The
+script generates real ones; nothing else has to be configured.
+
+> ⚠️ The generated `.env` targets **localhost** (`COOKIE_SECURE=false`). Before you
+> expose this on a real host, set `COOKIE_SECURE=true`, drop `ALLOW_INSECURE_COOKIES`,
+> and point `CORS_ORIGIN` at your admin's HTTPS origin.
+
 > ⚠️ Redeploy one service with `docker compose up -d --no-deps --force-recreate <svc>`.
 > The seed CLI refuses to wipe a database that already holds content (set `FORCE_SEED=1`
 > for a deliberate reseed) — but don't lean on the seatbelt. See `CLAUDE.md`.
@@ -145,18 +156,25 @@ Never used a terminal before? Follow these steps exactly — copy/paste each com
 - Open the `paperboycms` folder in **File Explorer**.
 - Click the address bar at the top, type `powershell`, and press **Enter**. A blue window opens — that's your terminal, already pointed at the right folder.
 
-**4. Start everything (one command)**
+**4. Create your login and passwords (one command)**
 - Copy this line, paste it into the blue window (right-click to paste), and press **Enter**:
+  ```powershell
+  powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+  ```
+- (The `-ExecutionPolicy Bypass` part is needed because Windows blocks scripts downloaded from the internet by default.)
+- It prints an **email and password** — that's your admin login. **Copy them somewhere safe now**; they aren't stored anywhere else and can't be shown again.
+- (This step is required. It gives your copy of Paperboy its own private keys, so nobody else can log into it.)
+
+**5. Start everything (one command)**
+- Copy this line, paste it into the blue window, and press **Enter**:
   ```powershell
   docker compose up -d
   ```
 - The first run downloads things and takes a few minutes. When it finishes you'll get your prompt back.
 
-**5. Open the admin**
+**6. Open the admin**
 - In your browser go to **http://localhost:8090**
-- Log in with:
-  - **Email:** `admin@paperboy.test`
-  - **Password:** `Admin!Passw0rd`
+- Log in with the email and password that step 4 printed.
 
 That's it — you're running Paperboy. 🎉
 
@@ -165,7 +183,10 @@ That's it — you're running Paperboy. 🎉
 - **Start it again later:** `docker compose start`
 - **See it running:** check Docker Desktop, or run `docker compose ps`
 
-> ⚠️ Don't run `docker compose down -v` or re-run the setup once you've added content — it **wipes everything** and resets the login. Use **stop**/**start** instead.
+> ⚠️ Don't run `docker compose down -v` once you've added content — the `-v` **deletes the
+> database volume**, wiping everything. Use **stop**/**start** instead.
+> (Re-running `setup.ps1` is safe: it leaves an existing `.env` alone. And the seed
+> refuses to touch a database that already holds content.)
 >
 > 💡 If a page won't load, make sure Docker Desktop is open and says **Engine running**, then try again.
 
@@ -209,9 +230,18 @@ The MCP surface is hardened against the ways LLM agents actually fail — every 
 The full rules (with the war stories behind them) live in [`CLAUDE.md`](./CLAUDE.md#agent-api-design-rules-mcp--write-endpoints--learned-from-real-failures).
 
 ## Seed accounts
-`admin@` Admin · `editor@` Editor · `author@` Author (section-scoped) · `viewer@` Viewer — passwords follow `<Role>!Passw0rd`.
+Your admin login is whatever `scripts/setup.sh` printed (it generates the password).
 
-> Seeded credentials, keys, and secrets are **dev defaults** — rotate them before exposing the CMS (`SESSION_SECRET`, `CSRF_SECRET`, the delivery keys, `PREVIEW_SECRET`, and the admin password).
+The three extra demo logins — `editor@` Editor · `author@` Author (section-scoped) ·
+`viewer@` Viewer, passwords `<Role>!Passw0rd` — are **development fixtures**. Their
+passwords are published in this repo, so a production seed creates only the admin;
+you get all four only with `ALLOW_DEMO_CREDENTIALS=true` (which the test and CI
+stacks set). Trying `editor@paperboy.test` on a normal install will just hit the
+login rate limit.
+
+> Everything the seed creates is derived from your `.env`. If you skipped
+> `scripts/setup.sh`, the API refuses to boot and the seed refuses to run rather than
+> falling back to the placeholder secrets committed here.
 
 ## Docs
 - **`CLAUDE.md`** — how to develop & deploy safely (and how AI agents should work in the repo).

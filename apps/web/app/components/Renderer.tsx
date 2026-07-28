@@ -218,10 +218,14 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
   if (content.type === "BlogPost") return <BlogPostView content={content} />;
 
   const data = content.data as Record<string, unknown>;
-  // Content areas (any field name; detection lives in the shared client).
+  // Content areas, identified from the SCHEMA (fieldTypes) — the same discipline
+  // the "applies" comment below describes. Passing fieldTypes is what makes an
+  // area named anything (and an area that is currently empty) discoverable.
   // `mainArea` is preferred so an EMPTY area still surfaces a placeholder target
   // in preview; otherwise the first non-empty area renders.
-  const areas = contentAreas(data).sort((a, b) => (a.field === "mainArea" ? -1 : b.field === "mainArea" ? 1 : 0));
+  const areas = contentAreas(data, content.fieldTypes).sort((a, b) =>
+    a.field === "mainArea" ? -1 : b.field === "mainArea" ? 1 : 0,
+  );
   const picked = areas.find((a) => a.blocks.length > 0) ?? areas[0] ?? { field: "mainArea", blocks: [] as AreaBlock[] };
   const areaField = picked.field;
   const area = picked.blocks;

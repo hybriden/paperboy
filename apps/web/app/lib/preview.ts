@@ -1,4 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
+import { verifyPreviewToken } from "@paperboy/shared/preview-token";
 
 /** The committed dev default — must never grant access in production (S2-M2). */
 const DEV_PREVIEW_SECRET = "dev-preview-secret-change-me";
@@ -23,6 +24,26 @@ export function matchesPreviewSecret(provided: string | null | undefined): boole
   const secret = process.env.PREVIEW_SECRET ?? DEV_PREVIEW_SECRET;
   if (process.env.NODE_ENV === "production" && secret === DEV_PREVIEW_SECRET) return false;
   return constantTimeEqual(provided, secret);
+}
+
+/**
+ * Does `provided` match a SHORT-LIVED preview token minted by the API
+ * (GET /manage/preview-token, session-authenticated)?
+ *
+ * This is how the in-editor preview iframe authenticates now. `?pb=<secret>` still
+ * works for server-side/CLI callers that legitimately hold the secret, but the
+ * BROWSER must never hold it: the admin used to inline PREVIEW_SECRET into its
+ * public JS bundle, so fetching that bundle granted permanent access to every
+ * draft. A token expires in minutes and only a signed-in editor can get one.
+ *
+ * Same production guard as above — the committed dev default never verifies
+ * anything in production.
+ */
+export function matchesPreviewToken(provided: string | null | undefined): boolean {
+  if (!provided) return false;
+  const secret = process.env.PREVIEW_SECRET ?? DEV_PREVIEW_SECRET;
+  if (process.env.NODE_ENV === "production" && secret === DEV_PREVIEW_SECRET) return false;
+  return verifyPreviewToken(secret, provided);
 }
 
 /**

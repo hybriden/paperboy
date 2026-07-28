@@ -6,6 +6,19 @@ const EnvSchema = z.object({
   API_PORT: z.coerce.number().default(8091),
   SESSION_SECRET: z.string().min(16).default("dev-session-secret-change-me-min-32-chars"),
   CSRF_SECRET: z.string().min(16).default("dev-csrf-secret-change-me-min-32-chars-long"),
+  // Encryption key for TOTP secrets and the stored AI/stock keys at rest
+  // (packages/db/src/totp.ts encKey → sha256 → AES-256-GCM). Optional: unset
+  // falls back to SESSION_SECRET. But it must go through the SAME placeholder
+  // guard as the other two — TOTP login is passwordless, so a shipped-constant
+  // MFA_SECRET turns one leaked `users` row into a full account takeover.
+  // Empty string counts as unset: compose ships `MFA_SECRET: ${MFA_SECRET:-}`.
+  MFA_SECRET: z.preprocess((v) => (v === "" ? undefined : v), z.string().min(16).optional()),
+  // Shared with the frontend (apps/web): the API SIGNS short-lived preview tokens
+  // with it and the frontend verifies them. Must be the same value on both, and it
+  // must never reach the browser — that is the whole point of the token indirection
+  // (the admin used to ship this secret itself, inlined into its public JS bundle).
+  // Unset ⇒ the mint route reports 503 and in-editor preview is unavailable.
+  PREVIEW_SECRET: z.preprocess((v) => (v === "" ? undefined : v), z.string().min(16).optional()),
   COOKIE_SECURE: z
     .enum(["true", "false"])
     .default("false")
@@ -41,7 +54,11 @@ const EnvSchema = z.object({
   // when the API is unreachable except through a trusted proxy that overwrites XFF.
   // Harden by setting the exact boundary: a hop COUNT ("1" = one trusted proxy) or
   // a CSV of trusted proxy IPs/CIDRs. "false" = trust none (req.ip = socket peer).
-  TRUST_PROXY: z.string().default("true"),
+  // Defaults to "false" (trust NO hops) so an unconfigured deploy fails safe: with
+  // "true", anyone who can reach the API directly sets their own X-Forwarded-For and
+  // every per-IP rate limit and audit IP becomes attacker-chosen. The shipped compose
+  // and .env.example set "1" (exactly one trusted proxy) — that is the opt-in.
+  TRUST_PROXY: z.string().default("false"),
 });
 
 /** Parse TRUST_PROXY into the shape Fastify's `trustProxy` accepts:
@@ -75,6 +92,22 @@ export function loadEnv(overrides: Partial<NodeJS.ProcessEnv> = {}): Env {
   if (env.NODE_ENV === "production") {
     if (looksInsecure(env.SESSION_SECRET) || looksInsecure(env.CSRF_SECRET)) {
       throw new Error("Refusing to start: SESSION_SECRET/CSRF_SECRET must be set to non-default values in production");
+    }
+    // PREVIEW_SECRET graduated from "a shared password" to "the signing key for a
+    // draft-access credential" when preview tokens replaced the raw secret, so it
+    // needs the same guard. apps/web fails closed on the committed dev default, but
+    // a customer's own frontend — which the docs tell to verify with the same
+    // secret — has no such backstop, and a world-known signing key means anyone can
+    // forge ?pbt= and read every draft.
+    if (env.PREVIEW_SECRET !== undefined && looksInsecure(env.PREVIEW_SECRET)) {
+      throw new Error(
+        "Refusing to start: PREVIEW_SECRET must be set to a non-default value in production — it signs the preview tokens that grant draft access. Generate one with `openssl rand -hex 32` (scripts/setup.sh does this), or leave it unset to disable in-editor preview.",
+      );
+    }
+    if (env.MFA_SECRET !== undefined && looksInsecure(env.MFA_SECRET)) {
+      throw new Error(
+        "Refusing to start: MFA_SECRET must be set to a non-default value in production — it encrypts TOTP secrets and stored API keys, and 2FA login is passwordless. Generate one with `openssl rand -hex 32`, or leave MFA_SECRET unset to derive the key from SESSION_SECRET.",
+      );
     }
     if (!env.COOKIE_SECURE && !env.ALLOW_INSECURE_COOKIES) {
       throw new Error(

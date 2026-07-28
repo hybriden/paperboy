@@ -198,10 +198,14 @@ export default function RichTextEditor({
   id,
   value,
   onChange,
+  disabled = false,
 }: {
   id: string;
   value: unknown;
   onChange: (doc: unknown) => void;
+  /** Read-only (no content.update). TipTap must be told, or a Viewer types freely
+   *  and the 700ms autosave fires a 403 toast every keystroke. */
+  disabled?: boolean;
 }) {
   const [picking, setPicking] = useState(false); // insert-image media picker
   const editor = useEditor({
@@ -212,6 +216,7 @@ export default function RichTextEditor({
       Link.configure({ openOnClick: false, autolink: true, HTMLAttributes: { rel: "noopener" } }),
       AssetImage.configure({ allowBase64: false }),
     ],
+    editable: !disabled,
     content: (value && typeof value === "object" && "type" in (value as object) ? value : EMPTY) as object,
     onUpdate: ({ editor }) => onChange(editor.getJSON()),
     editorProps: {

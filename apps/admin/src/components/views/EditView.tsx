@@ -17,12 +17,16 @@ export function EditView() {
   const { setCrumb } = useOutletContext<ShellOutlet>();
   const { documentId } = useParams();
   const [params] = useSearchParams();
-  const locale = params.get("lang") ?? "en";
   const navigate = useNavigate();
   const { user } = useUser();
   const isMobile = useIsMobile();
 
   const locales = useQuery({ queryKey: ["locales"], queryFn: ({ signal }) => api.locales(signal) });
+  // No ?lang= → the CONFIGURED default language, not a hardcoded "en". On a
+  // Norwegian instance "en" pointed the editor at a language the content isn't in,
+  // so every page opened as an untranslated blank scaffold. Falls back to "en" only
+  // until the locales query resolves.
+  const locale = params.get("lang") ?? locales.data?.find((l) => l.isDefault)?.code ?? "en";
   const types = useQuery({ queryKey: ["content-types"], queryFn: ({ signal }) => api.contentTypes(signal) });
   const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
   const canCreate = user.permissions.includes("content.create");
