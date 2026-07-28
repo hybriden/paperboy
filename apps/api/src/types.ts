@@ -10,6 +10,7 @@ declare module "fastify" {
     sessionSecret: string;
     loginRateMax: number;
     uploadsDir: string;
+    previewSecret?: string;
     aiConfig: { apiKey?: string; model: string };
     stockConfig: { unsplashKey?: string };
   }

@@ -31,10 +31,12 @@ await cms.getByPath("/blog/hello-world");
 await cms.startPage({ populate: 2 });
 await cms.global("SiteSettings");
 
-// Responsive images via the server's variant pipeline
+// Responsive images via the server's variant pipeline. An image field is
+// delivered as an OBJECT ({ url, alt, … }), not a bare string — pass its `url`.
 import { mediaUrl, mediaSrcset } from "@paperboycms/client";
-const src = mediaUrl(post!.data.image as string, { w: 640, format: "webp" });
-const srcset = mediaSrcset(post!.data.image as string); // 320/640/1024/1600w webp
+const image = post!.data.image as { url: string; alt: string } | null;
+const src = image && mediaUrl(image.url, { w: 640, format: "webp" });
+const srcset = image && mediaSrcset(image.url); // 320/640/1024/1600w webp
 ```
 
 ## Behavior
@@ -63,11 +65,15 @@ import {
   pbAreaAttrs,                     // data-pb-* attrs for the on-page-editing bridge
 } from "@paperboycms/client";
 
-const post = await cms.byPath("/blog/hello");
+const post = await cms.getByPath("/blog/hello");
 // Every delivery item carries `fieldTypes` (declared type per public field) so an
-// empty richtext field still renders as richtext, never as "".
-for (const block of contentAreas(post!.data.body)) {
-  const data = blockData(block); // shared vs inline, normalized
+// empty richtext field still renders as richtext, never as "". PASS IT to
+// contentAreas: areas are then identified by SCHEMA, so an area named anything —
+// and an area that is currently empty — is still found.
+for (const area of contentAreas(post!.data, post!.fieldTypes)) {
+  for (const block of area.blocks) {
+    const data = blockData(block); // shared vs inline, normalized
+  }
 }
 const html = renderRichText(post!.data.intro); // safe to set via innerHTML
 ```

@@ -1,3 +1,5 @@
+import { readdir, stat, unlink } from "node:fs/promises";
+import { join } from "node:path";
 import type { AssetSourceMeta } from "@paperboy/shared";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Database } from "./client.js";
@@ -142,17 +144,58 @@ export async function updateAssetAlt(
 }
 
 /**
- * Delete an asset row and return its stored relative path so the route can
- * unlink the file. References to a now-missing asset resolve to null in
- * delivery (no dangling-reference error). 404 if the asset doesn't exist.
+ * Remove an asset's BYTES: the original file and every cached transform variant
+ * (`<file>.w{n}q{n}.{fmt}`).
+ *
+ * Lives here, in the data layer, so EVERY surface inherits it. It used to live only
+ * in the API route, which meant the MCP `delete_asset` tool deleted the row and left
+ * the image permanently downloadable — the media mount resolves by filename with no
+ * DB lookup, so a row-only delete is not a delete. That contradicted the MCP's whole
+ * premise ("calls the same functions the API does").
+ *
+ * Best-effort: the row is the source of truth, so a leftover file is a leak, not a
+ * correctness bug — but a leftover file after a delete IS the bug.
+ */
+export async function removeAssetFiles(uploadsDir: string, relativePath: string): Promise<void> {
+  // FAIL LOUDLY if the uploads directory isn't there. It used to swallow ENOENT, so
+  // the documented stdio MCP invocation (which sets no UPLOADS_DIR and mounts no
+  // volume) reported a successful delete while every byte stayed downloadable at the
+  // old, unauthenticated /api/v1/media URL — a right-to-erasure request that silently
+  // did nothing. Self-teaching, per rule #2.
+  try {
+    await stat(uploadsDir);
+  } catch {
+    throw Errors.badRequest(
+      `Cannot delete the asset's files: UPLOADS_DIR ('${uploadsDir}') does not exist, so the image would stay publicly downloadable. Point UPLOADS_DIR at the same directory the API serves /api/v1/media from (in Docker: the paperboy-uploads volume at /app/uploads).`,
+    );
+  }
+  const fileName = relativePath.replace(`${MEDIA_PREFIX}/`, "");
+  // Server-generated nanoid names only; reject anything path-shaped regardless.
+  if (!fileName || fileName.includes("/") || fileName.includes("..")) return;
+  await unlink(join(uploadsDir, fileName)).catch(() => undefined);
+  const variantsDir = join(uploadsDir, "_variants");
+  for (const v of await readdir(variantsDir).catch(() => [] as string[])) {
+    if (v.startsWith(`${fileName}.`)) await unlink(join(variantsDir, v)).catch(() => undefined);
+  }
+}
+
+/**
+ * Delete an asset row AND its files. References to a now-missing asset resolve to
+ * null in delivery (no dangling-reference error). 404 if the asset doesn't exist.
+ *
+ * `uploadsDir` is optional only so a caller that owns the unlink itself (the API
+ * route, which batches it for site deletion) can opt out; pass it everywhere else.
  */
 export async function deleteAsset(
   db: Database,
   ctx: AccessContext,
   documentId: string,
+  uploadsDir?: string,
 ): Promise<{ relativePath: string }> {
   requirePermission(ctx, "content.delete");
   const res = await db.delete(asset).where(and(eq(asset.documentId, documentId), eq(asset.siteId, ctx.siteId))).returning({ url: asset.url });
   if (!res[0]) throw Errors.notFound("Asset");
-  return { relativePath: res[0].url };
+  const relativePath = res[0].url;
+  if (uploadsDir) await removeAssetFiles(uploadsDir, relativePath);
+  return { relativePath };
 }

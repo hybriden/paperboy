@@ -19,7 +19,9 @@ import { pickTranslateSource } from "../lib/translate-offer.js";
 import { reviewBadge } from "../lib/review-badge.js";
 import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
 import { blockInstanceFromDrop, type DropPayload } from "../lib/block-drop.js";
+import { isPreviewOrigin } from "../lib/preview-origin.js";
 import { parsePreviewMessage } from "@paperboycms/preview/protocol";
+import { useConfirm } from "./ui/confirm.js";
 import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
@@ -29,7 +31,7 @@ import { MarkdownEditor } from "./fields/MarkdownEditor.js";
 import { ReferenceField } from "./fields/ReferenceField.js";
 import { RichText } from "./fields/RichText.js";
 import { ImageField, StockQueryContext } from "./MediaLibrary.js";
-import { type PbRect, type PreviewMode, PreviewPane, publicSiteUrl } from "./PreviewPane.js";
+import { type PbRect, type PreviewMode, PreviewPane, previewOrigin, publicSiteUrl } from "./PreviewPane.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
@@ -72,6 +74,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
+  // Irreversible actions go through this. `MenuItem destructive` is styling only,
+  // so trash/unpublish/discard were each one click from destroying work.
+  const confirm = useConfirm();
   const [showVersions, setShowVersions] = useState(false);
   // "review" auto-opens the diff of the published version vs the working draft;
   // "history" is the plain version list.
@@ -558,6 +563,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // (paperboy:rect keeps the anchor tracking page scroll/resize).
   useEffect(() => {
     function onMessage(e: MessageEvent) {
+      // Only the preview iframe may drive this handler. `paperboy:drop` below
+      // appends a block and lets autosave commit it, so an unauthenticated handler
+      // is a content-write primitive running under the editor's own session — CSRF
+      // can't see it, and frame-ancestors doesn't apply because any page can
+      // window.open() the admin and postMessage into the handle it gets back.
+      // Fails closed: unknown preview origin → accept nothing.
+      if (!isPreviewOrigin(e.origin, previewOrigin(site.data))) return;
       const msg = parsePreviewMessage(e.data);
       if (!msg) return; // unknown/garbage (and forward-compat: future message types)
       if (msg.type === "paperboy:rect") {
@@ -660,8 +672,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
+    // previewBaseUrl is in the deps so the origin check can't keep trusting a
+    // stale origin after Settings → Site changes the preview host.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type]);
+  }, [type, site.data?.previewBaseUrl]);
 
   // Close the on-page overlay; if anything was saved while it was open, do the
   // deferred preview reload now (the bridge restores the scroll position).
@@ -909,7 +923,20 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               {canDelete && (
                 <>
                   <MenuSeparator />
-                  <MenuItem destructive onSelect={() => trash.mutate()}>Move to trash</MenuItem>
+                  <MenuItem
+                    destructive
+                    onSelect={() =>
+                      confirm.ask({
+                        title: "Move to trash?",
+                        description:
+                          "This unpublishes the page and its whole subtree, so it disappears from the live site immediately. You can restore it from Trash.",
+                        confirmLabel: "Move to trash",
+                        onConfirm: () => trash.mutate(),
+                      })
+                    }
+                  >
+                    Move to trash
+                  </MenuItem>
                 </>
               )}
             </MenuContent>
@@ -975,13 +1002,38 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                   {form.status === "published" && (
                     <>
                       <MenuSeparator />
-                      <MenuItem onSelect={() => unpublish.mutate()}>Unpublish</MenuItem>
+                      <MenuItem
+                        onSelect={() =>
+                          confirm.ask({
+                            title: "Unpublish this page?",
+                            description:
+                              "It disappears from the live site immediately. Your content is kept as a draft, so you can publish it again.",
+                            confirmLabel: "Unpublish",
+                            onConfirm: () => unpublish.mutate(),
+                          })
+                        }
+                      >
+                        Unpublish
+                      </MenuItem>
                     </>
                   )}
                   {form.hasUnpublishedChanges && (
                     <>
                       {form.status !== "published" && <MenuSeparator />}
-                      <MenuItem destructive onSelect={() => discard.mutate()}>Discard draft changes</MenuItem>
+                      <MenuItem
+                        destructive
+                        onSelect={() =>
+                          confirm.ask({
+                            title: "Discard draft changes?",
+                            description:
+                              "This permanently throws away every unpublished edit on this language version and reverts it to what is currently published. This cannot be undone.",
+                            confirmLabel: "Discard changes",
+                            onConfirm: () => discard.mutate(),
+                          })
+                        }
+                      >
+                        Discard draft changes
+                      </MenuItem>
                     </>
                   )}
                 </MenuContent>
@@ -1244,6 +1296,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           }}
         />
       )}
+      {confirm.dialog}
     </div>
     </StockQueryContext.Provider>
   );
@@ -1312,6 +1365,7 @@ function VersionsDialog({
   onRestored: (updated: ContentDetail) => void;
 }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const versions = useQuery({
     queryKey: ["versions", documentId, locale],
     queryFn: ({ signal }) => api.versions(documentId, locale, signal),
@@ -1319,7 +1373,7 @@ function VersionsDialog({
   const restore = useMutation({
     mutationFn: (versionId: number) => api.restoreVersion(documentId, locale, versionId),
     onSuccess: (updated) => {
-      toast.success("Version restored", "Loaded into a draft — review and publish.");
+      toast.success("Version restored", "It replaced your working draft — review and publish.");
       onRestored(updated);
       onOpenChange(false);
     },
@@ -1411,7 +1465,24 @@ function VersionsDialog({
                   )}
                   <span className="ml-auto text-xs text-muted">{new Date(v.createdAt).toLocaleString()}</span>
                   {canRestore && !v.isCurrentPublished && (
-                    <button className="btn-subtle px-2 py-0.5 text-xs" disabled={restore.isPending} onClick={() => restore.mutate(v.id)}>
+                    <button
+                      className="btn-subtle px-2 py-0.5 text-xs"
+                      disabled={restore.isPending}
+                      // Restore OVERWRITES the working draft in place (restoreVersion
+                      // UPDATEs the draft row; it does not append a version), so an
+                      // editor peeking at an old version could silently destroy hours
+                      // of unpublished work. The toast used to say it merely "Loaded
+                      // into a draft", which made it read as harmless.
+                      onClick={() =>
+                        confirm.ask({
+                          title: `Restore version ${v.versionNumber}?`,
+                          description:
+                            "This replaces your current unpublished draft with that version's content. Your draft is not kept anywhere — this cannot be undone.",
+                          confirmLabel: `Restore v${v.versionNumber}`,
+                          onConfirm: () => restore.mutate(v.id),
+                        })
+                      }
+                    >
                       <Icon.History width={13} height={13} /> Restore
                     </button>
                   )}
@@ -1421,6 +1492,7 @@ function VersionsDialog({
           </>
         )}
       </DialogContent>
+      {confirm.dialog}
     </Dialog>
   );
 }
@@ -1865,6 +1937,10 @@ function Field({
           onChange={onChange}
           types={types}
           sharedBlocks={sharedBlocks}
+          // Every other field branch threads this; contentArea didn't, so a
+          // read-only user got a live palette and inputs whose every keystroke
+          // autosaved into a 403.
+          disabled={disabled}
         />
         <FieldError>{error}</FieldError>
       </div>
@@ -1892,7 +1968,7 @@ function Field({
       {field.type === "markdown" && (
         <MarkdownEditor id={id} value={(value as string) ?? ""} disabled={disabled} onChange={(v) => onChange(v)} />
       )}
-      {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} />}
+      {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} disabled={disabled} />}
       {field.type === "boolean" && (
         <input id={id} aria-label={field.displayName} type="checkbox" checked={Boolean(value)} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       )}

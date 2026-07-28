@@ -198,7 +198,7 @@ export const api = {
   // two-factor
   mfaStatus: (signal?: AbortSignal) => request<{ enabled: boolean; backupCodesRemaining: number }>("GET", "/auth/2fa/status", undefined, signal),
   mfaSetup: () => request<{ secret: string; uri: string }>("POST", "/auth/2fa/setup"),
-  mfaEnable: (code: string) => request<{ backupCodes: string[] }>("POST", "/auth/2fa/enable", { code }),
+  mfaEnable: (code: string, password: string) => request<{ backupCodes: string[] }>("POST", "/auth/2fa/enable", { code, password }),
   mfaDisable: (password: string) => request<{ ok: boolean }>("POST", "/auth/2fa/disable", { password }),
 
   // schema
@@ -229,6 +229,9 @@ export const api = {
 
   // site config (start page)
   site: (signal?: AbortSignal) => request<{ startPageId: string | null; previewBaseUrl: string }>("GET", "/manage/site", undefined, signal),
+  /** Short-lived token for the preview iframe. Replaces the build-time
+   *  VITE_PREVIEW_SECRET, which shipped the long-lived secret in the public bundle. */
+  previewToken: (signal?: AbortSignal) => request<{ token: string; expiresAt: number }>("GET", "/manage/preview-token", undefined, signal),
   setStartPage: (documentId: string | null, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }, undefined, siteOverride),
   setPreviewUrl: (url: string, siteOverride?: string) =>

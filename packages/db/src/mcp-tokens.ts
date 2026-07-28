@@ -62,12 +62,33 @@ export async function revokeMcpToken(db: Database, ctx: AccessContext, id: numbe
   if (!updated[0]) throw Errors.notFound("MCP token");
 }
 
-/** Authenticate a token → the user id it acts as (or null). Updates last-used. */
-export async function verifyMcpToken(db: Database, token: string): Promise<string | null> {
-  if (!token || !token.startsWith("mcp_")) return null;
+/**
+ * What the database knows about a presented token.
+ *
+ * "revoked" and "unknown" both mean "don't authenticate", but the MCP server has
+ * to tell them apart: it may be booted with an env-only MCP_TOKEN that has no row
+ * at all ("unknown", and legitimately usable), while a token that DOES have a row
+ * and was revoked in Settings → MCP must stop working immediately — even if it is
+ * the same string the process booted with.
+ */
+export type McpTokenState =
+  | { state: "active"; userId: string }
+  | { state: "revoked"; userId: string }
+  | { state: "unknown"; userId: null };
+
+/** Look a token up without authenticating it. Does not touch last-used. */
+export async function mcpTokenState(db: Database, token: string): Promise<McpTokenState> {
+  if (!token || !token.startsWith("mcp_")) return { state: "unknown", userId: null };
   const rows = await db.select().from(mcpToken).where(eq(mcpToken.tokenHash, sha256(token))).limit(1);
   const row = rows[0];
-  if (!row || row.revokedAt) return null;
-  await db.update(mcpToken).set({ lastUsedAt: new Date() }).where(eq(mcpToken.id, row.id));
-  return row.userId;
+  if (!row) return { state: "unknown", userId: null };
+  return row.revokedAt ? { state: "revoked", userId: row.userId } : { state: "active", userId: row.userId };
+}
+
+/** Authenticate a token → the user id it acts as (or null). Updates last-used. */
+export async function verifyMcpToken(db: Database, token: string): Promise<string | null> {
+  const found = await mcpTokenState(db, token);
+  if (found.state !== "active") return null;
+  await db.update(mcpToken).set({ lastUsedAt: new Date() }).where(eq(mcpToken.tokenHash, sha256(token)));
+  return found.userId;
 }

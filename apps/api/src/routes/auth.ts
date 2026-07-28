@@ -146,9 +146,18 @@ export async function registerAuthRoutes(appBase: FastifyInstance): Promise<void
   );
   app.post(
     "/2fa/enable",
-    { preHandler: requireCsrf, schema: { tags: ["auth"], body: z.object({ code: z.string().min(6).max(8) }), response: { 200: z.object({ backupCodes: z.array(z.string()) }) } } },
+    {
+      preHandler: requireCsrf,
+      schema: {
+        tags: ["auth"],
+        // password: enabling 2FA is a credential-posture change, so it carries the
+        // same re-auth gate as /2fa/disable.
+        body: z.object({ code: z.string().min(6).max(8), password: z.string().min(1).max(200) }),
+        response: { 200: z.object({ backupCodes: z.array(z.string()) }) },
+      },
+    },
     async (req) => {
-      const r = await enableTotp(app.db, req.user!.id, req.body.code, req.sessionToken);
+      const r = await enableTotp(app.db, req.user!.id, req.body.code, req.body.password, req.sessionToken);
       await audit(app.db, { actorUserId: req.user!.id, action: "auth.2fa_enabled", ip: req.ip });
       return r;
     },

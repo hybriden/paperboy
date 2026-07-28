@@ -102,8 +102,26 @@ class DeliveryCtx {
     let name: string | null = null;
     if (rows[0]) {
       const found = await variantRow(this, perspective, rows[0].documentId, loc);
-      const sn = found ? (found.row.data as Record<string, unknown>).siteName : null;
-      name = typeof sn === "string" && sn.trim() ? sn : null;
+      // Read siteName from the SANITIZED map, not the raw row. Reading it raw
+      // bypassed the field-exposure gate entirely, so a SiteSettings.siteName marked
+      // delivery:"private" was correctly absent from /delivery/globals/SiteSettings
+      // yet still surfaced as seo.og.siteName on EVERY page — and apps/web renders
+      // that straight into <meta property="og:site_name">. That contradicts the
+      // stated contract ("computed post-sanitize, so a private role-tagged field can
+      // never leak") and this module's own fail-closed header.
+      if (found) {
+        const publicData = await sanitize(
+          this,
+          perspective,
+          "SiteSettings",
+          found.row.data as Record<string, unknown>,
+          found.usedLocale,
+          // depth 0: siteName is a scalar; no reference/contentArea graph to walk.
+          0,
+        );
+        const sn = publicData.siteName;
+        name = typeof sn === "string" && sn.trim() ? sn : null;
+      }
     }
     this._siteName = name;
     return name;

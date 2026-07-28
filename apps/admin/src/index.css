@@ -157,7 +157,11 @@ body {
     @apply btn border border-line bg-panel text-fg hover:bg-canvas;
   }
   .btn-danger {
-    @apply btn bg-danger text-white hover:opacity-90;
+    /* text-danger-fg, NOT text-white: dark theme lightens --c-danger to
+       rgb(248 120 120), where white text is ~2.7:1 and fails WCAG 1.4.3.
+       The per-tone fg channel is the token that tracks the theme (badge.tsx
+       already pairs them this way). */
+    @apply btn bg-danger text-danger-fg hover:opacity-90;
   }
   .field-label {
     @apply mb-1 block text-[13px] font-semibold text-fg;
