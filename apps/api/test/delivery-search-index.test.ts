@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { createDb } from "@paperboy/db";
 import { afterAll, describe, expect, it } from "vitest";
 import { TEST_DB } from "./helpers.js";
@@ -27,15 +28,43 @@ describe("delivery search index is usable by the query", () => {
     await raw.sql.end();
   });
 
-  it("stores the tsvector as a GENERATED column (nothing to keep in sync by hand)", async () => {
-    const rows = (await raw.sql`
-      SELECT is_generated, generation_expression
-      FROM information_schema.columns
+  it("stores the tsvector in a column maintained by a trigger (nothing to sync by hand)", async () => {
+    const cols = (await raw.sql`
+      SELECT data_type FROM information_schema.columns
       WHERE table_name = 'content_version' AND column_name = 'fts'
-    `) as unknown as { is_generated: string; generation_expression: string | null }[];
-    expect(rows[0], "content_version.fts is missing — did migration 0017 run?").toBeTruthy();
-    expect(rows[0]!.is_generated).toBe("ALWAYS");
-    expect(rows[0]!.generation_expression).toContain("simple");
+    `) as unknown as { data_type: string }[];
+    expect(cols[0], "content_version.fts is missing — did migrations 0017/0018 run?").toBeTruthy();
+    expect(cols[0]!.data_type).toBe("tsvector");
+
+    // 0017 used a GENERATED column; 0018 had to move to a trigger because an
+    // expression cannot catch to_tsvector's 1MB overflow, which made large
+    // documents permanently unsavable. Pin the trigger, not the old mechanism.
+    const trg = (await raw.sql`
+      SELECT tgname, pg_get_triggerdef(oid) AS def FROM pg_trigger
+      WHERE tgrelid = 'content_version'::regclass AND NOT tgisinternal
+        AND tgname = 'content_version_fts_trg'
+    `) as unknown as { tgname: string; def: string }[];
+    expect(trg[0], "the fts maintenance trigger is missing").toBeTruthy();
+    expect(trg[0]!.def).toMatch(/BEFORE INSERT OR UPDATE OF name, data/i);
+  });
+
+  it("the trigger degrades instead of failing when a document overflows the vector", async () => {
+    // The exact input that used to 500 and brick the document: many DISTINCT
+    // words (repeated text collapses to one lexeme and proves nothing).
+    const rows = (await raw.sql`
+      WITH words AS (SELECT string_agg('zeta' || g, ' ') AS w FROM generate_series(1, 80000) g)
+      INSERT INTO content_version (document_id, locale, status, is_current_published, version_number, name, data)
+      SELECT 'fts-overflow-probe', 'en', 'draft', false, 1, 'Overflow probe', jsonb_build_object('seoNotes', w)
+      FROM words
+      RETURNING length(data::text) AS data_bytes, length(fts::text) AS fts_bytes
+    `) as unknown as { data_bytes: number; fts_bytes: number }[];
+
+    // Stored complete; only the indexed vector is bounded.
+    expect(rows[0]!.data_bytes).toBeGreaterThan(600_000);
+    expect(rows[0]!.fts_bytes).toBeGreaterThan(0);
+    expect(rows[0]!.fts_bytes, "vector must stay under Postgres's cap").toBeLessThan(1_048_575);
+
+    await raw.sql`DELETE FROM content_version WHERE document_id = 'fts-overflow-probe'`;
   });
 
   it("indexes that column with GIN", async () => {
@@ -46,27 +75,47 @@ describe("delivery search index is usable by the query", () => {
     expect(rows[0]?.indexdef ?? "").toMatch(/USING gin \(fts\)/i);
   });
 
-  it("the planner uses the GIN index for the real search query shape", async () => {
-    await raw.sql`SET enable_seqscan = off`;
-    try {
-      // The same predicate deliverySearch issues (see packages/db/src/delivery.ts).
-      const plan = (await raw.sql`
+  it("the predicate deliverySearch issues is index-usable", async () => {
+    // Deliberately MINIMAL: just the fts predicate. The full query shape also
+    // matches `is_current_published`, and on a small table the planner prefers
+    // that partial index and applies `fts @@ ...` as a Filter — so asserting the
+    // whole shape tested table statistics, not index usability, and flipped
+    // between runs. This asks the one question that matters: can this predicate
+    // be answered by the GIN index at all?
+    //
+    // SET is session-scoped and postgres-js pools connections, so the SET and the
+    // EXPLAIN must share one — an earlier version set it on a different
+    // connection and the assertion was decided by luck.
+    const plan = await raw.sql.begin(async (tx) => {
+      await tx`SET LOCAL enable_seqscan = off`;
+      return (await tx`
         EXPLAIN (FORMAT JSON)
-        SELECT DISTINCT v.document_id AS id,
-               MAX(ts_rank(v.fts, websearch_to_tsquery('simple', 'salmon'))) AS rank
-        FROM content_version v
-        JOIN content_item i ON i.document_id = v.document_id AND i.deleted_at IS NULL AND i.site_id = 'site_default'
-        WHERE v.fts @@ websearch_to_tsquery('simple', 'salmon')
-          AND v.locale IN ('en')
-          AND v.is_current_published
-        GROUP BY v.document_id
-        ORDER BY rank DESC
-        LIMIT 100
+        SELECT document_id FROM content_version
+        WHERE fts @@ websearch_to_tsquery('simple', 'salmon')
       `) as unknown as { "QUERY PLAN": unknown }[];
-      expect(JSON.stringify(plan)).toContain("content_version_fts_v2_idx");
-    } finally {
-      await raw.sql`SET enable_seqscan = on`;
-    }
+    });
+    expect(JSON.stringify(plan)).toContain("content_version_fts_v2_idx");
+  });
+
+  it("deliverySearch matches on the stored column, not an inlined to_tsvector", async () => {
+    // A SOURCE-level pin, and honest about it: the plan test above proves the
+    // index is usable, not that the shipped query uses it. Re-inlining
+    // `to_tsvector(...)` in the query would keep every functional search test
+    // green while silently reverting to a full re-tokenization per candidate row
+    // (295.9ms vs 17.6ms measured on 40k versions), and no assertion here
+    // observes the SQL the function actually sends.
+    const src = await readFile(new URL("../../../packages/db/src/delivery.ts", import.meta.url), "utf8");
+    const searchFn = src.slice(src.indexOf("export async function deliverySearch"));
+    // Strip comments: the function's own docstring names `to_tsvector` precisely
+    // to warn against re-inlining it, which would otherwise trip the check below.
+    const body = searchFn
+      .slice(0, searchFn.indexOf("\n}"))
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("*") && !line.trim().startsWith("/*"))
+      .join("\n");
+    expect(body, "the search query should match on v.fts").toContain("v.fts @@ websearch_to_tsquery");
+    expect(body, "ranking should read the stored column too").toContain("ts_rank(v.fts");
+    expect(body, "an inlined to_tsvector cannot use the index").not.toContain("to_tsvector(");
   });
 
   it("the superseded expression index is gone (it doubled the write cost of a save)", async () => {
