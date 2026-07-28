@@ -602,8 +602,18 @@ export async function resolveRequestedLocale(
     .from(contentVersion)
     .where(eq(contentVersion.documentId, documentId));
   const codes = rows.map((r) => r.locale);
-  const defaults = await db.select().from(locale).where(eq(locale.isDefault, true)).limit(1);
-  const def = defaults[0]?.code ?? "en";
+  // The DOCUMENT'S OWN SITE decides the default, via resolveDefaultLocale — this
+  // used to read only `locale.isDefault`, so on a site whose defaultLocale is `nb`
+  // while the global default is still `en`, a locale-less MCP write resolved to `en`
+  // and forked a phantom `en` branch. That is the 2026-06-07 incident this function
+  // exists to prevent, reintroduced one level up. This is the resolver for EVERY MCP
+  // write (apps/mcp/src/server.ts locFor), so it has to agree with the HTTP routes.
+  const owner = await db
+    .select({ siteId: contentItem.siteId })
+    .from(contentItem)
+    .where(eq(contentItem.documentId, documentId))
+    .limit(1);
+  const def = await resolveDefaultLocale(db, owner[0]?.siteId);
   if (codes.length === 0 || codes.includes(def)) return def;
   if (codes.length === 1) return codes[0]!;
   throw Errors.badRequest(

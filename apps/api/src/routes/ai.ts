@@ -5,7 +5,7 @@ import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import sharp from "sharp";
 import { z } from "zod";
 import { AI_TASKS, AiUnavailableError, aiAssist, aiImageAltText, aiTranslateBatch } from "@paperboy/shared";
-import { AppError, getAssetRow, getStoredAiKey, getStoredAiModel } from "@paperboy/db";
+import { AppError, getAssetRow, getStoredAiKey, getStoredAiModel, resolveDefaultLocale } from "@paperboy/db";
 import { runContentAgent } from "../agent.js";
 import { requireAuth, requireCsrf, requirePermission } from "../security.js";
 
@@ -150,7 +150,9 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
         body: z.object({
           brief: z.string().min(10).max(4000),
           parentId: z.string().nullable().optional(),
-          locale: z.string().max(40).default("en"),
+          // Optional, not defaulted to "en": the handler resolves the active
+          // site's default locale so a non-English instance isn't pinned to en.
+          locale: z.string().max(40).optional(),
         }),
       },
     },
@@ -175,7 +177,10 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
           // versions record created_via='agent' and carry the needs-review flag.
           { db: app.db, ctx: { ...req.accessCtx!, via: "agent" }, cfg, emit: send },
           req.body.brief,
-          { parentId: req.body.parentId ?? null, locale: req.body.locale },
+          {
+            parentId: req.body.parentId ?? null,
+            locale: req.body.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId)),
+          },
         );
       } catch (err) {
         // This SSE route bypasses the global 500 sanitizer. Only forward AppError
