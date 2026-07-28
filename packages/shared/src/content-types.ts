@@ -67,7 +67,32 @@ export type FieldValidation = z.infer<typeof FieldValidation>;
  */
 const SAFE_URL_SCHEMES = new Set(["http:", "https:", "mailto:", "tel:"]);
 
+/**
+ * ASCII control characters (C0 + DEL). A URL containing one is never legitimate
+ * authored content, and they defeat any scheme test because the HTML URL parser
+ * normalises them AWAY before resolving:
+ *
+ *   - tab/LF/CR are stripped from ANYWHERE in a URL, so `java<TAB>script:` matches
+ *     no scheme here (→ looks like a harmless relative URL) and then executes as
+ *     `javascript:` in the browser.
+ *   - leading C0 controls are also stripped, and JS `trim()` does not remove them,
+ *     so `\x01javascript:` slipped past too.
+ *
+ * Rejecting the whole class beats enumerating the variants. Note SPACE is
+ * deliberately NOT in here: the parser percent-encodes internal spaces rather
+ * than removing them, so they cannot splice a scheme together, and real links
+ * contain them.
+ */
+function hasControlChar(raw: string): boolean {
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
 export function isSafeUrl(raw: string): boolean {
+  if (hasControlChar(raw)) return false;
   const v = raw.trim();
   if (v === "") return true; // cleared input, not a link
   const scheme = /^([a-z][a-z0-9+.-]*:)/i.exec(v);

@@ -758,13 +758,38 @@ export async function deliveryGetBySlug(
   const ctx = new DeliveryCtx(db, siteId);
   // Find candidate variants by slug, then re-resolve via the chokepoint so the
   // perspective filter (not the slug lookup) decides visibility.
+  //
+  // Joined to content_item so the candidate scan is site-partitioned and skips
+  // trashed documents, like every other broad delivery scan.
   const rows = await db
-    .select({ documentId: contentVersion.documentId, locale: contentVersion.locale })
+    .select({ documentId: contentVersion.documentId })
     .from(contentVersion)
-    .where(and(eq(contentVersion.slug, slug), eq(contentVersion.locale, loc)));
+    .innerJoin(contentItem, eq(contentItem.documentId, contentVersion.documentId))
+    .where(
+      and(
+        eq(contentVersion.slug, slug),
+        eq(contentVersion.locale, loc),
+        isNull(contentItem.deletedAt),
+        eq(contentItem.siteId, siteId),
+      ),
+    );
   for (const r of rows) {
     const resolved = await resolveContent(ctx, perspective, r.documentId, loc, clampDepth(populate));
-    if (resolved) return resolved;
+    if (!resolved) continue;
+    // The candidate scan matches ANY version row carrying this slug — drafts and
+    // superseded history included — but the chokepoint resolves the DOCUMENT, so
+    // what comes back is whatever version this perspective selects. Its slug can
+    // therefore be a DIFFERENT one, and answering 200 for a slug the delivered
+    // version doesn't have is two bugs at once:
+    //
+    //   * an existence oracle over unreleased URLs — renaming a draft to
+    //     `secret-campaign-2027` made that slug answer 200 (with the published
+    //     content) while an invented slug answered 404, under the PUBLIC key;
+    //   * every slug a page ever had kept answering forever, so a rename left
+    //     permanent duplicate content at the old URL.
+    //
+    // Requiring the match means the perspective decides the URL space too.
+    if (resolved.slug === slug) return resolved;
   }
   return null;
 }
@@ -929,6 +954,32 @@ export async function deliverySearch(
 ): Promise<{ items: DeliveryContent[]; total: number }> {
   const q = query.trim();
   if (!q) return { items: [], total: 0 };
+
+  // NEGATION IS A PUBLIC-TEXT OPERATION, and must never reach the SQL tsquery.
+  //
+  // `v.fts` is built from the whole `data` JSONB, private fields included, and
+  // `websearch_to_tsquery` honours `-term`. The leak-safe re-check below only ever
+  // re-verified POSITIVE terms, so an exclusion caused by a PRIVATE match survived
+  // untouched — turning the public delivery key into a word-membership oracle over
+  // private content, one word per request:
+  //
+  //   ?q=Kiwifruit -bluewhale  →  [B]   ⇒ "bluewhale" is in A's private text
+  //   ?q=Kiwifruit -seoNotes   →  []    ⇒ even the private JSON key is queryable
+  //
+  // So strip negated words before building the query, and apply them against the
+  // SANITIZED PUBLIC text instead (see `negated` below). A private match can then
+  // neither include nor exclude a document.
+  const words = q.split(/\s+/).filter(Boolean);
+  const positiveQuery = words.filter((w) => !w.startsWith("-")).join(" ");
+  // A query of only negations has nothing to match on; refusing it beats letting
+  // the bare exclusion run against private text.
+  if (!positiveQuery) return { items: [], total: 0 };
+  const negated = tokenizeSimple(
+    words
+      .filter((w) => w.startsWith("-"))
+      .map((w) => w.slice(1))
+      .join(" "),
+  );
   const ctx = new DeliveryCtx(db, siteId);
   const chain = await ctx.localeChain(loc);
   const max = Math.min(Math.max(limit, 1), 100);
@@ -945,10 +996,10 @@ export async function deliverySearch(
   // truth; don't inline to_tsvector(...) again or the index stops being used.
   const rows = (await db.execute(sql`
     SELECT DISTINCT v.document_id AS id,
-           MAX(ts_rank(v.fts, websearch_to_tsquery('simple', ${q}))) AS rank
+           MAX(ts_rank(v.fts, websearch_to_tsquery('simple', ${positiveQuery}))) AS rank
     FROM content_version v
     JOIN content_item i ON i.document_id = v.document_id AND i.deleted_at IS NULL AND i.site_id = ${siteId}
-    WHERE v.fts @@ websearch_to_tsquery('simple', ${q})
+    WHERE v.fts @@ websearch_to_tsquery('simple', ${positiveQuery})
       AND v.locale IN (${sql.join(chain.map((c) => sql`${c}`), sql`, `)})
       AND ${perspective === "published" ? sql`v.is_current_published` : sql`(v.status = 'draft' OR v.is_current_published)`}
       ${typeName ? sql`AND i.type = ${typeName}` : sql``}
@@ -957,11 +1008,11 @@ export async function deliverySearch(
     LIMIT ${max * 5}
   `)) as unknown as { id: string; rank: number }[];
   await ctx.primeVersions(rows.map((r) => r.id), perspective);
-  // Positive query terms under the 'simple' config (lowercase, word-token split,
-  // no stemming/stop-words). Negated (-term) words are dropped. A candidate is
-  // kept only if every positive term appears in its public text — and matching
-  // public-only text can never resurface private content, so this is leak-safe.
-  const terms = tokenizeSimple(q.split(/\s+/).filter((w) => !w.startsWith("-")).join(" "));
+  // Query terms under the 'simple' config (lowercase, word-token split, no
+  // stemming/stop-words). A candidate is kept only if every positive term appears
+  // in its public text and no negated term does — both directions decided on
+  // public text alone, so private content can neither surface nor filter.
+  const terms = tokenizeSimple(positiveQuery);
   const out: DeliveryContent[] = [];
   for (const r of rows) {
     if (out.length >= max) break;
@@ -969,13 +1020,14 @@ export async function deliverySearch(
     // returns PUBLIC fields only.
     const resolved = await resolveContent(ctx, perspective, r.id, loc, 0);
     if (!resolved) continue;
-    if (terms.length) {
+    if (terms.length || negated.length) {
       const parts: string[] = [];
       collectStrings(resolved.name, parts);
       collectStrings(resolved.data, parts);
       if (resolved.seo) collectStrings(resolved.seo, parts);
       const hay = new Set(tokenizeSimple(parts.join(" ")));
       if (!terms.every((t) => hay.has(t))) continue; // matched only on private text
+      if (negated.some((t) => hay.has(t))) continue; // excluded on PUBLIC text only
     }
     out.push(resolved);
   }

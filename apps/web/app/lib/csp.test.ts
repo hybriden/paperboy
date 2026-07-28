@@ -67,6 +67,18 @@ describe("frameAncestorsFor: framing is scoped to the preview, not site-wide", (
     expect(ancestors({ secFetchDest: null, hasPreviewCredential: false })).toBe("'none'");
   });
 
+  it("omits the localhost dev origins in production", () => {
+    // Any process listening on :8090/:8093 on a visitor's own machine could
+    // otherwise frame the customer's HTTPS site.
+    const prod = ancestors({ secFetchDest: "iframe", isProduction: true });
+    expect(prod).not.toContain("localhost");
+    expect(prod, "the configured admin must still be allowed").toContain(ADMIN);
+  });
+
+  it("keeps the localhost dev origins outside production", () => {
+    expect(ancestors({ secFetchDest: "iframe", isProduction: false })).toContain("http://localhost:8090");
+  });
+
   it("allows the same hostname on the admin port, so a LAN/dev host needs no config", () => {
     const csp = ancestors({ secFetchDest: "iframe", hostname: "192.168.1.20", adminOrigins: [] });
     expect(csp).toContain("http://192.168.1.20:8090");
@@ -99,6 +111,16 @@ describe("middleware wires the decision to the real request", () => {
     const csp = cspOf(middleware(req));
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("base-uri 'self'");
+  });
+
+  it("sends Vary: Sec-Fetch-Dest, since the policy now depends on it", () => {
+    // Without this a shared cache pins whichever policy it saw first: either the
+    // preview blanks for editors, or the relaxed frame-ancestors is re-served to
+    // the public — undoing the scoping entirely.
+    const req = new NextRequest("https://www.neoteric.no/en/about", {
+      headers: { host: "www.neoteric.no", "sec-fetch-dest": "document" },
+    });
+    expect(middleware(req).headers.get("vary")).toBe("Sec-Fetch-Dest");
   });
 
   it("does not send X-Frame-Options (it cannot express 'only when framed by the CMS')", () => {

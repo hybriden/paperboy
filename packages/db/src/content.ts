@@ -1265,6 +1265,20 @@ export async function updateContent(
       );
     }
   } else {
+    // Reaching the INSERT branch means there is NO draft row right now. A caller
+    // that asserted a specific non-zero revision was therefore looking at a draft
+    // that has since been consumed — published (promoted away) or discarded
+    // (deleted) — so its snapshot is stale and this branch would silently
+    // re-insert it, regressing the live page on the next publish. `revision: 0` is
+    // the honest "I know there is no draft" and is still accepted (getContent
+    // reports 0 for a draft-less document), as is omitting it entirely.
+    if (req.revision !== undefined && req.revision !== 0) {
+      throw Errors.conflict(
+        `The draft you were editing no longer exists — it was published or discarded since you loaded it (revision ${req.revision} is gone). ` +
+          `Your save was refused so it can't overwrite the newer state. ` +
+          `Re-read the content (GET /manage/content/${documentId}?locale=${loc}), re-apply your change, and save again with the revision it returns.`,
+      );
+    }
     // No working draft yet (editing a published OR an unpublished item): seed a
     // draft from the best available base — the live published version, else the
     // latest version of any status. Using the latest version is what prevents an
@@ -2356,7 +2370,10 @@ export async function restoreVersion(
   if (existingDraft[0]) {
     await db
       .update(contentVersion)
-      .set({ name: src.name, slug: src.slug, displayInNav: src.displayInNav, data, createdBy: ctx.userId, createdAt: new Date(), comment: `Restored from v${src.versionNumber}` })
+      // revision: this is an in-place draft write like any other. Without the bump
+      // an editor holding the pre-restore token saved straight over the restore —
+      // 200, no conflict, and no history trace of what was lost.
+      .set({ name: src.name, slug: src.slug, displayInNav: src.displayInNav, data, revision: sql`${contentVersion.revision} + 1`, createdBy: ctx.userId, createdAt: new Date(), comment: `Restored from v${src.versionNumber}` })
       .where(eq(contentVersion.id, existingDraft[0].id));
   } else {
     await db.insert(contentVersion).values({
