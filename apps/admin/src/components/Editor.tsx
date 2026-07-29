@@ -1050,7 +1050,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                       </MenuItem>
                     </>
                   )}
-                  {form.hasUnpublishedChanges && (
+                  {/* Only offered when there is a version to revert TO. On a
+                      never-published page the draft is the only version, so
+                      discarding it would leave an empty page in the tree — the
+                      API refuses that, and "Move to trash" is the way out. */}
+                  {form.hasUnpublishedChanges && (form.status === "published" || form.versionNumber > 1) && (
                     <>
                       {form.status !== "published" && <MenuSeparator />}
                       <MenuItem
@@ -1059,7 +1063,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                           confirm.ask({
                             title: "Discard draft changes?",
                             description:
-                              "This permanently throws away every unpublished edit on this language version and reverts it to what is currently published. This cannot be undone.",
+                              "This permanently throws away every unpublished edit on this language version and reverts it to the last published version. This cannot be undone.",
                             confirmLabel: "Discard changes",
                             onConfirm: () => discard.mutate(),
                           })
