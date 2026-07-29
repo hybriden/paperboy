@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   type BlockSummary,
@@ -1935,6 +1935,18 @@ export async function unpublishContent(
   return getContent(db, ctx, documentId, loc);
 }
 
+/**
+ * Throw away the draft and fall back to the published version.
+ *
+ * Refuses when the draft is the document's LAST version anywhere — a page that
+ * was created but never published has nothing to fall back to, so discarding
+ * would delete the only version and leave the `content_item` row behind with
+ * none. That ghost still sits in the page tree (named after its own documentId,
+ * since there is no version to read a name from) and opens a broken editor.
+ * Live 2026-07-27: three MCP-created BlogPosts under /blog were tidied up this
+ * way and became un-editable rows in the tree. `deleteVariant` refuses the same
+ * move for the same reason — trash removes a whole document, discard does not.
+ */
 export async function discardDraft(
   db: Database,
   ctx: AccessContext,
@@ -1943,6 +1955,22 @@ export async function discardDraft(
 ): Promise<void> {
   requirePermission(ctx, "content.update");
   await loadAuthorized(db, ctx, documentId);
+  const others = await db
+    .select({ id: contentVersion.id })
+    .from(contentVersion)
+    .where(
+      and(
+        eq(contentVersion.documentId, documentId),
+        // Anything the document would still own after the delete below.
+        or(ne(contentVersion.locale, loc), ne(contentVersion.status, "draft")),
+      ),
+    )
+    .limit(1);
+  if (others.length === 0) {
+    throw Errors.badRequest(
+      "This page has never been published, so there is no version to fall back to — discarding its only draft would leave an empty page in the tree. Move the page to trash instead to remove it.",
+    );
+  }
   await db
     .delete(contentVersion)
     .where(
