@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, type FieldDef, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, isCreativeWorkType, scalarToString, withSeoGroup } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, type FieldDef, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, isCreativeWorkType, scalarToString, sortByRule, withSeoGroup } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
 import type { Database } from "./client.js";
@@ -826,16 +826,6 @@ function collectStrings(v: unknown, acc: string[]): void {
   else if (typeof v === "object") for (const x of Object.values(v as Record<string, unknown>)) collectStrings(x, acc);
 }
 
-function compareKeys(a: unknown, b: unknown): number {
-  if (a == null && b == null) return 0;
-  if (a == null) return 1; // missing values sort last
-  if (b == null) return -1;
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  const as = scalarToString(a);
-  const bs = scalarToString(b);
-  return as < bs ? -1 : as > bs ? 1 : 0;
-}
-
 export async function deliveryList(
   db: Database,
   perspective: Perspective,
@@ -855,7 +845,7 @@ export async function deliveryList(
   if (typeName) conds.push(eq(contentItem.type, typeName));
   if (parentId) conds.push(eq(contentItem.parentId, parentId));
   const items = await db
-    .select({ documentId: contentItem.documentId })
+    .select({ documentId: contentItem.documentId, type: contentItem.type })
     .from(contentItem)
     .where(and(...conds))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
@@ -864,29 +854,34 @@ export async function deliveryList(
   // Visibility, filtering and sorting all read the CHOKEPOINT's own version
   // selection (variantRow: perspective + publish window + locale fallback) —
   // never a parallel query path — so a draft can't influence public ordering.
-  const candidates: { documentId: string; row: typeof contentVersion.$inferSelect }[] = [];
+  const candidates: { documentId: string; type: string; row: typeof contentVersion.$inferSelect }[] = [];
   for (const it of items) {
     const variant = await variantRow(ctx, perspective, it.documentId, loc);
-    if (variant) candidates.push({ documentId: it.documentId, row: variant.row });
+    if (variant) candidates.push({ documentId: it.documentId, type: it.type, row: variant.row });
   }
 
   // Field-visibility gate: filter/sort may only reference PUBLIC fields (plus the
   // intrinsic name/slug/createdAt). Otherwise a public consumer could filter or
   // sort by a delivery:"private" field and read the (sanitized) result set as an
   // inference oracle over the hidden value. A non-public key is IGNORED (not
-  // rejected) so it gives no signal — same outcome as an unknown field. When the
-  // type is omitted (parentId-only listing) we can't resolve visibility, so only
-  // name/slug are honored. (H1 + M1.)
-  const def = typeName ? await ctx.type(typeName) : null;
-  const publicFields = new Set(def ? def.fields.filter((f) => f.delivery === "public").map((f) => f.name) : []);
-  const fieldAllowed = (field: string) => field === "name" || field === "slug" || publicFields.has(field);
+  // rejected) so it gives no signal — same outcome as an unknown field. Resolved
+  // per ITEM type (a parentId-only listing can hold mixed types): a field private
+  // on one type contributes no key/constraint for that item even if it is public
+  // on a sibling's type. (H1 + M1.)
+  const publicFieldsByType = new Map<string, Set<string>>();
+  for (const t of new Set(candidates.map((c) => c.type))) {
+    const def = await ctx.type(t);
+    publicFieldsByType.set(t, new Set(def ? def.fields.filter((f) => f.delivery === "public").map((f) => f.name) : []));
+  }
+  const fieldAllowed = (field: string, type: string) =>
+    field === "name" || field === "slug" || (publicFieldsByType.get(type)?.has(field) ?? false);
 
   let filtered = candidates;
   if (opts.filter && Object.keys(opts.filter).length) {
-    filtered = filtered.filter(({ row }) => {
+    filtered = filtered.filter(({ row, type }) => {
       const data = row.data as Record<string, unknown>;
       for (const [field, want] of Object.entries(opts.filter!)) {
-        if (!fieldAllowed(field)) continue; // private/unknown key: no constraint, no oracle
+        if (!fieldAllowed(field, type)) continue; // private/unknown key: no constraint, no oracle
         const have = field === "name" ? row.name : field === "slug" ? row.slug : data[field];
         const ok = Array.isArray(have) ? have.map(scalarToString).includes(want) : scalarToString(have) === want;
         if (!ok) return false;
@@ -895,25 +890,33 @@ export async function deliveryList(
     });
   }
 
-  const sortField = opts.sort ? (opts.sort.startsWith("-") ? opts.sort.slice(1) : opts.sort) : null;
-  const sortAllowed =
-    sortField === "name" ||
-    sortField === "createdAt" ||
-    (sortField != null && sortField.startsWith("data.") && publicFields.has(sortField.slice(5)));
-  if (opts.sort && sortAllowed) {
-    const descending = opts.sort.startsWith("-");
-    const key = descending ? opts.sort.slice(1) : opts.sort;
-    const keyOf = (row: typeof contentVersion.$inferSelect): unknown => {
+  // Default order: the container's declared childSort, when listing a page's
+  // children without an explicit sort (an explicit ?sort= always wins). The
+  // same rule orders the admin tree, so editors and readers see one sequence.
+  let effectiveSort = opts.sort;
+  if (!effectiveSort && parentId) {
+    const parentRule = (
+      await db
+        .select({ cs: contentItem.childSort })
+        .from(contentItem)
+        .where(and(eq(contentItem.documentId, parentId), eq(contentItem.siteId, siteId)))
+        .limit(1)
+    )[0]?.cs;
+    if (parentRule && parentRule !== "manual") effectiveSort = parentRule;
+  }
+
+  if (effectiveSort) {
+    // Missing/gated keys stay last regardless of direction; equal keys keep tree
+    // order — so an all-private or unknown sort key degrades to the tree order,
+    // exactly as if the key had been ignored.
+    filtered = sortByRule(filtered, effectiveSort, ({ row, type }, key) => {
       if (key === "name") return row.name;
       if (key === "createdAt") return row.createdAt.toISOString();
-      if (key.startsWith("data.")) return (row.data as Record<string, unknown>)[key.slice(5)];
+      if (key.startsWith("data.")) {
+        const field = key.slice(5);
+        return publicFieldsByType.get(type)?.has(field) ? (row.data as Record<string, unknown>)[field] : null;
+      }
       return null;
-    };
-    filtered = [...filtered].sort((a, b) => {
-      const cmp = compareKeys(keyOf(a.row), keyOf(b.row));
-      // Missing keys stay last regardless of direction; equal keys keep tree order.
-      if (cmp === 0 || keyOf(a.row) == null || keyOf(b.row) == null) return cmp;
-      return descending ? -cmp : cmp;
     });
   }
 

@@ -445,6 +445,36 @@ export function scalarToString(v: unknown): string {
   return "";
 }
 
+/** Order two field values: numbers numerically, everything else as strings
+ *  (via scalarToString); missing (null/undefined) values sort last. */
+export function compareKeys(a: unknown, b: unknown): number {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1; // missing values sort last
+  if (b == null) return -1;
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  const as = scalarToString(a);
+  const bs = scalarToString(b);
+  return as < bs ? -1 : as > bs ? 1 : 0;
+}
+
+/**
+ * Sort items per an "[-]key" rule with compareKeys semantics: missing values
+ * stay last regardless of direction; equal keys keep the incoming order (stable).
+ * The ONE home for list-rule ordering — delivery lists and the rule-sorted
+ * content tree both use it, so admin and readers can never disagree on order.
+ */
+export function sortByRule<T>(items: T[], rule: string, keyOf: (item: T, field: string) => unknown): T[] {
+  const descending = rule.startsWith("-");
+  const field = descending ? rule.slice(1) : rule;
+  return [...items].sort((a, b) => {
+    const ka = keyOf(a, field);
+    const kb = keyOf(b, field);
+    const cmp = compareKeys(ka, kb);
+    if (cmp === 0 || ka == null || kb == null) return cmp;
+    return descending ? -cmp : cmp;
+  });
+}
+
 function ttInline(nodes: TtNode[] | undefined, md: boolean): string {
   return (nodes ?? [])
     .map((n) => {

@@ -2,6 +2,7 @@ import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, lte, ne, or, sql
 import { nanoid } from "nanoid";
 import {
   type BlockSummary,
+  ChildSort,
   type ContentDetail,
   type ContentTypeDef,
   type CreateContentRequest,
@@ -13,6 +14,7 @@ import {
   detectContentLanguage,
   expectedLanguageForLocale,
   fieldFormatHint,
+  sortByRule,
   stripSeoGroup,
   tiptapToPlainText,
   withSeoGroup,
@@ -390,6 +392,8 @@ interface VariantState {
   status: "draft" | "published";
   hasUnpublishedChanges: boolean;
   name: string;
+  /** Working data (draft-preferred, like the name) — feeds data.<field> child sorting. */
+  data: Record<string, unknown>;
 }
 
 /** Per-locale publication state for one document (drives tree badges + editor). */
@@ -407,15 +411,18 @@ async function variantStates(
       status: "draft" as const,
       hasUnpublishedChanges: false,
       name: r.name,
+      data: r.data as Record<string, unknown>,
     };
     if (r.isCurrentPublished) {
       cur.status = "published";
       cur.name = r.name;
+      cur.data = r.data as Record<string, unknown>;
     }
     if (r.status === "draft") {
       cur.hasUnpublishedChanges = true;
-      // Prefer the draft name as the freshest label.
+      // Prefer the draft name (and data) as the freshest state.
       cur.name = r.name;
+      cur.data = r.data as Record<string, unknown>;
     }
     byLocale[r.locale] = cur;
   }
@@ -449,7 +456,18 @@ export async function getTree(
     (i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId),
   );
 
-  const nodes: TreeNode[] = [];
+  // The parent's declared child ordering. 'manual' keeps the sortIndex order the
+  // query already applied; a computed rule re-sorts this level below.
+  const rule = parentId
+    ? ((await db.select({ cs: contentItem.childSort }).from(contentItem).where(eq(contentItem.documentId, parentId)).limit(1))[0]?.cs ?? "manual")
+    : "manual";
+  const bareRule = rule.startsWith("-") ? rule.slice(1) : rule;
+  const dataField = bareRule.startsWith("data.") ? bareRule.slice(5) : null;
+  // data.<field> values are read from the working version, preferring the site's
+  // default locale — the same variant whose name the tree displays.
+  const defaultLocale = dataField ? await resolveDefaultLocale(db, ctx.siteId) : null;
+
+  const rows: { node: TreeNode; createdAt: string; dataValue: unknown }[] = [];
   for (const item of visible) {
     const states = await variantStates(db, item.documentId);
     const childCount = await db
@@ -461,18 +479,30 @@ export async function getTree(
       localesSummary[code] = { status: s.status, hasUnpublishedChanges: s.hasUnpublishedChanges };
     }
     const anyName = Object.values(states)[0]?.name ?? item.documentId;
-    nodes.push({
-      documentId: item.documentId,
-      type: item.type,
-      kind: item.kind as TreeNode["kind"],
-      parentId: item.parentId,
-      sortIndex: item.sortIndex,
-      name: anyName,
-      locales: localesSummary,
-      hasChildren: (childCount[0]?.c ?? 0) > 0,
+    const dataState = dataField ? ((defaultLocale && states[defaultLocale]) || Object.values(states)[0]) : undefined;
+    rows.push({
+      node: {
+        documentId: item.documentId,
+        type: item.type,
+        kind: item.kind as TreeNode["kind"],
+        parentId: item.parentId,
+        sortIndex: item.sortIndex,
+        childSort: item.childSort,
+        name: anyName,
+        locales: localesSummary,
+        hasChildren: (childCount[0]?.c ?? 0) > 0,
+      },
+      createdAt: item.createdAt.toISOString(),
+      dataValue: dataField ? dataState?.data?.[dataField] : undefined,
     });
   }
-  return nodes;
+  const ordered =
+    rule === "manual"
+      ? rows
+      : sortByRule(rows, rule, (r, field) =>
+          field === "name" ? r.node.name : field === "createdAt" ? r.createdAt : field.startsWith("data.") ? r.dataValue : null,
+        );
+  return ordered.map((r) => r.node);
 }
 
 /* ------------------------------ asset pane -------------------------------- */
@@ -824,12 +854,24 @@ export async function createContent(
   // own uncommitted item (so knownSiteId is passed) plus committed siblings.
   await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`slug:${effectiveSiteId}:${req.parentId ?? "root"}:${req.locale}`}))`);
+    // APPEND after the existing siblings. A fixed sortIndex 0 sent every new
+    // child to the FRONT of any manually curated order (and left automated
+    // containers with an all-zero, insertion-ordered tree).
+    const maxSort = await tx
+      .select({ m: sql<number>`coalesce(max(${contentItem.sortIndex}), -1)` })
+      .from(contentItem)
+      .where(
+        and(
+          req.parentId ? eq(contentItem.parentId, req.parentId) : isNull(contentItem.parentId),
+          eq(contentItem.siteId, effectiveSiteId),
+        ),
+      );
     await tx.insert(contentItem).values({
       documentId,
       type: type.name,
       kind: type.kind,
       parentId: req.parentId,
-      sortIndex: 0,
+      sortIndex: (maxSort[0]?.m ?? -1) + 1,
       sectionId: effectiveSection,
       siteId: effectiveSiteId,
       createdBy: ctx.userId,
@@ -2157,6 +2199,28 @@ export async function moveContent(
       await tx.update(contentItem).set({ sortIndex: i * 10 }).where(eq(contentItem.documentId, ids[i]!));
     }
   });
+}
+
+/**
+ * Declare how a container page orders its children: "manual" (the drag-and-drop
+ * tree order), or a computed rule — "name" | "createdAt" | "data.<field>",
+ * "-" prefix for descending. The admin tree AND delivery's default list order
+ * both follow the rule, so editors and readers see the same sequence.
+ */
+export async function setChildSort(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  rule: string,
+): Promise<void> {
+  requirePermission(ctx, "content.update");
+  const item = await loadAuthorized(db, ctx, documentId);
+  if (item.kind !== "page") throw Errors.badRequest("Child ordering applies to pages (containers), not blocks or globals");
+  const parsed = ChildSort.safeParse(rule);
+  if (!parsed.success) {
+    throw Errors.validation(parsed.error.issues[0]?.message ?? "Invalid childSort rule");
+  }
+  await db.update(contentItem).set({ childSort: parsed.data }).where(eq(contentItem.documentId, documentId));
 }
 
 /** Flat list of all pages in scope (id, name, parentId) — powers the "Move to" picker. */

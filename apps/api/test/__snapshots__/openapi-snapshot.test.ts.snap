@@ -435,6 +435,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "requestBodyRequired": [],
     "requiredParams": [],
     "response200Props": [
+      "[]childSort",
       "[]documentId",
       "[]hasChildren",
       "[]kind",
@@ -1069,6 +1070,21 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "response200Props": [
       "ok",
       "purged",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/content/{documentId}/child-sort": {
+    "requestBodyRequired": [
+      "childSort",
+    ],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [
+      "ok",
     ],
     "summary": null,
     "tags": [
