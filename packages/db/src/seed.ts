@@ -263,7 +263,9 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
   });
 
   // --- Blog (ListPage) + two sample posts under it ------------------------
-  await db.insert(contentItem).values({ documentId: blogId, type: "ListPage", kind: "page", parentId: null, sortIndex: 1, sectionId: blogId });
+  // childSort: the blog declares its order (newest first by the editorial
+  // publishDate) so the admin tree and delivery list the same sequence.
+  await db.insert(contentItem).values({ documentId: blogId, type: "ListPage", kind: "page", parentId: null, sortIndex: 1, sectionId: blogId, childSort: "-data.publishDate" });
   await db.insert(contentVersion).values({
     documentId: blogId, locale: "en", status: "published", isCurrentPublished: true, versionNumber: 1,
     name: "Blog", slug: "blog", displayInNav: true,

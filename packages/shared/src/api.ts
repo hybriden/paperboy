@@ -16,6 +16,19 @@ export const Locale = z.object({
 });
 export type Locale = z.infer<typeof Locale>;
 
+/**
+ * A container page's child ordering rule. "manual" = editor-controlled tree
+ * order (drag & drop / move_content). The computed rules — "name", "createdAt"
+ * or "data.<field>", each optionally "-"-prefixed for descending — order the
+ * children in the admin tree AND as delivery's default list order, so editors
+ * and readers see the same sequence.
+ */
+export const ChildSort = z.string().regex(/^(manual|-?(name|createdAt|data\.[A-Za-z][A-Za-z0-9_]*))$/, {
+  message:
+    'childSort must be "manual", "name", "createdAt" or "data.<field>" — prefix "-" for descending, e.g. "-data.publishDate" (newest first)',
+});
+export type ChildSort = z.infer<typeof ChildSort>;
+
 /** A node in the content tree (management). */
 export const TreeNode = z.object({
   documentId: z.string(),
@@ -23,6 +36,8 @@ export const TreeNode = z.object({
   kind: ContentKind,
   parentId: z.string().nullable(),
   sortIndex: z.number(),
+  /** How THIS node orders its children (see ChildSort). */
+  childSort: ChildSort,
   name: z.string(),
   /** Per-locale status summary for the badges in the tree. */
   locales: z.record(

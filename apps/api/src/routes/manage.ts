@@ -71,6 +71,7 @@ import {
   listVersions,
   moveContent,
   publishContent,
+  setChildSort,
   schedulePublish,
   searchContent,
   unpublishContent,
@@ -89,6 +90,7 @@ import {
   Asset,
   BlockSummary,
   ContentDetail,
+  ChildSort,
   ContentTypeDef,
   CreateContentRequest,
   CreateFolderRequest,
@@ -419,6 +421,18 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       await moveContent(app.db, req.accessCtx!, req.params.documentId, req.body);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.move", documentId: req.params.documentId, ip: req.ip, detail: { parentId: req.body.parentId } });
+      return { ok: true };
+    },
+  );
+
+  // Container child ordering: how a page's children are listed in the tree and
+  // (by default) in delivery. "manual" restores the drag-and-drop tree order.
+  app.post(
+    "/content/:documentId/child-sort",
+    { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, body: z.object({ childSort: ChildSort }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await setChildSort(app.db, req.accessCtx!, req.params.documentId, req.body.childSort);
+      await audit(app.db, { actorUserId: req.user!.id, action: "content.child_sort", documentId: req.params.documentId, ip: req.ip, detail: { childSort: req.body.childSort } });
       return { ok: true };
     },
   );

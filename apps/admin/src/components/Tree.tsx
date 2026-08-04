@@ -93,6 +93,7 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
   const [filter, setFilter] = useState("");
   const [creating, setCreating] = useState<{ parentId: string | null } | null>(null);
   const [moving, setMoving] = useState<{ documentId: string; name: string } | null>(null);
+  const [sorting, setSorting] = useState<{ documentId: string; name: string; childSort: string } | null>(null);
   const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
   // Locales (default first) so an untranslated node can show the code it DOES
   // exist in, preferring the site default — mirrors Optimizely's tree.
@@ -255,6 +256,8 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
               canDelete={canDelete}
               onNewChild={(parentId) => setCreating({ parentId })}
               onMove={(documentId, name) => setMoving({ documentId, name })}
+              onSortChildren={(documentId, name, childSort) => setSorting({ documentId, name, childSort })}
+              parentChildSort="manual"
             />
           </div>
         </DndContext>
@@ -274,6 +277,8 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
       )}
 
       {moving && <MoveDialog node={moving} onClose={() => setMoving(null)} />}
+
+      {sorting && <SortChildrenDialog node={sorting} onClose={() => setSorting(null)} />}
     </div>
   );
 }
@@ -295,6 +300,10 @@ interface LevelProps {
   canDelete: boolean;
   onNewChild: (parentId: string) => void;
   onMove: (documentId: string, name: string) => void;
+  onSortChildren: (documentId: string, name: string, childSort: string) => void;
+  /** The PARENT's child ordering rule — anything but "manual" disables drag
+   *  reordering in this level (the rule owns the order, not the grip). */
+  parentChildSort: string;
   /** The documentId of the site start page (served at "/"), for the tree marker. */
   startPageId: string | null;
   /** documentIds of all ancestors of this level — a hard guard so a data cycle
@@ -366,11 +375,14 @@ function Level(props: LevelProps) {
 }
 
 function Row(props: LevelProps & { node: TreeNode }) {
-  const { node, depth, expanded, toggle, selectedId, onSelect, locale, canCreate, canDelete, onNewChild, onMove } = props;
+  const { node, depth, expanded, toggle, selectedId, onSelect, locale, canCreate, canDelete, onNewChild, onMove, onSortChildren } = props;
   const toast = useToast();
   const qc = useQueryClient();
   const dnd = useContext(TreeDndContext);
-  const dragEnabled = dnd?.dragEnabled ?? false;
+  // A computed rule on the parent owns this level's order — dragging to reorder
+  // would be a lie (the rule re-sorts on the next fetch), so the grip goes away.
+  const ruleSorted = props.parentChildSort !== "manual";
+  const dragEnabled = (dnd?.dragEnabled ?? false) && !ruleSorted;
 
   // Register this row's parent so the root drop handler can build the move() call.
   useEffect(() => {
@@ -544,6 +556,9 @@ function Row(props: LevelProps & { node: TreeNode }) {
             <CtxItem onSelect={() => onSelect(node.documentId)}>Open</CtxItem>
             {canCreate && node.kind === "page" && <CtxItem onSelect={() => onNewChild(node.documentId)}>New child page</CtxItem>}
             {canCreate && node.kind === "page" && <CtxItem onSelect={() => onMove(node.documentId, node.name)}>Move to…</CtxItem>}
+            {canCreate && node.kind === "page" && node.hasChildren && (
+              <CtxItem onSelect={() => onSortChildren(node.documentId, node.name, node.childSort)}>Sort children…</CtxItem>
+            )}
             {canCreate && <CtxItem onSelect={() => duplicate.mutate()}>Duplicate</CtxItem>}
             {/* Setting the start page needs publish rights; canDelete tracks the
                 same Editor/Admin roles as content.publish in the default RBAC. */}
@@ -602,6 +617,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
           parentId={node.documentId}
           depth={depth + 1}
           ancestors={new Set([...props.ancestors, node.documentId])}
+          parentChildSort={node.childSort}
         />
       )}
     </li>
@@ -684,6 +700,83 @@ function MoveDialog({ node, onClose }: { node: { documentId: string; name: strin
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
           <button className="btn-primary" disabled={move.isPending} onClick={() => move.mutate()}>
             {move.isPending ? "Moving…" : "Move here"}
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Preset child-ordering rules; anything else is a custom data.<field> rule. */
+const SORT_PRESETS: Array<{ value: string; label: string }> = [
+  { value: "manual", label: "Manual (drag & drop)" },
+  { value: "name", label: "Name A–Z" },
+  { value: "-name", label: "Name Z–A" },
+  { value: "-createdAt", label: "Newest first (created)" },
+  { value: "createdAt", label: "Oldest first (created)" },
+];
+
+/** "Sort children…" — declare how a container orders its children. The rule is
+ *  data on the page: the tree AND the delivery list order both follow it. */
+function SortChildrenDialog({ node, onClose }: { node: { documentId: string; name: string; childSort: string }; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const isPreset = SORT_PRESETS.some((p) => p.value === node.childSort);
+  const [preset, setPreset] = useState<string>(isPreset ? node.childSort : "__field__");
+  const [field, setField] = useState<string>(isPreset ? "" : node.childSort.replace(/^-?data\./, ""));
+  const [descending, setDescending] = useState<boolean>(isPreset ? true : node.childSort.startsWith("-"));
+  const rule = preset === "__field__" ? `${descending ? "-" : ""}data.${field.trim()}` : preset;
+  const fieldValid = preset !== "__field__" || /^[A-Za-z][A-Za-z0-9_]*$/.test(field.trim());
+
+  const save = useMutation({
+    mutationFn: () => api.setChildSort(node.documentId, rule),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["tree"] });
+      toast.success("Child order updated", rule === "manual" ? "Back to manual drag & drop order." : `Children now sort by ${rule}.`);
+      onClose();
+    },
+    onError: (e) => toast.error("Couldn’t set child order", (e as Error).message),
+  });
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        title={`Sort children of “${node.name}”`}
+        description="The rule orders the children in this tree and as the default order in the Delivery API. Manual restores drag & drop."
+        size="md"
+      >
+        <label className="field-label" htmlFor="cs-rule">Order children by</label>
+        <select id="cs-rule" className="field-input mb-3" value={preset} onChange={(e) => setPreset(e.target.value)}>
+          {SORT_PRESETS.map((p) => (
+            <option key={p.value} value={p.value}>{p.label}</option>
+          ))}
+          <option value="__field__">A content field…</option>
+        </select>
+        {preset === "__field__" && (
+          <>
+            <label className="field-label" htmlFor="cs-field">Field name</label>
+            <input
+              id="cs-field"
+              className="field-input mb-3"
+              value={field}
+              onChange={(e) => setField(e.target.value)}
+              placeholder="e.g. publishDate"
+              aria-label="Field name"
+            />
+            <label className="field-label" htmlFor="cs-dir">Direction</label>
+            <select id="cs-dir" className="field-input mb-3" value={descending ? "desc" : "asc"} onChange={(e) => setDescending(e.target.value === "desc")}>
+              <option value="desc">Descending (newest / highest first)</option>
+              <option value="asc">Ascending (oldest / lowest first)</option>
+            </select>
+            <p className="mb-3 text-xs text-muted">
+              Only fields delivered as public can order the public list; children missing the field sort last.
+            </p>
+          </>
+        )}
+        <div className="flex justify-end gap-2">
+          <button className="btn-ghost" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" disabled={!fieldValid || save.isPending} onClick={() => save.mutate()}>
+            {save.isPending ? "Saving…" : "Save order"}
           </button>
         </div>
       </DialogContent>
