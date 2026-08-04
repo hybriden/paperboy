@@ -92,6 +92,27 @@ describe("Stock import is idempotent per provider photo (no duplicate assets)", 
     expect(await stockAssets("dup-photo")).toHaveLength(1);
   });
 
+  it("re-import with an explicit alt UPDATES the stored alt (an accepted argument is never silently dropped)", async () => {
+    // Reported bug (harmonix automation, 2026-08-04): import_stock_image accepted
+    // `alt`, but the idempotent fast path returned the existing asset untouched —
+    // the authored, context-aware alt text silently lost to the provider's own
+    // description, while the call looked successful (agent-API rule #1).
+    const first = await importPhoto("alt-photo");
+    expect(first.statusCode).toBe(200);
+    expect(first.json().alt).toBe("a photo of alt-photo"); // provider description when no alt is passed
+
+    const authored = "Rows of server racks in a dim data center corridor.";
+    const second = await importPhoto("alt-photo", authored);
+    expect(second.statusCode).toBe(200);
+    expect(second.json().documentId).toBe(first.json().documentId); // still idempotent — no duplicate
+    expect(second.json().alt).toBe(authored); // the caller's alt wins
+
+    // Persisted on the asset, not just echoed back.
+    const listed = await s.app.inject({ method: "GET", url: "/api/v1/manage/assets", headers: authHeaders(admin) });
+    const row = (listed.json() as Array<{ documentId: string; alt: string }>).find((a) => a.documentId === first.json().documentId);
+    expect(row?.alt).toBe(authored);
+  });
+
   it("a different photo still imports as its own asset (dedup is not over-broad)", async () => {
     const other = await importPhoto("other-photo");
     expect(other.statusCode).toBe(200);
