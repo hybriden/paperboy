@@ -36,3 +36,18 @@ export function isPreviewOrigin(eventOrigin: string | null | undefined, previewU
   if (!expected) return false;
   return eventOrigin === expected;
 }
+
+/**
+ * Does this message prove the preview frame is ALIVE (loaded and rendering)?
+ *
+ * ANY valid `paperboy:*` message from the preview origin counts — not just
+ * `paperboy:preview-ready` (a page whose bridge speaks an older protocol, or
+ * only starts talking on interaction, was read as "silent" and triggered the
+ * "refusing to be framed?" hint while the preview rendered fine). Used ONLY to
+ * suppress that hint; the write-path handlers keep their stricter parsing.
+ */
+export function isPreviewActivity(eventOrigin: string | null | undefined, previewUrl: string | null | undefined, data: unknown): boolean {
+  if (!isPreviewOrigin(eventOrigin, previewUrl)) return false;
+  const type = (data as { type?: unknown } | null | undefined)?.type;
+  return typeof type === "string" && type.startsWith("paperboy:");
+}
