@@ -67,6 +67,9 @@ export const contentItem = pgTable(
     kind: text("kind").notNull(), // page | block | global
     parentId: text("parent_id"), // -> content_item.document_id (tree)
     sortIndex: integer("sort_index").notNull().default(0),
+    /** How this node orders ITS CHILDREN: 'manual' (tree order) or a computed
+     *  rule ('name' | 'createdAt' | 'data.<field>', '-' prefix = descending). */
+    childSort: text("child_sort").notNull().default("manual"),
     /** Top-level section this item belongs to (for object-level scope/RBAC). */
     sectionId: text("section_id"),
     /** Owning site (multisite partition). Children inherit the parent's site. */
