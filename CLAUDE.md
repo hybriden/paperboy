@@ -53,6 +53,7 @@ The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds
 
 ## Content model
 - Content types are **data** (`content_type` table), not hardcoded. Kinds: `page` / `block` / `global`.
+- **Child ordering is declared on the container** (`content_item.child_sort`): `manual` (drag-and-drop tree order; new children APPEND at max+1) or a computed rule — `name` | `createdAt` | `data.<field>`, `-` prefix = descending. The admin tree AND delivery's default list order both follow it (one comparator, `sortByRule` in packages/shared); an explicit delivery `?sort=` wins; non-public `data` fields never order a public list (per-item gate). Set via tree right-click → Sort children… / `POST /content/:id/child-sort`.
 - Content areas hold ordered block instances — inline (page-local) or shared (reference). Fields: text, markdown, richtext (TipTap JSON), boolean, number, datetime, select, link, image, reference, contentArea (+ legacy media). Image/media values are asset documentIds — URLs and paths are rejected at write.
 - Delivery is a **single read chokepoint** with a `perspective` (published | preview). Public key → published only; preview key → drafts. Private fields never reach delivery output. Don't add read paths that bypass it.
 - Delivery items and inline blocks expose **`fieldTypes`** (the declared type per *public* field) so frontends switch on schema instead of value-sniffing — an empty richtext field stays richtext. Part of the frozen delivery contract.

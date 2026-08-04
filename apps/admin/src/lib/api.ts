@@ -332,6 +332,8 @@ export const api = {
     request<{ ok: boolean; deleted: number }>("DELETE", `/manage/content/${documentId}/variant?locale=${encodeURIComponent(locale)}`),
   move: (documentId: string, body: { parentId?: string | null; beforeId?: string | null; afterId?: string | null }) =>
     request<{ ok: boolean }>("POST", `/manage/content/${documentId}/move`, body),
+  setChildSort: (documentId: string, childSort: string) =>
+    request<{ ok: boolean }>("POST", `/manage/content/${documentId}/child-sort`, { childSort }),
   duplicate: (documentId: string, locale: string) =>
     request<ContentDetail>("POST", `/manage/content/${documentId}/duplicate?locale=${locale}`),
   trash: (documentId: string) =>
