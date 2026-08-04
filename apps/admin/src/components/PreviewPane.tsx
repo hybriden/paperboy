@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
-import { isPreviewOrigin, originOf } from "../lib/preview-origin.js";
+import { isPreviewActivity, originOf } from "../lib/preview-origin.js";
 import { Surface } from "./ui/surface.js";
 
 /**
@@ -134,10 +134,10 @@ export function PreviewPane({
   const [bridgeSeen, setBridgeSeen] = useState(false);
   const [quiet, setQuiet] = useState(false);
   useEffect(() => {
+    // ANY valid bridge message counts as proof of life, not just preview-ready —
+    // the hint below must only ever appear when the frame is truly silent.
     const onReady = (e: MessageEvent) => {
-      if (isPreviewOrigin(e.origin, targetOrigin) && (e.data as { type?: string })?.type === "paperboy:preview-ready") {
-        setBridgeSeen(true);
-      }
+      if (isPreviewActivity(e.origin, targetOrigin, e.data)) setBridgeSeen(true);
     };
     window.addEventListener("message", onReady);
     return () => window.removeEventListener("message", onReady);

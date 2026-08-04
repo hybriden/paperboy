@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPreviewOrigin, originOf } from "./preview-origin.js";
+import { isPreviewActivity, isPreviewOrigin, originOf } from "./preview-origin.js";
 
 /**
  * The admin's postMessage handler turns `paperboy:drop` into a block append that
@@ -60,5 +60,33 @@ describe("isPreviewOrigin", () => {
     // e.g. the site query hasn't resolved — accept nothing rather than everything.
     expect(isPreviewOrigin("https://web.example.com", undefined)).toBe(false);
     expect(isPreviewOrigin("https://web.example.com", "")).toBe(false);
+  });
+});
+
+describe("isPreviewActivity", () => {
+  const preview = "https://web.example.com/en/blog";
+
+  // Reported 2026-08-04: the "Preview looks empty? … refusing to be framed"
+  // hint showed while the preview was rendering fine — the pane only counted
+  // paperboy:preview-ready as proof of life, so a page whose bridge speaks any
+  // OTHER message (or an older bridge without ready) still looked "silent".
+  // ANY valid paperboy:* message from the preview origin proves the frame is
+  // alive and rendering; the hint must only appear when nothing arrives.
+  it("counts any paperboy:* message from the preview origin as proof of life", () => {
+    expect(isPreviewActivity("https://web.example.com", preview, { type: "paperboy:preview-ready", version: 1 })).toBe(true);
+    expect(isPreviewActivity("https://web.example.com", preview, { type: "paperboy:rect", field: "body" })).toBe(true);
+    expect(isPreviewActivity("https://web.example.com", preview, { type: "paperboy:edit", field: "title" })).toBe(true);
+  });
+
+  it("rejects messages from any other origin (trust boundary unchanged)", () => {
+    expect(isPreviewActivity("https://evil.example.com", preview, { type: "paperboy:preview-ready" })).toBe(false);
+    expect(isPreviewActivity("null", preview, { type: "paperboy:preview-ready" })).toBe(false);
+  });
+
+  it("ignores non-bridge messages (react devtools, ads, random postMessage noise)", () => {
+    expect(isPreviewActivity("https://web.example.com", preview, { type: "webpackWarnings" })).toBe(false);
+    expect(isPreviewActivity("https://web.example.com", preview, "paperboy:preview-ready")).toBe(false);
+    expect(isPreviewActivity("https://web.example.com", preview, { type: 42 })).toBe(false);
+    expect(isPreviewActivity("https://web.example.com", preview, null)).toBe(false);
   });
 });
