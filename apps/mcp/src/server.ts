@@ -50,6 +50,7 @@ import {
   moveContent,
   renameDeliveryKey,
   publishContent,
+  schedulePublish,
   restoreContent,
   MEDIA_PREFIX,
   searchStockImages,
@@ -222,6 +223,12 @@ function buildServer(): McpServer {
 
 const loc = z.string().optional().describe("Locale code (default 'en')");
 const docId = z.string().describe("Content documentId");
+/** Strict ISO instant — a bare local time has no timezone and would publish at a server-dependent moment (rule 1: reject, don't guess). */
+const isoInstant = (field: string) =>
+  z.string().datetime({
+    offset: true,
+    message: `${field} must be a full ISO 8601 datetime with timezone, e.g. "2026-09-01T09:00:00Z" — a bare "2026-09-01T09:00" has no timezone and is ambiguous`,
+  });
 
 /* ------------------------------- content ------------------------------- */
 tool("tree", "List the page tree under a parent (omit parentId for top level).", { parentId: z.string().optional() },
@@ -342,10 +349,31 @@ tool(
     "Publish the working draft of a content item for a locale. The locale is a",
     "LANGUAGE BRANCH — publishing Norwegian text into 'en' puts it on the English",
     "site; a strong language/branch mismatch is refused unless allowLanguageMismatch is true.",
+    "A future publishAt SCHEDULES the go-live instead: the draft stays unpublished (and",
+    "invisible to readers) until then, and shows on the dashboard under Scheduled publishing.",
+    "Call publish again with a new publishAt to reschedule, or without one to go live now.",
+    "NEVER fake scheduling by putting the date in a data field — that publishes immediately.",
   ].join(" "),
-  { documentId: docId, locale: loc, allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY when publishing content whose language deliberately differs from the locale branch") },
-  async ({ documentId, locale, allowLanguageMismatch }) => {
+  {
+    documentId: docId,
+    locale: loc,
+    allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY when publishing content whose language deliberately differs from the locale branch"),
+    publishAt: isoInstant("publishAt").optional().describe('Future go-live time (ISO 8601, e.g. "2026-09-01T09:00:00Z"). Omit to publish immediately.'),
+    expireAt: isoInstant("expireAt").optional().describe("When to unpublish automatically (ISO 8601). Must be after publishAt."),
+  },
+  async ({ documentId, locale, allowLanguageMismatch, publishAt, expireAt }) => {
     const l = await locFor(documentId, locale);
+    if (publishAt || expireAt) {
+      // Same chokepoint as the manage /schedule route. expireAt alone means
+      // "publish now, expire then" — schedulePublish treats a now/past publishAt
+      // as an immediate publish carrying the expiry.
+      const scheduled = await schedulePublish(db, ctx, documentId, l, {
+        publishAt: publishAt ? new Date(publishAt) : new Date(),
+        expireAt: expireAt ? new Date(expireAt) : null,
+      });
+      mcpAudit("content.schedule", documentId, l, { publishAt: publishAt ?? null, expireAt: expireAt ?? null });
+      return scheduled;
+    }
     const published = await publishContent(db, ctx, documentId, l, { allowLanguageMismatch });
     mcpAudit("content.publish", documentId, l);
     return published;
