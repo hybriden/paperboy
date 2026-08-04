@@ -9,7 +9,7 @@ import {
 } from "@paperboy/shared";
 import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { type AssetRecord, findAssetBySource, insertAsset } from "./assets.js";
+import { type AssetRecord, findAssetBySource, insertAsset, updateAssetAlt } from "./assets.js";
 import type { Database } from "./client.js";
 import { AppError, Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
@@ -156,7 +156,13 @@ export async function importStockImage(
   // copy. Agents re-running the same "find a photo of X" task would otherwise pile
   // up duplicates (every duplicate in production arrived this way via MCP).
   const existing = await findAssetBySource(db, ctx, resolved.sourceMeta.provider, resolved.sourceMeta.providerId);
-  if (existing) return existing;
+  if (existing) {
+    // An explicitly passed alt must win on this path too — returning the row
+    // untouched silently discarded the caller's alt text (agent-API rule #1).
+    const alt = input.alt?.slice(0, 300);
+    if (alt !== undefined && alt !== existing.alt) return updateAssetAlt(db, ctx, existing.documentId, alt);
+    return existing;
+  }
 
   // SSRF defense-in-depth: only ever download from the provider's own hosts.
   // (The URL came from the provider API, never from the user/agent.)
