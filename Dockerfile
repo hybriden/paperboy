@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------- build: install workspace + build web (Next) and admin (Vite) ----------
-FROM node:22-bookworm-slim AS app
+FROM node:24-bookworm-slim AS app
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ ca-certificates wget \
   && rm -rf /var/lib/apt/lists/*
