@@ -17,7 +17,7 @@ export function MenuContent({
       <RMenu.Content
         align={align}
         sideOffset={6}
-        className={`z-50 min-w-[200px] overflow-hidden rounded-[var(--radius-lg)] border border-line bg-panel p-1 shadow-pop data-[state=open]:animate-slide-up ${className}`}
+        className={`z-50 min-w-[200px] overflow-hidden rounded-lg border border-line bg-panel p-1 shadow-pop data-[state=open]:animate-slide-up ${className}`}
       >
         {children}
       </RMenu.Content>
@@ -42,8 +42,8 @@ export function MenuItem({
     <RMenu.Item
       disabled={disabled}
       onSelect={onSelect}
-      className={`flex cursor-pointer items-center gap-2 rounded-[var(--radius)] px-2.5 py-1.5 text-sm outline-none data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40 ${
-        destructive ? "text-danger data-[highlighted]:bg-danger/10" : "text-fg data-[highlighted]:bg-accent/10 data-[highlighted]:text-accent-700"
+      className={`flex cursor-pointer items-center gap-2 rounded-(--radius) px-2.5 py-1.5 text-sm outline-hidden data-disabled:cursor-not-allowed data-disabled:opacity-40 ${
+        destructive ? "text-danger data-highlighted:bg-danger/10" : "text-fg data-highlighted:bg-accent/10 data-highlighted:text-accent-700"
       }`}
     >
       {children}

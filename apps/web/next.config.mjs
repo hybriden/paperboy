@@ -8,11 +8,13 @@ const nextConfig = {
   serverExternalPackages: ["isomorphic-dompurify", "jsdom"],
   // Media is proxied same-origin by a runtime route handler (app/api/v1/media/…).
   // CSP frame-ancestors (which origins may embed the preview iframe) is set
-  // dynamically in middleware.ts so it works on any host without a hard-coded origin.
+  // dynamically in proxy.ts so it works on any host without a hard-coded origin.
   webpack: (config) => {
     // The transpiled workspace packages use explicit .js specifiers on relative TS
     // imports (Node-ESM/nodenext-valid). When webpack consumes their .ts SOURCE via
     // transpilePackages, map a .js import to the .ts file it resolves to at build.
+    // Turbopack (the Next 16 default) can NOT do this aliasing, so the scripts pin
+    // `--webpack` explicitly; drop that only when the packages ship prebuilt dist.
     config.resolve.extensionAlias = { ...config.resolve.extensionAlias, ".js": [".ts", ".tsx", ".js"] };
     return config;
   },

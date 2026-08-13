@@ -4,7 +4,7 @@ import { Separator } from "react-resizable-panels";
 export function ResizeHandle({ className = "" }: { className?: string }) {
   return (
     <Separator
-      className={`group relative w-1.5 shrink-0 bg-line/40 outline-none transition-colors hover:bg-accent/40 data-[separator=active]:bg-accent ${className}`}
+      className={`group relative w-1.5 shrink-0 bg-line/40 outline-hidden transition-colors hover:bg-accent/40 data-[separator=active]:bg-accent ${className}`}
       aria-label="Resize panel"
     >
       {/* wider invisible hit area + a centered grip dot column */}

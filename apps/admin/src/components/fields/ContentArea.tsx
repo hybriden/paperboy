@@ -314,7 +314,7 @@ function ImageBlockPicker({
       <div
         role="menu"
         aria-label="Insert image as block"
-        className="fixed z-50 w-52 rounded-[var(--radius)] border border-line bg-panel p-1 shadow-pop"
+        className="fixed z-50 w-52 rounded-(--radius) border border-line bg-panel p-1 shadow-pop"
         style={{ left: Math.min(at.x, window.innerWidth - 220), top: Math.min(at.y, window.innerHeight - 40 * candidates.length - 16) }}
       >
         <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Insert image as…</p>
@@ -360,7 +360,7 @@ function SortableBlock({
   const isTeaser = isShared && type?.kind === "page";
 
   return (
-    <li id={`pb-block-${index}`} ref={setNodeRef} style={style} className={`rounded border border-line bg-panel shadow-sm ${isDragging ? "opacity-60 ring-2 ring-accent" : ""}`}>
+    <li id={`pb-block-${index}`} ref={setNodeRef} style={style} className={`rounded border border-line bg-panel shadow-xs ${isDragging ? "opacity-60 ring-2 ring-accent" : ""}`}>
       <div className="flex items-center gap-2 border-b border-line bg-canvas px-2 py-1.5">
         <button {...attributes} {...listeners} className="cursor-grab text-muted active:cursor-grabbing" aria-label="Drag to reorder">
           <Icon.Grip width={16} height={16} />
