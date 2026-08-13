@@ -269,7 +269,7 @@ export const BlockInstance = z
     blockType: z.string(),
     display: BlockDisplayOption.default("automatic"),
     /** Inline block payload (page-local). Mutually exclusive with `ref`. */
-    inline: z.record(z.unknown()).nullable().default(null),
+    inline: z.record(z.string(), z.unknown()).nullable().default(null),
     /** Shared block reference (documentId). Mutually exclusive with `inline`. */
     ref: z.string().nullable().default(null),
   })
@@ -303,7 +303,7 @@ export type ReferenceValue = z.infer<typeof ReferenceValue>;
  * instead. Node-level validity is the sanitizer's job (and is test-pinned); this
  * only fences the top-level contract. */
 export const RichTextDoc = z
-  .object({ type: z.literal("doc"), content: z.array(z.record(z.unknown())) })
+  .object({ type: z.literal("doc"), content: z.array(z.record(z.string(), z.unknown())) })
   .passthrough();
 export type RichTextDoc = z.infer<typeof RichTextDoc>;
 

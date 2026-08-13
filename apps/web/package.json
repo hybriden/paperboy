@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 8092",
-    "build": "next build",
+    "dev": "next dev --webpack -p 8092",
+    "build": "next build --webpack",
     "start": "next start -p 8092",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'lint: web (typecheck covers it)'",
@@ -14,17 +14,17 @@
     "@paperboycms/client": "workspace:^",
     "@paperboycms/preview": "workspace:*",
     "@paperboy/shared": "workspace:*",
-    "isomorphic-dompurify": "^2",
-    "marked": "^18.0.4",
-    "next": "^15.1.2",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "isomorphic-dompurify": "^3",
+    "marked": "^18.0.7",
+    "next": "^16.2.12",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
   },
   "devDependencies": {
     "@types/node": "^22",
-    "@types/react": "^19.0.1",
-    "@types/react-dom": "^19.0.2",
-    "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }

@@ -1,7 +1,7 @@
 {
   "name": "@paperboycms/client",
   "version": "0.2.0",
-  "description": "Typed client for the Paperboy headless CMS Delivery API — lists, search, media variants, render helpers, optional ETag cache. Zero dependencies, no codegen.",
+  "description": "Typed client for the Paperboy headless CMS Delivery API â€” lists, search, media variants, render helpers, optional ETag cache. Zero dependencies, no codegen.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -37,7 +37,7 @@
   },
   "devDependencies": {
     "@types/node": "^22",
-    "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }

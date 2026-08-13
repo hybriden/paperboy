@@ -93,7 +93,7 @@ function TopBar({
       <div className="ml-auto flex items-center gap-1.5">
         <button
           onClick={onOpenPalette}
-          className="flex h-9 items-center gap-2 rounded-[var(--radius)] px-2.5 text-sm text-muted transition-colors hover:bg-line/60 hover:text-fg"
+          className="flex h-9 items-center gap-2 rounded-(--radius) px-2.5 text-sm text-muted transition-colors hover:bg-line/60 hover:text-fg"
           aria-label="Open command palette"
         >
           <Icon.Search width={15} height={15} className="shrink-0" />
@@ -109,7 +109,7 @@ function TopBar({
             href="/api/docs"
             target="_blank"
             rel="noreferrer"
-            className="grid h-9 w-9 place-items-center rounded-[var(--radius)] text-muted hover:bg-line/60 hover:text-fg"
+            className="grid h-9 w-9 place-items-center rounded-(--radius) text-muted hover:bg-line/60 hover:text-fg"
             aria-label="API documentation"
             title="API docs"
           >
@@ -128,7 +128,7 @@ function ThemeToggle() {
   return (
     <Menu>
       <Tooltip label="Theme">
-        <MenuTrigger className="grid h-9 w-9 place-items-center rounded-[var(--radius)] text-muted hover:bg-line/60 hover:text-fg" aria-label="Theme">
+        <MenuTrigger className="grid h-9 w-9 place-items-center rounded-(--radius) text-muted hover:bg-line/60 hover:text-fg" aria-label="Theme">
           <Cur width={17} height={17} />
         </MenuTrigger>
       </Tooltip>
@@ -154,7 +154,7 @@ function UserMenu() {
   const initials = user.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   return (
     <Menu>
-      <MenuTrigger className="ml-1 flex items-center gap-2 rounded-[var(--radius)] py-1 pl-1 pr-2 hover:bg-line/60" aria-label="Account menu">
+      <MenuTrigger className="ml-1 flex items-center gap-2 rounded-(--radius) py-1 pl-1 pr-2 hover:bg-line/60" aria-label="Account menu">
         <span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-xs font-bold text-accent-fg">{initials}</span>
         <Icon.ChevronDown width={14} height={14} className="text-muted" />
       </MenuTrigger>
@@ -186,7 +186,7 @@ function Rail() {
             <NavLink
               to={it.to}
               aria-label={it.label}
-              className={`grid h-10 w-10 place-items-center rounded-[var(--radius)] transition-colors ${
+              className={`grid h-10 w-10 place-items-center rounded-(--radius) transition-colors ${
                 isActive ? "bg-accent text-accent-fg shadow-panel" : "text-muted hover:bg-line/60 hover:text-fg"
               }`}
             >

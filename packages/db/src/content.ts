@@ -31,9 +31,13 @@ import { getAgentReviewRequired } from "./site.js";
 import { dispatchWebhooks } from "./webhooks.js";
 
 /** Postgres unique-constraint violation (SQLSTATE 23505) — used to turn a losing
- *  concurrent write into a self-teaching 409 instead of an opaque 500. */
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
+ *  concurrent write into a self-teaching 409 instead of an opaque 500.
+ *  drizzle-orm ≥0.44 wraps driver errors in DrizzleQueryError with the Postgres
+ *  error (carrying the SQLSTATE) as `cause`, so walk the cause chain too. */
+function isUniqueViolation(err: unknown, depth = 0): boolean {
+  if (typeof err !== "object" || err === null || depth > 5) return false;
+  if ((err as { code?: string }).code === "23505") return true;
+  return isUniqueViolation((err as { cause?: unknown }).cause, depth + 1);
 }
 
 /* ----------------------------- content types ----------------------------- */
@@ -996,7 +1000,7 @@ export async function getContent(
 
 /** The top-level content fields a Zod parse error refers to (deduped, in order),
  *  so the API can hand them to the admin for inline display. */
-function failedFields(err: { issues?: Array<{ path: (string | number)[] }> }): string[] {
+function failedFields(err: { issues?: Array<{ path: readonly PropertyKey[] }> }): string[] {
   const names = (err.issues ?? [])
     .map((i) => i.path.find((p) => typeof p === "string"))
     .filter((p): p is string => typeof p === "string");
@@ -1004,7 +1008,7 @@ function failedFields(err: { issues?: Array<{ path: (string | number)[] }> }): s
 }
 
 /** Turn a Zod parse error into a concise, human message naming the field(s). */
-function formatValidation(err: { issues?: Array<{ path: (string | number)[]; message: string }> }): string {
+function formatValidation(err: { issues?: Array<{ path: readonly PropertyKey[]; message: string }> }): string {
   const issues = err.issues ?? [];
   if (!issues.length) return "Some fields are invalid";
   return issues
@@ -1024,7 +1028,7 @@ function formatValidation(err: { issues?: Array<{ path: (string | number)[]; mes
  * field; send a plain string (example: "Some text")`.
  */
 function formatDataValidation(
-  err: { issues?: Array<{ path: (string | number)[]; message: string }> },
+  err: { issues?: Array<{ path: readonly PropertyKey[]; message: string }> },
   type: ContentTypeDef,
 ): string {
   const issues = err.issues ?? [];

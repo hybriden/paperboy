@@ -127,7 +127,7 @@ export function BuildFromBriefDialog({
 
         {phase !== "idle" && (
           <div className="space-y-3">
-            <div ref={listRef} className="max-h-[42vh] space-y-1 overflow-y-auto rounded-[var(--radius)] border border-line bg-canvas/60 p-2.5">
+            <div ref={listRef} className="max-h-[42vh] space-y-1 overflow-y-auto rounded-(--radius) border border-line bg-canvas/60 p-2.5">
               {rows.map((r) => (
                 <div key={r.id} className={`flex items-start gap-2 text-sm ${r.kind === "status" ? "text-muted" : "text-fg"}`}>
                   <span className="mt-0.5 w-4 shrink-0 text-center" aria-hidden>
@@ -148,7 +148,7 @@ export function BuildFromBriefDialog({
                   {created.map((c) => (
                     <li key={c.documentId}>
                       <button
-                        className="flex w-full items-center gap-2 rounded-[var(--radius)] border border-line px-2.5 py-1.5 text-left text-sm hover:bg-line/40"
+                        className="flex w-full items-center gap-2 rounded-(--radius) border border-line px-2.5 py-1.5 text-left text-sm hover:bg-line/40"
                         onClick={() => {
                           onOpenChange(false);
                           void navigate(`/edit/${c.documentId}${locale !== "en" ? `?lang=${locale}` : ""}`);
