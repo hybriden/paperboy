@@ -41,6 +41,7 @@ export const TreeNode = z.object({
   name: z.string(),
   /** Per-locale status summary for the badges in the tree. */
   locales: z.record(
+    z.string(),
     z.object({
       status: ContentStatus,
       hasUnpublishedChanges: z.boolean(),
@@ -66,7 +67,7 @@ export const ContentDetail = z.object({
   /** Full hierarchical URL built from the ancestor chain of slugs (pages only). */
   urlPath: z.string().nullable(),
   displayInNav: z.boolean(),
-  data: z.record(z.unknown()),
+  data: z.record(z.string(), z.unknown()),
   /** Scheduled go-live (on a pending draft) / expiry — ISO strings, null when unset. */
   publishAt: z.string().nullable(),
   expireAt: z.string().nullable(),
@@ -89,7 +90,7 @@ export const BlockSummary = z.object({
   documentId: z.string(),
   type: z.string(),
   name: z.string(),
-  locales: z.record(z.object({ status: ContentStatus, hasUnpublishedChanges: z.boolean() })),
+  locales: z.record(z.string(), z.object({ status: ContentStatus, hasUnpublishedChanges: z.boolean() })),
   // Asset-pane folder (null = root/unfiled).
   folderId: z.string().nullable(),
 });
@@ -161,7 +162,7 @@ export const UpdateContentRequest = z.object({
   name: z.string().min(1).optional(),
   slug: z.string().nullable().optional(),
   displayInNav: z.boolean().optional(),
-  data: z.record(z.unknown()),
+  data: z.record(z.string(), z.unknown()),
   /** When true, `data` is shallow-merged over the current working draft instead
    *  of replacing it — so a caller can patch one field without resending all. */
   merge: z.boolean().optional(),
@@ -204,7 +205,7 @@ export const DeliverySeo = z.object({
   }),
   twitter: z.object({ card: z.string() }),
   /** schema.org page-entity node; @id/url/publisher are added by the frontend. */
-  jsonLd: z.record(z.unknown()),
+  jsonLd: z.record(z.string(), z.unknown()),
   /** Ancestor trail incl. self, root→leaf; urlPath null when not yet addressable. */
   breadcrumb: z.array(z.object({ name: z.string(), urlPath: z.string().nullable() })),
 });
@@ -225,13 +226,13 @@ export const DeliveryContent = z.object({
   urlPath: z.string().nullable(),
   /** cache-version: bumped on publish, used for ETag / cache busting. */
   cv: z.number(),
-  data: z.record(z.unknown()),
+  data: z.record(z.string(), z.unknown()),
   /** Public field name → its declared field type ("text" | "markdown" |
    *  "richtext" | "contentArea" | "image" | "reference" | "boolean" | "number"
    *  | "datetime" | "select" | "link"). Lets a frontend render each field by
    *  its SCHEMA type instead of sniffing the value's shape. Private fields are
    *  never listed (their names/types must not leak). */
-  fieldTypes: z.record(z.string()),
+  fieldTypes: z.record(z.string(), z.string()),
   /** Normalized SEO/schema.org contract — present on pages, null otherwise. */
   seo: DeliverySeo.nullable(),
 });

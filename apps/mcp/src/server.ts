@@ -258,7 +258,7 @@ tool(
     parentId: z.string().nullable().optional().describe("documentId of the parent page. Required in practice for pages — find it with `tree`. Omit only for top-level pages."),
     locale: z.string().optional().describe("The LANGUAGE BRANCH for this content — MATCH the language you are writing (Norwegian content → 'nb', English → 'en'). Call list_locales to see the site's branches. Defaults to the site default locale, which is usually English."),
     name: z.string(),
-    data: z.record(z.unknown()).optional().describe("Initial field values (field name → value), same shapes as update_content. Provide this to create a FILLED draft in one call. Call get_content_type first for the field names/shapes."),
+    data: z.record(z.string(), z.unknown()).optional().describe("Initial field values (field name → value), same shapes as update_content. Provide this to create a FILLED draft in one call. Call get_content_type first for the field names/shapes."),
     slug: z.string().optional().describe("URL slug for a page. Omit to auto-derive from the name."),
     allowTypeMismatch: z.boolean().optional().describe("Set true ONLY for a deliberate sub-page whose type differs from the parent list page's listedType"),
   },
@@ -313,7 +313,7 @@ tool(
     "then refused (409) if a human editor changed the draft meanwhile, instead of",
     "overwriting them. Merged writes don't need it — they read current data at write time.",
   ].join(" "),
-  { documentId: docId, locale: loc, name: z.string().optional(), slug: z.string().nullable().optional(), displayInNav: z.boolean().optional(), data: z.record(z.unknown()), merge: z.boolean().optional().describe("Default true: shallow-merge data over the current draft. false = replace the whole field map"), revision: z.number().int().nonnegative().optional().describe("Optimistic concurrency: the `revision` from get_content. If a human (or another agent) has changed the draft since, the write is refused instead of overwriting their work. Recommended whenever merge:false"), allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately write text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)") },
+  { documentId: docId, locale: loc, name: z.string().optional(), slug: z.string().nullable().optional(), displayInNav: z.boolean().optional(), data: z.record(z.string(), z.unknown()), merge: z.boolean().optional().describe("Default true: shallow-merge data over the current draft. false = replace the whole field map"), revision: z.number().int().nonnegative().optional().describe("Optimistic concurrency: the `revision` from get_content. If a human (or another agent) has changed the draft since, the write is refused instead of overwriting their work. Recommended whenever merge:false"), allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately write text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)") },
   // merge defaults to TRUE here (agent-facing surface): a full replace that
   // silently drops required fields like `intro` passes the relaxed draft
   // validation but bricks every subsequent publish — the worst failure mode
@@ -444,9 +444,9 @@ tool("list_content_types", "List all content types (fields annotated with the va
   async () => { need("content.read"); return (await listContentTypes(db)).map(withFieldFormats); });
 tool("get_content_type", "Get a content type definition by name. Each field includes valueFormat + valueExample — the exact JSON shape update_content expects.", { name: z.string() },
   async ({ name }) => { need("content.read"); const def = await getContentType(db, name); return def ? withFieldFormats(def) : def; });
-tool("create_content_type", "Create a content type from a full ContentTypeDef object.", { definition: z.record(z.unknown()) },
+tool("create_content_type", "Create a content type from a full ContentTypeDef object.", { definition: z.record(z.string(), z.unknown()) },
   async ({ definition }) => { const def = ContentTypeDef.parse(definition); const r = await createContentType(db, ctx, def); mcpAudit("contenttype.create", null, null, { name: def.name, kind: def.kind }); return r; });
-tool("update_content_type", "Update a content type (name and kind are immutable).", { name: z.string(), definition: z.record(z.unknown()) },
+tool("update_content_type", "Update a content type (name and kind are immutable).", { name: z.string(), definition: z.record(z.string(), z.unknown()) },
   async ({ name, definition }) => { const r = await updateContentType(db, ctx, name, ContentTypeDef.parse(definition)); mcpAudit("contenttype.update", null, null, { name }); return r.next; });
 
 /* -------------------------------- media -------------------------------- */
@@ -499,7 +499,7 @@ tool(
     limit: z.number().int().min(1).max(500).optional(),
     offset: z.number().int().min(0).optional(),
     sort: z.string().optional().describe("name | createdAt | data.<field>; prefix - for descending"),
-    filter: z.record(z.string()).optional().describe("Equality filters on data fields, e.g. {\"author\": \"Jane\"}"),
+    filter: z.record(z.string(), z.string()).optional().describe("Equality filters on data fields, e.g. {\"author\": \"Jane\"}"),
   },
   async ({ type, locale, populate, preview, limit, offset, sort, filter }) => { needDelivery(preview); return deliveryList(db, persp(preview), ctx.siteId, type, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate, undefined, { limit, offset, sort, filter }); });
 tool(
