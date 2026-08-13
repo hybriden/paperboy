@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
-import { Panel, PanelGroup } from "react-resizable-panels";
+import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
@@ -62,6 +62,8 @@ export function EditView() {
   // (collapsed to an edge rail that flies out on hover).
   const [treePinned, toggleTree] = usePinned("pb-pin-tree", true);
   const [assetsPinned, toggleAssets] = usePinned("pb-pin-assets", true);
+  // Persisted workspace split, one layout per pin config (was PanelGroup autoSaveId pre-v4).
+  const workspaceLayout = useDefaultLayout({ id: `paperboy-workspace-${treePinned ? "t" : "x"}${assetsPinned ? "a" : "x"}` });
 
   const select = (id: string) => navigate(`/edit/${id}${locale !== "en" ? `?lang=${locale}` : ""}`);
 
@@ -130,21 +132,22 @@ export function EditView() {
           <div className="flex h-full flex-col border-r border-line bg-panel">{tree}</div>
         </AutoHideRail>
       )}
-      <PanelGroup
+      <Group
         key={`wg-${treePinned ? "t" : ""}-${assetsPinned ? "a" : ""}`}
-        autoSaveId={`paperboy-workspace-${treePinned ? "t" : "x"}${assetsPinned ? "a" : "x"}`}
-        direction="horizontal"
+        defaultLayout={workspaceLayout.defaultLayout}
+        onLayoutChanged={workspaceLayout.onLayoutChanged}
+        orientation="horizontal"
         className="min-w-0 flex-1"
       >
         {treePinned && (
           <>
-            <Panel id="tree" order={1} defaultSize={20} minSize={12} collapsible collapsedSize={0} className="flex flex-col border-r border-line bg-panel">
+            <Panel id="tree" defaultSize="20" minSize="12" collapsible collapsedSize={0} className="flex flex-col border-r border-line bg-panel">
               {tree}
             </Panel>
             <ResizeHandle />
           </>
         )}
-        <Panel id="editor" order={2} minSize={30} className="min-w-0">
+        <Panel id="editor" minSize="30" className="min-w-0">
           {documentId ? (
             <Editor
               key={documentId + locale}
@@ -167,12 +170,12 @@ export function EditView() {
         {assetsPinned && (
           <>
             <ResizeHandle />
-            <Panel id="assets" order={3} defaultSize={18} minSize={12} collapsible collapsedSize={0} className="min-w-0">
+            <Panel id="assets" defaultSize="18" minSize="12" collapsible collapsedSize={0} className="min-w-0">
               {assets}
             </Panel>
           </>
         )}
-      </PanelGroup>
+      </Group>
       {!assetsPinned && (
         <AutoHideRail side="right" label="Assets" onPin={toggleAssets}>
           <div className="flex h-full flex-col border-l border-line bg-panel">{assets}</div>

@@ -35,7 +35,7 @@ export const SESSION_ABSOLUTE_HOURS = 24 * 30; // 30 days
 const SESSION_IDLE_MINUTES = 60 * 24 * 30; // 30 days
 
 /** Argon2id parameters (OWASP-recommended baseline). */
-const ARGON2_OPTS: argon2.Options = {
+const ARGON2_OPTS: argon2.HashOptions = {
   type: argon2.argon2id,
   memoryCost: 65536, // 64 MiB
   timeCost: 3,

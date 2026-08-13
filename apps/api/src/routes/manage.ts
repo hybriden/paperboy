@@ -158,7 +158,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       // permission change.
       schema: {
         tags: ["manage"],
-        response: { 200: z.record(z.object({ items: z.number(), inlineIn: z.number() })) },
+        response: { 200: z.record(z.string(), z.object({ items: z.number(), inlineIn: z.number() })) },
       },
     },
     async () => contentTypeUsage(app.db),
@@ -613,7 +613,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
             name: z.string(),
             slug: z.string().nullable(),
             displayInNav: z.boolean(),
-            data: z.record(z.unknown()),
+            data: z.record(z.string(), z.unknown()),
             createdAt: z.string(),
             createdBy: z.string().nullable(),
           }),

@@ -93,10 +93,11 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     index: false,
     dotfiles: "deny",
     setHeaders: (res, path) => {
-      res.setHeader("X-Content-Type-Options", "nosniff");
-      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+      // @fastify/static v10 hands the FastifyReply here (not the raw response).
+      res.header("X-Content-Type-Options", "nosniff");
+      res.header("Cache-Control", "public, max-age=31536000, immutable");
       // Force download for active-content formats so they never render inline.
-      if (path.toLowerCase().endsWith(".pdf")) res.setHeader("Content-Disposition", "attachment");
+      if (path.toLowerCase().endsWith(".pdf")) res.header("Content-Disposition", "attachment");
     },
   });
   await app.register(rateLimit, {
