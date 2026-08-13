@@ -17,7 +17,7 @@ export function PopoverContent({
       <RPopover.Content
         align={align}
         sideOffset={6}
-        className={`z-50 rounded-[var(--radius-lg)] border border-line bg-panel p-3 shadow-pop data-[state=open]:animate-slide-up ${className}`}
+        className={`z-50 rounded-lg border border-line bg-panel p-3 shadow-pop data-[state=open]:animate-slide-up ${className}`}
       >
         {children}
       </RPopover.Content>

@@ -78,10 +78,10 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>
       <RDialog.Portal>
-        <RDialog.Overlay className="fixed inset-0 z-[80] bg-black/50 backdrop-blur-[2px] data-[state=open]:animate-fade-in" />
+        <RDialog.Overlay className="fixed inset-0 z-80 bg-black/50 backdrop-blur-[2px] data-[state=open]:animate-fade-in" />
         <RDialog.Content
           aria-describedby={undefined}
-          className="fixed left-1/2 top-[15%] z-[80] w-[min(640px,92vw)] -translate-x-1/2 overflow-hidden rounded-[var(--radius-lg)] border border-line bg-panel shadow-pop outline-none data-[state=open]:animate-scale-in"
+          className="fixed left-1/2 top-[15%] z-80 w-[min(640px,92vw)] -translate-x-1/2 overflow-hidden rounded-lg border border-line bg-panel shadow-pop outline-hidden data-[state=open]:animate-scale-in"
         >
           <RDialog.Title className="sr-only">Command palette</RDialog.Title>
           <Command shouldFilter={false} label="Command palette" value={selected} onValueChange={setSelected}>
@@ -92,7 +92,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
                 value={query}
                 onValueChange={setQuery}
                 placeholder="Search the newsroom…"
-                className="h-14 w-full bg-transparent text-[15px] text-fg caret-accent outline-none focus-visible:!outline-none placeholder:text-muted/80"
+                className="h-14 w-full bg-transparent text-[15px] text-fg caret-accent outline-hidden focus-visible:outline-hidden! placeholder:text-muted/80"
               />
               <Kbd>esc</Kbd>
             </div>
@@ -236,7 +236,7 @@ function Item({
     <Command.Item
       value={value}
       onSelect={onSelect}
-      className="group relative flex cursor-pointer items-center gap-3 rounded-[var(--radius)] px-2.5 py-2 text-sm text-fg outline-none transition-colors duration-100 before:absolute before:bottom-[7px] before:left-0 before:top-[7px] before:w-[2.5px] before:rounded-full before:bg-accent before:opacity-0 before:transition-opacity data-[selected=true]:bg-accent/[0.08] data-[selected=true]:before:opacity-100"
+      className="group relative flex cursor-pointer items-center gap-3 rounded-(--radius) px-2.5 py-2 text-sm text-fg outline-hidden transition-colors duration-100 before:absolute before:bottom-[7px] before:left-0 before:top-[7px] before:w-[2.5px] before:rounded-full before:bg-accent before:opacity-0 before:transition-opacity data-[selected=true]:bg-accent/8 data-[selected=true]:before:opacity-100"
     >
       <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-[5px] border border-line/80 bg-canvas text-muted transition-colors group-data-[selected=true]:border-accent/30 group-data-[selected=true]:bg-accent-50 group-data-[selected=true]:text-accent-700">
         {icon}

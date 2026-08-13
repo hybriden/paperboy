@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 8092",
-    "build": "next build",
+    "dev": "next dev --webpack -p 8092",
+    "build": "next build --webpack",
     "start": "next start -p 8092",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'lint: web (typecheck covers it)'",

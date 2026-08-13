@@ -391,7 +391,7 @@ export function SettingsView() {
                     key={t.key}
                     onClick={() => setActive(t.key)}
                     aria-current={active === t.key}
-                    className={`mb-0.5 flex w-full items-center rounded-[var(--radius)] px-2 py-1.5 text-left text-sm transition-colors ${
+                    className={`mb-0.5 flex w-full items-center rounded-(--radius) px-2 py-1.5 text-left text-sm transition-colors ${
                       active === t.key ? "bg-accent/15 font-medium text-accent-700" : "text-fg hover:bg-line/50"
                     }`}
                   >

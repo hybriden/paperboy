@@ -16,7 +16,7 @@ const DRAFT_COOKIE = "__prerender_bypass";
  * cannot express "only when framed by the CMS" and would block the preview
  * unconditionally. A customer frontend adopting this pattern must drop it too.
  */
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const res = NextResponse.next();
   const hostname = (req.headers.get("host") ?? "").split(":")[0] ?? "";
   const ancestors = frameAncestorsFor({

@@ -131,7 +131,7 @@ export function FolderNav({
           {children.map((f) => (
             <li key={f.documentId}>
               <div
-                className={`group flex items-center gap-1.5 rounded-[var(--radius)] px-1.5 py-1 text-sm hover:bg-line/50 ${isDrop(f.documentId) ? "bg-accent/20 ring-1 ring-accent" : ""}`}
+                className={`group flex items-center gap-1.5 rounded-(--radius) px-1.5 py-1 text-sm hover:bg-line/50 ${isDrop(f.documentId) ? "bg-accent/20 ring-1 ring-accent" : ""}`}
                 {...dropProps(f.documentId)}
               >
                 <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5 text-left" onClick={() => onNavigate(f.documentId)}>

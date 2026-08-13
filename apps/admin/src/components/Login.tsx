@@ -99,7 +99,7 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
   }
 
   const errBanner = error && (
-    <p role="alert" className="mb-4 rounded-[var(--radius)] border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
+    <p role="alert" className="mb-4 rounded-(--radius) border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
       {error}
     </p>
   );
@@ -145,7 +145,7 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
         <div className="w-full max-w-[380px] animate-fade-in">
           {/* Compact wordmark for mobile, where the masthead panel is hidden. */}
           <div className="mb-8 flex items-center gap-2.5 md:hidden">
-            <span className="grid h-9 w-9 place-items-center rounded-[var(--radius)] bg-brand font-display text-lg font-semibold text-white">P</span>
+            <span className="grid h-9 w-9 place-items-center rounded-(--radius) bg-brand font-display text-lg font-semibold text-white">P</span>
             <span className="font-display text-2xl font-semibold tracking-[-0.01em]">Paperboy</span>
           </div>
 
@@ -181,7 +181,7 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
               <button type="submit" className="btn-primary h-11 w-full text-[15px]" disabled={busy || !password}>
                 {busy ? "Signing in…" : "Sign in"}
               </button>
-              <button type="button" className="mt-3 w-full rounded-[var(--radius)] py-1.5 text-center text-xs text-muted transition-colors hover:text-fg" onClick={reset}>
+              <button type="button" className="mt-3 w-full rounded-(--radius) py-1.5 text-center text-xs text-muted transition-colors hover:text-fg" onClick={reset}>
                 ← Use a different email
               </button>
             </form>
@@ -203,7 +203,7 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
               <button type="submit" className="btn-primary h-11 w-full text-[15px]" disabled={busy || code.trim().length < 6}>
                 {busy ? "Verifying…" : "Verify"}
               </button>
-              <button type="button" className="mt-3 w-full rounded-[var(--radius)] py-1.5 text-center text-xs text-muted transition-colors hover:text-fg" onClick={reset}>
+              <button type="button" className="mt-3 w-full rounded-(--radius) py-1.5 text-center text-xs text-muted transition-colors hover:text-fg" onClick={reset}>
                 ← Back to sign in
               </button>
             </form>

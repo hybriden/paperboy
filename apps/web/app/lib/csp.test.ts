@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { frameAncestorsFor } from "./csp";
-import { middleware } from "../../middleware";
+import { proxy } from "../../proxy";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -85,7 +85,7 @@ describe("frameAncestorsFor: framing is scoped to the preview, not site-wide", (
   });
 });
 
-describe("middleware wires the decision to the real request", () => {
+describe("proxy wires the decision to the real request", () => {
   const cspOf = (res: Response) => res.headers.get("content-security-policy") ?? "";
 
   it("a plain visitor gets frame-ancestors 'none'", () => {
@@ -93,7 +93,7 @@ describe("middleware wires the decision to the real request", () => {
     const req = new NextRequest("https://www.neoteric.no/en/about", {
       headers: { host: "www.neoteric.no", "sec-fetch-dest": "document" },
     });
-    expect(cspOf(middleware(req))).toContain("frame-ancestors 'none'");
+    expect(cspOf(proxy(req))).toContain("frame-ancestors 'none'");
   });
 
   it("the CMS preview iframe gets the admin origin", () => {
@@ -101,14 +101,14 @@ describe("middleware wires the decision to the real request", () => {
     const req = new NextRequest("https://www.neoteric.no/en/about?pbt=tok", {
       headers: { host: "www.neoteric.no", "sec-fetch-dest": "iframe" },
     });
-    expect(cspOf(middleware(req))).toContain(ADMIN);
+    expect(cspOf(proxy(req))).toContain(ADMIN);
   });
 
   it("keeps the baseline hardening in both cases", () => {
     const req = new NextRequest("https://www.neoteric.no/", {
       headers: { host: "www.neoteric.no", "sec-fetch-dest": "document" },
     });
-    const csp = cspOf(middleware(req));
+    const csp = cspOf(proxy(req));
     expect(csp).toContain("object-src 'none'");
     expect(csp).toContain("base-uri 'self'");
   });
@@ -120,7 +120,7 @@ describe("middleware wires the decision to the real request", () => {
     const req = new NextRequest("https://www.neoteric.no/en/about", {
       headers: { host: "www.neoteric.no", "sec-fetch-dest": "document" },
     });
-    expect(middleware(req).headers.get("vary")).toBe("Sec-Fetch-Dest");
+    expect(proxy(req).headers.get("vary")).toBe("Sec-Fetch-Dest");
   });
 
   it("does not send X-Frame-Options (it cannot express 'only when framed by the CMS')", () => {
@@ -131,6 +131,6 @@ describe("middleware wires the decision to the real request", () => {
     const req = new NextRequest("https://www.neoteric.no/en/about?pbt=tok", {
       headers: { host: "www.neoteric.no", "sec-fetch-dest": "iframe" },
     });
-    expect(middleware(req).headers.get("x-frame-options")).toBeNull();
+    expect(proxy(req).headers.get("x-frame-options")).toBeNull();
   });
 });

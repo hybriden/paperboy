@@ -17,9 +17,9 @@ export function Switch({
         id={id}
         checked={checked}
         onCheckedChange={onCheckedChange}
-        className="relative h-5 w-9 shrink-0 rounded-full border border-line bg-line/70 outline-none transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent"
+        className="relative h-5 w-9 shrink-0 rounded-full border border-line bg-line/70 outline-hidden transition-colors data-[state=checked]:border-accent data-[state=checked]:bg-accent"
       >
-        <RSwitch.Thumb className="block h-4 w-4 translate-x-0.5 rounded-full bg-panel shadow transition-transform data-[state=checked]:translate-x-[18px]" />
+        <RSwitch.Thumb className="block h-4 w-4 translate-x-0.5 rounded-full bg-panel shadow-sm transition-transform data-[state=checked]:translate-x-[18px]" />
       </RSwitch.Root>
       {label && <span>{label}</span>}
     </label>

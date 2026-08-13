@@ -1701,7 +1701,7 @@ function CompareView({
               {!f.changed && <span className="rounded bg-line px-1 text-[10px] normal-case text-muted">unchanged</span>}
             </div>
             {f.changed ? (
-              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg">
+              <p className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-fg">
                 {wordDiff(f.aText, f.bText).map((s, i) =>
                   s.t === "eq" ? (
                     <span key={i}>{s.s}</span>
@@ -1714,7 +1714,7 @@ function CompareView({
                 {f.aText === "" && f.bText === "" && <span className="text-muted">(structural change)</span>}
               </p>
             ) : (
-              <p className="whitespace-pre-wrap break-words text-sm text-muted">{f.bText || <span className="italic">empty</span>}</p>
+              <p className="whitespace-pre-wrap wrap-break-word text-sm text-muted">{f.bText || <span className="italic">empty</span>}</p>
             )}
           </div>
         ))}
