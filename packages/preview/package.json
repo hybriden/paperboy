@@ -1,7 +1,7 @@
 {
   "name": "@paperboycms/preview",
   "version": "0.2.0",
-  "description": "Framework-agnostic on-page-editing bridge for the Paperboy headless CMS preview iframe — click-to-edit, drag-drop blocks, live patch. Zero runtime dependencies.",
+  "description": "Framework-agnostic on-page-editing bridge for the Paperboy headless CMS preview iframe â€” click-to-edit, drag-drop blocks, live patch. Zero runtime dependencies.",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -41,8 +41,8 @@
     "lint": "echo 'lint: preview (typecheck covers it)'"
   },
   "devDependencies": {
-    "happy-dom": "^15.11.7",
-    "typescript": "^5.6.3",
-    "vitest": "^2.1.8"
+    "happy-dom": "^20.11.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }
