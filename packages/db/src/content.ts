@@ -17,6 +17,7 @@ import {
   sortByRule,
   stripSeoGroup,
   tiptapToPlainText,
+  parseStoredContentTypeDef,
   withSeoGroup,
 } from "@paperboy/shared";
 import type { Database } from "./client.js";
@@ -45,7 +46,7 @@ function isUniqueViolation(err: unknown, depth = 0): boolean {
 export async function listContentTypes(db: Database): Promise<ContentTypeDef[]> {
   const rows = await db.select().from(contentType).orderBy(asc(contentType.name));
   // Inject the reserved SEO group into every page kind (single read chokepoint).
-  return rows.map((r) => withSeoGroup(r.definition as ContentTypeDef));
+  return rows.map((r) => parseStoredContentTypeDef(r.definition));
 }
 
 /** Per-type usage: standalone items of that type, plus pages/blocks that embed
@@ -188,7 +189,7 @@ export async function getContentType(db: Database, name: string): Promise<Conten
   }
   // Inject the reserved SEO group (page kinds) — every consumer (validation,
   // coercion, delivery writes, MCP get) sees SEO automatically.
-  return withSeoGroup(rows[0].definition as ContentTypeDef);
+  return parseStoredContentTypeDef(rows[0].definition);
 }
 
 /** Admin-only: create a new content type. The body must already be schema-valid. */
@@ -248,7 +249,7 @@ export async function updateContentType(
   if (def.name !== name) throw Errors.badRequest("Content type name is immutable");
   const rows = await db.select().from(contentType).where(eq(contentType.name, name)).limit(1);
   if (!rows[0]) throw Errors.notFound(`Content type '${name}'`);
-  const prev = withSeoGroup(rows[0].definition as ContentTypeDef);
+  const prev = parseStoredContentTypeDef(rows[0].definition);
   if (def.kind !== prev.kind) throw Errors.conflict("Content type kind is immutable");
   // Strip the reserved SEO group before storing (system-managed, injected on read).
   const stored = stripSeoGroup(def);
