@@ -8,7 +8,7 @@ serialization, OpenAPI, admin forms, and inferred TypeScript types — so nothin
 | Layer | Choice | Why |
 |------|--------|-----|
 | Monorepo | pnpm workspaces | One source of truth for shared Zod schemas/types across API, admin and web; fast, content-addressed installs. |
-| Language | TypeScript (Node 22 LTS) | End-to-end types; one language across API/SPA/SSR. |
+| Language | TypeScript (Node 24 LTS) | End-to-end types; one language across API/SPA/SSR. |
 | API | **Fastify v5** + `fastify-type-provider-zod` | One Zod schema per route drives **runtime validation + response serialization + OpenAPI 3.1** — no drift. Strong throughput for JSON-heavy delivery. |
 | DB / ORM | **PostgreSQL 16** + **Drizzle** + drizzle-kit | SQL-close control over the explicitly relational content/version/locale model; partial unique indexes encode core invariants (one live published + one draft per variant). |
 | Validation | **Zod** (shared package) | Single source of truth: API I/O, admin forms, and inferred TS types. |
