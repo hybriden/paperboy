@@ -32,6 +32,8 @@ updates:
       # drop this once it supports 7.x, then bump deliberately.
       - dependency-name: typescript
         update-types: ["version-update:semver-major"]
-      # Types should track the runtime major (CI + Docker run Node 22).
+      # Types should track the runtime major (CI + Docker run Node 24 LTS).
+      # Bump the runtime (Dockerfile, ci.yml, eval.yml, engines) and these
+      # types TOGETHER when moving to the next LTS.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
