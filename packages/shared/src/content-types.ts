@@ -253,6 +253,21 @@ export function stripSeoGroup(def: ContentTypeDef): ContentTypeDef {
   return { ...def, fields: def.fields.filter((f) => !SEO_FIELD_NAMES.has(f.name)) };
 }
 
+/**
+ * Read-time normalization for STORED definitions — the only way a stored row
+ * may be turned back into a ContentTypeDef. A row written before a FieldDef
+ * key existed simply lacks that key; parsing through the current schema fills
+ * every .default(), so consumers — and response serialization, which since
+ * Zod 4 / fastify-type-provider-zod v7 validates the response AS-IS instead of
+ * backfilling defaults — always see a current-shape definition. (Skipping this
+ * turned every pre-`optionsFromContentTypes` row into an opaque 500 on
+ * GET /manage/content-types, found live 2026-08-13.) Also appends the reserved
+ * SEO group for page kinds.
+ */
+export function parseStoredContentTypeDef(raw: unknown): ContentTypeDef {
+  return withSeoGroup(ContentTypeDef.parse(raw));
+}
+
 /** Display option for a block placed in a content area. */
 export const BlockDisplayOption = z.enum(["automatic", "full", "wide", "narrow"]);
 export type BlockDisplayOption = z.infer<typeof BlockDisplayOption>;
