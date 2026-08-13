@@ -41,6 +41,7 @@
     "lint": "echo 'lint: preview (typecheck covers it)'"
   },
   "devDependencies": {
+    "@types/node": "^24",
     "happy-dom": "^20.11.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
