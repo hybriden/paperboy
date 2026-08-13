@@ -27,3 +27,11 @@ updates:
       production-dependencies:
         dependency-type: production
         patterns: ["*"]
+    ignore:
+      # typescript-eslint supports TS <6.1 only (typescript-eslint#10940);
+      # drop this once it supports 7.x, then bump deliberately.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      # Types should track the runtime major (CI + Docker run Node 22).
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
