@@ -499,7 +499,7 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
   });
 
   return (
-    <form className="flex flex-col gap-3 rounded-[var(--radius)] border border-line bg-canvas/40 p-4" onSubmit={(e) => { e.preventDefault(); if (dirty && !invalid) save.mutate(); }}>
+    <form className="flex flex-col gap-3 rounded-(--radius) border border-line bg-canvas/40 p-4" onSubmit={(e) => { e.preventDefault(); if (dirty && !invalid) save.mutate(); }}>
       {/* name / slug / active */}
       <div className="flex flex-wrap items-end gap-3">
         {canManage ? (

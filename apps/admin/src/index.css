@@ -1,189 +1,317 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import 'tailwindcss';
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* `inline` is load-bearing: several theme keys alias app tokens of the SAME
+   name (--radius, --shadow-panel, --font-display…, defined on :root below).
+   A non-inline @theme would emit `--radius: var(--radius)` — a circular
+   custom property. Inline substitutes the var() at each use site instead. */
+@theme inline {
+  --color-canvas: rgb(var(--c-canvas));
+  --color-panel: rgb(var(--c-panel));
+  --color-fg: rgb(var(--c-fg));
+  --color-ink: rgb(var(--c-fg));
+  --color-muted: rgb(var(--c-muted));
+  --color-line: rgb(var(--c-line));
+
+  --color-chrome: rgb(var(--c-chrome));
+  --color-chrome-light: rgb(var(--c-chrome-light));
+  --color-chrome-rail: rgb(var(--c-chrome-rail));
+  --color-chrome-border: rgb(var(--c-chrome-border));
+  --color-chrome-fg: rgb(var(--c-chrome-fg));
+
+  --color-accent-50: rgb(var(--c-accent-50));
+  --color-accent-600: rgb(var(--c-accent-600));
+  --color-accent-700: rgb(var(--c-accent-700));
+  --color-accent: rgb(var(--c-accent));
+  --color-accent-fg: rgb(var(--c-accent-fg));
+
+  --color-brand: rgb(var(--c-brand));
+
+  --color-published: rgb(var(--c-published));
+  --color-published-fg: rgb(var(--c-published-fg));
+  --color-published-subtle: rgb(var(--c-published-subtle));
+
+  --color-draft: rgb(var(--c-draft));
+  --color-draft-fg: rgb(var(--c-draft-fg));
+  --color-draft-subtle: rgb(var(--c-draft-subtle));
+
+  --color-danger: rgb(var(--c-danger));
+  --color-danger-fg: rgb(var(--c-danger-fg));
+  --color-danger-subtle: rgb(var(--c-danger-subtle));
+
+  --color-ring: rgb(var(--c-ring));
+
+  --font-sans: var(--font-ui);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono);
+
+  --radius: var(--radius);
+  --radius-lg: var(--radius-lg);
+
+  --shadow-panel: var(--shadow-panel);
+  --shadow-pop: var(--shadow-pop);
+
+  --ease-smooth: var(--ease);
+
+  --animate-fade-in: fade-in var(--dur) var(--ease);
+  --animate-slide-up: slide-up var(--dur) var(--ease);
+  --animate-scale-in: scale-in var(--dur) var(--ease);
+  --animate-toast-in: toast-in var(--dur) var(--ease);
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  @keyframes scale-in {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  @keyframes toast-in {
+    from {
+      opacity: 0;
+      transform: translateX(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+}
 
 /*
+  The default border color has changed to `currentcolor` in Tailwind CSS v4,
+  so we've added these compatibility styles to make sure everything still
+  looks the same as it did with Tailwind CSS v3.
+
+  If we ever want to remove these styles, we need to add an explicit border
+  color utility to any element that depends on these defaults.
+*/
+@layer base {
+  *,
+  ::after,
+  ::before,
+  ::backdrop,
+  ::file-selector-button {
+    border-color: var(--color-gray-200, currentcolor);
+  }
+}
+
+@utility btn {
+  @apply inline-flex select-none items-center justify-center gap-1.5 rounded-(--radius) px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+}
+
+@utility btn-primary {
+  @apply btn bg-accent text-accent-fg hover:bg-accent-600;
+}
+
+@utility btn-ghost {
+  @apply btn text-fg hover:bg-line/60;
+}
+
+@utility btn-subtle {
+  @apply btn border border-line bg-panel text-fg hover:bg-canvas;
+}
+
+@utility btn-danger {
+  /* text-danger-fg, NOT text-white: dark theme lightens --c-danger to
+       rgb(248 120 120), where white text is ~2.7:1 and fails WCAG 1.4.3.
+       The per-tone fg channel is the token that tracks the theme (badge.tsx
+       already pairs them this way). */
+  @apply btn bg-danger text-danger-fg hover:opacity-90;
+}
+
+@utility field-label {
+  @apply mb-1 block text-[13px] font-semibold text-fg;
+}
+
+@utility field-input {
+  @apply w-full rounded-(--radius) border border-line bg-panel px-2.5 py-1.5 text-sm text-fg outline-hidden transition-colors placeholder:text-muted/70 focus:border-accent;
+}
+
+@utility col-rule {
+  /* Newspaper column rule between panes. */
+  @apply border-line;
+}
+
+@utility eyebrow {
+  /* Editorial header system — a small "dateline" eyebrow over a serif title,
+     the newsroom voice carried consistently across every screen. */
+  @apply text-[11px] font-semibold uppercase tracking-[0.16em] text-muted;
+}
+
+@utility page-title {
+  @apply font-display text-[1.75rem] font-semibold leading-[1.1] tracking-[-0.01em] text-fg;
+}
+
+@utility section-title {
+  @apply font-display text-2xl font-semibold leading-tight tracking-[-0.01em] text-fg;
+}
+
+@layer utilities {
+  /*
  * Paperboy design tokens — "The Newsroom".
  * Colours are stored as raw "R G B" channels so Tailwind can apply alpha
  * (rgb(var(--x) / <alpha-value>)) — keeps bg-accent/10 etc. working.
  * Dark theme flips the same variables, so components stay theme-agnostic.
  */
-:root {
-  --font-ui: "Hanken Grotesk Variable", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Newsreader Variable", Georgia, "Times New Roman", serif;
-  --font-mono: "JetBrains Mono Variable", ui-monospace, "SFMono-Regular", monospace;
+  :root {
+    --font-ui: 'Hanken Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-display: 'Newsreader Variable', Georgia, 'Times New Roman', serif;
+    --font-mono:
+      'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', monospace;
 
-  /* Light — clean warm near-white (lifted from the old cream newsprint) */
-  --c-canvas: 251 250 248;
-  --c-panel: 255 255 255;
-  --c-fg: 26 26 24;
-  --c-muted: 90 99 110;
-  --c-line: 230 226 218;
+    /* Light — clean warm near-white (lifted from the old cream newsprint) */
+    --c-canvas: 251 250 248;
+    --c-panel: 255 255 255;
+    --c-fg: 26 26 24;
+    --c-muted: 90 99 110;
+    --c-line: 230 226 218;
 
-  --c-chrome: 22 28 36;
-  --c-chrome-light: 32 41 51;
-  --c-chrome-rail: 16 21 28;
-  --c-chrome-border: 44 54 66;
-  --c-chrome-fg: 233 231 224;
+    --c-chrome: 22 28 36;
+    --c-chrome-light: 32 41 51;
+    --c-chrome-rail: 16 21 28;
+    --c-chrome-border: 44 54 66;
+    --c-chrome-fg: 233 231 224;
 
-  --c-accent: 34 87 214; /* calm ink-blue (primary) */
-  --c-accent-600: 27 74 191;
-  --c-accent-700: 29 78 216; /* accent text on light tints */
-  --c-accent-50: 234 240 254;
-  --c-accent-fg: 255 255 255;
+    --c-accent: 34 87 214; /* calm ink-blue (primary) */
+    --c-accent-600: 27 74 191;
+    --c-accent-700: 29 78 216; /* accent text on light tints */
+    --c-accent-50: 234 240 254;
+    --c-accent-fg: 255 255 255;
 
-  --c-brand: 200 54 47; /* press-red — masthead mark ONLY */
+    --c-brand: 200 54 47; /* press-red — masthead mark ONLY */
 
-  /* Semantic status tones. Each tone exposes: the solid colour (DEFAULT) used
+    /* Semantic status tones. Each tone exposes: the solid colour (DEFAULT) used
      for fills and for text on a tint; `-fg` for text/icons ON the solid fill;
      `-subtle` for tinted backgrounds. Borders on tinted surfaces derive from
      the solid colour at low alpha (e.g. border-published/30), so there's no
      separate border channel. Maps to the Surface/Badge tones positive /
      caution / critical. */
-  --c-published: 19 122 62; /* positive */
-  --c-published-fg: 255 255 255;
-  --c-published-subtle: 230 245 236;
-  --c-draft: 154 87 0; /* caution */
-  --c-draft-fg: 255 255 255;
-  --c-draft-subtle: 250 240 222;
-  --c-danger: 185 28 28; /* critical */
-  --c-danger-fg: 255 255 255;
-  --c-danger-subtle: 250 232 232;
-  --c-ring: 34 87 214;
+    --c-published: 19 122 62; /* positive */
+    --c-published-fg: 255 255 255;
+    --c-published-subtle: 230 245 236;
+    --c-draft: 154 87 0; /* caution */
+    --c-draft-fg: 255 255 255;
+    --c-draft-subtle: 250 240 222;
+    --c-danger: 185 28 28; /* critical */
+    --c-danger-fg: 255 255 255;
+    --c-danger-subtle: 250 232 232;
+    --c-ring: 34 87 214;
 
-  --radius: 9px;
-  --radius-lg: 14px;
-  --shadow-panel: 0 1px 2px rgb(16 24 40 / 0.04), 0 6px 16px -6px rgb(16 24 40 / 0.10);
-  --shadow-pop: 0 10px 30px -10px rgb(16 24 40 / 0.28), 0 2px 8px rgb(16 24 40 / 0.10);
-  --dur: 160ms;
-  --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
-}
+    --radius: 9px;
+    --radius-lg: 14px;
+    --shadow-panel:
+      0 1px 2px rgb(16 24 40 / 0.04), 0 6px 16px -6px rgb(16 24 40 / 0.1);
+    --shadow-pop:
+      0 10px 30px -10px rgb(16 24 40 / 0.28), 0 2px 8px rgb(16 24 40 / 0.1);
+    --dur: 160ms;
+    --ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+  }
 
-[data-theme="dark"] {
-  /* Dark newsprint — a subtly warm charcoal (r≥g≥b), echoing the light
+  [data-theme='dark'] {
+    /* Dark newsprint — a subtly warm charcoal (r≥g≥b), echoing the light
      theme's warmth instead of the old cool blue-gray. Clear step from the
      app background (canvas) to raised surfaces (panel) so cards/shell read
      by tone, not shadow (shadows barely register on dark). */
-  --c-canvas: 23 22 20;
-  --c-panel: 32 31 28;
-  --c-fg: 237 234 226;
-  --c-muted: 162 156 146;
-  --c-line: 46 44 40;
+    --c-canvas: 23 22 20;
+    --c-panel: 32 31 28;
+    --c-fg: 237 234 226;
+    --c-muted: 162 156 146;
+    --c-line: 46 44 40;
 
-  --c-chrome: 11 12 16;
-  --c-chrome-light: 24 26 32;
-  --c-chrome-rail: 8 9 12;
-  --c-chrome-border: 38 41 49;
-  --c-chrome-fg: 236 233 225;
+    --c-chrome: 11 12 16;
+    --c-chrome-light: 24 26 32;
+    --c-chrome-rail: 8 9 12;
+    --c-chrome-border: 38 41 49;
+    --c-chrome-fg: 236 233 225;
 
-  --c-accent: 110 152 255;
-  --c-accent-600: 130 168 255;
-  --c-accent-700: 150 182 255; /* light blue text on dark tints */
-  --c-accent-50: 30 41 70;
-  --c-accent-fg: 12 14 20;
+    --c-accent: 110 152 255;
+    --c-accent-600: 130 168 255;
+    --c-accent-700: 150 182 255; /* light blue text on dark tints */
+    --c-accent-50: 30 41 70;
+    --c-accent-fg: 12 14 20;
 
-  --c-brand: 232 100 92;
-  --c-published: 60 200 130;
-  --c-published-fg: 12 28 18;
-  --c-published-subtle: 24 46 35;
-  --c-draft: 216 162 84;
-  --c-draft-fg: 38 28 12;
-  --c-draft-subtle: 48 38 20;
-  --c-danger: 248 120 120;
-  --c-danger-fg: 40 16 16;
-  --c-danger-subtle: 52 28 28;
-  --c-ring: 110 152 255;
+    --c-brand: 232 100 92;
+    --c-published: 60 200 130;
+    --c-published-fg: 12 28 18;
+    --c-published-subtle: 24 46 35;
+    --c-draft: 216 162 84;
+    --c-draft-fg: 38 28 12;
+    --c-draft-subtle: 48 38 20;
+    --c-danger: 248 120 120;
+    --c-danger-fg: 40 16 16;
+    --c-danger-subtle: 52 28 28;
+    --c-ring: 110 152 255;
 
-  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.5);
-  --shadow-pop: 0 12px 34px -10px rgb(0 0 0 / 0.6), 0 2px 10px rgb(0 0 0 / 0.4);
-}
-
-html,
-body,
-#root {
-  height: 100%;
-  margin: 0;
-}
-
-body {
-  font-family: var(--font-ui);
-  background: rgb(var(--c-canvas));
-  color: rgb(var(--c-fg));
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  font-feature-settings: "cv05", "ss01";
-}
-
-/* Visible focus ring everywhere (WCAG 2.4.7). */
-:focus-visible {
-  outline: 2px solid rgb(var(--c-ring));
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
-  }
-}
-
-/* Tabular numerals for all data-dense numerics. */
-.tnum {
-  font-feature-settings: "tnum";
-  font-variant-numeric: tabular-nums;
-}
-
-/* Editorial masthead wordmark. */
-.masthead {
-  font-family: var(--font-display);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-}
-
-@layer components {
-  .btn {
-    @apply inline-flex select-none items-center justify-center gap-1.5 rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50;
-  }
-  .btn-primary {
-    @apply btn bg-accent text-accent-fg hover:bg-accent-600;
-  }
-  .btn-ghost {
-    @apply btn text-fg hover:bg-line/60;
-  }
-  .btn-subtle {
-    @apply btn border border-line bg-panel text-fg hover:bg-canvas;
-  }
-  .btn-danger {
-    /* text-danger-fg, NOT text-white: dark theme lightens --c-danger to
-       rgb(248 120 120), where white text is ~2.7:1 and fails WCAG 1.4.3.
-       The per-tone fg channel is the token that tracks the theme (badge.tsx
-       already pairs them this way). */
-    @apply btn bg-danger text-danger-fg hover:opacity-90;
-  }
-  .field-label {
-    @apply mb-1 block text-[13px] font-semibold text-fg;
-  }
-  .field-input {
-    @apply w-full rounded-[var(--radius)] border border-line bg-panel px-2.5 py-1.5 text-sm text-fg outline-none transition-colors placeholder:text-muted/70 focus:border-accent;
-  }
-  /* Newspaper column rule between panes. */
-  .col-rule {
-    @apply border-line;
+    --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.4), 0 1px 3px rgb(0 0 0 / 0.5);
+    --shadow-pop:
+      0 12px 34px -10px rgb(0 0 0 / 0.6), 0 2px 10px rgb(0 0 0 / 0.4);
   }
 
-  /* Editorial header system — a small "dateline" eyebrow over a serif title,
-     the newsroom voice carried consistently across every screen. */
-  .eyebrow {
-    @apply text-[11px] font-semibold uppercase tracking-[0.16em] text-muted;
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
   }
-  .page-title {
-    @apply font-display text-[1.75rem] font-semibold leading-[1.1] tracking-[-0.01em] text-fg;
+
+  body {
+    font-family: var(--font-ui);
+    background: rgb(var(--c-canvas));
+    color: rgb(var(--c-fg));
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: 'cv05', 'ss01';
   }
-  .section-title {
-    @apply font-display text-2xl font-semibold leading-tight tracking-[-0.01em] text-fg;
+
+  /* Visible focus ring everywhere (WCAG 2.4.7). */
+  :focus-visible {
+    outline: 2px solid rgb(var(--c-ring));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  /* Tabular numerals for all data-dense numerics. */
+  .tnum {
+    font-feature-settings: 'tnum';
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Editorial masthead wordmark. */
+  .masthead {
+    font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.01em;
   }
 }
 

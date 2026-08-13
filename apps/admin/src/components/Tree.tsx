@@ -500,7 +500,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
               );
               e.dataTransfer.effectAllowed = "copy";
             }}
-            className={`group flex cursor-pointer items-center gap-1 rounded-[var(--radius)] py-1.5 pr-1.5 text-sm transition-colors ${
+            className={`group flex cursor-pointer items-center gap-1 rounded-(--radius) py-1.5 pr-1.5 text-sm transition-colors ${
               overInside ? "bg-accent/15 ring-2 ring-inset ring-accent" : isSelected ? "bg-accent/15 font-medium text-fg" : "text-fg hover:bg-line/50"
             }`}
             style={{ paddingLeft: indent }}
@@ -552,7 +552,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
           </div>
         </Ctx.Trigger>
         <Ctx.Portal>
-          <Ctx.Content className="z-50 min-w-[180px] overflow-hidden rounded-[var(--radius-lg)] border border-line bg-panel p-1 shadow-pop">
+          <Ctx.Content className="z-50 min-w-[180px] overflow-hidden rounded-lg border border-line bg-panel p-1 shadow-pop">
             <CtxItem onSelect={() => onSelect(node.documentId)}>Open</CtxItem>
             {canCreate && node.kind === "page" && <CtxItem onSelect={() => onNewChild(node.documentId)}>New child page</CtxItem>}
             {canCreate && node.kind === "page" && <CtxItem onSelect={() => onMove(node.documentId, node.name)}>Move to…</CtxItem>}
@@ -628,10 +628,10 @@ function CtxItem({ children, onSelect, destructive }: { children: React.ReactNod
   return (
     <Ctx.Item
       onSelect={onSelect}
-      className={`cursor-pointer rounded-[var(--radius)] px-2.5 py-1.5 text-sm outline-none ${
+      className={`cursor-pointer rounded-(--radius) px-2.5 py-1.5 text-sm outline-hidden ${
         destructive
-          ? "text-danger data-[highlighted]:bg-danger/10"
-          : "text-fg data-[highlighted]:bg-accent/10 data-[highlighted]:text-accent-700"
+          ? "text-danger data-highlighted:bg-danger/10"
+          : "text-fg data-highlighted:bg-accent/10 data-highlighted:text-accent-700"
       }`}
     >
       {children}

@@ -324,7 +324,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
         className="w-[min(760px,94vw)]"
       >
         {mode === "edit" && usage && (
-          <div className="mb-3 flex items-center gap-2 rounded-[var(--radius)] border border-line bg-canvas px-3 py-2 text-xs text-fg">
+          <div className="mb-3 flex items-center gap-2 rounded-(--radius) border border-line bg-canvas px-3 py-2 text-xs text-fg">
             <Icon.Content width={14} height={14} className="shrink-0 text-muted" />
             <span>
               <strong>Usage:</strong>{" "}
@@ -341,7 +341,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
           </div>
         )}
         {mode === "edit" && (
-          <div className="mb-3 rounded-[var(--radius)] border border-draft/40 bg-draft/10 px-3 py-2 text-xs text-draft">
+          <div className="mb-3 rounded-(--radius) border border-draft/40 bg-draft/10 px-3 py-2 text-xs text-draft">
             Editing affects existing content: renaming or retyping a field orphans its stored value, and adding a
             <strong> required</strong> field will block re-publishing existing items until it’s filled. Name and kind are locked.
           </div>
@@ -382,7 +382,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
         </div>
 
         {kind === "page" && (
-          <p className="mb-2 rounded-[var(--radius)] border border-line bg-canvas px-3 py-2 text-xs text-muted">
+          <p className="mb-2 rounded-(--radius) border border-line bg-canvas px-3 py-2 text-xs text-muted">
             🔒 Every page automatically includes the reserved <strong>SEO</strong> group (meta title/description,
             canonical, noindex, Open Graph, Twitter) — managed by the system, not editable here.
           </p>
@@ -391,7 +391,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
         <div className="space-y-2">
           {fields.length === 0 && <p className="rounded border border-dashed border-line px-3 py-4 text-center text-sm text-muted">No fields yet.</p>}
           {fields.map((f) => (
-            <div key={f._key} className="rounded-[var(--radius)] border border-line bg-canvas/60 p-2.5">
+            <div key={f._key} className="rounded-(--radius) border border-line bg-canvas/60 p-2.5">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 <input className="field-input py-1 font-mono text-xs" placeholder="fieldName" value={f.name} onChange={(e) => patchField(f._key, { name: e.target.value })} aria-label="Field name" />
                 <input className="field-input py-1 text-xs" placeholder="Display name" value={f.displayName} onChange={(e) => patchField(f._key, { displayName: e.target.value })} aria-label="Field display name" />
@@ -449,7 +449,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
         </div>
 
         {kind === "page" && (
-          <div className="mt-4 rounded-[var(--radius)] border border-line bg-canvas/40 p-3">
+          <div className="mt-4 rounded-(--radius) border border-line bg-canvas/40 p-3">
             <h4 className="text-[13px] font-bold uppercase tracking-wide text-muted">SEO &amp; schema.org</h4>
             <p className="mb-3 mt-1 text-xs text-muted">
               Optional. Delivery builds the SEO / JSON-LD block automatically from field-name conventions — set these only to
@@ -493,7 +493,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
               )}
             </div>
             {unknownType && !aiSuggestions && (
-              <div className="mb-3 flex items-center gap-2 rounded-[var(--radius)] border border-line bg-panel/60 px-2.5 py-2 text-xs text-muted">
+              <div className="mb-3 flex items-center gap-2 rounded-(--radius) border border-line bg-panel/60 px-2.5 py-2 text-xs text-muted">
                 <span className="min-w-0 flex-1">“{schemaType.trim()}” isn’t in the built-in catalog — AI can propose the fields its rich result needs.</span>
                 {aiEnabled ? (
                   <button type="button" className="btn-subtle px-2 py-1 text-xs" disabled={suggest.isPending} onClick={() => suggest.mutate()}>
@@ -505,7 +505,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
               </div>
             )}
             {gaps && (
-              <div className="mb-3 rounded-[var(--radius)] border border-line bg-panel/60 p-2.5">
+              <div className="mb-3 rounded-(--radius) border border-line bg-panel/60 p-2.5">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-xs font-medium text-fg">
                     {catalogGaps ? `What ${schemaType.trim()} needs for its rich result` : `AI-suggested fields for ${schemaType.trim()} — review before adding`}

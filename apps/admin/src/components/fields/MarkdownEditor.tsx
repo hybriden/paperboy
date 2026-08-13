@@ -115,7 +115,7 @@ export function MarkdownEditor({
   const html = tab === "preview" ? DOMPurify.sanitize(marked.parse(value || "", { async: false }) as string) : "";
 
   return (
-    <div className="rounded-[var(--radius)] border border-line bg-panel">
+    <div className="rounded-(--radius) border border-line bg-panel">
       <div className="flex flex-wrap items-center gap-0.5 border-b border-line bg-panel px-1.5 py-1">
         <Btn label="B" title="Bold" disabled={disabled} onClick={() => wrap("**", "**", "bold")} bold />
         <Btn label="I" title="Italic" disabled={disabled} onClick={() => wrap("_", "_", "italic")} italic />
@@ -144,7 +144,7 @@ export function MarkdownEditor({
           id={id}
           ref={ref}
           aria-label="Markdown content"
-          className="block w-full resize-y bg-transparent px-3 py-2 font-mono text-[13px] leading-relaxed text-fg outline-none"
+          className="block w-full resize-y bg-transparent px-3 py-2 font-mono text-[13px] leading-relaxed text-fg outline-hidden"
           style={{ minHeight }}
           value={value}
           disabled={disabled}

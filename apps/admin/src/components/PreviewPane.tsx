@@ -373,7 +373,7 @@ export function PreviewPane({
           <>
             {/* Highlight ring over the element being edited. */}
             <div
-              className="pointer-events-none absolute z-10 rounded-sm ring-2 ring-accent"
+              className="pointer-events-none absolute z-10 rounded-xs ring-2 ring-accent"
               style={anchor.ring}
               aria-hidden
             />

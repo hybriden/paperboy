@@ -72,7 +72,7 @@ function AssetThumb({ asset, selected, onClick }: { asset: Asset; selected?: boo
       }}
       onClick={onClick}
       title={`${asset.filename}${asset.alt ? ` · ${asset.alt}` : ""} — pick, or drag onto an image field`}
-      className={`group relative aspect-square cursor-grab overflow-hidden rounded-[var(--radius)] border active:cursor-grabbing ${selected ? "border-accent ring-2 ring-accent" : "border-line hover:border-accent/50"}`}
+      className={`group relative aspect-square cursor-grab overflow-hidden rounded-(--radius) border active:cursor-grabbing ${selected ? "border-accent ring-2 ring-accent" : "border-line hover:border-accent/50"}`}
     >
       <img src={asset.url} alt={asset.alt} loading="lazy" className="h-full w-full bg-canvas object-cover" />
     </button>
@@ -294,7 +294,7 @@ function StockTab({ onPick, cols = "grid-cols-3" }: { onPick: (a: Asset) => void
           <figure key={r.id} className="min-w-0">
             <button
               type="button"
-              className="relative block aspect-square w-full overflow-hidden rounded-[var(--radius)] border border-line hover:border-accent/50 disabled:opacity-60"
+              className="relative block aspect-square w-full overflow-hidden rounded-(--radius) border border-line hover:border-accent/50 disabled:opacity-60"
               disabled={importing !== null}
               title={r.description || "Import this photo"}
               onClick={() => { setImporting(r.id); importPhoto.mutate(r); }}
@@ -372,12 +372,12 @@ export function ImageField({ id, value, disabled, onChange }: { id: string; valu
   return (
     <div
       id={id}
-      className={`flex items-center gap-3 rounded-[var(--radius)] ${dropOver ? "ring-2 ring-accent ring-offset-2" : ""}`}
+      className={`flex items-center gap-3 rounded-(--radius) ${dropOver ? "ring-2 ring-accent ring-offset-2" : ""}`}
       onDragOver={(e) => { if (!disabled && (e.dataTransfer.types.includes("application/x-paperboy") || e.dataTransfer.types.includes("Files"))) { e.preventDefault(); setDropOver(true); } }}
       onDragLeave={() => setDropOver(false)}
       onDrop={disabled ? undefined : onDrop}
     >
-      <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-[var(--radius)] border border-line bg-canvas">
+      <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-(--radius) border border-line bg-canvas">
         {current ? <img src={current.url} alt={current.alt} className="h-full w-full object-cover" /> : <Icon.Image width={22} height={22} className="text-muted/60" />}
       </div>
       <div className="flex flex-col gap-1.5">

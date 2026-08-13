@@ -39,7 +39,7 @@ export function SiteSwitcher() {
           if (e.target.value === NEW_SITE) window.location.href = "/settings#site";
           else if (e.target.value !== active) switchTo(e.target.value);
         }}
-        className="max-w-[160px] truncate rounded-[var(--radius)] border border-line bg-canvas px-2 py-1.5 text-sm text-fg hover:bg-line/60 focus:outline-none"
+        className="max-w-[160px] truncate rounded-(--radius) border border-line bg-canvas px-2 py-1.5 text-sm text-fg hover:bg-line/60 focus:outline-hidden"
         aria-label="Active site"
       >
         {sites.map((s) => (

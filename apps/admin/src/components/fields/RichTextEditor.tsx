@@ -223,7 +223,7 @@ export default function RichTextEditor({
       attributes: {
         id,
         class:
-          "prose-paperboy min-h-[120px] rounded-b-[var(--radius)] border border-t-0 border-line bg-panel px-3 py-2.5 text-sm text-fg outline-none focus:border-accent",
+          "prose-paperboy min-h-[120px] rounded-b-(--radius) border border-t-0 border-line bg-panel px-3 py-2.5 text-sm text-fg outline-hidden focus:border-accent",
       },
       // Drop a media asset (dragged from the Assets pane) → insert an image
       // node at the drop position; an OS image FILE uploads through the normal
@@ -341,7 +341,7 @@ export default function RichTextEditor({
         : null,
   });
 
-  if (!editor) return <div className="h-[150px] animate-pulse rounded-[var(--radius)] bg-line/40" />;
+  if (!editor) return <div className="h-[150px] animate-pulse rounded-(--radius) bg-line/40" />;
 
   const setLink = () => {
     const prev = editor.getAttributes("link").href as string | undefined;
@@ -353,7 +353,7 @@ export default function RichTextEditor({
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-0.5 rounded-t-[var(--radius)] border border-line bg-panel px-1.5 py-1">
+      <div className="flex flex-wrap items-center gap-0.5 rounded-t-(--radius) border border-line bg-panel px-1.5 py-1">
         <Btn label="Bold" active={active?.bold} on={() => editor.chain().focus().toggleBold().run()}><Icon.Bold width={14} height={14} /></Btn>
         <Btn label="Italic" active={active?.italic} on={() => editor.chain().focus().toggleItalic().run()}><Icon.Italic width={14} height={14} /></Btn>
         <span className="mx-1 h-4 w-px bg-line" />

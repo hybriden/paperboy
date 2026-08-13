@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import {
   type AccessContext,
   type Database,
@@ -127,7 +126,7 @@ export const TOOLS: AgentTool[] = [
       name: z.string().optional(),
       slug: z.string().nullable().optional(),
       displayInNav: z.boolean().optional(),
-      data: z.record(z.unknown()).describe("Field values keyed by field name; see the field-format rules"),
+      data: z.record(z.string(), z.unknown()).describe("Field values keyed by field name; see the field-format rules"),
     }),
     run: async (a, d) =>
       updateContent(d.db, d.ctx, a.documentId as string, await resolveRequestedLocale(d.db, a.documentId as string, a.locale as string | undefined), {
@@ -209,7 +208,7 @@ interface MsgBlock {
 
 function toolSpecs(): Array<{ name: string; description: string; input_schema: unknown }> {
   return TOOLS.map((t) => {
-    const schema = zodToJsonSchema(t.schema, { $refStrategy: "none" }) as Record<string, unknown>;
+    const schema = z.toJSONSchema(t.schema, { io: "input" }) as Record<string, unknown>;
     delete schema.$schema;
     return { name: t.name, description: t.description, input_schema: schema };
   });

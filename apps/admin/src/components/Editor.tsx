@@ -10,7 +10,7 @@ import {
   SEO_FIELD_NAMES,
   type SessionUser,
 } from "@paperboy/shared";
-import { Panel, PanelGroup } from "react-resizable-panels";
+import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { postCaret } from "../lib/caret.js";
@@ -85,6 +85,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const [showSchedule, setShowSchedule] = useState(false);
   const [showBrief, setShowBrief] = useState(false);
   const [hideTranslateOffer, setHideTranslateOffer] = useState(false);
+  // Persisted form/preview split (was PanelGroup autoSaveId pre-v4).
+  const splitLayout = useDefaultLayout({ id: `paperboy-editor-split-${widePreview ? "w" : "n"}` });
   const detail = useQuery({
     queryKey: ["content", documentId, locale],
     queryFn: ({ signal }) => api.get(documentId, locale, signal),
@@ -1285,17 +1287,17 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           return <div className="min-h-0 flex-1 border-l border-line bg-panel">{previewPaneEl}</div>;
         }
         return (
-          <PanelGroup direction="horizontal" autoSaveId={`paperboy-editor-split-${widePreview ? "w" : "n"}`} className="flex min-h-0 flex-1">
-            <Panel id="form" order={1} defaultSize={widePreview ? 32 : 42} minSize={24} className="min-w-0">
+          <Group orientation="horizontal" defaultLayout={splitLayout.defaultLayout} onLayoutChanged={splitLayout.onLayoutChanged} className="flex min-h-0 flex-1">
+            <Panel id="form" defaultSize={widePreview ? "32" : "42"} minSize="24" className="min-w-0">
               {formSection}
             </Panel>
             {previewOpen && <ResizeHandle />}
             {previewOpen && (
-              <Panel id="preview" order={2} defaultSize={widePreview ? 68 : 58} minSize={20} className="min-w-0 border-l border-line bg-panel">
+              <Panel id="preview" defaultSize={widePreview ? "68" : "58"} minSize="20" className="min-w-0 border-l border-line bg-panel">
                 {previewPaneEl}
               </Panel>
             )}
-          </PanelGroup>
+          </Group>
         );
       })()}
 
@@ -1699,7 +1701,7 @@ function CompareView({
               {!f.changed && <span className="rounded bg-line px-1 text-[10px] normal-case text-muted">unchanged</span>}
             </div>
             {f.changed ? (
-              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-fg">
+              <p className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-fg">
                 {wordDiff(f.aText, f.bText).map((s, i) =>
                   s.t === "eq" ? (
                     <span key={i}>{s.s}</span>
@@ -1712,7 +1714,7 @@ function CompareView({
                 {f.aText === "" && f.bText === "" && <span className="text-muted">(structural change)</span>}
               </p>
             ) : (
-              <p className="whitespace-pre-wrap break-words text-sm text-muted">{f.bText || <span className="italic">empty</span>}</p>
+              <p className="whitespace-pre-wrap wrap-break-word text-sm text-muted">{f.bText || <span className="italic">empty</span>}</p>
             )}
           </div>
         ))}
