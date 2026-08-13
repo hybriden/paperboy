@@ -31,9 +31,13 @@ import { getAgentReviewRequired } from "./site.js";
 import { dispatchWebhooks } from "./webhooks.js";
 
 /** Postgres unique-constraint violation (SQLSTATE 23505) — used to turn a losing
- *  concurrent write into a self-teaching 409 instead of an opaque 500. */
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
+ *  concurrent write into a self-teaching 409 instead of an opaque 500.
+ *  drizzle-orm ≥0.44 wraps driver errors in DrizzleQueryError with the Postgres
+ *  error (carrying the SQLSTATE) as `cause`, so walk the cause chain too. */
+function isUniqueViolation(err: unknown, depth = 0): boolean {
+  if (typeof err !== "object" || err === null || depth > 5) return false;
+  if ((err as { code?: string }).code === "23505") return true;
+  return isUniqueViolation((err as { cause?: unknown }).cause, depth + 1);
 }
 
 /* ----------------------------- content types ----------------------------- */
