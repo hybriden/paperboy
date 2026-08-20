@@ -10,8 +10,11 @@ const PUBLIC_KEY = process.env.PAPERBOY_PUBLIC_KEY ?? "pk_live_seed_public_key_v
 export async function publicFileResponse(file: "robots.txt" | "sitemap.xml" | "llms.txt" | "security.txt"): Promise<Response> {
   const res = await fetch(`${API}/api/v1/delivery/${file}`, {
     headers: { authorization: `Bearer ${PUBLIC_KEY}` },
-    // Fresh enough for crawlers, cheap enough for the API.
-    next: { revalidate: 300 },
+    // Per-request, never cached at BUILD time: an ISR/static fetch here makes
+    // `next build` execute the route and dial the API, which isn't running in
+    // CI/Docker builds — the whole build failed on it. The response's own
+    // Cache-Control (below) keeps crawler traffic cheap instead.
+    cache: "no-store",
   });
   if (!res.ok) {
     // Unconfigured (e.g. no security contact set) → an honest 404 on this origin.
