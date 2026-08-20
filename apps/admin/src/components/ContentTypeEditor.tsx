@@ -27,6 +27,7 @@ interface DraftField {
   allowedTypes: string[];
   options: FieldOption[];
   multiple: boolean;
+  slugifyValues: boolean;
   validation?: FieldValidation;
   helpText?: string;
   seoRole?: "title" | "description" | "image" | "datePublished" | "dateModified" | "author" | "keywords";
@@ -76,6 +77,7 @@ const newField = (): DraftField => ({
   allowedTypes: [],
   options: [],
   multiple: false,
+  slugifyValues: false,
 });
 
 /** Visual icon picker: trigger shows the current icon; the popover is a searchable
@@ -460,8 +462,10 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                 <OptionsEditor
                   options={f.options}
                   multiple={f.multiple}
+                  slugifyValues={f.slugifyValues}
                   onChange={(options) => patchField(f._key, { options })}
                   onMultiple={(multiple) => patchField(f._key, { multiple })}
+                  onSlugify={(slugifyValues) => patchField(f._key, { slugifyValues })}
                 />
               )}
               {(f.type === "text" || f.type === "number") && (
@@ -605,20 +609,32 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
 function OptionsEditor({
   options,
   multiple,
+  slugifyValues,
   onChange,
   onMultiple,
+  onSlugify,
 }: {
   options: FieldOption[];
   multiple: boolean;
+  slugifyValues: boolean;
   onChange: (o: FieldOption[]) => void;
   onMultiple: (m: boolean) => void;
+  onSlugify: (s: boolean) => void;
 }) {
   const patch = (i: number, p: Partial<FieldOption>) => onChange(options.map((o, j) => (j === i ? { ...o, ...p } : o)));
   return (
     <div className="mt-2 border-t border-line pt-2">
-      <div className="mb-1 flex items-center justify-between">
+      <div className="mb-1 flex items-center justify-between gap-3">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Options</span>
-        <Switch checked={multiple} onCheckedChange={onMultiple} label="Allow multiple" />
+        <span className="flex items-center gap-3">
+          {/* Tag-style fields: every write is normalized to a URL-safe slug
+              ("AI"/"Llama.CPP" → "ai"/"llama-cpp") so tag pages and sitemaps
+              can't fragment on casing or punctuation. */}
+          <span title="Normalize written values to URL-safe slugs (lowercase, hyphens) — for tag-style fields with a free value list.">
+            <Switch checked={slugifyValues} onCheckedChange={onSlugify} label="Slugify values (tags)" />
+          </span>
+          <Switch checked={multiple} onCheckedChange={onMultiple} label="Allow multiple" />
+        </span>
       </div>
       <div className="space-y-1">
         {options.map((o, i) => (
