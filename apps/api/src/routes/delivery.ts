@@ -6,12 +6,14 @@ import {
   deliveryGetBySlug,
   deliveryGlobal,
   deliveryList,
+  deliveryPages,
   deliverySearch,
   deliveryStartPage,
+  getSiteById,
   resolveDefaultLocale,
   verifyDeliveryKey,
 } from "@paperboy/db";
-import { DeliveryContent } from "@paperboy/shared";
+import { DeliveryContent, buildLlmsTxt, buildRobotsTxt, buildSecurityTxt, buildSitemapXml, parseSeoFilesConfig } from "@paperboy/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -275,6 +277,110 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       if (!global) return reply.code(404).send({ error: "not_found", message: "No such global" });
       setCacheHeaders(reply, perspective, global.cv);
       return global;
+    },
+  );
+
+  /* ------------------------------ public files ---------------------------- */
+  // The page inventory + the generated robots.txt / sitemap.xml / llms.txt /
+  // security.txt built on it. Served from delivery (key = site + perspective,
+  // like every read) so a frontend just PROXIES its own /robots.txt etc.
+  // through — content-driven, never stale on publish; apps/web is the
+  // reference. Config lives per site in Settings → Site.
+
+  const PublicPageOut = z.object({
+    documentId: z.string(),
+    type: z.string(),
+    name: z.string(),
+    locale: z.string(),
+    urlPath: z.string(),
+    lastmod: z.string(),
+    noIndex: z.boolean(),
+    description: z.string().optional(),
+  });
+  app.get(
+    "/pages",
+    {
+      config: { rateLimit: { max: 120, timeWindow: "1 minute" } },
+      schema: { tags: ["delivery"], response: { 200: z.object({ pages: z.array(PublicPageOut), cv: z.number() }) } },
+    },
+    async (req, reply) => {
+      const result = await deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
+      setCacheHeaders(reply, req.perspective!, result.cv);
+      return result;
+    },
+  );
+
+  /** Site row + parsed files config for the key's site. */
+  async function siteFiles(req: FastifyRequest) {
+    const s = await getSiteById(app.db, req.deliverySiteId!);
+    return { site: s, cfg: parseSeoFilesConfig(s?.seoFiles), base: s?.canonicalBaseUrl ?? null };
+  }
+  function textFileHeaders(reply: FastifyReply, perspective: Perspective, contentType: string): void {
+    reply.type(contentType);
+    reply.header("Cache-Control", perspective === "preview" ? "private, no-store" : "public, max-age=300, stale-while-revalidate=600");
+    reply.header("Vary", "Authorization, X-Api-Key");
+  }
+  const needsBase = (file: string) =>
+    new AppError(
+      409,
+      "not_configured",
+      `${file} needs absolute URLs — set the site's Canonical base URL (the public origin, e.g. https://www.example.com) in Settings → Site first.`,
+    );
+
+  app.get(
+    "/robots.txt",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } }, schema: { tags: ["delivery"] } },
+    async (req, reply) => {
+      const { cfg, base } = await siteFiles(req);
+      textFileHeaders(reply, req.perspective!, "text/plain; charset=utf-8");
+      return buildRobotsTxt({ canonicalBaseUrl: base, robotsExtra: cfg.robotsExtra });
+    },
+  );
+  app.get(
+    "/sitemap.xml",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } }, schema: { tags: ["delivery"] } },
+    async (req, reply) => {
+      const { base } = await siteFiles(req);
+      if (!base) throw needsBase("sitemap.xml");
+      const { pages } = await deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
+      textFileHeaders(reply, req.perspective!, "application/xml; charset=utf-8");
+      return buildSitemapXml(pages, base);
+    },
+  );
+  app.get(
+    "/llms.txt",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } }, schema: { tags: ["delivery"] } },
+    async (req, reply) => {
+      const { site, cfg, base } = await siteFiles(req);
+      textFileHeaders(reply, req.perspective!, "text/plain; charset=utf-8");
+      // A full editor override needs no base URL (it embeds its own links).
+      if (cfg.llmsOverride?.trim()) return buildLlmsTxt({ siteName: "", canonicalBaseUrl: "", defaultLocale: "", pages: [], override: cfg.llmsOverride });
+      if (!base) throw needsBase("llms.txt");
+      const { pages } = await deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
+      return buildLlmsTxt({
+        siteName: site?.name ?? "",
+        canonicalBaseUrl: base,
+        defaultLocale: site?.defaultLocale ?? "en",
+        pages,
+        summary: cfg.llmsSummary,
+      });
+    },
+  );
+  app.get(
+    "/security.txt",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } }, schema: { tags: ["delivery"] } },
+    async (req, reply) => {
+      const { cfg, base } = await siteFiles(req);
+      const body = buildSecurityTxt({ ...cfg, canonicalBaseUrl: base });
+      if (body === null) {
+        throw new AppError(
+          404,
+          "not_configured",
+          "security.txt is not configured — RFC 9116 requires a Contact. Set one (email or https: URL) in Settings → Site → Public files.",
+        );
+      }
+      textFileHeaders(reply, req.perspective!, "text/plain; charset=utf-8");
+      return body;
     },
   );
 }

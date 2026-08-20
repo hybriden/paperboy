@@ -26,6 +26,7 @@ import {
   setAiConfig,
   setStockConfig,
   setPreviewBaseUrl,
+  setSiteFilesConfig,
   setStartPage,
   listAudit,
   listDeliveryKeys,
@@ -109,7 +110,9 @@ import {
   Locale,
   RoleName,
   STOCK_PROVIDERS,
+  SeoFilesConfig,
   SetFolderRequest,
+  parseSeoFilesConfig,
   StockSearchResult,
   TYPE_TEMPLATE_EXPORT_FORMAT,
   TYPE_TEMPLATE_EXPORT_VERSION,
@@ -983,6 +986,39 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
+  // Public-files config (robots/sitemap/llms/security.txt) for the ACTIVE site.
+  // Per field: undefined = unchanged, null/"" = clear. The generated files are
+  // served by the delivery API and proxied by the frontend — see /delivery/*.txt.
+  app.post(
+    "/site/public-files",
+    {
+      preHandler: [requireCsrf, requirePermission("content.publish")],
+      schema: {
+        tags: ["manage"],
+        body: z.object({
+          canonicalBaseUrl: z.string().max(400).nullable().optional(),
+          robotsExtra: z.string().max(4000).nullable().optional(),
+          llmsSummary: z.string().max(2000).nullable().optional(),
+          llmsOverride: z.string().max(20000).nullable().optional(),
+          securityContact: z.string().max(300).nullable().optional(),
+          securityPolicyUrl: z.string().max(300).nullable().optional(),
+          securityLanguages: z.string().max(100).nullable().optional(),
+        }),
+        response: { 200: z.object({ ok: z.boolean() }) },
+      },
+    },
+    async (req) => {
+      await setSiteFilesConfig(app.db, req.accessCtx!, req.body);
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "site.public_files",
+        ip: req.ip,
+        detail: { fields: Object.keys(req.body).filter((k) => req.body[k as keyof typeof req.body] !== undefined) },
+      });
+      return { ok: true };
+    },
+  );
+
   /* ---------------------------- AI provider ------------------------------ */
   // Write-only AI provider config. The key is never returned — only whether one
   // is set, where it comes from (CMS DB vs env fallback), its last 4 chars,
@@ -1361,6 +1397,14 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     createdAt: z.string(),
     previewBaseUrl: z.string().nullable(),
     startPageId: z.string().nullable(),
+    canonicalBaseUrl: z.string().nullable(),
+    seoFiles: SeoFilesConfig,
+  });
+  type SiteRowDb = Awaited<ReturnType<typeof listSites>>[number];
+  const siteOut = (s: SiteRowDb): z.infer<typeof SiteOut> => ({
+    ...s,
+    createdAt: s.createdAt.toISOString(),
+    seoFiles: parseSeoFilesConfig(s.seoFiles),
   });
 
   // List all sites + which one is active for this request (the site switcher).
@@ -1370,7 +1414,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const sites = await listSites(app.db, req.accessCtx!);
       return {
-        sites: sites.map((s) => ({ ...s, createdAt: s.createdAt.toISOString() })),
+        sites: sites.map(siteOut),
         activeSiteId: req.accessCtx!.siteId,
       };
     },
@@ -1390,7 +1434,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const site = await createSite(app.db, req.accessCtx!, req.body);
       await audit(app.db, { actorUserId: req.user!.id, action: "site.create", ip: req.ip, detail: { id: site.id, slug: site.slug } });
-      return { ...site, createdAt: site.createdAt.toISOString() };
+      return siteOut(site);
     },
   );
 
@@ -1409,7 +1453,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const site = await renameSite(app.db, req.accessCtx!, req.params.id, req.body);
       await audit(app.db, { actorUserId: req.user!.id, action: "site.rename", ip: req.ip, detail: { id: site.id, name: site.name, slug: site.slug } });
-      return { ...site, createdAt: site.createdAt.toISOString() };
+      return siteOut(site);
     },
   );
 

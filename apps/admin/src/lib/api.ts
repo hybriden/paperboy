@@ -261,6 +261,8 @@ export const api = {
   previewToken: (signal?: AbortSignal) => request<{ token: string; expiresAt: number }>("GET", "/manage/preview-token", undefined, signal),
   setStartPage: (documentId: string | null, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }, undefined, siteOverride),
+  setPublicFiles: (body: Partial<Record<"canonicalBaseUrl" | keyof SeoFilesConfig, string | null>>, siteOverride?: string) =>
+    request<{ ok: boolean }>("POST", "/manage/site/public-files", body, undefined, siteOverride),
   setPreviewUrl: (url: string, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/preview-url", { url }, undefined, siteOverride),
   aiConfig: (signal?: AbortSignal) =>
@@ -488,6 +490,15 @@ export interface DashboardData {
   emptyTypesList: { name: string; displayName: string; kind: string }[];
 }
 
+export interface SeoFilesConfig {
+  robotsExtra?: string;
+  llmsSummary?: string;
+  llmsOverride?: string;
+  securityContact?: string;
+  securityPolicyUrl?: string;
+  securityLanguages?: string;
+}
+
 export interface SiteRow {
   id: string;
   slug: string;
@@ -497,6 +508,8 @@ export interface SiteRow {
   createdAt: string;
   previewBaseUrl: string | null;
   startPageId: string | null;
+  canonicalBaseUrl: string | null;
+  seoFiles: SeoFilesConfig;
 }
 
 export interface AgentEvent {

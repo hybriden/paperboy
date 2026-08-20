@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName } from "@paperboy/shared";
-import { ACTIVE_SITE_KEY, type AiProviderName, api, ApiError, type ManagedUser, type SiteRow } from "../../lib/api.js";
+import { ACTIVE_SITE_KEY, type AiProviderName, api, ApiError, type ManagedUser, type SeoFilesConfig, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
@@ -905,6 +905,16 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
  *  edited in place and persisted by a SINGLE Save button. Every write targets
  *  THIS site (per-call x-paperboy-site override), without changing the admin's
  *  working site. */
+/** The per-site public-files draft (robots/llms/security.txt config), "" = unset. */
+const filesOf = (s: SiteRow): Record<keyof SeoFilesConfig, string> => ({
+  robotsExtra: s.seoFiles.robotsExtra ?? "",
+  llmsSummary: s.seoFiles.llmsSummary ?? "",
+  llmsOverride: s.seoFiles.llmsOverride ?? "",
+  securityContact: s.seoFiles.securityContact ?? "",
+  securityPolicyUrl: s.seoFiles.securityPolicyUrl ?? "",
+  securityLanguages: s.seoFiles.securityLanguages ?? "",
+});
+
 function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean; canManage: boolean }) {
   const toast = useToast();
   const qc = useQueryClient();
@@ -912,11 +922,13 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
 
   // One editable draft per field, seeded from the site; resynced when the saved
   // site changes (keyed by the values we last persisted).
-  const saved = `${site.name}\u0000${site.slug}\u0000${site.previewBaseUrl ?? ""}\u0000${site.startPageId ?? ""}`;
+  const saved = `${site.name}\u0000${site.slug}\u0000${site.previewBaseUrl ?? ""}\u0000${site.startPageId ?? ""}\u0000${site.canonicalBaseUrl ?? ""}\u0000${JSON.stringify(site.seoFiles)}`;
   const [name, setName] = useState(site.name);
   const [slug, setSlug] = useState(site.slug);
   const [previewUrl, setPreviewUrl] = useState(site.previewBaseUrl ?? "");
   const [startPageId, setStartPageId] = useState(site.startPageId ?? "");
+  const [canonicalUrl, setCanonicalUrl] = useState(site.canonicalBaseUrl ?? "");
+  const [files, setFiles] = useState(() => filesOf(site));
   const lastSaved = useRef(saved);
   if (lastSaved.current !== saved) {
     // The site changed under us (after a save elsewhere) — resync the draft.
@@ -925,6 +937,8 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
     setSlug(site.slug);
     setPreviewUrl(site.previewBaseUrl ?? "");
     setStartPageId(site.startPageId ?? "");
+    setCanonicalUrl(site.canonicalBaseUrl ?? "");
+    setFiles(filesOf(site));
   }
 
   const pages = useQuery({ queryKey: ["pages", site.id], queryFn: ({ signal }) => api.pages(signal, site.id) });
@@ -933,8 +947,12 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
   const nameChanged = canManage && (name.trim() !== site.name || slug.trim() !== site.slug);
   const previewChanged = previewUrl.trim() !== (site.previewBaseUrl ?? "");
   const startChanged = (startPageId || null) !== (site.startPageId ?? null);
-  const dirty = nameChanged || previewChanged || startChanged;
+  const savedFiles = filesOf(site);
+  const canonicalChanged = canonicalUrl.trim() !== (site.canonicalBaseUrl ?? "");
+  const filesChanged = (Object.keys(files) as Array<keyof SeoFilesConfig>).filter((k) => files[k].trim() !== savedFiles[k]);
+  const dirty = nameChanged || previewChanged || startChanged || canonicalChanged || filesChanged.length > 0;
   const invalid = canManage && (!name.trim() || !slugValid);
+  const setFile = (k: keyof SeoFilesConfig, v: string) => setFiles((p) => ({ ...p, [k]: v }));
 
   const save = useMutation({
     mutationFn: async () => {
@@ -942,6 +960,12 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
       if (nameChanged) await api.renameSite(site.id, { name: name.trim(), slug: slug.trim() });
       if (previewChanged) await api.setPreviewUrl(previewUrl.trim(), site.id);
       if (startChanged) await api.setStartPage(startPageId || null, site.id);
+      if (canonicalChanged || filesChanged.length) {
+        const patch: Partial<Record<"canonicalBaseUrl" | keyof SeoFilesConfig, string | null>> = {};
+        if (canonicalChanged) patch.canonicalBaseUrl = canonicalUrl.trim() || null;
+        for (const k of filesChanged) patch[k] = (files[k] ?? "").trim() || null;
+        await api.setPublicFiles(patch, site.id);
+      }
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["sites"] });
@@ -989,6 +1013,62 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
           Preview opens <code>{(previewUrl || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Empty = fall back to the admin host on :8092.
         </span>
       </label>
+
+      {/* canonical public origin */}
+      <label className="text-sm">
+        <span className="field-label">Canonical base URL</span>
+        <input aria-label="Canonical base URL" className="field-input" type="url" inputMode="url" placeholder="https://www.example.com" value={canonicalUrl} onChange={(e) => setCanonicalUrl(e.target.value)} />
+        <span className="mt-1 block text-xs text-muted">
+          The PUBLIC origin — absolute URLs in the generated sitemap.xml, robots.txt and llms.txt are built against it
+          (the preview URL may point at staging).
+        </span>
+      </label>
+
+      {/* generated public files (robots/sitemap/llms/security.txt) */}
+      <details className="rounded-(--radius) border border-line bg-panel/40">
+        <summary className="cursor-pointer px-3 py-2 text-sm font-medium text-fg">
+          Public files <span className="text-xs font-normal text-muted">robots.txt · sitemap.xml · llms.txt · security.txt</span>
+        </summary>
+        <div className="flex flex-col gap-3 border-t border-line p-3">
+          <p className="text-xs text-muted">
+            Generated from published content + these settings, served by the Delivery API
+            (<code>/api/v1/delivery/robots.txt</code> etc.) — the frontend proxies each path through its own origin, so
+            they never go stale on publish. <code>apps/web</code> is the reference.
+          </p>
+          <label className="text-sm">
+            <span className="field-label">robots.txt extras</span>
+            <textarea aria-label="robots.txt extras" className="field-input font-mono text-xs" rows={3} placeholder={"User-agent: GPTBot\nAllow: /"} value={files.robotsExtra} onChange={(e) => setFile("robotsExtra", e.target.value)} />
+            <span className="mt-1 block text-xs text-muted">Appended verbatim after the default allow-all (e.g. AI-crawler rules). The sitemap pointer is added automatically.</span>
+          </label>
+          <label className="text-sm">
+            <span className="field-label">llms.txt summary</span>
+            <textarea aria-label="llms.txt summary" className="field-input text-xs" rows={2} placeholder="One-paragraph description of the site for AI assistants." value={files.llmsSummary} onChange={(e) => setFile("llmsSummary", e.target.value)} />
+            <span className="mt-1 block text-xs text-muted">The blockquote under the H1; the page list is generated from published pages (teaser/meta description as each page’s blurb).</span>
+          </label>
+          <label className="text-sm">
+            <span className="field-label">llms.txt override <span className="text-muted">(optional)</span></span>
+            <textarea aria-label="llms.txt override" className="field-input font-mono text-xs" rows={3} placeholder="# Site name…  (full markdown — replaces generation entirely)" value={files.llmsOverride} onChange={(e) => setFile("llmsOverride", e.target.value)} />
+          </label>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="grow text-sm" style={{ minWidth: 220 }}>
+              <span className="field-label">security.txt contact</span>
+              <input aria-label="security.txt contact" className="field-input" placeholder="security@example.com" value={files.securityContact} onChange={(e) => setFile("securityContact", e.target.value)} />
+            </label>
+            <label className="grow text-sm" style={{ minWidth: 220 }}>
+              <span className="field-label">Policy URL <span className="text-muted">(optional)</span></span>
+              <input aria-label="security.txt policy URL" className="field-input" type="url" inputMode="url" placeholder="https://example.com/security-policy" value={files.securityPolicyUrl} onChange={(e) => setFile("securityPolicyUrl", e.target.value)} />
+            </label>
+            <label className="text-sm" style={{ minWidth: 140 }}>
+              <span className="field-label">Languages <span className="text-muted">(optional)</span></span>
+              <input aria-label="security.txt preferred languages" className="field-input" placeholder="en, no" value={files.securityLanguages} onChange={(e) => setFile("securityLanguages", e.target.value)} />
+            </label>
+          </div>
+          <p className="text-xs text-muted">
+            security.txt (RFC 9116) is served only when a contact is set; Expires is kept fresh automatically (rolling
+            180 days) since the file is generated on request.
+          </p>
+        </div>
+      </details>
 
       {/* start page */}
       <label className="text-sm" style={{ maxWidth: 420 }}>
