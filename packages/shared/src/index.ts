@@ -1,6 +1,7 @@
 export * from "./content-types.js";
 export * from "./schema-catalog.js";
 export * from "./type-templates.js";
+export * from "./public-files.js";
 export * from "./api.js";
 export * from "./auth.js";
 export * from "./ai.js";

@@ -73,6 +73,12 @@ export const site = pgTable("site", {
   // at "/" for this site. NULL = unset (preview falls back; no start page).
   previewBaseUrl: text("preview_base_url"),
   startPageId: text("start_page_id"),
+  // Public-files setup (migration 0021): the PUBLIC origin absolute URLs are
+  // built against (sitemap/robots/llms) — distinct from previewBaseUrl, which
+  // may point at staging — plus the editor-controlled file config
+  // (SeoFilesConfig in @paperboy/shared).
+  canonicalBaseUrl: text("canonical_base_url"),
+  seoFiles: jsonb("seo_files").notNull().default({}),
 });
 
 export const contentItem = pgTable(

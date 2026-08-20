@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, type FieldDef, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, isCreativeWorkType, parseStoredContentTypeDef, scalarToString, sortByRule } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, type FieldDef, type PublicPageEntry, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, isCreativeWorkType, parseStoredContentTypeDef, scalarToString, sortByRule } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
 import type { Database } from "./client.js";
@@ -937,6 +937,78 @@ export async function deliveryList(
     if (resolved) out.push(resolved);
   }
   return { items: out, total };
+}
+
+/** llms.txt description candidates, most editorial first. Gated per type by
+ *  delivery visibility below — a type that marks e.g. `summary` private never
+ *  leaks it into the page inventory. (metaDescription is in the reserved SEO
+ *  group, always public on pages.) */
+const PAGE_DESCRIPTION_FIELDS = ["teaserText", "metaDescription", "summary", "intro"] as const;
+
+/**
+ * The public page inventory: every PAGE visible in this perspective, one row
+ * per genuine (page, locale) variant, with its urlPath — the primitive
+ * sitemap.xml / llms.txt / robots.txt generation builds on (and useful to any
+ * frontend building its own). Chokepoint rules apply unchanged: visibility and
+ * paths come from the same variantRow/urlPathOf walk as every delivery read
+ * (a draft ancestor hides the whole subtree in the published perspective),
+ * locale-FALLBACK variants are not listed (only real ones — no duplicate URLs),
+ * and the description honours per-type field visibility.
+ */
+export async function deliveryPages(
+  db: Database,
+  perspective: Perspective,
+  siteId: string,
+): Promise<{ pages: PublicPageEntry[]; cv: number }> {
+  const ctx = new DeliveryCtx(db, siteId);
+  const locales = await db.select({ code: locale.code }).from(locale).where(eq(locale.enabled, true)).orderBy(asc(locale.sortIndex));
+  const items = await db
+    .select({ documentId: contentItem.documentId, type: contentItem.type })
+    .from(contentItem)
+    .where(and(isNull(contentItem.deletedAt), eq(contentItem.siteId, siteId), eq(contentItem.kind, "page")))
+    .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
+  await ctx.primeVersions(items.map((i) => i.documentId), perspective);
+
+  const publicFieldsByType = new Map<string, Set<string>>();
+  const pages: PublicPageEntry[] = [];
+  let cv = 0;
+  for (const { code } of locales) {
+    for (const it of items) {
+      const variant = await variantRow(ctx, perspective, it.documentId, code);
+      // Genuine variants only: a locale served via FALLBACK would list the same
+      // page again under another locale prefix — a duplicate, not a translation.
+      if (!variant || variant.usedLocale !== code) continue;
+      const urlPath = await urlPathOf(ctx, perspective, it.documentId, code);
+      if (!urlPath) continue;
+      let pub = publicFieldsByType.get(it.type);
+      if (!pub) {
+        const def = await ctx.type(it.type);
+        pub = new Set(def ? def.fields.filter((f) => f.delivery === "public").map((f) => f.name) : []);
+        publicFieldsByType.set(it.type, pub);
+      }
+      const data = variant.row.data as Record<string, unknown>;
+      let description: string | undefined;
+      for (const key of PAGE_DESCRIPTION_FIELDS) {
+        const v = data[key];
+        if (pub.has(key) && typeof v === "string" && v.trim()) {
+          description = v.replace(/\s+/g, " ").trim().slice(0, 200);
+          break;
+        }
+      }
+      cv = Math.max(cv, variant.row.cv);
+      pages.push({
+        documentId: it.documentId,
+        type: it.type,
+        name: variant.row.name,
+        locale: code,
+        urlPath,
+        lastmod: variant.row.createdAt.toISOString(),
+        noIndex: data.noIndex === true,
+        ...(description ? { description } : {}),
+      });
+    }
+  }
+  return { pages, cv };
 }
 
 /**

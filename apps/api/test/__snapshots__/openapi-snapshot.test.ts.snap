@@ -278,6 +278,36 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "delivery",
     ],
   },
+  "GET /api/v1/delivery/llms.txt": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/delivery/pages": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "cv",
+      "pages",
+    ],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/delivery/robots.txt": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
   "GET /api/v1/delivery/search": {
     "requestBodyRequired": [],
     "requiredParams": [
@@ -287,6 +317,24 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "items",
       "total",
     ],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/delivery/security.txt": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
+  "GET /api/v1/delivery/sitemap.xml": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
     "summary": null,
     "tags": [
       "delivery",
@@ -910,11 +958,13 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     ],
     "response200Props": [
       "active",
+      "canonicalBaseUrl",
       "createdAt",
       "defaultLocale",
       "id",
       "name",
       "previewBaseUrl",
+      "seoFiles",
       "slug",
       "startPageId",
     ],
@@ -1554,6 +1604,17 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "POST /api/v1/manage/site/public-files": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "POST /api/v1/manage/site/start-page": {
     "requestBodyRequired": [
       "documentId",
@@ -1576,11 +1637,13 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "requiredParams": [],
     "response200Props": [
       "active",
+      "canonicalBaseUrl",
       "createdAt",
       "defaultLocale",
       "id",
       "name",
       "previewBaseUrl",
+      "seoFiles",
       "slug",
       "startPageId",
     ],

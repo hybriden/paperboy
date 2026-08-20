@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { type AiConfig, type AiProvider, DEFAULT_AI_MODELS, DEFAULT_OPENAI_BASE_URL } from "@paperboy/shared";
+import { type AiConfig, type AiProvider, DEFAULT_AI_MODELS, DEFAULT_OPENAI_BASE_URL, SeoFilesConfig, parseSeoFilesConfig } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, loadAuthorized, requirePermission } from "./scope.js";
@@ -60,6 +60,49 @@ export async function setPreviewBaseUrl(db: Database, ctx: AccessContext, url: s
     throw Errors.badRequest("Preview URL must be a full http(s):// URL");
   }
   await db.update(site).set({ previewBaseUrl: trimmed || null }).where(eq(site.id, ctx.siteId));
+}
+
+/**
+ * Per-site public-files config (Settings → Site): the canonical PUBLIC origin
+ * (absolute URLs in sitemap/robots/llms — distinct from the preview URL, which
+ * may point at staging) + the editor-controlled robots/llms/security.txt
+ * fields. Same permission as the preview URL (site chrome, content.publish).
+ * Per field: undefined = unchanged; null/"" = clear.
+ */
+export async function setSiteFilesConfig(
+  db: Database,
+  ctx: AccessContext,
+  input: { canonicalBaseUrl?: string | null } & { [K in keyof SeoFilesConfig]?: string | null },
+): Promise<void> {
+  requirePermission(ctx, "content.publish");
+  const rows = await db.select().from(site).where(eq(site.id, ctx.siteId)).limit(1);
+  if (!rows[0]) throw Errors.notFound("Site");
+  const patch: Partial<typeof site.$inferInsert> = {};
+  if (input.canonicalBaseUrl !== undefined) {
+    const url = input.canonicalBaseUrl?.trim().replace(/\/+$/, "") ?? "";
+    if (url && !/^https?:\/\/[^\s]+$/i.test(url)) {
+      throw Errors.badRequest('Canonical base URL must be a full http(s):// URL, e.g. "https://www.example.com"');
+    }
+    patch.canonicalBaseUrl = url || null;
+  }
+  const fileKeys = ["robotsExtra", "llmsSummary", "llmsOverride", "securityContact", "securityPolicyUrl", "securityLanguages"] as const;
+  if (fileKeys.some((k) => input[k] !== undefined)) {
+    const files: Record<string, string> = { ...parseSeoFilesConfig(rows[0].seoFiles) };
+    for (const k of fileKeys) {
+      const v = input[k];
+      if (v === undefined) continue;
+      const trimmed = v?.trim() ?? "";
+      if (trimmed) files[k] = trimmed;
+      else delete files[k];
+    }
+    if (files.securityContact && !files.securityContact.includes("@") && !/^(mailto:|https:)/i.test(files.securityContact)) {
+      throw Errors.badRequest(
+        'security.txt Contact must be an email, a mailto: URI or an https:// URL (RFC 9116). Example: "security@example.com"',
+      );
+    }
+    patch.seoFiles = SeoFilesConfig.parse(files); // max lengths enforced, self-teaching 422 on violation
+  }
+  if (Object.keys(patch).length) await db.update(site).set(patch).where(eq(site.id, ctx.siteId));
 }
 
 /** Read-only site config surface for the admin (the ACTIVE site's start page + preview URL). */
