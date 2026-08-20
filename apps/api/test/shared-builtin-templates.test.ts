@@ -21,7 +21,7 @@ describe("Built-in type-template library", () => {
       [
         "AccordionBlock", "AccordionItemBlock", "ArticleListPage", "ArticlePage", "BannerBlock",
         "FaqPage", "FaqTopicBlock", "FooterSettings", "HeaderSettings", "HeroBlock", "ImageBlock",
-        "LinkItemBlock", "LinkListBlock", "PageTeaserBlock", "PersonBlock", "PersonPage",
+        "LinkItemBlock", "LinkListBlock", "PersonBlock", "PersonPage",
         "QuestionBlock", "QuoteBlock", "SectionPage", "StartPage", "TeaserListBlock", "TextBlock",
         "VideoBlock",
       ].sort(),

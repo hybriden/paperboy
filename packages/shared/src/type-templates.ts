@@ -360,7 +360,7 @@ const RAW_TEMPLATES = [
     name: "TeaserListBlock",
     displayName: "Teaser list",
     kind: "block",
-    description: "Block that lists hand-picked pages with an optional heading and intro.",
+    description: "Block that lists hand-picked pages as teasers, with an optional heading and intro.",
     icon: "ph:cards",
     fields: [
       { name: "heading", displayName: "Heading", type: "text", localized: true, delivery: "public", helpText: "The heading should be short and descriptive." },
@@ -369,20 +369,13 @@ const RAW_TEMPLATES = [
         validation: { maxLength: 300 }, helpText: "Optional summary introduction of the teaser list.",
       },
       {
+        // Pages dropped into a content area are the platform's native teaser
+        // mechanism: each renders as a compact card from the page's Teaser
+        // fields (falling back to heading/intro/main image) linking to it.
         name: "teasers", displayName: "Teasers", type: "contentArea", localized: true, delivery: "public",
-        allowedBlocks: ["PageTeaserBlock"], helpText: "Add a page teaser for each page to promote.",
+        helpText: "Select or drag pages here (from the content tree) — each is shown as a teaser linking to that page.",
       },
       { name: "moreLink", displayName: "Link", type: "link", localized: true, delivery: "public", helpText: "Link to a page with more content related to the teaser list." },
-    ],
-  },
-  {
-    name: "PageTeaserBlock",
-    displayName: "Page teaser",
-    kind: "block",
-    description: "Promotes a single page, rendered from the page's teaser fields (or its heading, intro and main image).",
-    icon: "ph:file-text",
-    fields: [
-      { name: "page", displayName: "Page", type: "reference", required: true, delivery: "public", helpText: "The page to promote." },
     ],
   },
   {
