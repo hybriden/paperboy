@@ -4,8 +4,8 @@ import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import sharp from "sharp";
 import { z } from "zod";
-import { AI_TASKS, AiUnavailableError, aiAssist, aiImageAltText, aiTranslateBatch } from "@paperboy/shared";
-import { AppError, getAssetRow, getStoredAiKey, getStoredAiModel, resolveDefaultLocale } from "@paperboy/db";
+import { AI_RESULT_PROVIDERS, AI_TASKS, AiUnavailableError, aiAssist, aiImageAltText, aiTranslateBatch } from "@paperboy/shared";
+import { AppError, getAssetRow, resolveAiRuntimeConfig, resolveDefaultLocale } from "@paperboy/db";
 import { runContentAgent } from "../agent.js";
 import { requireAuth, requireCsrf, requirePermission } from "../security.js";
 
@@ -18,14 +18,11 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
   const app = appBase.withTypeProvider<ZodTypeProvider>();
   app.addHook("preHandler", requireAuth);
 
-  // Resolve the provider config at request time: a key/model set in the CMS
-  // (Settings → Site) overrides the ANTHROPIC_API_KEY/AI_MODEL env fallback, so
-  // it can be changed without restarting the api.
-  async function resolveAiConfig(): Promise<{ apiKey?: string; model: string }> {
-    const apiKey = (await getStoredAiKey(app.db)) ?? app.aiConfig.apiKey;
-    const model = (await getStoredAiModel(app.db)) ?? app.aiConfig.model;
-    return { apiKey, model };
-  }
+  // Resolve the provider config at request time: a config stored in the CMS
+  // (Settings → AI) overrides the env fallbacks, so it can be changed without
+  // restarting the api. Key/provider/baseUrl resolve as a UNIT — see
+  // resolveAiRuntimeConfig for the binding rules.
+  const resolveAiConfig = () => resolveAiRuntimeConfig(app.db, app.aiEnv);
 
   app.get(
     "/status",
@@ -48,7 +45,7 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
           context: z.string().max(4000).optional(),
         }),
         response: {
-          200: z.object({ result: z.string(), provider: z.enum(["anthropic", "fallback"]) }),
+          200: z.object({ result: z.string(), provider: z.enum(AI_RESULT_PROVIDERS) }),
           409: z.object({ error: z.string(), message: z.string() }),
         },
       },
@@ -75,7 +72,7 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
         tags: ["ai"],
         body: z.object({ documentId: z.string().min(1).max(64) }),
         response: {
-          200: z.object({ result: z.string(), provider: z.enum(["anthropic", "fallback"]) }),
+          200: z.object({ result: z.string(), provider: z.enum(AI_RESULT_PROVIDERS) }),
           400: z.object({ error: z.string(), message: z.string() }),
           404: z.object({ error: z.string(), message: z.string() }),
           409: z.object({ error: z.string(), message: z.string() }),
@@ -130,7 +127,7 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
             message: "Total text to translate exceeds 200000 characters — split into smaller batches",
             path: ["texts"],
           }),
-        response: { 200: z.object({ results: z.array(z.string()), provider: z.enum(["anthropic", "fallback"]) }) },
+        response: { 200: z.object({ results: z.array(z.string()), provider: z.enum(AI_RESULT_PROVIDERS) }) },
       },
     },
     async (req) => aiTranslateBatch(req.body.texts, req.body.targetLocale, await resolveAiConfig()),
@@ -144,7 +141,9 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
     "/agent",
     {
       preHandler: [requireCsrf, requirePermission("content.create")],
-      config: { rateLimit: { max: 5, timeWindow: "5 minutes" } },
+      // Same test-mode lift as the global limiter/loginRateMax: the suite runs
+      // several scripted agent conversations from one IP inside the window.
+      config: { rateLimit: { max: process.env.NODE_ENV === "test" ? 100_000 : 5, timeWindow: "5 minutes" } },
       schema: {
         tags: ["ai"],
         body: z.object({

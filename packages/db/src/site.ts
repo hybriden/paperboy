@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { type AiConfig, type AiProvider, DEFAULT_AI_MODELS, DEFAULT_OPENAI_BASE_URL } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, loadAuthorized, requirePermission } from "./scope.js";
@@ -14,6 +15,8 @@ import { decryptSecret, encryptSecret } from "./totp.js";
 
 const AI_API_KEY = "aiApiKey";
 const AI_MODEL_KEY = "aiModel";
+const AI_PROVIDER_KEY = "aiProvider";
+const AI_BASE_URL_KEY = "aiBaseUrl";
 
 async function getSetting<T>(db: Database, key: string): Promise<T | null> {
   const rows = await db.select().from(siteSetting).where(eq(siteSetting.key, key)).limit(1);
@@ -91,43 +94,65 @@ export async function setAgentReviewRequired(db: Database, ctx: AccessContext, r
   await putSetting(db, AGENT_REVIEW_KEY, { required });
 }
 
-/* --------------------------------- AI key --------------------------------- */
+/* ------------------------------- AI provider ------------------------------- */
+
+/** The stored AI configuration, decrypted. `keyProvider` is the provider the key
+ *  was SAVED under — a key is bound to its provider (see resolveAiRuntimeConfig). */
+export interface StoredAiConfig {
+  provider: AiProvider | null;
+  apiKey: string | null;
+  keyProvider: AiProvider | null;
+  model: string | null;
+  baseUrl: string | null;
+}
 
 /**
- * The AI provider key configured in the CMS, decrypted (or null if unset). AES-GCM
- * encrypted at rest — same scheme/key as TOTP secrets. Resolved at request time by
- * the AI route, which prefers this over the `ANTHROPIC_API_KEY` env fallback. A key
- * that can't be decrypted (e.g. SESSION_SECRET rotated) is treated as unset.
+ * The AI config stored in the CMS. The key is AES-GCM encrypted at rest — same
+ * scheme/key as TOTP secrets; a key that can't be decrypted (e.g. secret
+ * rotated) is treated as unset.
  */
-export async function getStoredAiKey(db: Database): Promise<string | null> {
-  const v = await getSetting<{ cipher: string }>(db, AI_API_KEY);
-  if (!v?.cipher) return null;
-  try {
-    return decryptSecret(v.cipher);
-  } catch {
-    return null;
+export async function getStoredAiConfig(db: Database): Promise<StoredAiConfig> {
+  const keyRow = await getSetting<{ cipher: string; provider?: AiProvider }>(db, AI_API_KEY);
+  let apiKey: string | null = null;
+  if (keyRow?.cipher) {
+    try {
+      apiKey = decryptSecret(keyRow.cipher);
+    } catch {
+      apiKey = null;
+    }
   }
-}
-
-/** The model override configured in the CMS (or null to fall back to env/default). */
-export async function getStoredAiModel(db: Database): Promise<string | null> {
-  const v = await getSetting<{ model: string }>(db, AI_MODEL_KEY);
-  return v?.model ?? null;
+  const provider = (await getSetting<{ provider: AiProvider }>(db, AI_PROVIDER_KEY))?.provider ?? null;
+  const model = (await getSetting<{ model: string }>(db, AI_MODEL_KEY))?.model ?? null;
+  const baseUrl = (await getSetting<{ url: string }>(db, AI_BASE_URL_KEY))?.url ?? null;
+  // Keys stored before providers existed are Anthropic keys by definition.
+  return { provider, apiKey, keyProvider: apiKey ? (keyRow?.provider ?? "anthropic") : null, model, baseUrl };
 }
 
 /**
- * Set or clear the AI provider key/model (Admin only). The key is encrypted at
- * rest. For each field: `undefined` leaves it unchanged; null/"" clears it.
+ * Set or clear the AI provider config (Admin only). For each field: `undefined`
+ * leaves it unchanged; null/"" clears it. The key is encrypted at rest and
+ * SAVED BOUND to the active provider; switching provider therefore CLEARS a
+ * key bound to the old one — a key must never be sent to a different vendor's
+ * endpoint than it was entered for (an admin-set baseUrl would otherwise be a
+ * key-exfiltration channel for the previous provider's key).
  */
 export async function setAiConfig(
   db: Database,
   ctx: AccessContext,
-  input: { apiKey?: string | null; model?: string | null },
+  input: { provider?: AiProvider; apiKey?: string | null; model?: string | null; baseUrl?: string | null },
 ): Promise<void> {
   requirePermission(ctx, "user.manage");
+  const stored = await getStoredAiConfig(db);
+  const provider = input.provider ?? stored.provider ?? "anthropic";
+  if (input.provider !== undefined) {
+    await putSetting(db, AI_PROVIDER_KEY, { provider: input.provider });
+    if (stored.apiKey && stored.keyProvider !== input.provider && input.apiKey === undefined) {
+      await db.delete(siteSetting).where(eq(siteSetting.key, AI_API_KEY));
+    }
+  }
   if (input.apiKey !== undefined) {
     const key = input.apiKey?.trim();
-    if (key) await putSetting(db, AI_API_KEY, { cipher: encryptSecret(key) });
+    if (key) await putSetting(db, AI_API_KEY, { cipher: encryptSecret(key), provider });
     else await db.delete(siteSetting).where(eq(siteSetting.key, AI_API_KEY));
   }
   if (input.model !== undefined) {
@@ -135,4 +160,71 @@ export async function setAiConfig(
     if (model) await putSetting(db, AI_MODEL_KEY, { model });
     else await db.delete(siteSetting).where(eq(siteSetting.key, AI_MODEL_KEY));
   }
+  if (input.baseUrl !== undefined) {
+    const url = input.baseUrl?.trim().replace(/\/+$/, "");
+    if (url && !/^https?:\/\/[^\s]+$/i.test(url)) {
+      throw Errors.badRequest('AI base URL must be a full http(s):// URL, e.g. "https://api.openai.com/v1" or "http://localhost:11434/v1"');
+    }
+    if (url) await putSetting(db, AI_BASE_URL_KEY, { url });
+    else await db.delete(siteSetting).where(eq(siteSetting.key, AI_BASE_URL_KEY));
+  }
+}
+
+/** The env-side AI settings (process.env shaped — both the API and the MCP server pass theirs). */
+export interface AiEnv {
+  AI_PROVIDER?: string;
+  ANTHROPIC_API_KEY?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
+  AI_MODEL?: string;
+}
+
+/** The resolved runtime config plus where the key came from (for the status UI). */
+export interface ResolvedAiConfig extends AiConfig {
+  source: "db" | "env" | "none";
+}
+
+/**
+ * Resolve the effective AI config — the ONE place the DB settings and the env
+ * fallbacks combine, shared by the API routes and the MCP server.
+ *
+ * Safety rule: key, provider and baseUrl resolve AS A UNIT from one source. A
+ * stored (DB) key wins, and is only used under the provider it was saved for;
+ * otherwise the env unit applies, where each vendor's env key is bound to its
+ * own provider (ANTHROPIC_API_KEY → anthropic, OPENAI_API_KEY → openai) and the
+ * base URL comes only from OPENAI_BASE_URL. Units never mix: a DB-set provider
+ * or baseUrl can never cause an env key to be sent somewhere its owner didn't
+ * configure. Only the model may cross sources (it is not a secret).
+ */
+export async function resolveAiRuntimeConfig(db: Database, env: AiEnv): Promise<ResolvedAiConfig> {
+  const stored = await getStoredAiConfig(db);
+  const envProvider: AiProvider | null =
+    env.AI_PROVIDER === "openai" || env.AI_PROVIDER === "anthropic"
+      ? env.AI_PROVIDER
+      : env.ANTHROPIC_API_KEY
+        ? "anthropic"
+        : env.OPENAI_API_KEY
+          ? "openai"
+          : null;
+
+  if (stored.apiKey && stored.keyProvider) {
+    const provider = stored.keyProvider;
+    return {
+      provider,
+      apiKey: stored.apiKey,
+      baseUrl: provider === "openai" ? (stored.baseUrl ?? DEFAULT_OPENAI_BASE_URL) : undefined,
+      // "" counts as unset (compose passes AI_MODEL through even when empty).
+      model: stored.model || env.AI_MODEL?.trim() || DEFAULT_AI_MODELS[provider],
+      source: "db",
+    };
+  }
+  const provider = stored.provider ?? envProvider ?? "anthropic";
+  const envKey = provider === "openai" ? env.OPENAI_API_KEY : env.ANTHROPIC_API_KEY;
+  return {
+    provider,
+    apiKey: envKey || undefined,
+    baseUrl: provider === "openai" ? (env.OPENAI_BASE_URL?.trim().replace(/\/+$/, "") || DEFAULT_OPENAI_BASE_URL) : undefined,
+    model: stored.model || env.AI_MODEL?.trim() || DEFAULT_AI_MODELS[provider],
+    source: envKey ? "env" : "none",
+  };
 }

@@ -23,7 +23,10 @@ describe("AI content agent (build from brief)", () => {
   });
   afterEach(() => {
     globalThis.fetch = realFetch;
-    s.app.aiConfig.apiKey = undefined;
+    s.app.aiEnv.ANTHROPIC_API_KEY = undefined;
+    s.app.aiEnv.OPENAI_API_KEY = undefined;
+    s.app.aiEnv.OPENAI_BASE_URL = undefined;
+    s.app.aiEnv.AI_PROVIDER = undefined;
   });
 
   const sse = (payload: string) =>
@@ -54,7 +57,7 @@ describe("AI content agent (build from brief)", () => {
   });
 
   it("runs a scripted loop: creates a draft via the real tools and streams events", async () => {
-    s.app.aiConfig.apiKey = "sk-test";
+    s.app.aiEnv.ANTHROPIC_API_KEY = "sk-test";
     // Scripted Anthropic: ① inspect types ② create a page ③ fill it ④ done.
     const turns = [
       { content: [{ type: "tool_use", id: "t1", name: "list_content_types", input: {} }], stop_reason: "tool_use" },
@@ -114,8 +117,64 @@ describe("AI content agent (build from brief)", () => {
     expect(got.json().data.heading).toBe("Agent Article");
   });
 
+  it("speaks the OpenAI tool_calls dialect: same loop, same tools, real drafts", async () => {
+    s.app.aiEnv.AI_PROVIDER = "openai";
+    s.app.aiEnv.OPENAI_API_KEY = "sk-oai-agent";
+    s.app.aiEnv.OPENAI_BASE_URL = "https://llm.agent-test/v1";
+    // Scripted OpenAI: ① create a page ② a tool call with BROKEN JSON arguments
+    // (self-teaching error result, loop continues) ③ done.
+    const turns = [
+      {
+        choices: [{ message: { content: "Creating the article.", tool_calls: [{ id: "c1", type: "function", function: { name: "create_content", arguments: JSON.stringify({ type: "ArticlePage", parentId: null, locale: "en", name: "OpenAI Article" }) } }] } }],
+      },
+      {
+        choices: [{ message: { content: null, tool_calls: [{ id: "c2", type: "function", function: { name: "update_content", arguments: "{ this is not json" } }] } }],
+      },
+      { choices: [{ message: { content: "Done — one draft (the field update needs a retry)." } }] },
+    ];
+    let call = 0;
+    const requests: Array<Record<string, unknown>> = [];
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (!(url instanceof Request ? url.url : String(url)).includes("llm.agent-test")) return realFetch(url as never, init as never);
+      requests.push(JSON.parse(typeof init?.body === "string" ? init.body : "{}") as Record<string, unknown>);
+      return new Response(JSON.stringify(turns[Math.min(call++, turns.length - 1)]), { status: 200, headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+
+    const res = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/ai/agent",
+      headers: authHeaders(ed),
+      payload: { brief: "Create one article page called OpenAI Article.", locale: "en" },
+    });
+    expect(res.statusCode).toBe(200);
+    const events = sse(res.payload);
+
+    // Dialect on the wire: function-typed tools, a system message, and — after
+    // the first tool ran — role:"tool" results tied to the call id.
+    const first = requests[0]! as { tools: Array<{ type: string; function?: { name: string } }>; messages: Array<{ role: string }> };
+    expect(first.tools.every((t) => t.type === "function")).toBe(true);
+    expect(first.tools.some((t) => t.function?.name === "create_content")).toBe(true);
+    expect(first.messages[0]!.role).toBe("system");
+    const second = requests[1]! as { messages: Array<{ role: string; tool_call_id?: string }> };
+    expect(second.messages.some((m) => m.role === "tool" && m.tool_call_id === "c1")).toBe(true);
+
+    // Loop behavior: the create succeeded, the broken-JSON call failed HONESTLY
+    // with a self-teaching message, and the run still completed.
+    const doneEvents = events.filter((e) => e.type === "tool_done");
+    expect(doneEvents.find((e) => e.name === "create_content")?.ok).toBe(true);
+    const broken = doneEvents.find((e) => e.name === "update_content");
+    expect(broken?.ok).toBe(false);
+    expect(broken?.text).toMatch(/not valid JSON/i);
+    const done = events.find((e) => e.type === "done");
+    expect(done?.created).toHaveLength(1);
+
+    const got = await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${done!.created![0]!.documentId}?locale=en`, headers: authHeaders(ed) });
+    expect(got.statusCode).toBe(200);
+    expect(got.json().name).toBe("OpenAI Article");
+  });
+
   it("sanitizes an unexpected (non-AppError) stream failure instead of leaking it (L2)", async () => {
-    s.app.aiConfig.apiKey = "sk-test";
+    s.app.aiEnv.ANTHROPIC_API_KEY = "sk-test";
     globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       if (!(url instanceof Request ? url.url : String(url)).includes("api.anthropic.com")) return realFetch(url as never, init as never);
       throw new Error("SENSITIVE-INTERNAL-DETAIL postgres://secret@host");
@@ -128,7 +187,7 @@ describe("AI content agent (build from brief)", () => {
   });
 
   it("has no publish tool: a scripted publish attempt fails without touching content", async () => {
-    s.app.aiConfig.apiKey = "sk-test";
+    s.app.aiEnv.ANTHROPIC_API_KEY = "sk-test";
     const turns = [
       { content: [{ type: "tool_use", id: "p1", name: "publish", input: { documentId: "whatever", locale: "en" } }], stop_reason: "tool_use" },
       { content: [{ type: "text", text: "Understood, cannot publish." }], stop_reason: "end_turn" },

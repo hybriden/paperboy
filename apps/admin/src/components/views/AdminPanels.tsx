@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName } from "@paperboy/shared";
-import { ACTIVE_SITE_KEY, api, ApiError, type ManagedUser, type SiteRow } from "../../lib/api.js";
+import { ACTIVE_SITE_KEY, type AiProviderName, api, ApiError, type ManagedUser, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
@@ -1079,19 +1079,29 @@ export function AiPanel() {
   const cfg = useQuery({ queryKey: ["ai-config"], queryFn: ({ signal }) => api.aiConfig(signal) });
   const [keyInput, setKeyInput] = useState("");
   const [model, setModel] = useState<string | null>(null);
+  const [provider, setProvider] = useState<AiProviderName | null>(null);
+  const [baseUrl, setBaseUrl] = useState<string | null>(null);
   const status = cfg.data;
-  const modelValue = model ?? status?.model ?? "";
+  const activeProvider: AiProviderName = provider ?? status?.provider ?? "anthropic";
+  const providerChanged = provider !== null && provider !== status?.provider;
+  const modelValue = model ?? (providerChanged ? "" : (status?.model ?? ""));
+  const baseUrlValue = baseUrl ?? (providerChanged ? "" : (status?.baseUrl ?? ""));
+  const PROVIDER_LABELS: Record<AiProviderName, string> = { anthropic: "Anthropic (Claude)", openai: "OpenAI-compatible" };
 
   const save = useMutation({
     mutationFn: () =>
       api.setAiConfig({
+        provider: provider ?? undefined, // untouched = unchanged
         apiKey: keyInput.trim() ? keyInput.trim() : undefined, // blank = keep current
-        model: model !== null ? model.trim() || null : undefined, // untouched = unchanged
+        model: model !== null ? model.trim() || null : undefined,
+        baseUrl: baseUrl !== null ? baseUrl.trim() || null : undefined,
       }),
     onSuccess: (s) => {
       qc.setQueryData(["ai-config"], s);
       setKeyInput("");
       setModel(null);
+      setProvider(null);
+      setBaseUrl(null);
       toast.success("AI settings saved", s.configured ? "The assistant is enabled." : "No key set — AI runs in basic mode.");
     },
     onError: (e) => toast.error("Couldn’t save", (e as Error).message),
@@ -1104,24 +1114,35 @@ export function AiPanel() {
     },
     onError: (e) => toast.error("Couldn’t clear", (e as Error).message),
   });
+  // A REAL model roundtrip through the saved config — key presence alone can't
+  // catch a wrong base URL or model name (the usual OpenAI-compatible misconfigs).
   const test = useMutation({
-    mutationFn: () => api.aiStatus(),
-    onSuccess: (s) =>
-      s.enabled
-        ? toast.success("AI is live", "A provider key is configured.")
-        : toast.error("AI is offline", "No key configured — add one above."),
+    mutationFn: () => api.aiTest(),
+    onSuccess: (r) =>
+      r.ok
+        ? toast.success("AI is live", `${PROVIDER_LABELS[r.provider]} answered using ${r.model}.`)
+        : toast.error("AI test failed", r.message ?? "Unknown error"),
     onError: (e) => toast.error("Couldn’t check", (e as Error).message),
   });
 
-  const statusText =
-    status?.source === "db"
-      ? `Key configured in the CMS (ending ••${status.last4})`
-      : status?.source === "env"
-        ? `Using the ANTHROPIC_API_KEY environment value (ending ••${status.last4})`
+  const endpointHost = (() => {
+    if (status?.provider !== "openai" || !status.baseUrl) return null;
+    try {
+      return new URL(status.baseUrl).host;
+    } catch {
+      return status.baseUrl;
+    }
+  })();
+  const statusText = !status
+    ? "…"
+    : status.source === "db"
+      ? `${PROVIDER_LABELS[status.provider]} key configured in the CMS (ending ••${status.last4}${endpointHost ? `, ${endpointHost}` : ""})`
+      : status.source === "env"
+        ? `Using the ${status.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} environment value (ending ••${status.last4}${endpointHost ? `, ${endpointHost}` : ""})`
         : "No key configured — the copy desk is offline (only basic SEO truncation works).";
 
   return (
-    <PanelShell title="AI provider" hint="Connect an Anthropic API key so the copy desk (SEO text, copy improvement, translation, image descriptions) uses Claude. The key is stored encrypted and never shown again; it overrides the server environment value.">
+    <PanelShell title="AI provider" hint="Connect Anthropic (Claude) or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, Mistral, a local Ollama/vLLM…) so the copy desk (SEO text, copy improvement, translation, image descriptions) uses a real model. The key is stored encrypted and never shown again; it overrides the server environment value.">
       <div className="space-y-4 p-4">
         <div className="flex items-center gap-2 text-sm">
           <span className={`h-2 w-2 rounded-full ${status?.configured ? "bg-published" : "bg-draft"}`} />
@@ -1132,29 +1153,71 @@ export function AiPanel() {
               items-end row makes that column taller and knocks every sibling
               (labels, inputs, buttons) out of line. */}
           <div className="flex flex-wrap items-end gap-3">
-            <label className="grow text-sm" style={{ minWidth: 320 }}>
-              <span className="field-label">Anthropic API key</span>
+            <label className="text-sm" style={{ minWidth: 190 }}>
+              <span className="field-label">Provider</span>
+              <select
+                className="field-input"
+                value={activeProvider}
+                onChange={(e) => { setProvider(e.target.value as AiProviderName); setModel(null); setBaseUrl(null); }}
+              >
+                <option value="anthropic">Anthropic (Claude)</option>
+                <option value="openai">OpenAI-compatible</option>
+              </select>
+            </label>
+            {activeProvider === "openai" && (
+              <label className="grow text-sm" style={{ minWidth: 260 }}>
+                <span className="field-label">Base URL</span>
+                <input
+                  aria-label="Base URL"
+                  className="field-input"
+                  inputMode="url"
+                  placeholder="https://api.openai.com/v1"
+                  value={baseUrlValue}
+                  onChange={(e) => setBaseUrl(e.target.value)}
+                />
+              </label>
+            )}
+            <label className="grow text-sm" style={{ minWidth: 280 }}>
+              <span className="field-label">API key</span>
               <input
-                aria-label="Anthropic API key"
+                aria-label="API key"
                 className="field-input"
                 type="password"
                 autoComplete="off"
-                placeholder={status?.configured ? "•••••••• (leave blank to keep)" : "sk-ant-…"}
+                placeholder={
+                  status?.configured && !providerChanged
+                    ? "•••••••• (leave blank to keep)"
+                    : activeProvider === "openai"
+                      ? "sk-…"
+                      : "sk-ant-…"
+                }
                 value={keyInput}
                 onChange={(e) => setKeyInput(e.target.value)}
               />
             </label>
-            <label className="text-sm" style={{ minWidth: 220 }}>
+            <label className="text-sm" style={{ minWidth: 200 }}>
               <span className="field-label">Model</span>
-              <input aria-label="Model" className="field-input" placeholder="claude-haiku-4-5-20251001" value={modelValue} onChange={(e) => setModel(e.target.value)} />
+              <input
+                aria-label="Model"
+                className="field-input"
+                placeholder={activeProvider === "openai" ? "gpt-4o-mini" : "claude-haiku-4-5-20251001"}
+                value={modelValue}
+                onChange={(e) => setModel(e.target.value)}
+              />
             </label>
             <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
-            <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>Test</button>
+            <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>{test.isPending ? "Testing…" : "Test"}</button>
             {status?.source === "db" && (
               <button type="button" className="btn-subtle" disabled={clearKey.isPending} onClick={() => clearKey.mutate()}>Clear key</button>
             )}
           </div>
-          <p className="text-xs text-muted">Stored encrypted at rest. Leave blank to keep the current key.</p>
+          <p className="text-xs text-muted">
+            {activeProvider === "openai"
+              ? "Any Chat Completions endpoint works — e.g. https://api.openai.com/v1, https://openrouter.ai/api/v1, or http://localhost:11434/v1 (Ollama). "
+              : ""}
+            Stored encrypted at rest. Leave the key blank to keep the current one; switching provider requires entering its key.
+            {" "}Test makes one tiny model call through the saved settings.
+          </p>
         </form>
       </div>
     </PanelShell>

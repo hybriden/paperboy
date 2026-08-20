@@ -73,9 +73,16 @@ services:
       # container directly can spoof its IP and defeat every per-IP limit. Set the
       # real boundary: "1" = exactly one trusted proxy in front.
       TRUST_PROXY: ${TRUST_PROXY:-1}
-      # AI assistant: passes through from the host if set; falls back to offline heuristics otherwise.
+      # AI assistant: Anthropic OR any OpenAI-compatible endpoint. Each key is
+      # bound to its own provider; AI_PROVIDER picks one when both are set. A
+      # config stored in the CMS (Settings → AI) overrides all of these. No key
+      # at all falls back to offline heuristics. AI_MODEL empty = the
+      # per-provider default.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      AI_MODEL: ${AI_MODEL:-claude-haiku-4-5-20251001}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      AI_MODEL: ${AI_MODEL:-}
       # Stock images: env fallback for the Unsplash key (a CMS-stored key wins).
       UNSPLASH_ACCESS_KEY: ${UNSPLASH_ACCESS_KEY:-}
       # Login brute-force limit per IP/min — raised by CI e2e runs only.
@@ -162,7 +169,10 @@ services:
       SESSION_SECRET: ${SESSION_SECRET:-prod-session-secret-please-override-32+chars}
       MFA_SECRET: ${MFA_SECRET:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      AI_MODEL: ${AI_MODEL:-claude-haiku-4-5-20251001}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      AI_MODEL: ${AI_MODEL:-}
       # Same as the api service: media URLs in MCP delivery reads (preview_content
       # etc.) absolutize against this; empty = relative (same-origin only).
       MEDIA_PUBLIC_BASE: ${MEDIA_PUBLIC_BASE:-}

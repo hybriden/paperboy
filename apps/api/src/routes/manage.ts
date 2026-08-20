@@ -17,8 +17,7 @@ import {
   dispatchWebhooks,
   getAgentReviewRequired,
   getSiteConfig,
-  getStoredAiKey,
-  getStoredAiModel,
+  resolveAiRuntimeConfig,
   getStoredStockConfig,
   markReviewed,
   setAgentReviewRequired,
@@ -95,8 +94,10 @@ import {
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  AI_PROVIDERS,
   Asset,
   BlockSummary,
+  aiAssist,
   ContentDetail,
   ChildSort,
   ContentTypeDef,
@@ -981,25 +982,27 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
-  /* ------------------------------- AI key ------------------------------- */
+  /* ---------------------------- AI provider ------------------------------ */
   // Write-only AI provider config. The key is never returned — only whether one
-  // is set, where it comes from (CMS DB vs env fallback), its last 4 chars, and
-  // the model. Admin-gated (user.manage).
+  // is set, where it comes from (CMS DB vs env fallback), its last 4 chars,
+  // plus the resolved provider/model/baseUrl. Admin-gated (user.manage).
   const AiConfigStatus = z.object({
     configured: z.boolean(),
     source: z.enum(["db", "env", "none"]),
+    provider: z.enum(AI_PROVIDERS),
     last4: z.string().nullable(),
     model: z.string().nullable(),
+    baseUrl: z.string().nullable(),
   });
   async function aiStatus(): Promise<z.infer<typeof AiConfigStatus>> {
-    const dbKey = await getStoredAiKey(app.db);
-    const key = dbKey ?? app.aiConfig.apiKey;
-    const dbModel = await getStoredAiModel(app.db);
+    const cfg = await resolveAiRuntimeConfig(app.db, app.aiEnv);
     return {
-      configured: Boolean(key),
-      source: dbKey ? "db" : app.aiConfig.apiKey ? "env" : "none",
-      last4: key ? key.slice(-4) : null,
-      model: dbModel ?? app.aiConfig.model ?? null,
+      configured: Boolean(cfg.apiKey),
+      source: cfg.source,
+      provider: cfg.provider ?? "anthropic",
+      last4: cfg.apiKey ? cfg.apiKey.slice(-4) : null,
+      model: cfg.model || null,
+      baseUrl: cfg.baseUrl ?? null,
     };
   }
   app.get(
@@ -1013,24 +1016,65 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       preHandler: [requireCsrf, requirePermission("user.manage")],
       schema: {
         tags: ["manage"],
-        body: z.object({ apiKey: z.string().max(400).nullable().optional(), model: z.string().max(120).nullable().optional() }),
+        body: z.object({
+          provider: z.enum(AI_PROVIDERS).optional(),
+          apiKey: z.string().max(400).nullable().optional(),
+          model: z.string().max(120).nullable().optional(),
+          baseUrl: z.string().max(400).nullable().optional(),
+        }),
         response: { 200: AiConfigStatus },
       },
     },
     async (req) => {
-      await setAiConfig(app.db, req.accessCtx!, { apiKey: req.body.apiKey, model: req.body.model });
+      await setAiConfig(app.db, req.accessCtx!, {
+        provider: req.body.provider,
+        apiKey: req.body.apiKey,
+        model: req.body.model,
+        baseUrl: req.body.baseUrl,
+      });
       await audit(app.db, {
         actorUserId: req.user!.id,
         action: "site.ai_config",
         ip: req.ip,
         // Never log the key itself — only what changed.
         detail: {
+          provider: req.body.provider ?? undefined,
           keySet: typeof req.body.apiKey === "string" && req.body.apiKey.trim().length > 0,
           keyCleared: req.body.apiKey === null || req.body.apiKey === "",
           model: req.body.model ?? undefined,
+          baseUrl: req.body.baseUrl ?? undefined,
         },
       });
       return aiStatus();
+    },
+  );
+  // A REAL end-to-end check: one tiny model call through the resolved config.
+  // "Key present" (GET /site/ai) can't catch a wrong baseUrl or a bad model
+  // name — the classic OpenAI-compatible misconfigs — so the panel's Test
+  // button uses this and shows the provider's own error message on failure.
+  app.post(
+    "/site/ai/test",
+    {
+      preHandler: [requireCsrf, requirePermission("user.manage")],
+      config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+      schema: {
+        tags: ["manage"],
+        response: { 200: z.object({ ok: z.boolean(), provider: z.enum(AI_PROVIDERS), model: z.string(), message: z.string().nullable() }) },
+      },
+    },
+    async () => {
+      const cfg = await resolveAiRuntimeConfig(app.db, app.aiEnv);
+      if (!cfg.apiKey) {
+        return { ok: false, provider: cfg.provider ?? "anthropic", model: cfg.model, message: "No API key configured — add one here or via the environment." };
+      }
+      try {
+        // A model-REQUIRING task: "summarize" would silently degrade to the
+        // offline fallback on provider failure and report a false ok.
+        await aiAssist({ task: "rewrite", input: "ping", instruction: "Reply with the single word: pong" }, cfg);
+        return { ok: true, provider: cfg.provider ?? "anthropic", model: cfg.model, message: null };
+      } catch (err) {
+        return { ok: false, provider: cfg.provider ?? "anthropic", model: cfg.model, message: (err as Error).message };
+      }
     },
   );
 

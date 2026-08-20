@@ -3,14 +3,16 @@ import { AiSchemaFieldSuggestions } from "./schema-catalog.js";
 /**
  * AI editorial assistant. Real editorial use-cases the editor needs help with:
  * SEO title/description generation, summarising, copy improvement, image alt
- * text, and translation. When ANTHROPIC_API_KEY is configured the API calls
- * Claude. Without a key, only the deterministic truncation tasks keep a
- * fallback (meta_title/meta_description/summarize — genuinely useful offline,
- * labeled provider:"fallback"); tasks that REQUIRE a model refuse with a
- * self-teaching AiUnavailableError instead of returning the input dressed up
- * as a result (rule #1: never garbage-in-success-out — the old "improve"
- * fallback returned the source with a capital letter as success, and an MCP
- * translate call with no key returned the untranslated source as success).
+ * text, and translation. Two providers, one seam: Anthropic (Messages API) or
+ * any OpenAI-compatible Chat Completions endpoint (OpenAI, OpenRouter, Groq,
+ * Mistral, Ollama, LM Studio, vLLM, LiteLLM…) — selected by AiConfig.provider.
+ * Without a key, only the deterministic truncation tasks keep a fallback
+ * (meta_title/meta_description/summarize — genuinely useful offline, labeled
+ * provider:"fallback"); tasks that REQUIRE a model refuse with a self-teaching
+ * AiUnavailableError instead of returning the input dressed up as a result
+ * (rule #1: never garbage-in-success-out — the old "improve" fallback returned
+ * the source with a capital letter as success, and an MCP translate call with
+ * no key returned the untranslated source as success).
  */
 
 export const AI_TASKS = ["meta_title", "meta_description", "summarize", "improve", "alt_text", "translate", "rewrite", "variants", "write", "schema_fields"] as const;
@@ -24,7 +26,8 @@ export class AiUnavailableError extends Error {
   constructor(detail?: string) {
     super(
       detail ??
-        "AI is not configured — this task needs a real model. Add an Anthropic API key in Settings → AI (or set ANTHROPIC_API_KEY).",
+        "AI is not configured — this task needs a real model. Add an API key in Settings → AI " +
+          "(Anthropic, or any OpenAI-compatible endpoint), or set ANTHROPIC_API_KEY / OPENAI_API_KEY.",
     );
     this.name = "AiUnavailableError";
   }
@@ -39,14 +42,180 @@ export interface AiRequest {
   /** Surrounding page context (name/intro/etc.) — informs tone and subject. */
   context?: string;
 }
+
+export const AI_PROVIDERS = ["anthropic", "openai"] as const;
+export type AiProvider = (typeof AI_PROVIDERS)[number];
+/** What AiResult.provider may carry (the wire enum: providers + offline fallback). */
+export const AI_RESULT_PROVIDERS = ["anthropic", "openai", "fallback"] as const;
+
 export interface AiResult {
   result: string;
-  provider: "anthropic" | "fallback";
+  provider: (typeof AI_RESULT_PROVIDERS)[number];
 }
 
-interface AiConfig {
+export const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+/** Model used when none is configured, per provider. */
+export const DEFAULT_AI_MODELS: Record<AiProvider, string> = {
+  anthropic: "claude-haiku-4-5-20251001",
+  openai: "gpt-4o-mini",
+};
+
+export interface AiConfig {
+  /** Which dialect the endpoint speaks. Default: "anthropic". */
+  provider?: AiProvider;
   apiKey?: string;
   model: string;
+  /** openai only: the endpoint base ("https://api.openai.com/v1", "http://localhost:11434/v1", …). */
+  baseUrl?: string;
+}
+
+const providerOf = (cfg: AiConfig): AiProvider => cfg.provider ?? "anthropic";
+
+/* --------------------------- provider chat seam --------------------------- */
+// ONE single-turn chat function, two dialects. Every model call in the product
+// (assist tasks, vision alt text, batch translate — and the content agent's
+// tool loop via the exported low-level posts) goes through these, so adding a
+// dialect is one place, not five.
+
+interface ChatRequest {
+  system: string;
+  user: string;
+  /** Optional vision input (the actual image bytes, base64). */
+  image?: { base64: string; mediaType: string };
+  maxTokens: number;
+  timeoutMs: number;
+}
+
+/** Trim a provider error body to something short and self-teaching. */
+function errExcerpt(body: string): string {
+  const flat = body.replace(/\s+/g, " ").trim();
+  return flat ? ` — ${flat.slice(0, 200)}` : "";
+}
+
+/**
+ * POST to the Anthropic Messages API. Exported for the content agent (tool
+ * loop), which builds its own payload but must share auth/timeout/error shape.
+ */
+export async function postAnthropicMessages(
+  cfg: AiConfig,
+  payload: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<Record<string, unknown>> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": cfg.apiKey!, "anthropic-version": "2023-06-01" },
+      body: JSON.stringify(payload),
+      signal: ac.signal,
+    });
+    if (!res.ok) throw new Error(`Anthropic ${res.status}${errExcerpt(await res.text().catch(() => ""))}`);
+    return (await res.json()) as Record<string, unknown>;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * POST to an OpenAI-compatible /chat/completions endpoint. Exported for the
+ * content agent. Newer OpenAI models reject `max_tokens` in favour of
+ * `max_completion_tokens`, while many compatible servers (Ollama, vLLM, older
+ * proxies) only accept the classic name — send the classic one and retry once
+ * with the new name when the endpoint says so, so both worlds work unconfigured.
+ */
+export async function postOpenAiChat(
+  cfg: AiConfig,
+  payload: Record<string, unknown>,
+  timeoutMs: number,
+): Promise<Record<string, unknown>> {
+  const base = (cfg.baseUrl?.trim() || DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, "");
+  const url = `${base}/chat/completions`;
+  const attempt = async (body: Record<string, unknown>): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; status: number; text: string }> => {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey!}` },
+        body: JSON.stringify(body),
+        signal: ac.signal,
+      });
+      if (!res.ok) return { ok: false, status: res.status, text: await res.text().catch(() => "") };
+      return { ok: true, data: (await res.json()) as Record<string, unknown> };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  const first = await attempt(payload);
+  if (first.ok) return first.data;
+  if (first.status === 400 && /max_tokens/.test(first.text) && "max_tokens" in payload) {
+    const { max_tokens, ...rest } = payload;
+    const second = await attempt({ ...rest, max_completion_tokens: max_tokens });
+    if (second.ok) return second.data;
+    throw new Error(`OpenAI-compatible ${second.status}${errExcerpt(second.text)}`);
+  }
+  throw new Error(`OpenAI-compatible ${first.status}${errExcerpt(first.text)}`);
+}
+
+/** Extract the text of an OpenAI chat response (string or content-part array). */
+export function openAiMessageText(data: Record<string, unknown>): string {
+  const choice = (data.choices as Array<{ message?: { content?: unknown } }> | undefined)?.[0];
+  const content = choice?.message?.content;
+  if (typeof content === "string") return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((p) => (p && typeof p === "object" && typeof (p as { text?: unknown }).text === "string" ? (p as { text: string }).text : ""))
+      .join("")
+      .trim();
+  }
+  return "";
+}
+
+function anthropicMessageText(data: Record<string, unknown>): string {
+  const content = (data.content ?? []) as Array<{ type: string; text?: string }>;
+  return content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
+}
+
+/** Single-turn chat against the configured provider; returns the reply text. */
+async function chat(cfg: AiConfig, req: ChatRequest): Promise<string> {
+  let text: string;
+  if (providerOf(cfg) === "openai") {
+    const content = req.image
+      ? [
+          { type: "image_url", image_url: { url: `data:${req.image.mediaType};base64,${req.image.base64}` } },
+          { type: "text", text: req.user },
+        ]
+      : req.user;
+    const data = await postOpenAiChat(
+      cfg,
+      {
+        model: cfg.model,
+        max_tokens: req.maxTokens,
+        messages: [
+          { role: "system", content: req.system },
+          { role: "user", content },
+        ],
+      },
+      req.timeoutMs,
+    );
+    text = openAiMessageText(data);
+  } else {
+    const content = req.image
+      ? [
+          { type: "image", source: { type: "base64", media_type: req.image.mediaType, data: req.image.base64 } },
+          { type: "text", text: req.user },
+        ]
+      : req.user;
+    const data = await postAnthropicMessages(
+      cfg,
+      { model: cfg.model, max_tokens: req.maxTokens, system: req.system, messages: [{ role: "user", content }] },
+      req.timeoutMs,
+    );
+    text = anthropicMessageText(data);
+  }
+  if (!text) throw new Error("Empty AI response");
+  return text;
 }
 
 const SYSTEM =
@@ -117,33 +286,8 @@ export function normalizeSchemaFields(raw: string): string {
   throw new Error("the model returned an unusable field-suggestion list");
 }
 
-async function callAnthropic(req: AiRequest, cfg: AiConfig): Promise<string> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 20_000);
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": cfg.apiKey!,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: cfg.model,
-        max_tokens: 1024,
-        system: SYSTEM,
-        messages: [{ role: "user", content: instruction(req) }],
-      }),
-      signal: ac.signal,
-    });
-    if (!res.ok) throw new Error(`Anthropic ${res.status}`);
-    const data = (await res.json()) as { content?: { type: string; text?: string }[] };
-    const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
-    if (!text) throw new Error("Empty AI response");
-    return text;
-  } finally {
-    clearTimeout(timer);
-  }
+async function callModel(req: AiRequest, cfg: AiConfig): Promise<string> {
+  return chat(cfg, { system: SYSTEM, user: instruction(req), maxTokens: 1024, timeoutMs: 20_000 });
 }
 
 /** Deterministic, offline-safe heuristics — ONLY for the truncation tasks.
@@ -210,10 +354,10 @@ export async function aiAssist(req: AiRequest, cfg: AiConfig): Promise<AiResult>
     return { result: fallback(req), provider: "fallback" };
   }
   try {
-    const result = await callAnthropic(req, cfg);
+    const result = await callModel(req, cfg);
     return {
       result: req.task === "variants" ? normalizeVariants(result) : req.task === "schema_fields" ? normalizeSchemaFields(result) : result,
-      provider: "anthropic",
+      provider: providerOf(cfg),
     };
   } catch (err) {
     // Truncation tasks degrade gracefully; model-requiring tasks must surface
@@ -248,40 +392,20 @@ export interface AiAltTextRequest {
  */
 export async function aiImageAltText(req: AiAltTextRequest, cfg: AiConfig): Promise<AiResult> {
   if (!cfg.apiKey) throw new AiUnavailableError();
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 30_000);
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": cfg.apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: cfg.model,
-        max_tokens: 256,
-        system: ALT_SYSTEM,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "image", source: { type: "base64", media_type: req.mediaType, data: req.imageBase64 } },
-              { type: "text", text: `Write alt text for this image.${req.filename ? ` (Filename, as a weak hint only: ${req.filename})` : ""}` },
-            ],
-          },
-        ],
-      }),
-      signal: ac.signal,
+    const text = await chat(cfg, {
+      system: ALT_SYSTEM,
+      user: `Write alt text for this image.${req.filename ? ` (Filename, as a weak hint only: ${req.filename})` : ""}`,
+      image: { base64: req.imageBase64, mediaType: req.mediaType },
+      maxTokens: 256,
+      timeoutMs: 30_000,
     });
-    if (!res.ok) throw new Error(`Anthropic ${res.status}`);
-    const data = (await res.json()) as { content?: { type: string; text?: string }[] };
-    const text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
-    if (!text) throw new Error("Empty AI response");
-    return { result: text.slice(0, 200), provider: "anthropic" };
+    return { result: text.slice(0, 200), provider: providerOf(cfg) };
   } catch (err) {
     if (err instanceof AiUnavailableError) throw err;
     throw new AiUnavailableError(
       `AI provider call failed (${err instanceof Error ? err.message : "unknown error"}) — try again, or check the key/model in Settings → AI.`,
     );
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -290,32 +414,13 @@ export async function aiImageAltText(req: AiAltTextRequest, cfg: AiConfig): Prom
 const TRANSLATE_SYSTEM =
   "You are a professional translator inside a headless CMS. Translate each input string into the requested language, preserving meaning, tone, and any Markdown/HTML formatting. Return ONLY a JSON array of the translated strings, in the same order and with the same length as the input — no preamble, no code fences.";
 
-async function callAnthropicTranslate(texts: string[], targetLocale: string, cfg: AiConfig): Promise<string[]> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), 30_000);
-  try {
-    const prompt = `Translate each string in this JSON array into ${targetLocale}. Return ONLY a JSON array of translations, same order and length.\n\n${JSON.stringify(texts)}`;
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": cfg.apiKey!, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({
-        model: cfg.model,
-        max_tokens: 8192,
-        system: TRANSLATE_SYSTEM,
-        messages: [{ role: "user", content: prompt }],
-      }),
-      signal: ac.signal,
-    });
-    if (!res.ok) throw new Error(`Anthropic ${res.status}`);
-    const data = (await res.json()) as { content?: { type: string; text?: string }[] };
-    let text = (data.content ?? []).filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
-    text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-    const arr = JSON.parse(text);
-    if (!Array.isArray(arr) || !arr.every((x) => typeof x === "string")) throw new Error("Bad translate response");
-    return arr as string[];
-  } finally {
-    clearTimeout(timer);
-  }
+async function callModelTranslate(texts: string[], targetLocale: string, cfg: AiConfig): Promise<string[]> {
+  const prompt = `Translate each string in this JSON array into ${targetLocale}. Return ONLY a JSON array of translations, same order and length.\n\n${JSON.stringify(texts)}`;
+  let text = await chat(cfg, { system: TRANSLATE_SYSTEM, user: prompt, maxTokens: 8192, timeoutMs: 30_000 });
+  text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  const arr = JSON.parse(text);
+  if (!Array.isArray(arr) || !arr.every((x) => typeof x === "string")) throw new Error("Bad translate response");
+  return arr as string[];
 }
 
 /**
@@ -328,12 +433,12 @@ export async function aiTranslateBatch(
   texts: string[],
   targetLocale: string,
   cfg: AiConfig,
-): Promise<{ results: string[]; provider: "anthropic" | "fallback" }> {
+): Promise<{ results: string[]; provider: AiResult["provider"] }> {
   if (!texts.length) return { results: [], provider: "fallback" };
   if (cfg.apiKey) {
     try {
-      const results = await callAnthropicTranslate(texts, targetLocale, cfg);
-      if (results.length === texts.length) return { results, provider: "anthropic" };
+      const results = await callModelTranslate(texts, targetLocale, cfg);
+      if (results.length === texts.length) return { results, provider: providerOf(cfg) };
     } catch {
       // fall through to copy-source fallback
     }

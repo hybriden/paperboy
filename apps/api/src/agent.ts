@@ -14,7 +14,14 @@ import {
   moveContent,
   updateContent,
 } from "@paperboy/db";
-import { aiTranslateBatch, scalarToString } from "@paperboy/shared";
+import {
+  type AiConfig,
+  aiTranslateBatch,
+  openAiMessageText,
+  postAnthropicMessages,
+  postOpenAiChat,
+  scalarToString,
+} from "@paperboy/shared";
 
 /**
  * The in-product content agent ("Build from brief"). A server-side tool-use
@@ -41,7 +48,7 @@ export interface AgentEvent {
 interface AgentDeps {
   db: Database;
   ctx: AccessContext;
-  cfg: { apiKey?: string; model: string };
+  cfg: AiConfig;
   emit: (ev: AgentEvent) => void;
 }
 
@@ -195,44 +202,101 @@ const MAX_TURNS = 16;
 const CALL_TIMEOUT_MS = 90_000;
 const DEADLINE_MS = 4 * 60_000;
 
-interface MsgBlock {
-  type: string;
-  text?: string;
-  id?: string;
-  name?: string;
-  input?: Record<string, unknown>;
-  tool_use_id?: string;
-  content?: string;
-  is_error?: boolean;
+/* ------------------------- provider-neutral loop I/O ----------------------- */
+// The loop thinks in a NEUTRAL transcript; each model call converts it to the
+// configured provider's dialect (Anthropic tool_use blocks vs OpenAI
+// tool_calls). One loop, two wire formats — adding a dialect never touches the
+// tool registry or the loop logic.
+
+interface NeutralToolCall {
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+  /** Set when the provider sent unparseable arguments — surfaced as a tool error. */
+  inputError?: string;
+}
+type NeutralTurn =
+  | { kind: "user"; text: string }
+  | { kind: "assistant"; text: string; toolCalls: NeutralToolCall[] }
+  | { kind: "toolResults"; results: Array<{ id: string; content: string; isError: boolean }> };
+
+interface ModelTurn {
+  text: string;
+  toolCalls: NeutralToolCall[];
 }
 
-function toolSpecs(): Array<{ name: string; description: string; input_schema: unknown }> {
-  return TOOLS.map((t) => {
-    const schema = z.toJSONSchema(t.schema, { io: "input" }) as Record<string, unknown>;
-    delete schema.$schema;
-    return { name: t.name, description: t.description, input_schema: schema };
+function toolJsonSchema(t: AgentTool): Record<string, unknown> {
+  const schema = z.toJSONSchema(t.schema, { io: "input" }) as Record<string, unknown>;
+  delete schema.$schema;
+  return schema;
+}
+
+async function callAnthropicModel(cfg: AiConfig, transcript: NeutralTurn[]): Promise<ModelTurn> {
+  type Block = { type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> };
+  const messages = transcript.map((t) => {
+    if (t.kind === "user") return { role: "user", content: t.text };
+    if (t.kind === "assistant") {
+      const blocks: unknown[] = [];
+      if (t.text) blocks.push({ type: "text", text: t.text });
+      for (const c of t.toolCalls) blocks.push({ type: "tool_use", id: c.id, name: c.name, input: c.input });
+      return { role: "assistant", content: blocks };
+    }
+    return {
+      role: "user",
+      content: t.results.map((r) => ({ type: "tool_result", tool_use_id: r.id, content: r.content, ...(r.isError ? { is_error: true } : {}) })),
+    };
   });
+  const tools = TOOLS.map((t) => ({ name: t.name, description: t.description, input_schema: toolJsonSchema(t) }));
+  const data = await postAnthropicMessages(cfg, { model: cfg.model, max_tokens: 8192, system: SYSTEM, tools, messages }, CALL_TIMEOUT_MS);
+  const content = (data.content ?? []) as Block[];
+  return {
+    text: content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n").trim(),
+    toolCalls: content
+      .filter((b) => b.type === "tool_use")
+      .map((b) => ({ id: b.id ?? "", name: b.name ?? "", input: (b.input ?? {}) as Record<string, unknown> })),
+  };
 }
 
-async function callAnthropic(
-  cfg: { apiKey?: string; model: string },
-  messages: Array<{ role: string; content: unknown }>,
-): Promise<{ content: MsgBlock[]; stop_reason: string }> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), CALL_TIMEOUT_MS);
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": cfg.apiKey!, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: cfg.model, max_tokens: 8192, system: SYSTEM, tools: toolSpecs(), messages }),
-      signal: ac.signal,
-    });
-    if (!res.ok) throw new Error(`Anthropic ${res.status}`);
-    return (await res.json()) as { content: MsgBlock[]; stop_reason: string };
-  } finally {
-    clearTimeout(timer);
+async function callOpenAiModel(cfg: AiConfig, transcript: NeutralTurn[]): Promise<ModelTurn> {
+  const messages: unknown[] = [{ role: "system", content: SYSTEM }];
+  for (const t of transcript) {
+    if (t.kind === "user") {
+      messages.push({ role: "user", content: t.text });
+    } else if (t.kind === "assistant") {
+      messages.push({
+        role: "assistant",
+        content: t.text || null,
+        ...(t.toolCalls.length
+          ? { tool_calls: t.toolCalls.map((c) => ({ id: c.id, type: "function", function: { name: c.name, arguments: JSON.stringify(c.input) } })) }
+          : {}),
+      });
+    } else {
+      // OpenAI has no error flag on tool messages — the "Error: …" content string carries it.
+      for (const r of t.results) messages.push({ role: "tool", tool_call_id: r.id, content: r.content });
+    }
   }
+  const tools = TOOLS.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: toolJsonSchema(t) } }));
+  const data = await postOpenAiChat(cfg, { model: cfg.model, max_tokens: 8192, messages, tools }, CALL_TIMEOUT_MS);
+  const message = (data.choices as Array<{ message?: { tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> } }> | undefined)?.[0]?.message;
+  const toolCalls: NeutralToolCall[] = (message?.tool_calls ?? []).map((c, i) => {
+    const raw = c.function?.arguments ?? "{}";
+    try {
+      const input = raw.trim() === "" ? {} : (JSON.parse(raw) as Record<string, unknown>);
+      return { id: c.id ?? `call_${i}`, name: c.function?.name ?? "", input };
+    } catch {
+      return {
+        id: c.id ?? `call_${i}`,
+        name: c.function?.name ?? "",
+        input: {},
+        inputError: `The tool arguments were not valid JSON. Send a single JSON object matching the tool's schema. Received: ${raw.slice(0, 300)}`,
+      };
+    }
+  });
+  return { text: openAiMessageText(data), toolCalls };
 }
+
+const callModel = (cfg: AiConfig, transcript: NeutralTurn[]): Promise<ModelTurn> =>
+  (cfg.provider ?? "anthropic") === "openai" ? callOpenAiModel(cfg, transcript) : callAnthropicModel(cfg, transcript);
 
 /** One-line human label for a tool call, shown in the activity stream. */
 function toolLabel(name: string, input: Record<string, unknown>): string {
@@ -277,47 +341,44 @@ export async function runContentAgent(
       ? `The editor launched this from the page with documentId ${opts.parentId} — use it as the DEFAULT parent for new pages, EXCEPT where placement rule 4 applies (a list-item type always goes under its ListPage instead).`
       : "Create new pages at the top level (parentId null) unless the brief says otherwise — EXCEPT where placement rule 4 applies (a list-item type always goes under its ListPage).");
 
-  const messages: Array<{ role: string; content: unknown }> = [{ role: "user", content: intro }];
+  const transcript: NeutralTurn[] = [{ kind: "user", text: intro }];
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     if (Date.now() > deadline) {
       emit({ type: "error", text: "Time budget exceeded — review the drafts created so far." });
       return;
     }
-    const resp = await callAnthropic(deps.cfg, messages);
+    const resp = await callModel(deps.cfg, transcript);
 
-    for (const block of resp.content) {
-      if (block.type === "text" && block.text?.trim()) emit({ type: "status", text: block.text.trim() });
-    }
-    const toolUses = resp.content.filter((b) => b.type === "tool_use");
-    if (resp.stop_reason !== "tool_use" || toolUses.length === 0) {
+    if (resp.text) emit({ type: "status", text: resp.text });
+    if (resp.toolCalls.length === 0) {
       emit({ type: "done", created, text: "Drafts ready for review." });
       return;
     }
 
-    messages.push({ role: "assistant", content: resp.content });
-    const results: MsgBlock[] = [];
-    for (const tu of toolUses) {
+    transcript.push({ kind: "assistant", text: resp.text, toolCalls: resp.toolCalls });
+    const results: Array<{ id: string; content: string; isError: boolean }> = [];
+    for (const tu of resp.toolCalls) {
       const tool = TOOLS.find((t) => t.name === tu.name);
-      const input = (tu.input ?? {}) as Record<string, unknown>;
-      emit({ type: "tool", name: tu.name, text: toolLabel(tu.name ?? "", input) });
+      emit({ type: "tool", name: tu.name, text: toolLabel(tu.name, tu.input) });
       try {
+        if (tu.inputError) throw new Error(tu.inputError);
         if (!tool) throw new Error(`Unknown tool: ${tu.name}`);
-        const args = tool.schema.parse(input);
+        const args = tool.schema.parse(tu.input);
         const result = await tool.run(args, deps);
         if (tu.name === "create_content" && result && typeof result === "object" && "documentId" in result) {
           const r = result as { documentId: string; name?: string; type?: string };
-          created.push({ documentId: r.documentId, name: r.name ?? scalarToString(input.name), type: r.type ?? scalarToString(input.type) });
+          created.push({ documentId: r.documentId, name: r.name ?? scalarToString(tu.input.name), type: r.type ?? scalarToString(tu.input.type) });
         }
         emit({ type: "tool_done", name: tu.name, ok: true });
-        results.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result ?? { ok: true }).slice(0, 16_000) });
+        results.push({ id: tu.id, content: JSON.stringify(result ?? { ok: true }).slice(0, 16_000), isError: false });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         emit({ type: "tool_done", name: tu.name, ok: false, text: msg });
-        results.push({ type: "tool_result", tool_use_id: tu.id, content: `Error: ${msg}`, is_error: true });
+        results.push({ id: tu.id, content: `Error: ${msg}`, isError: true });
       }
     }
-    messages.push({ role: "user", content: results });
+    transcript.push({ kind: "toolResults", results });
   }
   emit({ type: "error", text: "Step limit reached — review the drafts created so far.", created } as AgentEvent);
 }
