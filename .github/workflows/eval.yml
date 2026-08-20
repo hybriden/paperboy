@@ -23,6 +23,12 @@ on:
     - cron: "0 6 * * 1" # Mondays 06:00 UTC
   workflow_dispatch:
 
+# A scheduled run must never block or accumulate behind a newer one (e.g. a
+# hung real-model run holding the ref while Monday 06:00 fires again).
+concurrency:
+  group: eval-${{ github.ref }}
+  cancel-in-progress: true
+
 # Least privilege: the eval only reads the repo (it drives the MCP server, asserts
 # invariants); it never writes back. Don't inherit a write-capable default token.
 permissions:
@@ -37,6 +43,9 @@ jobs:
   eval:
     name: MCP outcome-invariant eval
     runs-on: ubuntu-latest
+    # The real-model driver is also paid — a hung scenario must not ride a
+    # runner (and an API session) out to GitHub's 360-minute default.
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -113,6 +122,8 @@ jobs:
 
       - name: Run the MCP eval (real model)
         if: steps.mode.outputs.run == 'true' && steps.mode.outputs.mode == 'real'
+        # A stuck scenario (model/API wedged) must fail, not hang.
+        timeout-minutes: 25
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: node evals/mcp-eval.mjs
