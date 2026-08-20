@@ -62,6 +62,8 @@ import {
   getContent,
   getContentType,
   getTypeTemplate,
+  exportTypeTemplates,
+  importTypeTemplates,
   findReferencingDocuments,
   getTree,
   getVersion,
@@ -107,7 +109,10 @@ import {
   STOCK_PROVIDERS,
   SetFolderRequest,
   StockSearchResult,
+  TYPE_TEMPLATE_EXPORT_FORMAT,
+  TYPE_TEMPLATE_EXPORT_VERSION,
   TreeNode,
+  TypeTemplateExport,
   UpdateContentRequest,
   UpdateFolderRequest,
   sniffUpload,
@@ -204,16 +209,89 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   const InstantiateTemplateBody = z.object({
     updateExisting: z.boolean().optional(),
     asName: z.string().max(60).optional(),
+    withBlocks: z.boolean().optional(),
   });
   const InstantiateTemplateResponse = z.object({
     type: ContentTypeDef,
     name: z.string(),
     action: z.enum(["created", "updated"]),
+    blocks: z
+      .object({ created: z.array(z.string()), existing: z.array(z.string()), missing: z.array(z.string()) })
+      .optional(),
+  });
+  // Accepts a full export document as-is (format/version/exportedAt are
+  // optional and checked, so a pasted export imports without editing).
+  const ImportTemplatesBody = z.object({
+    format: z.string().optional(),
+    version: z.number().optional(),
+    exportedAt: z.string().optional(),
+    templates: z.array(ContentTypeDef).min(1).max(200),
+    overwrite: z.boolean().optional(),
+  });
+  const ImportTemplatesResponse = z.object({
+    created: z.array(z.string()),
+    updated: z.array(z.string()),
+    skipped: z.array(z.object({ name: z.string(), reason: z.string() })),
   });
   app.get(
     "/type-templates",
     { schema: { tags: ["manage"], response: { 200: z.array(ContentTypeDef) } } },
     async () => listTypeTemplates(app.db),
+  );
+  // Static route — wins over /type-templates/:name (and "export" can never be
+  // a template name: names are PascalCase).
+  app.get(
+    "/type-templates/export",
+    {
+      schema: {
+        tags: ["manage"],
+        querystring: z.object({ names: z.string().optional() }),
+        response: { 200: TypeTemplateExport },
+      },
+    },
+    async (req) => {
+      const names = req.query.names
+        ?.split(",")
+        .map((n) => n.trim())
+        .filter(Boolean);
+      const templates = await exportTypeTemplates(app.db, names);
+      return {
+        format: TYPE_TEMPLATE_EXPORT_FORMAT,
+        version: TYPE_TEMPLATE_EXPORT_VERSION,
+        exportedAt: new Date().toISOString(),
+        templates,
+      };
+    },
+  );
+  app.post(
+    "/type-templates/import",
+    {
+      preHandler: [requireCsrf, requirePermission("contenttype.manage")],
+      schema: { tags: ["manage"], body: ImportTemplatesBody, response: { 200: ImportTemplatesResponse } },
+    },
+    async (req) => {
+      const { version, templates, overwrite } = req.body;
+      if (version !== undefined && version !== TYPE_TEMPLATE_EXPORT_VERSION) {
+        throw new AppError(
+          400,
+          "unsupported_export_version",
+          `Unsupported type-template export version ${version} — this instance imports version ${TYPE_TEMPLATE_EXPORT_VERSION}. Re-export from a matching Paperboy version.`,
+        );
+      }
+      const result = await importTypeTemplates(app.db, req.accessCtx!, templates, overwrite ?? false);
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "type_template.import",
+        ip: req.ip,
+        detail: {
+          created: result.created,
+          updated: result.updated,
+          skipped: result.skipped.map((s) => s.name),
+          overwrite: overwrite ?? false,
+        },
+      });
+      return result;
+    },
   );
   app.get(
     "/type-templates/:name",

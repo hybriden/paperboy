@@ -216,11 +216,23 @@ export const api = {
     request<ContentTypeDef>("PUT", `/manage/type-templates/${encodeURIComponent(name)}`, def),
   deleteTypeTemplate: (name: string) =>
     request<{ ok: boolean }>("DELETE", `/manage/type-templates/${encodeURIComponent(name)}`),
-  instantiateTypeTemplate: (name: string, opts?: { updateExisting?: boolean; asName?: string }) =>
-    request<{ type: ContentTypeDef; name: string; action: "created" | "updated" }>(
+  instantiateTypeTemplate: (name: string, opts?: { updateExisting?: boolean; asName?: string; withBlocks?: boolean }) =>
+    request<{
+      type: ContentTypeDef;
+      name: string;
+      action: "created" | "updated";
+      blocks?: { created: string[]; existing: string[]; missing: string[] };
+    }>("POST", `/manage/type-templates/${encodeURIComponent(name)}/instantiate`, opts ?? {}),
+  exportTypeTemplates: (names?: string[]) =>
+    request<{ format: string; version: number; exportedAt: string; templates: ContentTypeDef[] }>(
+      "GET",
+      `/manage/type-templates/export${names?.length ? `?names=${encodeURIComponent(names.join(","))}` : ""}`,
+    ),
+  importTypeTemplates: (body: { templates: unknown[]; overwrite?: boolean }) =>
+    request<{ created: string[]; updated: string[]; skipped: { name: string; reason: string }[] }>(
       "POST",
-      `/manage/type-templates/${encodeURIComponent(name)}/instantiate`,
-      opts ?? {},
+      "/manage/type-templates/import",
+      body,
     ),
   locales: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales", undefined, signal),
   localesAll: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales/all", undefined, signal),

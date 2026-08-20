@@ -251,6 +251,8 @@ test("Admin can create a content type from Settings; Editor cannot", async ({ pa
   // mid-click under CI load. Wait for the (static) panel heading first.
   await expect(page.getByRole("heading", { name: "Content types" }).first()).toBeVisible();
   await page.getByRole("button", { name: "New content type" }).click();
+  // The template gallery opens first — this test builds a type from scratch.
+  await page.getByRole("dialog").getByRole("button", { name: "Start blank" }).click();
   const unique = `Bulletin${Date.now().toString().slice(-5)}`;
   await page.getByLabel("Name (code)").fill(unique);
   await page.getByLabel("Display name", { exact: true }).fill("Bulletin");
@@ -411,6 +413,8 @@ test("content-type editor offers the new field types (datetime, select, link)", 
   // mid-click under CI load. Wait for the (static) panel heading first.
   await expect(page.getByRole("heading", { name: "Content types" }).first()).toBeVisible();
   await page.getByRole("button", { name: "New content type" }).click();
+  // The template gallery opens first — this test needs the blank editor.
+  await page.getByRole("dialog").getByRole("button", { name: "Start blank" }).click();
   const dlg = page.getByRole("dialog");
   await dlg.getByRole("button", { name: "Add field" }).click();
   const typeSelect = dlg.getByLabel("Field type").first();

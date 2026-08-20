@@ -9,7 +9,7 @@
 
 **Built for teams of humans *and* agents.** Every write path — admin UI, REST, MCP — goes through the same
 validation, permissions and audit trail; agents are first-class editors, not an integration afterthought
-(the MCP↔API parity is [test-enforced](apps/api/test/mcp-parity.test.ts)). See [docs/POSITIONING.md](docs/POSITIONING.md).
+(the MCP↔API parity is [test-enforced](apps/api/test/mcp-parity.test.ts)).
 
 A TypeScript monorepo: a Fastify Management + Delivery API, a React admin with visual
 on-page editing, a Next.js reference frontend, and a stdio MCP server — on PostgreSQL.
@@ -282,7 +282,6 @@ uploads tar so rows and media match.
 ## Docs
 - **`CLAUDE.md`** — how to develop & deploy safely (and how AI agents should work in the repo).
 - **`STACK.md`** — the stack and the reasoning behind each choice.
-- **`docs/POSITIONING.md`** — what Paperboy is for and who it's for.
 - **[`packages/client/README.md`](packages/client/README.md)** / **[`packages/preview/README.md`](packages/preview/README.md)** — the npm packages, in depth.
 
 ## License
