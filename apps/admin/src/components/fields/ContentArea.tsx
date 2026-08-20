@@ -37,11 +37,17 @@ interface Props {
   sharedBlocks: { documentId: string; name: string; type: string }[];
   /** Read-only (no content.update). Hides the palette and locks every control. */
   disabled?: boolean;
+  /** Nesting level (a contentArea field INSIDE an inline block renders another
+   *  ContentArea). Editing stops at MAX_AREA_DEPTH; the write chokepoint's own
+   *  depth cap is deeper, so nothing storable becomes uneditable in practice. */
+  depth?: number;
 }
 
 const DISPLAY_OPTIONS: BlockDisplayOption[] = ["automatic", "full", "wide", "narrow"];
+/** Deepest inline nesting the editor renders (page → block → … ). */
+const MAX_AREA_DEPTH = 4;
 
-export function ContentArea({ field, value, onChange, types, sharedBlocks, disabled = false }: Props) {
+export function ContentArea({ field, value, onChange, types, sharedBlocks, disabled = false, depth = 0 }: Props) {
   const blocks = value ?? [];
   const allowed = field.allowedBlocks.length
     ? types.filter((t) => field.allowedBlocks.includes(t.name))
@@ -263,6 +269,9 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
                   onRemove={() => removeBlock(b.key)}
                   onMove={(d) => move(b.key, d)}
                   disabled={disabled}
+                  types={types}
+                  sharedBlocks={sharedBlocks}
+                  depth={depth}
                 />
               ))}
             </ul>
@@ -343,6 +352,9 @@ function SortableBlock({
   onRemove,
   onMove,
   disabled = false,
+  types,
+  sharedBlocks,
+  depth,
 }: {
   block: BlockInstance;
   index: number;
@@ -352,6 +364,9 @@ function SortableBlock({
   onRemove: () => void;
   onMove: (d: -1 | 1) => void;
   disabled?: boolean;
+  types: ContentTypeDef[];
+  sharedBlocks: { documentId: string; name: string; type: string }[];
+  depth: number;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.key, disabled });
   const style = { transform: CSS.Transform.toString(transform), transition };
@@ -393,6 +408,9 @@ function SortableBlock({
           {type.fields.map((f) => (
             <BlockField key={f.name} field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
               disabled={disabled}
+              types={types}
+              sharedBlocks={sharedBlocks}
+              depth={depth}
               onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })} />
           ))}
         </div>
@@ -407,8 +425,45 @@ function SortableBlock({
   );
 }
 
-function BlockField({ field, fieldId, value, onChange, disabled = false }: { field: FieldDef; fieldId: string; value: unknown; onChange: (v: unknown) => void; disabled?: boolean }) {
+function BlockField({ field, fieldId, value, onChange, disabled = false, types, sharedBlocks, depth }: {
+  field: FieldDef;
+  fieldId: string;
+  value: unknown;
+  onChange: (v: unknown) => void;
+  disabled?: boolean;
+  types: ContentTypeDef[];
+  sharedBlocks: { documentId: string; name: string; type: string }[];
+  depth: number;
+}) {
   const id = fieldId;
+  // A contentArea INSIDE an inline block: recurse into a full nested area
+  // (repeatable structures — FAQ topics/questions, link lists, teaser lists —
+  // are modelled exactly this way). Without this branch the field rendered
+  // NOTHING here, so inline nested content was write-supported (coercion +
+  // delivery recurse) but uneditable by humans.
+  if (field.type === "contentArea") {
+    return (
+      <div>
+        <div className="field-label text-[12px]">{field.displayName}</div>
+        {field.helpText && <p className="mb-1 text-xs text-muted">{field.helpText}</p>}
+        {depth + 1 >= MAX_AREA_DEPTH ? (
+          <p className="rounded border border-dashed border-line px-2 py-1.5 text-xs text-muted">
+            Nested too deep to edit inline — add this as a shared block and edit it from the Assets pane.
+          </p>
+        ) : (
+          <ContentArea
+            field={field}
+            value={(value as BlockInstance[]) ?? []}
+            onChange={onChange}
+            types={types}
+            sharedBlocks={sharedBlocks}
+            disabled={disabled}
+            depth={depth + 1}
+          />
+        )}
+      </div>
+    );
+  }
   return (
     <div>
       <label className="field-label text-[12px]" htmlFor={id}>{field.displayName}</label>

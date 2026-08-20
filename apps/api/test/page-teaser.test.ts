@@ -102,6 +102,56 @@ describe("pages in content areas → teasers", () => {
     expect(res.json().data.mainArea).toHaveLength(0);
   });
 
+  it("nested: a page in an INLINE block's own content area delivers as a teaser (TeaserListBlock)", async () => {
+    // Dogfoods the built-in library: SectionPage hosts an inline TeaserListBlock
+    // whose `teasers` area references a page — the platform's teaser mechanism
+    // one level down. Coercion/delivery recurse into inline data, so the nested
+    // entry must resolve exactly like a top-level one.
+    const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    for (const name of ["SectionPage", "TeaserListBlock"]) {
+      const inst = await s.app.inject({ method: "POST", url: `/api/v1/manage/type-templates/${name}/instantiate`, headers: authHeaders(admin), payload: {} });
+      expect(inst.statusCode, inst.body).toBe(200);
+    }
+
+    // A fresh published page to tease (the earlier target got unpublished).
+    const t = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "LandingPage", locale: "en", name: "Nested Target" } });
+    const nestedTargetId = t.json().documentId as string;
+    await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${nestedTargetId}?locale=en`, headers: authHeaders(ed), payload: { name: "Nested Target", slug: "nested-target", data: { heading: "Nested Target" } } });
+    expect((await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${nestedTargetId}/publish?locale=en`, headers: authHeaders(ed) })).statusCode).toBe(200);
+
+    const h = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "SectionPage", locale: "en", name: "Nested Host" } });
+    const nestedHostId = h.json().documentId as string;
+    const upd = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${nestedHostId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: {
+        merge: true,
+        data: {
+          heading: "Nested Host",
+          mainArea: [{
+            key: "tl1", blockType: "TeaserListBlock", display: "automatic", ref: null,
+            inline: { heading: "Read more", teasers: [{ key: "t1", blockType: "LandingPage", display: "automatic", inline: null, ref: nestedTargetId }] },
+          }],
+        },
+      },
+    });
+    expect(upd.statusCode, upd.body).toBe(200);
+    expect((await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${nestedHostId}/publish?locale=en`, headers: authHeaders(ed) })).statusCode).toBe(200);
+
+    const res = await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${nestedHostId}?locale=en&populate=2`, headers: pub });
+    expect(res.statusCode).toBe(200);
+    const area = res.json().data.mainArea as Array<{ blockType: string; data: { teasers: Array<{ shared: boolean; content: { name: string; urlPath: string | null; kind: string } }> } }>;
+    expect(area).toHaveLength(1);
+    expect(area[0].blockType).toBe("TeaserListBlock");
+    const teasers = area[0].data.teasers;
+    expect(teasers).toHaveLength(1);
+    expect(teasers[0].shared).toBe(true);
+    expect(teasers[0].content.kind).toBe("page");
+    expect(teasers[0].content.name).toBe("Nested Target");
+    expect(teasers[0].content.urlPath).toBe("/nested-target");
+  });
+
   it("blocks are still constrained by allowedBlocks (exemption is pages only)", async () => {
     // QuoteBlock must actually EXIST for this to test allowedBlocks rather than the
     // unknown-type guard — it isn't seeded, so install it first. (Before this, the
