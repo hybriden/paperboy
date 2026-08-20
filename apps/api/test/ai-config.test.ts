@@ -146,4 +146,42 @@ describe("AI provider key — in-CMS config (encrypted, write-only, Admin-only)"
       await s.app.inject({ method: "POST", url: "/api/v1/manage/site/ai", headers: authHeaders(admin), payload: { provider: "anthropic", apiKey: null, model: null, baseUrl: null } });
     }
   });
+
+  it("GET /site/ai/models probes the endpoint's catalog through the saved config (searchable model picker)", async () => {
+    // Unconfigured → honest, self-teaching failure (no probe attempted).
+    const cold = await s.app.inject({ method: "GET", url: "/api/v1/manage/site/ai/models", headers: authHeaders(admin) });
+    expect(cold.json()).toMatchObject({ ok: false, models: [] });
+    expect(cold.json().message).toContain("No API key");
+
+    await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/site/ai",
+      headers: authHeaders(admin),
+      payload: { provider: "openai", apiKey: "sk-oai-models", baseUrl: "https://router.test/v1", model: "gpt-test" },
+    });
+    try {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [{ id: "meta/llama-3" }, { id: "anthropic/claude-x" }] }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const ok = await s.app.inject({ method: "GET", url: "/api/v1/manage/site/ai/models", headers: authHeaders(admin) });
+      expect(ok.json()).toMatchObject({ ok: true, provider: "openai", models: ["anthropic/claude-x", "meta/llama-3"] });
+      expect(fetchMock.mock.calls[0]![0]).toBe("https://router.test/v1/models");
+
+      // A proxy without /models is reported honestly, steering to manual entry.
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, text: async () => "not found" }));
+      const noRoute = await s.app.inject({ method: "GET", url: "/api/v1/manage/site/ai/models", headers: authHeaders(admin) });
+      expect(noRoute.json().ok).toBe(false);
+      expect(noRoute.json().message).toContain("manually");
+
+      // Admin-only, like every AI-config surface.
+      const ed = await login(s.app, "editor@paperboy.test", "Editor!Passw0rd");
+      const denied = await s.app.inject({ method: "GET", url: "/api/v1/manage/site/ai/models", headers: { cookie: ed.cookie } });
+      expect(denied.statusCode).toBe(403);
+    } finally {
+      vi.unstubAllGlobals();
+      await s.app.inject({ method: "POST", url: "/api/v1/manage/site/ai", headers: authHeaders(admin), payload: { provider: "anthropic", apiKey: null, model: null, baseUrl: null } });
+    }
+  });
 });

@@ -269,6 +269,8 @@ export const api = {
     request<AiConfigStatus>("POST", "/manage/site/ai", body),
   aiTest: () =>
     request<{ ok: boolean; provider: AiProviderName; model: string; message: string | null }>("POST", "/manage/site/ai/test", {}),
+  aiModels: () =>
+    request<{ ok: boolean; provider: AiProviderName; models: string[]; message: string | null }>("GET", "/manage/site/ai/models"),
 
   // stock images
   stockConfig: (signal?: AbortSignal) =>

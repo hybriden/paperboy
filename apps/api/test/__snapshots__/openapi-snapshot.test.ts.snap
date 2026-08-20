@@ -720,6 +720,20 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "GET /api/v1/manage/site/ai/models": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "message",
+      "models",
+      "ok",
+      "provider",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "GET /api/v1/manage/sites": {
     "requestBodyRequired": [],
     "requiredParams": [],

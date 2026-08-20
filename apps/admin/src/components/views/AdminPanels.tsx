@@ -1124,6 +1124,23 @@ export function AiPanel() {
         : toast.error("AI test failed", r.message ?? "Unknown error"),
     onError: (e) => toast.error("Couldn’t check", (e as Error).message),
   });
+  // Probe the endpoint's model catalog (through the SAVED config, like Test) and
+  // feed it into a datalist under the Model field — typing filters the list, so
+  // an OpenRouter-scale catalog (hundreds of models) is searchable in place.
+  const [models, setModels] = useState<string[] | null>(null);
+  const fetchModels = useMutation({
+    mutationFn: () => api.aiModels(),
+    onSuccess: (r) => {
+      if (r.ok) {
+        setModels(r.models);
+        toast.success("Models loaded", `${r.models.length} models — type in the Model field to search.`);
+      } else {
+        setModels(null);
+        toast.error("Couldn’t list models", r.message ?? "Unknown error");
+      }
+    },
+    onError: (e) => toast.error("Couldn’t list models", (e as Error).message),
+  });
 
   const endpointHost = (() => {
     if (status?.provider !== "openai" || !status.baseUrl) return null;
@@ -1158,7 +1175,7 @@ export function AiPanel() {
               <select
                 className="field-input"
                 value={activeProvider}
-                onChange={(e) => { setProvider(e.target.value as AiProviderName); setModel(null); setBaseUrl(null); }}
+                onChange={(e) => { setProvider(e.target.value as AiProviderName); setModel(null); setBaseUrl(null); setModels(null); }}
               >
                 <option value="anthropic">Anthropic (Claude)</option>
                 <option value="openai">OpenAI-compatible</option>
@@ -1196,17 +1213,32 @@ export function AiPanel() {
               />
             </label>
             <label className="text-sm" style={{ minWidth: 200 }}>
-              <span className="field-label">Model</span>
+              <span className="field-label">Model{models ? ` (${models.length} available)` : ""}</span>
               <input
                 aria-label="Model"
                 className="field-input"
-                placeholder={activeProvider === "openai" ? "gpt-4o-mini" : "claude-haiku-4-5-20251001"}
+                list={models ? "ai-model-options" : undefined}
+                placeholder={models ? "type to search models…" : activeProvider === "openai" ? "gpt-4o-mini" : "claude-haiku-4-5-20251001"}
                 value={modelValue}
                 onChange={(e) => setModel(e.target.value)}
               />
+              {models && (
+                <datalist id="ai-model-options">
+                  {models.map((m) => <option key={m} value={m}>{m}</option>)}
+                </datalist>
+              )}
             </label>
             <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
             <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>{test.isPending ? "Testing…" : "Test"}</button>
+            <button
+              type="button"
+              className="btn-subtle"
+              disabled={fetchModels.isPending || !status?.configured}
+              title={status?.configured ? "List the models the saved endpoint offers" : "Save a key first — the probe uses the saved settings"}
+              onClick={() => fetchModels.mutate()}
+            >
+              {fetchModels.isPending ? "Fetching…" : "Fetch models"}
+            </button>
             {status?.source === "db" && (
               <button type="button" className="btn-subtle" disabled={clearKey.isPending} onClick={() => clearKey.mutate()}>Clear key</button>
             )}

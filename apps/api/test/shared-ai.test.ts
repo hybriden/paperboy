@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AiUnavailableError, aiAssist, aiImageAltText, aiTranslateBatch } from "@paperboy/shared";
+import { AiUnavailableError, aiAssist, aiImageAltText, aiTranslateBatch, listAiModels } from "@paperboy/shared";
 
 /**
  * The AI provider's honesty contract (pure unit — no DB, no network).
@@ -164,6 +164,36 @@ describe("OpenAI-compatible provider (dialect mapping)", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okText('["hei","verden"]')));
     const r = await aiTranslateBatch(["hi", "world"], "nb", CFG);
     expect(r).toEqual({ results: ["hei", "verden"], provider: "openai" });
+  });
+});
+
+describe("listAiModels — endpoint model catalog probe", () => {
+  it("openai dialect: GET {baseUrl}/models with Bearer auth; ids sorted and deduped", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ id: "z-model" }, { id: "a-model" }, { id: "a-model" }, { id: 42 }, {}] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const models = await listAiModels({ provider: "openai", apiKey: "sk-o", model: "m", baseUrl: "https://openrouter.ai/api/v1/" });
+    expect(models).toEqual(["a-model", "z-model"]); // sorted, deduped, non-strings dropped
+    const [url, init] = fetchMock.mock.calls[0]! as [string, { headers: Record<string, string> }];
+    expect(url).toBe("https://openrouter.ai/api/v1/models");
+    expect(init.headers.authorization).toBe("Bearer sk-o");
+  });
+
+  it("anthropic dialect: GET /v1/models with the x-api-key header", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "claude-x" }] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const models = await listAiModels({ apiKey: "sk-ant", model: "m" });
+    expect(models).toEqual(["claude-x"]);
+    const [url, init] = fetchMock.mock.calls[0]! as [string, { headers: Record<string, string> }];
+    expect(url).toContain("api.anthropic.com/v1/models");
+    expect(init.headers["x-api-key"]).toBe("sk-ant");
+  });
+
+  it("surfaces the endpoint's error (proxies without /models are common)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, text: async () => "no such route" }));
+    await expect(listAiModels({ provider: "openai", apiKey: "k", model: "m" })).rejects.toThrow(/404.*no such route/);
   });
 });
 
