@@ -20,10 +20,15 @@ concurrency:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Every job carries a hard timeout-minutes: a hung step (docker build, apt in
+# playwright install, compose --wait) must fail the job in minutes, not burn a
+# whole runner slot for GitHub's 360-minute default before anyone cancels it.
+# (2026-08: the e2e job ran 6h01m to default-timeout after a step hung.)
 jobs:
   ci:
     name: typecheck · test · build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     services:
       postgres:
@@ -93,6 +98,7 @@ jobs:
   quickstart:
     name: quickstart (the documented path, clean checkout)
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -115,7 +121,7 @@ jobs:
   e2e:
     name: e2e (Playwright vs composed stack)
     runs-on: ubuntu-latest
-
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -127,12 +133,19 @@ jobs:
           cache: pnpm
 
       - name: Install
+        timeout-minutes: 15
         run: pnpm install --frozen-lockfile
 
       - name: Install Playwright chromium
+        # apt inside --with-deps is the classic CI stall (a held dpkg lock or a
+        # wedged mirror can hang it indefinitely); bound it hard.
+        timeout-minutes: 20
         run: pnpm --filter @paperboy/admin exec playwright install --with-deps chromium
 
       - name: Start the full stack (db → migrate+seed → api → web → admin)
+        # --wait blocks until every healthcheck passes; a crash-looping service
+        # would otherwise spin it forever.
+        timeout-minutes: 20
         # COOKIE_SECURE=false: the suite logs in over http://localhost:8090
         # (the same reason live-deploy runs need ADMIN_URL=https://…).
         run: docker compose up -d --build --wait
@@ -167,6 +180,9 @@ jobs:
           curl --retry 30 --retry-delay 2 --retry-all-errors -fsS -o /dev/null http://localhost:8090
 
       - name: Run e2e suite
+        # Bounded even if the runner process stalls after the tests finish —
+        # Playwright's own per-test timeouts bound the SUITE, not the process.
+        timeout-minutes: 30
         run: pnpm --filter @paperboy/admin test:e2e
 
       - name: Stack logs (on failure)
