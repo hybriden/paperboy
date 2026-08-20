@@ -99,6 +99,9 @@ export const Icon = {
   Copy: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base(p)}><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
   ),
+  Template: (p: SVGProps<SVGSVGElement>) => (
+    <svg {...base(p)}><rect x="3" y="3" width="12" height="12" rx="2" /><path d="M21 6v12a3 3 0 0 1-3 3H8" /></svg>
+  ),
   Image: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base(p)}><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-5-5L5 21" /></svg>
   ),

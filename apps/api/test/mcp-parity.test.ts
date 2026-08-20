@@ -241,6 +241,51 @@ describe("MCP parity: real stdio server vs the API", () => {
     }
   }, 90_000);
 
+  it("template tools: MCP create + instantiate is equivalent to the API routes (write parity)", async () => {
+    const def = {
+      name: "McpTpl",
+      displayName: "MCP template",
+      kind: "block",
+      fields: [{ name: "label", displayName: "Label", type: "text", delivery: "public" }],
+    };
+    const created = await mcp.call("create_type_template", { definition: def });
+    expect(created.isError, created.text.slice(0, 200)).toBe(false);
+    expect((created.json as { name: string }).name).toBe("McpTpl");
+
+    // The template is readable through the API with the same shape.
+    const viaApi = (await s.app.inject({ method: "GET", url: "/api/v1/manage/type-templates/McpTpl", headers: { cookie: admin.cookie } })).json() as { name: string; fields: Array<{ name: string }> };
+    expect(viaApi.name).toBe("McpTpl");
+    expect(viaApi.fields.map((f) => f.name)).toEqual(["label"]);
+
+    // Instantiate through MCP → a real content type appears through the API.
+    const inst = await mcp.call("instantiate_type_template", { name: "McpTpl" });
+    expect(inst.isError, inst.text.slice(0, 200)).toBe(false);
+    const res = inst.json as { name: string; action: string };
+    expect(res).toMatchObject({ name: "McpTpl", action: "created" });
+    const type = await s.app.inject({ method: "GET", url: "/api/v1/manage/content-types/McpTpl", headers: { cookie: admin.cookie } });
+    expect(type.statusCode).toBe(200);
+  }, 90_000);
+
+  it("instantiate_type_template refuses implicit overwrite with a self-teaching error (rule #1)", async () => {
+    const dup = await mcp.call("instantiate_type_template", { name: "McpTpl" });
+    expect(dup.isError).toBe(true);
+    expect(dup.text).toContain("McpTpl");
+    expect(dup.text).toContain("updateExisting: true");
+    expect(dup.text).toContain("asName");
+
+    // Explicit consent works.
+    const ok = await mcp.call("instantiate_type_template", { name: "McpTpl", updateExisting: true });
+    expect(ok.isError, ok.text.slice(0, 200)).toBe(false);
+    expect((ok.json as { action: string }).action).toBe("updated");
+  }, 90_000);
+
+  it("type-template writes leave an audit trail with ip='mcp'", async () => {
+    const audit = await s.app.inject({ method: "GET", url: "/api/v1/manage/audit?action=type_template", headers: authHeaders(admin) });
+    const rows = audit.json() as Array<{ ip: string | null; action: string }>;
+    expect(rows.some((r) => r.ip === "mcp" && r.action === "type_template.instantiate")).toBe(true);
+    expect(rows.some((r) => r.ip === "mcp" && r.action === "type_template.create")).toBe(true);
+  }, 60_000);
+
   it("a revoked token is refused at boot (process exits non-zero)", async () => {
     const revoke = await s.app.inject({ method: "POST", url: `/api/v1/manage/mcp-tokens/${tokenId}/revoke`, headers: authHeaders(admin) });
     expect(revoke.statusCode).toBe(200);
