@@ -964,7 +964,6 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
             <label className="text-sm" style={{ minWidth: 140 }}>
               <span className="field-label">Slug</span>
               <input aria-label="Site slug" className="field-input" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
-              {slug.trim() && !slugValid && <span className="mt-1 block text-xs text-danger">Lowercase, numbers and single hyphens.</span>}
             </label>
           </>
         ) : (
@@ -976,6 +975,11 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
           <button type="button" className="text-xs text-accent hover:underline" onClick={() => switchSite(site.id)}>Make active</button>
         )}
       </div>
+      {/* Below the row, not inside the slug column — an in-column error makes
+          that column taller and shoves the whole items-end row out of line. */}
+      {canManage && slug.trim() !== "" && !slugValid && (
+        <p className="-mt-2 text-xs text-danger">Slug: lowercase letters, numbers and single hyphens only.</p>
+      )}
 
       {/* preview URL */}
       <label className="text-sm">
@@ -1123,29 +1127,34 @@ export function AiPanel() {
           <span className={`h-2 w-2 rounded-full ${status?.configured ? "bg-published" : "bg-draft"}`} />
           <span className="text-muted">{statusText}</span>
         </div>
-        <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
-          <label className="grow text-sm" style={{ minWidth: 320 }}>
-            <span className="field-label">Anthropic API key</span>
-            <input
-              aria-label="Anthropic API key"
-              className="field-input"
-              type="password"
-              autoComplete="off"
-              placeholder={status?.configured ? "•••••••• (leave blank to keep)" : "sk-ant-…"}
-              value={keyInput}
-              onChange={(e) => setKeyInput(e.target.value)}
-            />
-            <span className="mt-1 block text-xs text-muted">Stored encrypted at rest. Leave blank to keep the current key.</span>
-          </label>
-          <label className="text-sm" style={{ minWidth: 220 }}>
-            <span className="field-label">Model</span>
-            <input aria-label="Model" className="field-input" placeholder="claude-haiku-4-5-20251001" value={modelValue} onChange={(e) => setModel(e.target.value)} />
-          </label>
-          <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
-          <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>Test</button>
-          {status?.source === "db" && (
-            <button type="button" className="btn-subtle" disabled={clearKey.isPending} onClick={() => clearKey.mutate()}>Clear key</button>
-          )}
+        <form className="space-y-1.5" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+          {/* The hint lives BELOW the row: a hint inside one label of an
+              items-end row makes that column taller and knocks every sibling
+              (labels, inputs, buttons) out of line. */}
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="grow text-sm" style={{ minWidth: 320 }}>
+              <span className="field-label">Anthropic API key</span>
+              <input
+                aria-label="Anthropic API key"
+                className="field-input"
+                type="password"
+                autoComplete="off"
+                placeholder={status?.configured ? "•••••••• (leave blank to keep)" : "sk-ant-…"}
+                value={keyInput}
+                onChange={(e) => setKeyInput(e.target.value)}
+              />
+            </label>
+            <label className="text-sm" style={{ minWidth: 220 }}>
+              <span className="field-label">Model</span>
+              <input aria-label="Model" className="field-input" placeholder="claude-haiku-4-5-20251001" value={modelValue} onChange={(e) => setModel(e.target.value)} />
+            </label>
+            <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
+            <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>Test</button>
+            {status?.source === "db" && (
+              <button type="button" className="btn-subtle" disabled={clearKey.isPending} onClick={() => clearKey.mutate()}>Clear key</button>
+            )}
+          </div>
+          <p className="text-xs text-muted">Stored encrypted at rest. Leave blank to keep the current key.</p>
         </form>
       </div>
     </PanelShell>
@@ -1201,31 +1210,34 @@ export function StockImagesPanel() {
           <span className={`h-2 w-2 rounded-full ${status?.configured ? "bg-published" : "bg-draft"}`} />
           <span className="text-muted">{statusText}</span>
         </div>
-        <form className="flex flex-wrap items-end gap-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
-          <label className="text-sm" style={{ minWidth: 160 }}>
-            <span className="field-label">Provider</span>
-            <select className="field-input" value="unsplash" onChange={() => undefined}>
-              <option value="unsplash">Unsplash</option>
-            </select>
-          </label>
-          <label className="grow text-sm" style={{ minWidth: 320 }}>
-            <span className="field-label">Unsplash access key</span>
-            <input
-              aria-label="Unsplash access key"
-              className="field-input"
-              type="password"
-              autoComplete="off"
-              placeholder={status?.configured ? "•••••••• (leave blank to keep)" : "Access key from unsplash.com/developers"}
-              value={keyInput}
-              onChange={(e) => setKeyInput(e.target.value)}
-            />
-            <span className="mt-1 block text-xs text-muted">Stored encrypted at rest. Demo keys allow 50 requests/hour.</span>
-          </label>
-          <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
-          <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>Test</button>
-          {status?.source === "db" && (
-            <button type="button" className="btn-subtle" disabled={clearKey.isPending} onClick={() => clearKey.mutate()}>Clear key</button>
-          )}
+        <form className="space-y-1.5" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+          {/* Hint below the row — same alignment rule as the AI panel above. */}
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-sm" style={{ minWidth: 160 }}>
+              <span className="field-label">Provider</span>
+              <select className="field-input" value="unsplash" onChange={() => undefined}>
+                <option value="unsplash">Unsplash</option>
+              </select>
+            </label>
+            <label className="grow text-sm" style={{ minWidth: 320 }}>
+              <span className="field-label">Unsplash access key</span>
+              <input
+                aria-label="Unsplash access key"
+                className="field-input"
+                type="password"
+                autoComplete="off"
+                placeholder={status?.configured ? "•••••••• (leave blank to keep)" : "Access key from unsplash.com/developers"}
+                value={keyInput}
+                onChange={(e) => setKeyInput(e.target.value)}
+              />
+            </label>
+            <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
+            <button type="button" className="btn-subtle" disabled={test.isPending} onClick={() => test.mutate()}>Test</button>
+            {status?.source === "db" && (
+              <button type="button" className="btn-subtle" disabled={clearKey.isPending} onClick={() => clearKey.mutate()}>Clear key</button>
+            )}
+          </div>
+          <p className="text-xs text-muted">Stored encrypted at rest. Demo keys allow 50 requests/hour.</p>
         </form>
       </div>
     </PanelShell>
