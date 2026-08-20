@@ -66,6 +66,23 @@ test("login form authenticates (smoke)", async ({ page }) => {
   await expect(page.getByLabel("Account menu")).toBeVisible({ timeout: 15_000 });
 });
 
+// PWA install contract: the manifest and every icon it names must be served.
+// A renamed/moved icon would silently break already-installed admin apps.
+test("PWA manifest and icons are served", async ({ page }) => {
+  const res = await page.request.get("/manifest.webmanifest");
+  expect(res.status()).toBe(200);
+  expect(res.headers()["content-type"]).toContain("manifest+json");
+  const manifest = (await res.json()) as { name: string; display: string; icons: { src: string }[] };
+  expect(manifest.name).toBe("Paperboy CMS");
+  expect(manifest.display).toBe("standalone");
+  expect(manifest.icons.length).toBeGreaterThanOrEqual(3);
+  for (const icon of manifest.icons) {
+    const r = await page.request.get(icon.src);
+    expect(r.status(), icon.src).toBe(200);
+    expect(r.headers()["content-type"], icon.src).toBe("image/png");
+  }
+});
+
 async function axeClean(page: Page, context: string) {
   const results = await new AxeBuilder({ page }).analyze();
   const serious = results.violations.filter((v) => v.impact === "serious" || v.impact === "critical");
