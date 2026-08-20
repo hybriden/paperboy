@@ -601,9 +601,10 @@ export async function listAudit(
   const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
   const conds = [];
   if (opts.before) conds.push(sql`${auditLog.id} < ${opts.before}`);
-  // Prefix match so "content." selects the whole category; exact actions work
-  // too. LIKE wildcards in the input are stripped, not interpreted.
-  if (opts.action) conds.push(like(auditLog.action, `${opts.action.replace(/[%_]/g, "")}%`));
+    // Prefix match so "content." selects the whole category; exact actions work
+    // too. LIKE wildcards in the input are escaped, not interpreted (stripping
+    // `_` was a bug: actions like "type_template.create" became unfilterable).
+    if (opts.action) conds.push(like(auditLog.action, `${opts.action.replace(/[\\%_]/g, (c) => `\\${c}`)}%`));
   if (opts.actorUserId) conds.push(eq(auditLog.actorUserId, opts.actorUserId));
   if (opts.documentId) conds.push(eq(auditLog.documentId, opts.documentId));
   const from = opts.from ? new Date(opts.from) : null;

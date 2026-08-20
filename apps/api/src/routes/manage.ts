@@ -61,11 +61,17 @@ import {
   updateAssetAlt,
   getContent,
   getContentType,
+  getTypeTemplate,
   findReferencingDocuments,
   getTree,
   getVersion,
   contentTypeUsage,
   deleteContentType,
+  deleteTypeTemplate,
+  createTypeTemplate,
+  updateTypeTemplate,
+  listTypeTemplates,
+  instantiateTypeTemplate,
   listContentTypes,
   listLocales,
   listVersions,
@@ -188,6 +194,69 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       await deleteContentType(app.db, req.accessCtx!, req.params.name);
       await audit(app.db, { actorUserId: req.user!.id, action: "contenttype.delete", ip: req.ip, detail: { name: req.params.name } });
       return { ok: true };
+    },
+  );
+
+  /* ---------------------- content-type template collection -------------- */
+  // Reusable ContentTypeDef recipes (per-instance). A template's name is the
+  // type name it materialises by default; see instantiateTypeTemplate.
+  const TypeTemplateParams = z.object({ name: z.string() });
+  const InstantiateTemplateBody = z.object({
+    updateExisting: z.boolean().optional(),
+    asName: z.string().max(60).optional(),
+  });
+  const InstantiateTemplateResponse = z.object({
+    type: ContentTypeDef,
+    name: z.string(),
+    action: z.enum(["created", "updated"]),
+  });
+  app.get(
+    "/type-templates",
+    { schema: { tags: ["manage"], response: { 200: z.array(ContentTypeDef) } } },
+    async () => listTypeTemplates(app.db),
+  );
+  app.get(
+    "/type-templates/:name",
+    { schema: { tags: ["manage"], params: TypeTemplateParams, response: { 200: ContentTypeDef } } },
+    async (req) => getTypeTemplate(app.db, req.params.name),
+  );
+  app.post(
+    "/type-templates",
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], body: ContentTypeDef, response: { 200: ContentTypeDef } } },
+    async (req) => {
+      const created = await createTypeTemplate(app.db, req.accessCtx!, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "type_template.create", ip: req.ip, detail: { name: created.name, kind: created.kind, fields: created.fields.length } });
+      return created;
+    },
+  );
+  app.put(
+    "/type-templates/:name",
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: TypeTemplateParams, body: ContentTypeDef, response: { 200: ContentTypeDef } } },
+    async (req) => {
+      const { next, prev } = await updateTypeTemplate(app.db, req.accessCtx!, req.params.name, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "type_template.update", ip: req.ip, detail: { name: next.name, deliveryDelta: deliveryFlagDelta(prev, next) } });
+      return next;
+    },
+  );
+  app.delete(
+    "/type-templates/:name",
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: TypeTemplateParams, response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await deleteTypeTemplate(app.db, req.accessCtx!, req.params.name);
+      await audit(app.db, { actorUserId: req.user!.id, action: "type_template.delete", ip: req.ip, detail: { name: req.params.name } });
+      return { ok: true };
+    },
+  );
+  app.post(
+    "/type-templates/:name/instantiate",
+    {
+      preHandler: [requireCsrf, requirePermission("contenttype.manage")],
+      schema: { tags: ["manage"], params: TypeTemplateParams, body: InstantiateTemplateBody, response: { 200: InstantiateTemplateResponse } },
+    },
+    async (req) => {
+      const result = await instantiateTypeTemplate(app.db, req.accessCtx!, req.params.name, req.body);
+      await audit(app.db, { actorUserId: req.user!.id, action: "type_template.instantiate", ip: req.ip, detail: { template: req.params.name, type: result.name, action: result.action } });
+      return result;
     },
   );
 

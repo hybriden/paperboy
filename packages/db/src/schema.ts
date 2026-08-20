@@ -28,6 +28,23 @@ export const contentType = pgTable("content_type", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * A content-type template (migration 0020): a named, reusable ContentTypeDef
+ * recipe. Mirrors `contentType` 1:1 — the template's own name is the content
+ * type name `instantiate` materialises by default. Per-instance; content types
+ * are shared across sites, so templates are too.
+ */
+export const typeTemplate = pgTable("type_template", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  displayName: text("display_name").notNull(),
+  kind: text("kind").notNull(), // page | block | global
+  description: text("description").notNull().default(""),
+  icon: text("icon").notNull().default("file"),
+  definition: jsonb("definition").notNull(), // full ContentTypeDef (SEO-stripped at write)
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const locale = pgTable("locale", {
   code: text("code").primaryKey(),
   displayName: text("display_name").notNull(),

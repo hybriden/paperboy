@@ -184,9 +184,12 @@ interface Props {
   usage?: { items: number; inlineIn: number };
   open: boolean;
   onOpenChange: (o: boolean) => void;
+  /** "templates" saves into the type-template collection (reusable recipes)
+   *  instead of the live content types. */
+  target?: "types" | "templates";
 }
 
-export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpenChange }: Props) {
+export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpenChange, target = "types" }: Props) {
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -284,11 +287,18 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
       return next;
     });
 
+  const isTemplate = target === "templates";
   const save = useMutation({
-    mutationFn: (def: ContentTypeDef) => (mode === "create" ? api.createContentType(def) : api.updateContentType(name, def)),
+    mutationFn: (def: ContentTypeDef) =>
+      isTemplate
+        ? (mode === "create" ? api.createTypeTemplate(def) : api.updateTypeTemplate(name, def))
+        : (mode === "create" ? api.createContentType(def) : api.updateContentType(name, def)),
     onSuccess: (saved) => {
-      void qc.invalidateQueries({ queryKey: ["content-types"] });
-      toast.success(mode === "create" ? "Content type created" : "Content type updated", saved.displayName);
+      void qc.invalidateQueries({ queryKey: isTemplate ? ["type-templates"] : ["content-types"] });
+      toast.success(
+        isTemplate ? (mode === "create" ? "Template created" : "Template updated") : mode === "create" ? "Content type created" : "Content type updated",
+        saved.displayName,
+      );
       onOpenChange(false);
     },
     onError: (e) => {
@@ -319,8 +329,16 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        title={mode === "create" ? "New content type" : `Edit “${initial?.displayName}”`}
-        description="Define the fields editors fill in. Fields marked public are exposed by the delivery API."
+        title={
+          isTemplate
+            ? (mode === "create" ? "New type template" : `Edit template “${initial?.displayName}”`)
+            : (mode === "create" ? "New content type" : `Edit “${initial?.displayName}”`)
+        }
+        description={
+          isTemplate
+            ? "A reusable recipe. Define its fields here, then instantiate it into a live content type from the templates panel."
+            : "Define the fields editors fill in. Fields marked public are exposed by the delivery API."
+        }
         className="w-[min(760px,94vw)]"
       >
         {mode === "edit" && usage && (
@@ -340,10 +358,15 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
             </span>
           </div>
         )}
-        {mode === "edit" && (
+        {mode === "edit" && !isTemplate && (
           <div className="mb-3 rounded-(--radius) border border-draft/40 bg-draft/10 px-3 py-2 text-xs text-draft">
             Editing affects existing content: renaming or retyping a field orphans its stored value, and adding a
             <strong> required</strong> field will block re-publishing existing items until it’s filled. Name and kind are locked.
+          </div>
+        )}
+        {mode === "edit" && isTemplate && (
+          <div className="mb-3 rounded-(--radius) border border-draft/40 bg-draft/10 px-3 py-2 text-xs text-draft">
+            Editing a template does not affect content types instantiated from it. Name and kind are locked.
           </div>
         )}
 
@@ -564,13 +587,13 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
         )}
 
         <div className="mt-4 flex items-center gap-2">
-          {mode === "edit" && (
+          {mode === "edit" && !isTemplate && (
             <DeleteTypeButton name={name} usage={usage} onDeleted={() => onOpenChange(false)} />
           )}
           <div className="ml-auto flex gap-2">
             <button className="btn-ghost" onClick={() => onOpenChange(false)}>Cancel</button>
             <button className="btn-primary" disabled={save.isPending} onClick={submit}>
-              {save.isPending ? "Saving…" : mode === "create" ? "Create type" : "Save changes"}
+              {save.isPending ? "Saving…" : mode === "create" ? (isTemplate ? "Create template" : "Create type") : "Save changes"}
             </button>
           </div>
         </div>

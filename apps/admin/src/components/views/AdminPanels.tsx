@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import type { ContentTypeDef, RoleName } from "@paperboy/shared";
-import { ACTIVE_SITE_KEY, api, type ManagedUser, type SiteRow } from "../../lib/api.js";
+import { ACTIVE_SITE_KEY, api, ApiError, type ManagedUser, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
@@ -152,6 +152,7 @@ export function ContentTypesPanel() {
   const usage = useQuery({ queryKey: ["content-types-usage"], queryFn: ({ signal }) => api.contentTypeUsage(signal) });
   const [editor, setEditor] = useState<{ mode: "create" | "edit"; initial?: ContentTypeDef } | null>(null);
   const [kind, setKind] = useState<KindFilter>("all");
+  const [tplSource, setTplSource] = useState<ContentTypeDef | null>(null);
 
   const all = types.data ?? [];
   // Deep link from the dashboard ("content types without content"):
@@ -203,11 +204,21 @@ export function ContentTypesPanel() {
             <span>{t.fields.length} fields</span>
           </span>
           {canManage && (
-            <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setEditor({ mode: "edit", initial: t })}>Edit</button>
+            <>
+              <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setEditor({ mode: "edit", initial: t })}>Edit</button>
+              <button
+                className="rounded px-2 py-0.5 text-xs text-muted hover:bg-line/60 hover:text-fg"
+                title="Save as a reusable type template (from Settings → Type templates)"
+                onClick={() => setTplSource(t)}
+              >
+                <Icon.Template width={12} height={12} className="inline align-[-1px]" /> Template
+              </button>
+            </>
           )}
         </div>
       ))}
       {shown.length === 0 && <p className="p-4 text-sm text-muted">{all.length === 0 ? "No content types." : "None of this kind."}</p>}
+      {tplSource && <SaveTemplateDialog type={tplSource} onClose={() => setTplSource(null)} />}
       {editor && (
         <ContentTypeEditor
           mode={editor.mode}
@@ -221,6 +232,203 @@ export function ContentTypesPanel() {
         />
       )}
     </PanelShell>
+  );
+}
+
+/** "Save as template": copies the given live content type into the type-template
+ *  collection under a (renameable) name. If that name is taken, offer to update
+ *  the existing template from the type's current definition. */
+function SaveTemplateDialog({ type, onClose }: { type: ContentTypeDef; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [name, setName] = useState(type.name);
+  const [confirmOverwrite, setConfirmOverwrite] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: (over: boolean) =>
+      over ? api.updateTypeTemplate(name, type) : api.createTypeTemplate(type),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["type-templates"] });
+      toast.success("Template created", "“" + type.displayName + "” is now in Settings → Type templates.");
+      onClose();
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409 && !confirmOverwrite) setConfirmOverwrite(true);
+      else setError((e as Error).message);
+    },
+  });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent size="sm" title={`Save “${type.displayName}” as template`} description="Templates are reusable recipes you can instantiate into types later.">
+        <div className="space-y-3">
+          <div>
+            <label className="field-label" htmlFor="tpl-name">Template name</label>
+            <input id="tpl-name" aria-label="Template name" className="field-input font-mono text-xs" value={name} onChange={(e) => { setName(e.target.value); setConfirmOverwrite(false); setError(null); }} />
+          </div>
+          {error && <p className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger" role="alert">{error}</p>}
+          {confirmOverwrite && (
+            <p className="rounded border border-draft/40 bg-draft/10 px-3 py-2 text-xs text-draft">
+              A template named <strong>{name}</strong> already exists. Update it from this type’s current definition?
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button
+              className="btn-primary"
+              disabled={save.isPending || !name.trim()}
+              onClick={() => save.mutate(confirmOverwrite)}
+            >
+              {save.isPending ? "Saving…" : confirmOverwrite ? "Update template" : "Save template"}
+            </button>
+            {confirmOverwrite && <button className="btn-ghost" onClick={() => setConfirmOverwrite(false)}>Keep old template</button>}
+            <button className="btn-ghost ml-auto" onClick={onClose}>Cancel</button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------ Type templates ----------------------------- */
+export function TypeTemplatesPanel() {
+  const { user } = useUser();
+  const canManage = user.permissions.includes("contenttype.manage");
+  const qc = useQueryClient();
+  const toast = useToast();
+  const types = useQuery({ queryKey: ["content-types"], queryFn: ({ signal }) => api.contentTypes(signal) });
+  const templates = useQuery({ queryKey: ["type-templates"], queryFn: ({ signal }) => api.typeTemplates(signal) });
+  const [editor, setEditor] = useState<{ mode: "create" | "edit"; initial?: ContentTypeDef } | null>(null);
+  const [inst, setInst] = useState<{ template: ContentTypeDef; asName: string; overwrite: boolean } | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
+
+  const deleteTpl = useMutation({
+    mutationFn: (name: string) => api.deleteTypeTemplate(name),
+    onSuccess: (_r, name) => {
+      void qc.invalidateQueries({ queryKey: ["type-templates"] });
+      toast.success("Template deleted", `“${name}” removed. Instantiated types are not affected.`);
+      setDeleting(null);
+    },
+    onError: (e) => toast.error("Couldn’t delete template", (e as Error).message),
+  });
+  const instantiate = useMutation({
+    mutationFn: (args: { name: string; asName?: string; updateExisting?: boolean }) =>
+      api.instantiateTypeTemplate(args.name, { asName: args.asName, updateExisting: args.updateExisting }),
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ["content-types"] });
+      toast.success(res.action === "created" ? "Type created from template" : "Type updated from template", `“${res.name}”`);
+      setInst(null);
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409 && inst) setInst({ ...inst, overwrite: true });
+      else toast.error("Couldn’t instantiate", (e as Error).message);
+    },
+  });
+
+  const all = templates.data ?? [];
+
+  return (
+    <PanelShell
+      title="Type templates"
+      hint="Reusable content-type recipes (per instance). Instantiate one into a live type — existing types are never overwritten without an explicit confirm."
+      action={canManage ? <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setEditor({ mode: "create" })}><Icon.Plus width={14} height={14} /> New template</button> : undefined}
+    >
+      {templates.isLoading ? (
+        <p className="p-4 text-sm text-muted">Loading…</p>
+      ) : all.length === 0 ? (
+        <p className="p-4 text-sm text-muted">No templates yet. Create one here, or save any content type as a template from the Content types tab.</p>
+      ) : (
+        all.map((t) => (
+          <div key={t.name} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
+            <TypeIcon name={t.icon} width={16} height={16} className="shrink-0 text-muted" />
+            <span className="font-medium text-fg">{t.displayName}</span>
+            <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{t.name}</code>
+            <span className="rounded bg-canvas px-1.5 py-0.5 text-[11px] text-muted">{t.kind}</span>
+            <span className="ml-auto flex items-center gap-3 text-xs text-muted">
+              <span title="Instantiated from this template">{(types.data ?? []).some((x) => x.name === t.name) ? "type exists" : "not instantiated"}</span>
+              <span className="text-line">·</span>
+              <span>{t.fields.length} fields</span>
+            </span>
+            {canManage && (
+              <>
+                <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setEditor({ mode: "edit", initial: t })}>Edit</button>
+                <button
+                  className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10"
+                  title="Materialise this template into a live content type"
+                  onClick={() => setInst({ template: t, asName: t.name, overwrite: false })}
+                >
+                  Instantiate
+                </button>
+                {deleting === t.name ? (
+                  <span className="flex items-center gap-2 text-xs">
+                    <span className="text-danger">Delete “{t.name}”?</span>
+                    <button className="btn-danger px-2 py-0.5 text-xs" disabled={deleteTpl.isPending} onClick={() => deleteTpl.mutate(t.name)}>{deleteTpl.isPending ? "Deleting…" : "Confirm"}</button>
+                    <button className="btn-ghost px-2 py-0.5 text-xs" onClick={() => setDeleting(null)}>Cancel</button>
+                  </span>
+                ) : (
+                  <button className="rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => setDeleting(t.name)}>Delete</button>
+                )}
+              </>
+            )}
+          </div>
+        ))
+      )}
+      {editor && (
+        <ContentTypeEditor
+          mode={editor.mode}
+          initial={editor.initial}
+          allTypes={all}
+          target="templates"
+          open
+          onOpenChange={(o) => !o && setEditor(null)}
+        />
+      )}
+      {inst && (
+        <InstantiateDialog
+          template={inst.template}
+          asName={inst.asName}
+          onAsNameChange={(v) => setInst({ ...inst, asName: v, overwrite: false })}
+          overwrite={inst.overwrite}
+          onOverwriteChange={(v) => setInst({ ...inst, overwrite: v })}
+          busy={instantiate.isPending}
+          onInstantiate={() =>
+            instantiate.mutate({ name: inst.template.name, asName: inst.asName !== inst.template.name ? inst.asName : undefined, updateExisting: inst.overwrite })}
+          onClose={() => setInst(null)}
+        />
+      )}
+    </PanelShell>
+  );
+}
+
+function InstantiateDialog({
+  template, asName, onAsNameChange, overwrite, onOverwriteChange, busy, onInstantiate, onClose,
+}: {
+  template: ContentTypeDef; asName: string; onAsNameChange: (v: string) => void; overwrite: boolean;
+  onOverwriteChange: (v: boolean) => void; busy: boolean; onInstantiate: () => void; onClose: () => void;
+}) {
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent size="sm" title={`Instantiate “${template.displayName}”`} description="Creates a live content type from this template.">
+        <div className="space-y-3">
+          <div>
+            <label className="field-label" htmlFor="inst-name">Type name</label>
+            <input id="inst-name" aria-label="Type name" className="field-input font-mono text-xs" value={asName} onChange={(e) => onAsNameChange(e.target.value)} />
+            <p className="mt-1 text-[11px] text-muted">Defaults to the template’s own name. Use a different name to create a variant.</p>
+          </div>
+          {overwrite && (
+            <p className="rounded border border-draft/40 bg-draft/10 px-3 py-2 text-xs text-draft" role="alert">
+              Type <strong>{asName}</strong> already exists. Overwrite it from this template? Its kind must match and
+              existing content rows are kept (fields are re-shaped, not migrated).
+            </p>
+          )}
+          <div className="flex gap-2">
+            <button className="btn-primary" disabled={busy || !asName.trim()} onClick={onInstantiate}>
+              {busy ? "Working…" : overwrite ? "Overwrite type" : "Instantiate"}
+            </button>
+            {overwrite && <button className="btn-ghost" onClick={() => onOverwriteChange(false)}>Cancel</button>}
+            <button className="btn-ghost ml-auto" onClick={onClose}>Close</button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 

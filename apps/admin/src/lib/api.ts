@@ -210,6 +210,18 @@ export const api = {
     request<ContentTypeDef>("PUT", `/manage/content-types/${encodeURIComponent(name)}`, def),
   deleteContentType: (name: string) =>
     request<{ ok: boolean }>("DELETE", `/manage/content-types/${encodeURIComponent(name)}`),
+  typeTemplates: (signal?: AbortSignal) => request<ContentTypeDef[]>("GET", "/manage/type-templates", undefined, signal),
+  createTypeTemplate: (def: ContentTypeDef) => request<ContentTypeDef>("POST", "/manage/type-templates", def),
+  updateTypeTemplate: (name: string, def: ContentTypeDef) =>
+    request<ContentTypeDef>("PUT", `/manage/type-templates/${encodeURIComponent(name)}`, def),
+  deleteTypeTemplate: (name: string) =>
+    request<{ ok: boolean }>("DELETE", `/manage/type-templates/${encodeURIComponent(name)}`),
+  instantiateTypeTemplate: (name: string, opts?: { updateExisting?: boolean; asName?: string }) =>
+    request<{ type: ContentTypeDef; name: string; action: "created" | "updated" }>(
+      "POST",
+      `/manage/type-templates/${encodeURIComponent(name)}/instantiate`,
+      opts ?? {},
+    ),
   locales: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales", undefined, signal),
   localesAll: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales/all", undefined, signal),
   createLocale: (body: { code: string; displayName: string; fallbackLocaleCode?: string | null }) =>

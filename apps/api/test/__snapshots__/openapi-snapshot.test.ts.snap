@@ -98,6 +98,19 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "DELETE /api/v1/manage/type-templates/{name}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:name",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "DELETE /api/v1/manage/users/{id}": {
     "requestBodyRequired": [],
     "requiredParams": [
@@ -745,6 +758,42 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "[]sourceUrl",
       "[]thumbUrl",
       "[]width",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/type-templates": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]description",
+      "[]displayName",
+      "[]fields",
+      "[]icon",
+      "[]kind",
+      "[]name",
+      "[]schemaType",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/type-templates/{name}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:name",
+    ],
+    "response200Props": [
+      "description",
+      "displayName",
+      "fields",
+      "icon",
+      "kind",
+      "name",
+      "schemaType",
     ],
     "summary": null,
     "tags": [
@@ -1529,6 +1578,43 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "POST /api/v1/manage/type-templates": {
+    "requestBodyRequired": [
+      "displayName",
+      "fields",
+      "kind",
+      "name",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "description",
+      "displayName",
+      "fields",
+      "icon",
+      "kind",
+      "name",
+      "schemaType",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/type-templates/{name}/instantiate": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:name",
+    ],
+    "response200Props": [
+      "action",
+      "name",
+      "type",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "POST /api/v1/manage/users": {
     "requestBodyRequired": [
       "email",
@@ -1698,6 +1784,30 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "kind",
       "name",
       "parentId",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "PUT /api/v1/manage/type-templates/{name}": {
+    "requestBodyRequired": [
+      "displayName",
+      "fields",
+      "kind",
+      "name",
+    ],
+    "requiredParams": [
+      "path:name",
+    ],
+    "response200Props": [
+      "description",
+      "displayName",
+      "fields",
+      "icon",
+      "kind",
+      "name",
+      "schemaType",
     ],
     "summary": null,
     "tags": [
