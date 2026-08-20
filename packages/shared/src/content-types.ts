@@ -1026,10 +1026,14 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
       // Same carrier family on scalar fields — a real agent sent
       // {type:'select', value:'article'} / {type:'datetime', value:'…Z'} and
       // looped 8× on the reject (2026-06-07 13:0x run).
-      const v = unwrapTextCarrier(value);
+      let v = unwrapTextCarrier(value);
       if (!f.slugifyValues) return v;
       // Tag-style normalization (opt-in on the field): every surface writes the
-      // same canonical slug, so "AI"/"ai"/"llama.cpp" can't fragment.
+      // same canonical slug, so "AI"/"ai"/"llama.cpp" can't fragment. A COMMA
+      // string on a multiple field is the legacy/agent spelling of the array
+      // ("ai, llama.cpp") — split it; slugs can never contain commas, so this
+      // is unambiguous here (and only here: genuine option lists keep commas).
+      if (f.multiple && typeof v === "string") v = v.split(",");
       if (Array.isArray(v)) {
         const slugs = v.map((x) => (typeof x === "string" ? slugifyValue(x) : "")).filter(Boolean);
         return [...new Set(slugs)];

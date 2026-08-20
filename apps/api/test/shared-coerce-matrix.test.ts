@@ -453,3 +453,12 @@ describe("select slugifyValues — tag normalization at the write chokepoint", (
     expect(slugifyValue(slugifyValue("Llama.CPP"))).toBe(slugifyValue("Llama.CPP"));
   });
 });
+
+describe("select slugifyValues — legacy comma-string splits on MULTIPLE fields", () => {
+  it("'AI, Llama.CPP' → ['ai','llama-cpp'] (the pre-migration tags spelling keeps working)", () => {
+    expect(coerceFieldValue(f("select", { multiple: true, slugifyValues: true }), "AI, Llama.CPP")).toEqual(["ai", "llama-cpp"]);
+  });
+  it("commas are NOT split without the slugify flag (a genuine option value may contain one)", () => {
+    expect(coerceFieldValue(f("select", { multiple: true }), "a, b")).toBe("a, b");
+  });
+});
