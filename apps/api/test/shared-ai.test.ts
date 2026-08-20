@@ -88,6 +88,85 @@ describe("aiTranslateBatch — seed semantics preserved", () => {
   });
 });
 
+describe("OpenAI-compatible provider (dialect mapping)", () => {
+  const CFG = { provider: "openai" as const, apiKey: "sk-oai-test", model: "gpt-test", baseUrl: "https://llm.example/v1/" };
+  const okText = (text: string) => ({ ok: true, json: async () => ({ choices: [{ message: { content: text } }] }) });
+
+  it("maps to {baseUrl}/chat/completions with Bearer auth + a system message, labels the result 'openai'", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okText("Better text."));
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await aiAssist({ task: "improve", input: "some text" }, CFG);
+    expect(r).toEqual({ result: "Better text.", provider: "openai" });
+    const [url, init] = fetchMock.mock.calls[0]! as [string, { headers: Record<string, string>; body: string }];
+    expect(url).toBe("https://llm.example/v1/chat/completions"); // trailing slash stripped
+    expect(init.headers.authorization).toBe("Bearer sk-oai-test");
+    const body = JSON.parse(init.body) as { model: string; messages: Array<{ role: string; content: string }> };
+    expect(body.model).toBe("gpt-test");
+    expect(body.messages[0]).toMatchObject({ role: "system" });
+    expect(body.messages[1]!.role).toBe("user");
+    expect(body.messages[1]!.content).toContain("some text");
+  });
+
+  it("defaults the base URL to api.openai.com when none is set", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okText("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+    await aiAssist({ task: "improve", input: "x" }, { provider: "openai", apiKey: "k", model: "m" });
+    expect(fetchMock.mock.calls[0]![0]).toBe("https://api.openai.com/v1/chat/completions");
+  });
+
+  it("retries once with max_completion_tokens when the endpoint rejects max_tokens (newer OpenAI models)", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () => '{"error":{"message":"Unsupported parameter: max_tokens. Use max_completion_tokens instead."}}',
+      })
+      .mockResolvedValueOnce(okText("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await aiAssist({ task: "improve", input: "x" }, CFG);
+    expect(r.result).toBe("ok");
+    const first = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body) as Record<string, unknown>;
+    const second = JSON.parse((fetchMock.mock.calls[1]![1] as { body: string }).body) as Record<string, unknown>;
+    expect(first.max_tokens).toBeDefined();
+    expect(second.max_tokens).toBeUndefined();
+    expect(second.max_completion_tokens).toBe(first.max_tokens);
+  });
+
+  it("surfaces the endpoint's own error body in the failure (self-teaching for misconfig)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404, text: async () => 'model "gpt-nope" does not exist' }));
+    await expect(aiAssist({ task: "improve", input: "x" }, CFG)).rejects.toThrow(/gpt-nope/);
+  });
+
+  it("sends vision input as an image_url data URL", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okText("A cat on a sofa"));
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await aiImageAltText({ imageBase64: "aGk=", mediaType: "image/jpeg" }, CFG);
+    expect(r).toEqual({ result: "A cat on a sofa", provider: "openai" });
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body) as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    const userContent = body.messages[1]!.content as Array<{ type: string; image_url?: { url: string } }>;
+    const image = userContent.find((p) => p.type === "image_url");
+    expect(image?.image_url?.url).toBe("data:image/jpeg;base64,aGk=");
+  });
+
+  it("reads content-part array replies (some compatible servers return parts, not a string)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: true, json: async () => ({ choices: [{ message: { content: [{ type: "text", text: "part reply" }] } }] }) }),
+    );
+    const r = await aiAssist({ task: "improve", input: "x" }, CFG);
+    expect(r.result).toBe("part reply");
+  });
+
+  it("translate batch goes through the same dialect and keeps its contract", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okText('["hei","verden"]')));
+    const r = await aiTranslateBatch(["hi", "world"], "nb", CFG);
+    expect(r).toEqual({ results: ["hei", "verden"], provider: "openai" });
+  });
+});
+
 describe("aiImageAltText — vision alt text", () => {
   it("refuses without a key (no filename heuristics dressed up as AI)", async () => {
     await expect(

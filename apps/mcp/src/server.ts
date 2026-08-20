@@ -47,6 +47,7 @@ import {
    instantiateTypeTemplate,
    exportTypeTemplates,
    importTypeTemplates,
+   resolveAiRuntimeConfig,
    listDeliveryKeys,
   listLocales,
   listPages,
@@ -93,7 +94,18 @@ if (!DATABASE_URL) {
 const MCP_TOKEN = process.env.MCP_TOKEN; // a Paperboy-issued MCP token (preferred)
 const MCP_EMAIL = process.env.MCP_EMAIL ?? "admin@paperboy.test";
 const MCP_PASSWORD = process.env.MCP_PASSWORD ?? "Admin!Passw0rd";
-const AI_CONFIG = { apiKey: process.env.ANTHROPIC_API_KEY, model: process.env.AI_MODEL ?? "claude-haiku-4-5-20251001" };
+// AI config resolves PER CALL through the same chokepoint as the API: a config
+// stored in the CMS (Settings → AI) wins over these env fallbacks, and each
+// env key is bound to its own provider (ANTHROPIC_API_KEY → anthropic,
+// OPENAI_API_KEY [+ OPENAI_BASE_URL] → openai; AI_PROVIDER picks when both are
+// set). Previously env-only, so a key configured in the admin didn't reach MCP.
+const AI_ENV = {
+  AI_PROVIDER: process.env.AI_PROVIDER,
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+  AI_MODEL: process.env.AI_MODEL,
+};
 // Stock images: env fallback for the Unsplash key (a CMS-stored key wins), and
 // the uploads dir imports are written to — MUST be the same volume the API's
 // /api/v1/media serves, or imported files 404.
@@ -607,9 +619,9 @@ tool("list_audit", "Read the append-only audit log (admin). Filter by action pre
 tool("list_locales", "List enabled locales.", {}, async () => { need("content.read"); return listLocales(db); });
 
 /* ---------------------------------- AI --------------------------------- */
-tool("ai_assist", "AI editorial help: meta_title, meta_description, summarize, improve, translate, rewrite, variants, write (draft prose about a topic). Tasks needing a model error clearly when no AI key is configured.",
+tool("ai_assist", "AI editorial help: meta_title, meta_description, summarize, improve, translate, rewrite, variants, write (draft prose about a topic). Uses the provider configured in Settings → AI (Anthropic or an OpenAI-compatible endpoint); tasks needing a model error clearly when none is configured.",
   { task: z.enum(AI_TASKS), input: z.string().min(1), targetLocale: z.string().optional() },
-  async (a) => { need("content.update"); return aiAssist(a, AI_CONFIG); });
+  async (a) => { need("content.update"); return aiAssist(a, await resolveAiRuntimeConfig(db, AI_ENV)); });
 
 /* --------------------------------- boot -------------------------------- */
 async function main(): Promise<void> {

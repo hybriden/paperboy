@@ -35,10 +35,21 @@ const EnvSchema = z.object({
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
-  // AI editorial assistant. When ANTHROPIC_API_KEY is set the API calls Claude;
-  // otherwise a deterministic local fallback keeps the feature usable offline.
+  // AI editorial assistant. Two providers: Anthropic (ANTHROPIC_API_KEY) or any
+  // OpenAI-compatible Chat Completions endpoint (OPENAI_API_KEY + optional
+  // OPENAI_BASE_URL). AI_PROVIDER picks one when both keys are set; a config
+  // stored in the CMS (Settings → AI) overrides all of these. Each env key is
+  // bound to its own provider — see resolveAiRuntimeConfig in @paperboy/db.
+  // Without any key a deterministic local fallback keeps the truncation tasks
+  // usable offline. AI_MODEL has NO default here: the per-provider default
+  // lives in DEFAULT_AI_MODELS (an Anthropic default baked in env would leak
+  // into OpenAI configs).
   ANTHROPIC_API_KEY: z.string().optional(),
-  AI_MODEL: z.string().default("claude-haiku-4-5-20251001"),
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_BASE_URL: z.string().optional(),
+  // "" = unset (compose passes the var through even when the host has none).
+  AI_PROVIDER: z.preprocess((v) => (v === "" ? undefined : v), z.enum(["anthropic", "openai"]).optional()),
+  AI_MODEL: z.string().optional(),
   // Stock images (Settings → Stock images). Env fallback for the Unsplash
   // access key; a key stored in the CMS takes precedence.
   UNSPLASH_ACCESS_KEY: z.string().optional(),

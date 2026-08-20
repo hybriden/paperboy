@@ -76,7 +76,15 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     reply.header("X-Frame-Options", "DENY");
     if (env.COOKIE_SECURE) reply.header("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
   });
-  app.decorate("aiConfig", { apiKey: env.ANTHROPIC_API_KEY, model: env.AI_MODEL });
+  // The env-side AI settings; resolveAiRuntimeConfig combines them with the
+  // CMS-stored config at request time (stored unit wins — see @paperboy/db).
+  app.decorate("aiEnv", {
+    AI_PROVIDER: env.AI_PROVIDER,
+    ANTHROPIC_API_KEY: env.ANTHROPIC_API_KEY,
+    OPENAI_API_KEY: env.OPENAI_API_KEY,
+    OPENAI_BASE_URL: env.OPENAI_BASE_URL,
+    AI_MODEL: env.AI_MODEL,
+  });
   app.decorate("stockConfig", { unsplashKey: env.UNSPLASH_ACCESS_KEY });
 
   await app.register(cookie, { secret: env.SESSION_SECRET });

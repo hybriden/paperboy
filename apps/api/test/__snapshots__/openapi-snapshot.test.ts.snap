@@ -708,9 +708,11 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "requestBodyRequired": [],
     "requiredParams": [],
     "response200Props": [
+      "baseUrl",
       "configured",
       "last4",
       "model",
+      "provider",
       "source",
     ],
     "summary": null,
@@ -1499,10 +1501,26 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "requestBodyRequired": [],
     "requiredParams": [],
     "response200Props": [
+      "baseUrl",
       "configured",
       "last4",
       "model",
+      "provider",
       "source",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/site/ai/test": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "message",
+      "model",
+      "ok",
+      "provider",
     ],
     "summary": null,
     "tags": [

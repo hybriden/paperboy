@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
+import { Icon } from "../lib/icons.js";
 import { isPreviewActivity, originOf } from "../lib/preview-origin.js";
 import { Surface } from "./ui/surface.js";
 
@@ -133,6 +134,18 @@ export function PreviewPane({
    */
   const [bridgeSeen, setBridgeSeen] = useState(false);
   const [quiet, setQuiet] = useState(false);
+  // The hint is dismissable PER FRONTEND: a preview that renders fine without
+  // the bridge would otherwise show it on every visit (reported 2026-08-20 —
+  // the hint sat under a perfectly working preview).
+  const hintKey = `pb-preview-hint-dismissed:${targetOrigin}`;
+  const [hintDismissed, setHintDismissed] = useState(() => Boolean(targetOrigin && localStorage.getItem(hintKey)));
+  useEffect(() => {
+    setHintDismissed(Boolean(targetOrigin && localStorage.getItem(`pb-preview-hint-dismissed:${targetOrigin}`)));
+  }, [targetOrigin]);
+  const dismissHint = () => {
+    if (targetOrigin) localStorage.setItem(hintKey, "1");
+    setHintDismissed(true);
+  };
   useEffect(() => {
     // ANY valid bridge message counts as proof of life, not just preview-ready —
     // the hint below must only ever appear when the frame is truly silent.
@@ -303,14 +316,34 @@ export function PreviewPane({
               className="border border-line bg-white shadow-panel"
               style={{ width: "100%", height: "100%", border: 0 }}
             />
-            {quiet && !bridgeSeen && targetOrigin && (
-              // Advice, not a verdict — the frontend may simply not run the bridge.
-              // But a refused frame is by far the most common cause of a blank pane,
-              // and the browser only reports it to a console the editor never opens.
-              <div className="pointer-events-auto absolute inset-x-0 bottom-0 border-t border-line bg-panel/95 p-3 text-xs text-muted">
-                <strong className="text-fg">Preview looks empty?</strong> Your frontend at{" "}
-                <code className="font-mono">{targetOrigin}</code> may be refusing to be framed. It must allow this
-                admin as a frame ancestor — scoped to the framed request, so the public site stays unframable:
+            {quiet && !bridgeSeen && targetOrigin && !hintDismissed && (
+              // Advice, not a verdict: the admin CANNOT read a cross-origin frame, so
+              // its only proof of life is a paperboy:* postMessage from the
+              // @paperboycms/preview bridge. A frontend that renders fine but doesn't
+              // run the bridge is indistinguishable from a refused frame — so say so
+              // honestly, and let the editor dismiss it per frontend.
+              <div className="pointer-events-auto absolute inset-x-0 bottom-0 border-t border-line bg-panel/95 p-3 pr-9 text-xs text-muted">
+                <button
+                  type="button"
+                  className="absolute right-2 top-2 rounded p-1 text-muted hover:bg-line/60 hover:text-fg"
+                  aria-label="Dismiss this hint for this frontend"
+                  title="Dismiss for this frontend"
+                  onClick={dismissHint}
+                >
+                  <Icon.X width={14} height={14} />
+                </button>
+                <strong className="text-fg">No response from the preview bridge.</strong>{" "}
+                <span className="block">
+                  <strong className="text-fg">If the preview shows content above</strong>, everything is fine — your frontend at{" "}
+                  <code className="font-mono">{targetOrigin}</code> just isn’t running{" "}
+                  <code className="font-mono">@paperboycms/preview</code>, which powers on-page editing and live
+                  updates. Add the bridge to enable those (and this hint goes away), or dismiss this with the ×.
+                </span>
+                <span className="mt-1 block">
+                  <strong className="text-fg">If the preview is empty</strong>, the frontend is probably refusing to be
+                  framed. It must allow this admin as a frame ancestor — scoped to the framed request, so the public
+                  site stays unframable:
+                </span>
                 <code className="mt-1 block break-all rounded bg-line/50 px-2 py-1 font-mono">
                   {`Content-Security-Policy: frame-ancestors ${window.location.origin}`}
                   <br />

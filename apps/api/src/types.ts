@@ -1,4 +1,4 @@
-import type { AccessContext, Database, Perspective } from "@paperboy/db";
+import type { AccessContext, AiEnv, Database, Perspective } from "@paperboy/db";
 import type { SessionUser } from "@paperboy/shared";
 
 declare module "fastify" {
@@ -11,7 +11,7 @@ declare module "fastify" {
     loginRateMax: number;
     uploadsDir: string;
     previewSecret?: string;
-    aiConfig: { apiKey?: string; model: string };
+    aiEnv: AiEnv;
     stockConfig: { unsplashKey?: string };
   }
   interface FastifyRequest {
