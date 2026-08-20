@@ -1,7 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import type { ContentTypeDef, RoleName } from "@paperboy/shared";
+import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName } from "@paperboy/shared";
 import { ACTIVE_SITE_KEY, api, ApiError, type ManagedUser, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
@@ -9,6 +9,7 @@ import { useUser } from "../../lib/user.js";
 import { ContentTypeEditor } from "../ContentTypeEditor.js";
 import { Dialog, DialogContent } from "../ui/dialog.js";
 import { Badge } from "../ui/badge.js";
+import { Switch } from "../ui/switch.js";
 import { Callout } from "../ui/callout.js";
 import { Surface } from "../ui/surface.js";
 import { useToast } from "../ui/toast.js";
@@ -153,6 +154,8 @@ export function ContentTypesPanel() {
   const [editor, setEditor] = useState<{ mode: "create" | "edit"; initial?: ContentTypeDef } | null>(null);
   const [kind, setKind] = useState<KindFilter>("all");
   const [tplSource, setTplSource] = useState<ContentTypeDef | null>(null);
+  const [picker, setPicker] = useState(false);
+  const [useAsIs, setUseAsIs] = useState<ContentTypeDef | null>(null);
 
   const all = types.data ?? [];
   // Deep link from the dashboard ("content types without content"):
@@ -179,7 +182,7 @@ export function ContentTypesPanel() {
     <PanelShell
       title="Content types"
       hint="The data model: pages, blocks and globals editors fill in. Public fields are exposed by the Delivery API."
-      action={canManage ? <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setEditor({ mode: "create" })}><Icon.Plus width={14} height={14} /> New content type</button> : undefined}
+      action={canManage ? <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setPicker(true)}><Icon.Plus width={14} height={14} /> New content type</button> : undefined}
     >
       {/* Kind filter */}
       <div className="flex gap-1 border-b border-line px-3 py-2" role="tablist" aria-label="Filter by kind">
@@ -219,6 +222,15 @@ export function ContentTypesPanel() {
       ))}
       {shown.length === 0 && <p className="p-4 text-sm text-muted">{all.length === 0 ? "No content types." : "None of this kind."}</p>}
       {tplSource && <SaveTemplateDialog type={tplSource} onClose={() => setTplSource(null)} />}
+      {picker && (
+        <NewTypeDialog
+          onBlank={() => { setPicker(false); setEditor({ mode: "create" }); }}
+          onCustomize={(t) => { setPicker(false); setEditor({ mode: "create", initial: t }); }}
+          onUseAsIs={(t) => { setPicker(false); setUseAsIs(t); }}
+          onClose={() => setPicker(false)}
+        />
+      )}
+      {useAsIs && <InstantiateDialog template={useAsIs} allTypes={all} onClose={() => setUseAsIs(null)} />}
       {editor && (
         <ContentTypeEditor
           mode={editor.mode}
@@ -288,6 +300,74 @@ function SaveTemplateDialog({ type, onClose }: { type: ContentTypeDef; onClose: 
   );
 }
 
+/** "New content type" picker: start blank, or start from a template — either
+ *  customised in the editor first, or created exactly as the recipe stands. */
+function NewTypeDialog({
+  onBlank, onCustomize, onUseAsIs, onClose,
+}: {
+  onBlank: () => void;
+  onCustomize: (t: ContentTypeDef) => void;
+  onUseAsIs: (t: ContentTypeDef) => void;
+  onClose: () => void;
+}) {
+  const templates = useQuery({ queryKey: ["type-templates"], queryFn: ({ signal }) => api.typeTemplates(signal) });
+  const groups: { key: ContentTypeDef["kind"]; label: string }[] = [
+    { key: "page", label: "Pages" },
+    { key: "block", label: "Blocks" },
+    { key: "global", label: "Globals" },
+  ];
+  const all = templates.data ?? [];
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        title="New content type"
+        description="Start from a template — use it as-is or customize it first — or start blank."
+        className="w-[min(720px,94vw)]"
+      >
+        <div className="flex max-h-[70vh] flex-col gap-4 overflow-y-auto pr-1">
+          <button
+            className="flex items-center gap-3 rounded-(--radius) border border-dashed border-line px-4 py-3 text-left text-sm hover:border-accent hover:bg-accent/5"
+            onClick={onBlank}
+          >
+            <Icon.Plus width={16} height={16} className="shrink-0 text-muted" />
+            <span>
+              <span className="block font-medium text-fg">Start blank</span>
+              <span className="block text-xs text-muted">Define every field yourself.</span>
+            </span>
+          </button>
+          {templates.isLoading && <p className="text-sm text-muted" aria-busy="true">Loading templates…</p>}
+          {groups.map(({ key, label }) => {
+            const list = all.filter((t) => t.kind === key);
+            if (list.length === 0) return null;
+            return (
+              <div key={key}>
+                <h4 className="mb-1.5 text-[13px] font-bold uppercase tracking-wide text-muted">{label}</h4>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {list.map((t) => (
+                    <div key={t.name} className="flex flex-col gap-1.5 rounded-(--radius) border border-line bg-canvas/60 p-3">
+                      <div className="flex items-center gap-2">
+                        <TypeIcon name={t.icon} width={16} height={16} className="shrink-0 text-muted" />
+                        <span className="truncate text-sm font-medium text-fg">{t.displayName}</span>
+                        {BUILTIN_TYPE_TEMPLATE_NAMES.has(t.name) && <Badge tone="default">built-in</Badge>}
+                      </div>
+                      <p className="min-h-8 text-xs text-muted">{t.description || `${t.fields.length} fields.`}</p>
+                      <div className="mt-auto flex items-center gap-2">
+                        <code className="mr-auto rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{t.name}</code>
+                        <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => onCustomize(t)}>Customize</button>
+                        <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => onUseAsIs(t)}>Use as-is</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /* ------------------------------ Type templates ----------------------------- */
 export function TypeTemplatesPanel() {
   const { user } = useUser();
@@ -297,8 +377,12 @@ export function TypeTemplatesPanel() {
   const types = useQuery({ queryKey: ["content-types"], queryFn: ({ signal }) => api.contentTypes(signal) });
   const templates = useQuery({ queryKey: ["type-templates"], queryFn: ({ signal }) => api.typeTemplates(signal) });
   const [editor, setEditor] = useState<{ mode: "create" | "edit"; initial?: ContentTypeDef } | null>(null);
-  const [inst, setInst] = useState<{ template: ContentTypeDef; asName: string; overwrite: boolean } | null>(null);
+  const [inst, setInst] = useState<ContentTypeDef | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [kind, setKind] = useState<KindFilter>("all");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [importResult, setImportResult] = useState<{ created: string[]; updated: string[]; skipped: { name: string; reason: string }[] } | null>(null);
+  const [importedDoc, setImportedDoc] = useState<{ templates: unknown[]; version?: number } | null>(null);
 
   const deleteTpl = useMutation({
     mutationFn: (name: string) => api.deleteTypeTemplate(name),
@@ -309,67 +393,143 @@ export function TypeTemplatesPanel() {
     },
     onError: (e) => toast.error("Couldn’t delete template", (e as Error).message),
   });
-  const instantiate = useMutation({
-    mutationFn: (args: { name: string; asName?: string; updateExisting?: boolean }) =>
-      api.instantiateTypeTemplate(args.name, { asName: args.asName, updateExisting: args.updateExisting }),
-    onSuccess: (res) => {
-      void qc.invalidateQueries({ queryKey: ["content-types"] });
-      toast.success(res.action === "created" ? "Type created from template" : "Type updated from template", `“${res.name}”`);
-      setInst(null);
+  const doImport = useMutation({
+    mutationFn: (v: { templates: unknown[]; overwrite?: boolean; version?: number }) => api.importTypeTemplates(v),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ["type-templates"] });
+      setImportResult(r);
     },
-    onError: (e) => {
-      if (e instanceof ApiError && e.status === 409 && inst) setInst({ ...inst, overwrite: true });
-      else toast.error("Couldn’t instantiate", (e as Error).message);
+    onError: (e) => toast.error("Couldn’t import templates", (e as Error).message),
+  });
+  const doExport = useMutation({
+    mutationFn: () => api.exportTypeTemplates(),
+    onSuccess: (doc) => {
+      const blob = new Blob([JSON.stringify(doc, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `paperboy-type-templates-${doc.exportedAt.slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Templates exported", `${doc.templates.length} templates in the download.`);
     },
+    onError: (e) => toast.error("Couldn’t export templates", (e as Error).message),
   });
 
+  async function onImportFile(file: File | undefined) {
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text()) as { templates?: unknown[]; version?: number } | unknown[];
+      const templates = Array.isArray(parsed) ? parsed : parsed?.templates;
+      const version = Array.isArray(parsed) ? undefined : parsed?.version;
+      if (!Array.isArray(templates) || templates.length === 0) {
+        toast.error("Not a template export", "Expected a JSON document with a “templates” array (from Export)." );
+        return;
+      }
+      setImportedDoc({ templates, version });
+      doImport.mutate({ templates, version });
+    } catch {
+      toast.error("Couldn’t read file", "The file is not valid JSON.");
+    }
+  }
+
   const all = templates.data ?? [];
+  const counts: Record<KindFilter, number> = {
+    all: all.length,
+    page: all.filter((t) => t.kind === "page").length,
+    block: all.filter((t) => t.kind === "block").length,
+    global: all.filter((t) => t.kind === "global").length,
+  };
+  const shown = kind === "all" ? all : all.filter((t) => t.kind === kind);
 
   return (
     <PanelShell
       title="Type templates"
-      hint="Reusable content-type recipes (per instance). Instantiate one into a live type — existing types are never overwritten without an explicit confirm."
-      action={canManage ? <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setEditor({ mode: "create" })}><Icon.Plus width={14} height={14} /> New template</button> : undefined}
+      hint="Reusable content-type recipes. Built-in templates ship with Paperboy (read-only — duplicate one to customise it); your own are stored per instance. Instantiate one into a live type — existing types are never overwritten without an explicit confirm."
+      action={
+        canManage ? (
+          <span className="flex items-center gap-1.5">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              aria-label="Import templates file"
+              onChange={(e) => { void onImportFile(e.target.files?.[0]); e.target.value = ""; }}
+            />
+            <button className="btn-subtle px-2 py-1 text-xs" disabled={doImport.isPending} onClick={() => fileRef.current?.click()}>
+              {doImport.isPending ? "Importing…" : "Import"}
+            </button>
+            <button className="btn-subtle px-2 py-1 text-xs" disabled={doExport.isPending} onClick={() => doExport.mutate()}>
+              {doExport.isPending ? "Exporting…" : "Export"}
+            </button>
+            <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setEditor({ mode: "create" })}><Icon.Plus width={14} height={14} /> New template</button>
+          </span>
+        ) : undefined
+      }
     >
+      <div className="flex gap-1 border-b border-line px-3 py-2" role="tablist" aria-label="Filter templates by kind">
+        {KIND_TABS.map((t) => (
+          <button key={t.key} role="tab" aria-selected={kind === t.key}
+            className={`rounded-full px-2.5 py-1 text-xs font-medium ${kind === t.key ? "bg-accent/15 text-accent-700" : "text-muted hover:bg-line/60 hover:text-fg"}`}
+            onClick={() => setKind(t.key)}>
+            {t.label} <span className="tnum">{counts[t.key]}</span>
+          </button>
+        ))}
+      </div>
       {templates.isLoading ? (
         <p className="p-4 text-sm text-muted">Loading…</p>
-      ) : all.length === 0 ? (
-        <p className="p-4 text-sm text-muted">No templates yet. Create one here, or save any content type as a template from the Content types tab.</p>
+      ) : shown.length === 0 ? (
+        <p className="p-4 text-sm text-muted">{all.length === 0 ? "No templates." : "None of this kind."}</p>
       ) : (
-        all.map((t) => (
-          <div key={t.name} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
-            <TypeIcon name={t.icon} width={16} height={16} className="shrink-0 text-muted" />
-            <span className="font-medium text-fg">{t.displayName}</span>
-            <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{t.name}</code>
-            <span className="rounded bg-canvas px-1.5 py-0.5 text-[11px] text-muted">{t.kind}</span>
-            <span className="ml-auto flex items-center gap-3 text-xs text-muted">
-              <span title="Instantiated from this template">{(types.data ?? []).some((x) => x.name === t.name) ? "type exists" : "not instantiated"}</span>
-              <span className="text-line">·</span>
-              <span>{t.fields.length} fields</span>
-            </span>
-            {canManage && (
-              <>
-                <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setEditor({ mode: "edit", initial: t })}>Edit</button>
-                <button
-                  className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10"
-                  title="Materialise this template into a live content type"
-                  onClick={() => setInst({ template: t, asName: t.name, overwrite: false })}
-                >
-                  Instantiate
-                </button>
-                {deleting === t.name ? (
-                  <span className="flex items-center gap-2 text-xs">
-                    <span className="text-danger">Delete “{t.name}”?</span>
-                    <button className="btn-danger px-2 py-0.5 text-xs" disabled={deleteTpl.isPending} onClick={() => deleteTpl.mutate(t.name)}>{deleteTpl.isPending ? "Deleting…" : "Confirm"}</button>
-                    <button className="btn-ghost px-2 py-0.5 text-xs" onClick={() => setDeleting(null)}>Cancel</button>
-                  </span>
-                ) : (
-                  <button className="rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => setDeleting(t.name)}>Delete</button>
-                )}
-              </>
-            )}
-          </div>
-        ))
+        shown.map((t) => {
+          const builtin = BUILTIN_TYPE_TEMPLATE_NAMES.has(t.name);
+          return (
+            <div key={t.name} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
+              <TypeIcon name={t.icon} width={16} height={16} className="shrink-0 text-muted" />
+              <span className="font-medium text-fg">{t.displayName}</span>
+              <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{t.name}</code>
+              <span className="rounded bg-canvas px-1.5 py-0.5 text-[11px] text-muted">{t.kind}</span>
+              {builtin && <Badge tone="default">built-in</Badge>}
+              <span className="ml-auto flex items-center gap-3 text-xs text-muted">
+                <span title="Instantiated from this template">{(types.data ?? []).some((x) => x.name === t.name) ? "type exists" : "not instantiated"}</span>
+                <span className="text-line">·</span>
+                <span>{t.fields.length} fields</span>
+              </span>
+              {canManage && (
+                <>
+                  {builtin ? (
+                    <button
+                      className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10"
+                      title="Built-ins are read-only — duplicate into an editable copy"
+                      onClick={() => setEditor({ mode: "create", initial: { ...t, name: `${t.name}Custom`, displayName: `${t.displayName} (copy)` } })}
+                    >
+                      Duplicate
+                    </button>
+                  ) : (
+                    <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setEditor({ mode: "edit", initial: t })}>Edit</button>
+                  )}
+                  <button
+                    className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10"
+                    title="Materialise this template into a live content type"
+                    onClick={() => setInst(t)}
+                  >
+                    Instantiate
+                  </button>
+                  {!builtin && (deleting === t.name ? (
+                    <span className="flex items-center gap-2 text-xs">
+                      <span className="text-danger">Delete “{t.name}”?</span>
+                      <button className="btn-danger px-2 py-0.5 text-xs" disabled={deleteTpl.isPending} onClick={() => deleteTpl.mutate(t.name)}>{deleteTpl.isPending ? "Deleting…" : "Confirm"}</button>
+                      <button className="btn-ghost px-2 py-0.5 text-xs" onClick={() => setDeleting(null)}>Cancel</button>
+                    </span>
+                  ) : (
+                    <button className="rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => setDeleting(t.name)}>Delete</button>
+                  ))}
+                </>
+              )}
+            </div>
+          );
+        })
       )}
       {editor && (
         <ContentTypeEditor
@@ -381,38 +541,123 @@ export function TypeTemplatesPanel() {
           onOpenChange={(o) => !o && setEditor(null)}
         />
       )}
-      {inst && (
-        <InstantiateDialog
-          template={inst.template}
-          asName={inst.asName}
-          onAsNameChange={(v) => setInst({ ...inst, asName: v, overwrite: false })}
-          overwrite={inst.overwrite}
-          onOverwriteChange={(v) => setInst({ ...inst, overwrite: v })}
-          busy={instantiate.isPending}
-          onInstantiate={() =>
-            instantiate.mutate({ name: inst.template.name, asName: inst.asName !== inst.template.name ? inst.asName : undefined, updateExisting: inst.overwrite })}
-          onClose={() => setInst(null)}
+      {inst && <InstantiateDialog template={inst} allTypes={types.data ?? []} onClose={() => setInst(null)} />}
+      {importResult && (
+        <ImportResultDialog
+          result={importResult}
+          canOverwrite={Boolean(importedDoc) && importResult.skipped.some((s) => s.reason.includes("overwrite"))}
+          busy={doImport.isPending}
+          onOverwrite={() => { if (importedDoc) doImport.mutate({ ...importedDoc, overwrite: true }); }}
+          onClose={() => { setImportResult(null); setImportedDoc(null); }}
         />
       )}
     </PanelShell>
   );
 }
 
-function InstantiateDialog({
-  template, asName, onAsNameChange, overwrite, onOverwriteChange, busy, onInstantiate, onClose,
+/** Per-template import outcome — skips carry the reason, and a one-click
+ *  "overwrite existing" retry is offered when that's what blocked them. */
+function ImportResultDialog({
+  result, canOverwrite, busy, onOverwrite, onClose,
 }: {
-  template: ContentTypeDef; asName: string; onAsNameChange: (v: string) => void; overwrite: boolean;
-  onOverwriteChange: (v: boolean) => void; busy: boolean; onInstantiate: () => void; onClose: () => void;
+  result: { created: string[]; updated: string[]; skipped: { name: string; reason: string }[] };
+  canOverwrite: boolean; busy: boolean; onOverwrite: () => void; onClose: () => void;
 }) {
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent size="md" title="Import result" description="What happened to each template in the file.">
+        <div className="space-y-3 text-sm">
+          {result.created.length > 0 && (
+            <p><strong className="text-published">Created:</strong> {result.created.join(", ")}</p>
+          )}
+          {result.updated.length > 0 && (
+            <p><strong className="text-accent-700">Updated:</strong> {result.updated.join(", ")}</p>
+          )}
+          {result.skipped.length > 0 && (
+            <div>
+              <strong className="text-muted">Skipped:</strong>
+              <ul className="mt-1 space-y-1">
+                {result.skipped.map((s) => (
+                  <li key={s.name} className="rounded border border-line bg-canvas/60 px-2 py-1 text-xs">
+                    <code className="font-mono">{s.name}</code> — <span className="text-muted">{s.reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {result.created.length === 0 && result.updated.length === 0 && result.skipped.length === 0 && (
+            <p className="text-muted">The file contained no templates.</p>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            {canOverwrite && (
+              <button className="btn-subtle" disabled={busy} onClick={onOverwrite}>
+                {busy ? "Importing…" : "Import again, overwriting existing"}
+              </button>
+            )}
+            <button className="btn-primary" onClick={onClose}>Done</button>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Instantiate a template into a live content type. Self-contained: owns the
+ *  mutation (used from both the templates panel and the new-type gallery),
+ *  the explicit-overwrite confirm, and the "also create its blocks" option. */
+function InstantiateDialog({ template, allTypes, onClose }: { template: ContentTypeDef; allTypes: ContentTypeDef[]; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [asName, setAsName] = useState(template.name);
+  const [overwrite, setOverwrite] = useState(false);
+  // Block types this template's content areas reference but that don't exist
+  // yet — the withBlocks option exists exactly for these.
+  const missingBlocks = useMemo(() => {
+    const referenced = new Set<string>();
+    for (const f of template.fields) {
+      if (f.type === "contentArea") for (const b of f.allowedBlocks) referenced.add(b);
+    }
+    return [...referenced].filter((n) => !allTypes.some((t) => t.name === n));
+  }, [template, allTypes]);
+  const [withBlocks, setWithBlocks] = useState(true);
+
+  const instantiate = useMutation({
+    mutationFn: () =>
+      api.instantiateTypeTemplate(template.name, {
+        asName: asName !== template.name ? asName : undefined,
+        updateExisting: overwrite,
+        withBlocks: missingBlocks.length > 0 && withBlocks,
+      }),
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ["content-types"] });
+      void qc.invalidateQueries({ queryKey: ["content-types-usage"] });
+      const blocks = res.blocks?.created.length ? ` Also created: ${res.blocks.created.join(", ")}.` : "";
+      toast.success(res.action === "created" ? "Type created from template" : "Type updated from template", `“${res.name}”.${blocks}`);
+      onClose();
+    },
+    onError: (e) => {
+      if (e instanceof ApiError && e.status === 409 && !overwrite) setOverwrite(true);
+      else toast.error("Couldn’t instantiate", (e as Error).message);
+    },
+  });
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent size="sm" title={`Instantiate “${template.displayName}”`} description="Creates a live content type from this template.">
         <div className="space-y-3">
           <div>
             <label className="field-label" htmlFor="inst-name">Type name</label>
-            <input id="inst-name" aria-label="Type name" className="field-input font-mono text-xs" value={asName} onChange={(e) => onAsNameChange(e.target.value)} />
+            <input id="inst-name" aria-label="Type name" className="field-input font-mono text-xs" value={asName}
+              onChange={(e) => { setAsName(e.target.value); setOverwrite(false); }} />
             <p className="mt-1 text-[11px] text-muted">Defaults to the template’s own name. Use a different name to create a variant.</p>
           </div>
+          {missingBlocks.length > 0 && (
+            <Switch
+              checked={withBlocks}
+              onCheckedChange={setWithBlocks}
+              label={`Also create the ${missingBlocks.length === 1 ? "block type" : `${missingBlocks.length} block types`} it uses (${missingBlocks.join(", ")})`}
+            />
+          )}
           {overwrite && (
             <p className="rounded border border-draft/40 bg-draft/10 px-3 py-2 text-xs text-draft" role="alert">
               Type <strong>{asName}</strong> already exists. Overwrite it from this template? Its kind must match and
@@ -420,10 +665,10 @@ function InstantiateDialog({
             </p>
           )}
           <div className="flex gap-2">
-            <button className="btn-primary" disabled={busy || !asName.trim()} onClick={onInstantiate}>
-              {busy ? "Working…" : overwrite ? "Overwrite type" : "Instantiate"}
+            <button className="btn-primary" disabled={instantiate.isPending || !asName.trim()} onClick={() => instantiate.mutate()}>
+              {instantiate.isPending ? "Working…" : overwrite ? "Overwrite type" : "Instantiate"}
             </button>
-            {overwrite && <button className="btn-ghost" onClick={() => onOverwriteChange(false)}>Cancel</button>}
+            {overwrite && <button className="btn-ghost" onClick={() => setOverwrite(false)}>Cancel</button>}
             <button className="btn-ghost ml-auto" onClick={onClose}>Close</button>
           </div>
         </div>

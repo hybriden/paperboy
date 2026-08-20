@@ -20,6 +20,8 @@ async function openNewTypeDialog(page: import("@playwright/test").Page) {
   await page.getByRole("link", { name: "Settings" }).click();
   await expect(page.getByRole("heading", { name: "Content types" }).first()).toBeVisible({ timeout: 10_000 });
   await page.getByRole("button", { name: "New content type" }).click();
+  // The template gallery opens first; these tests exercise the blank editor.
+  await page.getByRole("dialog").getByRole("button", { name: "Start blank" }).click();
   const dlg = page.getByRole("dialog");
   await expect(dlg.getByRole("heading", { name: "New content type" })).toBeVisible();
   return dlg;

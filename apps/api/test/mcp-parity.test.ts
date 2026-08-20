@@ -279,6 +279,33 @@ describe("MCP parity: real stdio server vs the API", () => {
     expect((ok.json as { action: string }).action).toBe("updated");
   }, 90_000);
 
+  it("built-in templates are listed via MCP, and export/import round-trips (write parity)", async () => {
+    const list = await mcp.call("list_type_templates", {});
+    expect(list.isError).toBe(false);
+    const names = (list.json as Array<{ name: string }>).map((t) => t.name);
+    expect(names).toEqual(expect.arrayContaining(["ArticlePage", "FaqPage", "HeroBlock", "McpTpl"]));
+
+    // Export the stored template, delete it, import the document back.
+    const exported = await mcp.call("export_type_templates", { names: ["McpTpl"] });
+    expect(exported.isError, exported.text.slice(0, 200)).toBe(false);
+    const doc = exported.json as { format: string; version: number; templates: Array<Record<string, unknown>> };
+    expect(doc.format).toBe("paperboy-type-templates");
+    await mcp.call("delete_type_template", { name: "McpTpl" });
+
+    const imported = await mcp.call("import_type_templates", { templates: doc.templates });
+    expect(imported.isError, imported.text.slice(0, 200)).toBe(false);
+    expect((imported.json as { created: string[] }).created).toEqual(["McpTpl"]);
+
+    // Readable through the API again — same collection, same shape.
+    const viaApi = await s.app.inject({ method: "GET", url: "/api/v1/manage/type-templates/McpTpl", headers: { cookie: admin.cookie } });
+    expect(viaApi.statusCode).toBe(200);
+
+    // Built-in names are read-only via MCP too, with a self-teaching error.
+    const denied = await mcp.call("delete_type_template", { name: "TextBlock" });
+    expect(denied.isError).toBe(true);
+    expect(denied.text).toContain("built-in");
+  }, 90_000);
+
   it("type-template writes leave an audit trail with ip='mcp'", async () => {
     const audit = await s.app.inject({ method: "GET", url: "/api/v1/manage/audit?action=type_template", headers: authHeaders(admin) });
     const rows = audit.json() as Array<{ ip: string | null; action: string }>;

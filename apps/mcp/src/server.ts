@@ -45,6 +45,8 @@ import {
    listContentTypes,
    listTypeTemplates,
    instantiateTypeTemplate,
+   exportTypeTemplates,
+   importTypeTemplates,
    listDeliveryKeys,
   listLocales,
   listPages,
@@ -73,7 +75,7 @@ import {
   resolveDefaultLocale,
   verifyMcpToken,
 } from "@paperboy/db";
-import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, RoleName, aiAssist, fieldFormatHint, redactForLog } from "@paperboy/shared";
+import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, RoleName, TYPE_TEMPLATE_EXPORT_FORMAT, TYPE_TEMPLATE_EXPORT_VERSION, aiAssist, fieldFormatHint, redactForLog } from "@paperboy/shared";
 import { z } from "zod";
 
 /**
@@ -458,29 +460,55 @@ tool("update_content_type", "Update a content type (name and kind are immutable)
 /* --------------------- content-type template collection ------------------ */
 // Named, reusable ContentTypeDef recipes: save a type as a template, then
 // instantiate it back into a real content type (optionally under a new name).
-tool("list_type_templates", "List all content-type templates — named ContentTypeDef recipes. Each template's name is the content type name it materialises by default.", {},
+tool("list_type_templates", "List all content-type templates — named ContentTypeDef recipes. Includes the BUILT-IN library (starter pages/blocks that ship with Paperboy, read-only) alongside stored templates. Each template's name is the content type name it materialises by default.", {},
   async () => { need("content.read"); return (await listTypeTemplates(db)).map(withFieldFormats); });
-tool("get_type_template", "Get a type template definition by name. Each field includes valueFormat + valueExample.", { name: z.string() },
+tool("get_type_template", "Get a type template definition by name (stored or built-in). Each field includes valueFormat + valueExample.", { name: z.string() },
   async ({ name }) => { need("content.read"); return withFieldFormats(await getTypeTemplate(db, name)); });
-tool("create_type_template", "Save a content type definition as a reusable template (a starter/backup recipe). The template's name is the content type name instantiate materialises by default — use a name no existing template takes.", { definition: z.record(z.string(), z.unknown()).describe("Full ContentTypeDef, same shape as create_content_type") },
+tool("create_type_template", "Save a content type definition as a reusable template (a starter/backup recipe). The template's name is the content type name instantiate materialises by default — use a name no existing template takes (built-in template names are reserved).", { definition: z.record(z.string(), z.unknown()).describe("Full ContentTypeDef, same shape as create_content_type") },
   async ({ definition }) => { const def = ContentTypeDef.parse(definition); const r = await createTypeTemplate(db, ctx, def); mcpAudit("type_template.create", null, null, { name: def.name, kind: def.kind }); return r; });
-tool("update_type_template", "Update a type template in place (name and kind are immutable).", { name: z.string(), definition: z.record(z.string(), z.unknown()) },
+tool("update_type_template", "Update a stored type template in place (name and kind are immutable; built-in templates are read-only — copy one under a new name instead).", { name: z.string(), definition: z.record(z.string(), z.unknown()) },
   async ({ name, definition }) => { const def = ContentTypeDef.parse(definition); const r = await updateTypeTemplate(db, ctx, name, def); mcpAudit("type_template.update", null, null, { name }); return r.next; });
-tool("delete_type_template", "Delete a type template. Types instantiated from it are NOT affected.", { name: z.string() },
+tool("delete_type_template", "Delete a stored type template (built-ins can't be deleted). Types instantiated from it are NOT affected.", { name: z.string() },
   async ({ name }) => { await deleteTypeTemplate(db, ctx, name); mcpAudit("type_template.delete", null, null, { name }); return { ok: true }; });
 tool(
   "instantiate_type_template",
   "Materialise a type template into a real content type. Default: creates the type under the template's own name. " +
     "If that type already exists the call is REFUSED (409) — pass updateExisting: true to re-apply the template onto the existing type (kind must match; existing content is not migrated), " +
-    "or asName: \"OtherName\" to create a type with a DIFFERENT name (must match ^[A-Z][a-zA-Z0-9]*$, e.g. \"CaseStudy\").",
+    "or asName: \"OtherName\" to create a type with a DIFFERENT name (must match ^[A-Z][a-zA-Z0-9]*$, e.g. \"CaseStudy\"). " +
+    "Pass withBlocks: true to ALSO create the block types the template's content areas reference (recursively; existing types are left untouched) — recommended for built-ins like FaqPage so the set works out of the box.",
   {
     name: z.string().describe("Template name"),
     updateExisting: z.boolean().optional().describe("Overwrite the existing type of the same name from the template (default false)"),
     asName: z.string().optional().describe("Create the type under this name instead of the template's"),
+    withBlocks: z.boolean().optional().describe("Also create the block types this template's content areas allow-list (default false)"),
   },
-  async ({ name, updateExisting, asName }) => {
-    const r = await instantiateTypeTemplate(db, ctx, name, { updateExisting, asName });
-    mcpAudit("type_template.instantiate", null, null, { template: name, type: r.name, action: r.action });
+  async ({ name, updateExisting, asName, withBlocks }) => {
+    const r = await instantiateTypeTemplate(db, ctx, name, { updateExisting, asName, withBlocks });
+    mcpAudit("type_template.instantiate", null, null, { template: name, type: r.name, action: r.action, ...(r.blocks ? { blocks: r.blocks } : {}) });
+    return r;
+  },
+);
+tool(
+  "export_type_templates",
+  "Export type templates as a portable JSON document ({format, version, exportedAt, templates}) that import_type_templates on another Paperboy instance accepts. Omit names to export everything (built-ins included).",
+  { names: z.array(z.string()).optional().describe("Template names to export (default: all)") },
+  async ({ names }) => {
+    need("content.read");
+    const templates = await exportTypeTemplates(db, names);
+    return { format: TYPE_TEMPLATE_EXPORT_FORMAT, version: TYPE_TEMPLATE_EXPORT_VERSION, exportedAt: new Date().toISOString(), templates };
+  },
+);
+tool(
+  "import_type_templates",
+  "Import type templates from an export document. Per-template outcome: new names are created; existing stored templates are skipped unless overwrite: true; built-in names are always skipped (they ship with every instance). Returns {created, updated, skipped:[{name, reason}]}.",
+  {
+    templates: z.array(z.record(z.string(), z.unknown())).min(1).max(200).describe("The export document's templates array (full ContentTypeDef objects)"),
+    overwrite: z.boolean().optional().describe("Update existing stored templates from the import (default false)"),
+  },
+  async ({ templates, overwrite }) => {
+    const defs = templates.map((t) => ContentTypeDef.parse(t));
+    const r = await importTypeTemplates(db, ctx, defs, overwrite ?? false);
+    mcpAudit("type_template.import", null, null, { created: r.created, updated: r.updated, skipped: r.skipped.map((s) => s.name), overwrite: overwrite ?? false });
     return r;
   },
 );

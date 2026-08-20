@@ -781,6 +781,20 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "GET /api/v1/manage/type-templates/export": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "exportedAt",
+      "format",
+      "templates",
+      "version",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "GET /api/v1/manage/type-templates/{name}": {
     "requestBodyRequired": [],
     "requiredParams": [
@@ -1600,6 +1614,21 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "POST /api/v1/manage/type-templates/import": {
+    "requestBodyRequired": [
+      "templates",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "created",
+      "skipped",
+      "updated",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "POST /api/v1/manage/type-templates/{name}/instantiate": {
     "requestBodyRequired": [],
     "requiredParams": [
@@ -1607,6 +1636,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     ],
     "response200Props": [
       "action",
+      "blocks",
       "name",
       "type",
     ],

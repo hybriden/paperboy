@@ -75,7 +75,7 @@ export const ContentDetail = z.object({
   updatedBy: z.string().nullable(),
   /** Which surface wrote the working version: "mcp"/"agent" = agents, "web" = human, null = pre-feature. */
   updatedVia: z.enum(["mcp", "agent", "web"]).nullable(),
-  /** Agent-written drafts carry this until a human edits or approves (see docs/POSITIONING.md). */
+  /** Agent-written drafts carry this until a human edits or approves. */
   needsReview: z.boolean(),
   /** Optimistic-concurrency token for the working draft. Send it back as
    *  `revision` on update and a save from a stale snapshot is refused (409)
