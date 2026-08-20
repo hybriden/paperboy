@@ -177,6 +177,37 @@ function anthropicMessageText(data: Record<string, unknown>): string {
   return content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("").trim();
 }
 
+/**
+ * List the models the configured endpoint offers. Both dialects expose a
+ * models listing (OpenAI-compatible: GET {baseUrl}/models — OpenAI, OpenRouter,
+ * Groq, Ollama, vLLM…; Anthropic: GET /v1/models), and both return
+ * {data:[{id}]}. Some proxies don't implement it — the caller surfaces that
+ * honestly ("type the model name manually"), it is never fatal to anything.
+ */
+export async function listAiModels(cfg: AiConfig, timeoutMs = 10_000): Promise<string[]> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    const openai = providerOf(cfg) === "openai";
+    const url = openai
+      ? `${(cfg.baseUrl?.trim() || DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, "")}/models`
+      : "https://api.anthropic.com/v1/models?limit=1000";
+    const headers: Record<string, string> = openai
+      ? { authorization: `Bearer ${cfg.apiKey!}` }
+      : { "x-api-key": cfg.apiKey!, "anthropic-version": "2023-06-01" };
+    const res = await fetch(url, { headers, signal: ac.signal });
+    if (!res.ok) throw new Error(`${openai ? "OpenAI-compatible" : "Anthropic"} ${res.status}${errExcerpt(await res.text().catch(() => ""))}`);
+    const data = (await res.json()) as { data?: Array<{ id?: unknown }> };
+    const ids = (data.data ?? [])
+      .map((m) => (typeof m.id === "string" ? m.id : ""))
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+    return [...new Set(ids)];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Single-turn chat against the configured provider; returns the reply text. */
 async function chat(cfg: AiConfig, req: ChatRequest): Promise<string> {
   let text: string;

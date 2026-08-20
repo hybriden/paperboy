@@ -98,6 +98,7 @@ import {
   Asset,
   BlockSummary,
   aiAssist,
+  listAiModels,
   ContentDetail,
   ChildSort,
   ContentTypeDef,
@@ -1074,6 +1075,40 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         return { ok: true, provider: cfg.provider ?? "anthropic", model: cfg.model, message: null };
       } catch (err) {
         return { ok: false, provider: cfg.provider ?? "anthropic", model: cfg.model, message: (err as Error).message };
+      }
+    },
+  );
+  // Probe the endpoint's model catalog (both dialects expose a listing) so the
+  // panel's Model field can offer a searchable picker instead of blind typing —
+  // essential on aggregator endpoints like OpenRouter with hundreds of models.
+  // Same saved-config semantics as /test; a proxy without /models is reported
+  // honestly, never treated as a config error.
+  app.get(
+    "/site/ai/models",
+    {
+      preHandler: [requirePermission("user.manage")],
+      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+      schema: {
+        tags: ["manage"],
+        response: { 200: z.object({ ok: z.boolean(), provider: z.enum(AI_PROVIDERS), models: z.array(z.string()), message: z.string().nullable() }) },
+      },
+    },
+    async () => {
+      const cfg = await resolveAiRuntimeConfig(app.db, app.aiEnv);
+      const provider = cfg.provider ?? "anthropic";
+      if (!cfg.apiKey) {
+        return { ok: false, provider, models: [], message: "No API key configured — save one first, then fetch the model list." };
+      }
+      try {
+        const models = await listAiModels(cfg);
+        return { ok: true, provider, models, message: null };
+      } catch (err) {
+        return {
+          ok: false,
+          provider,
+          models: [],
+          message: `Couldn't list models from the endpoint (${(err as Error).message}) — it may not implement /models; type the model name manually.`,
+        };
       }
     },
   );
