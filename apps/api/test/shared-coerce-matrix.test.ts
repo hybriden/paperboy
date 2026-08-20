@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type ContentTypeDef, type FieldDef, coerceData, coerceFieldValue } from "@paperboy/shared";
+import { type ContentTypeDef, type FieldDef, coerceData, coerceFieldValue, slugifyValue } from "@paperboy/shared";
 
 /**
  * The UNCOVERED edge matrix for `coerceFieldValue` / `coerceData`.
@@ -421,5 +421,35 @@ describe("coerceData: applies per-field coercion across a content type, only to 
     const out = coerceData(ct, input, "en");
     expect(out).not.toBe(input);
     expect(input).toEqual({ heading: "H" });
+  });
+});
+
+describe("select slugifyValues — tag normalization at the write chokepoint", () => {
+  const tags = f("select", { multiple: true, slugifyValues: true });
+
+  it("normalizes casing/punctuation/whitespace and dedupes ('AI'/'ai' can't fragment)", () => {
+    expect(coerceFieldValue(tags, ["AI", "ai", "Llama.CPP", "llama-cpp", "RTX Spark", "Blåbær"])).toEqual([
+      "ai",
+      "llama-cpp",
+      "rtx-spark",
+      "blabaer",
+    ]);
+  });
+
+  it("drops values that slugify to nothing, and non-strings", () => {
+    expect(coerceFieldValue(tags, ["  ", "!!!", 42, "ok"])).toEqual(["ok"]);
+  });
+
+  it("slugifies a single (non-multiple) select value too", () => {
+    expect(coerceFieldValue(f("select", { slugifyValues: true }), "Optimizely CMS")).toBe("optimizely-cms");
+  });
+
+  it("without the flag, select values pass through untouched (genuine option lists may be case-sensitive)", () => {
+    expect(coerceFieldValue(f("select", { multiple: true }), ["AI", "Llama.CPP"])).toEqual(["AI", "Llama.CPP"]);
+  });
+
+  it("slugifyValue itself: deterministic, idempotent", () => {
+    expect(slugifyValue("  Épinard & Ål  ")).toBe("epinard-al");
+    expect(slugifyValue(slugifyValue("Llama.CPP"))).toBe(slugifyValue("Llama.CPP"));
   });
 });

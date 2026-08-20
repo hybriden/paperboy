@@ -39,6 +39,41 @@ describe("update_content ergonomics: helpful errors + merge mode", () => {
     await s.app.close();
   });
 
+  it("slugifyValues select: every surface writes canonical tag slugs (no 'AI'/'ai' fragmentation)", async () => {
+    const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const type = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content-types",
+      headers: authHeaders(admin),
+      payload: {
+        name: "TaggedNote",
+        displayName: "Tagged note",
+        kind: "block",
+        fields: [{ name: "tags", displayName: "Tags", type: "select", multiple: true, slugifyValues: true, delivery: "public" }],
+      },
+    });
+    expect(type.statusCode, type.body).toBe(200);
+
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: authHeaders(ed),
+      payload: { type: "TaggedNote", locale: "en", name: "Tagged" },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const id = created.json().documentId as string;
+    const put = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${id}?locale=en`,
+      headers: authHeaders(ed),
+      payload: { merge: true, data: { tags: ["AI", "ai", "Llama.CPP", "RTX Spark"] } },
+    });
+    expect(put.statusCode, put.body).toBe(200);
+    const got = await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(ed) });
+    // Normalized + deduped at the WRITE chokepoint — the stored value is canonical.
+    expect(got.json().data.tags).toEqual(["ai", "llama-cpp", "rtx-spark"]);
+  });
+
   it("uncoercible shapes → an error that names the expected format + example", async () => {
     const res = await s.app.inject({
       method: "PUT",

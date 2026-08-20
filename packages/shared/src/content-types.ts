@@ -144,6 +144,15 @@ export const FieldDef = z.object({
   optionsFromContentTypes: z.boolean().default(false),
   /** For select: allow choosing more than one option (value is then an array). */
   multiple: z.boolean().default(false),
+  /**
+   * For select: normalize every written value to a URL-safe slug (lowercase,
+   * hyphens; æ/ø/å transliterated) and dedupe — for TAG-style free-form fields,
+   * where "AI", "ai" and "llama.cpp" fragmenting into separate values breaks
+   * tag pages and sitemaps downstream. Opt-in per field (a genuine option list
+   * may be case-sensitive), enforced in the write chokepoint so every surface
+   * (admin, REST, MCP) writes the same canonical form.
+   */
+  slugifyValues: z.boolean().default(false),
   /** Optional per-field validation rules (text length, number range, regex). */
   validation: FieldValidation.optional(),
   /** Tab/group in the All-Properties editor. */
@@ -422,10 +431,12 @@ export function fieldFormatHint(f: FieldDef): { format: string; example: unknown
       return { format: "a number", example: 3 };
     case "datetime":
       return { format: "an ISO-8601 datetime string", example: "2026-01-15T09:00:00.000Z" };
-    case "select":
+    case "select": {
+      const slug = f.slugifyValues ? " (values are normalized to URL-safe slugs: lowercase, hyphens — e.g. 'Llama.CPP' → 'llama-cpp')" : "";
       return f.multiple
-        ? { format: "an array of option-value strings", example: f.options.slice(0, 1).map((o) => o.value) }
-        : { format: "one option-value string", example: f.options[0]?.value ?? "option-value" };
+        ? { format: `an array of option-value strings${slug}`, example: f.options.slice(0, 1).map((o) => o.value) }
+        : { format: `one option-value string${slug}`, example: f.options[0]?.value ?? "option-value" };
+    }
     case "link":
       return { format: "an object { href, text?, target? }", example: { href: "https://example.com", text: "Example" } };
     case "image":
@@ -439,6 +450,26 @@ export function fieldFormatHint(f: FieldDef): { format: string; example: unknown
         example: [{ key: "b1", blockType: "HeroBlock", display: "full", ref: null, inline: { title: "…" } }],
       };
   }
+}
+
+/**
+ * Canonical URL-safe slug for a tag-style select value. Deterministic and
+ * shared by every write path (and mirrorable by frontends for tag URLs):
+ * lowercase, Norwegian letters transliterated, diacritics stripped, every
+ * non-alphanumeric run collapsed to one hyphen.
+ * "Llama.CPP" → "llama-cpp", "RTX Spark" → "rtx-spark", "Blåbær" → "blabaer".
+ */
+export function slugifyValue(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/æ/g, "ae")
+    .replace(/ø/g, "o")
+    .replace(/å/g, "a")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 /* --------------------- tolerant input coercion (agents) ------------------- */
@@ -991,11 +1022,21 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
     }
     case "contentArea":
       return value && typeof value === "object" && !Array.isArray(value) && "blockType" in (value as object) ? [value] : value;
-    case "select":
-    case "datetime":
+    case "select": {
       // Same carrier family on scalar fields — a real agent sent
       // {type:'select', value:'article'} / {type:'datetime', value:'…Z'} and
       // looped 8× on the reject (2026-06-07 13:0x run).
+      const v = unwrapTextCarrier(value);
+      if (!f.slugifyValues) return v;
+      // Tag-style normalization (opt-in on the field): every surface writes the
+      // same canonical slug, so "AI"/"ai"/"llama.cpp" can't fragment.
+      if (Array.isArray(v)) {
+        const slugs = v.map((x) => (typeof x === "string" ? slugifyValue(x) : "")).filter(Boolean);
+        return [...new Set(slugs)];
+      }
+      return typeof v === "string" ? slugifyValue(v) : v;
+    }
+    case "datetime":
       return unwrapTextCarrier(value);
     case "image":
     case "media": {
