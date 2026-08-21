@@ -762,6 +762,20 @@ test("visual editing: a field INSIDE a block opens the on-page overlay scoped to
   await expect(page.locator("#pb-block-0")).toHaveCount(0);
 });
 
+test("focusing a block field in the form highlights that block's field in the preview", async ({ page }) => {
+  await login(page);
+  await page.getByRole("treeitem", { name: /Home/ }).click();
+  await expect(editorName(page)).toHaveValue("Home");
+  await page.getByRole("button", { name: "Side by side" }).click();
+  const frame = await waitPreviewFrame(page);
+  await frame.locator("body.pb-editing").waitFor({ state: "attached", timeout: 20_000 });
+  // Focus the HERO block's Title editor in the form (block card, area index 0).
+  await page.locator("#bf-h1-title").click();
+  // paperboy:focus carries the block index, so the flash lands on THAT block's
+  // field in the page — not on the first same-named field or the whole area.
+  await expect(frame.locator('[data-pb-block-index="0"] [data-pb-field="title"]')).toHaveClass(/pb-focus/, { timeout: 3000 });
+});
+
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();

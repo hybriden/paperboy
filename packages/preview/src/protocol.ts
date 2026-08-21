@@ -91,6 +91,10 @@ export interface PatchMessage {
 export interface FocusMessage {
   type: "paperboy:focus";
   field: string;
+  /** Scope the highlight to the field INSIDE this block (data-pb-block-index).
+   *  The bridge falls back to flashing the block root when the field itself
+   *  isn't tagged in the markup. Absent → first matching field on the page. */
+  blockIndex?: number | null;
 }
 
 /** A drag started in the admin (Assets pane). Broadcast to the iframe so the
@@ -165,7 +169,11 @@ export const patchMessage = (
   ...(opts?.blockIndex != null ? { blockIndex: opts.blockIndex } : {}),
 });
 
-export const focusMessage = (field: string): FocusMessage => ({ type: "paperboy:focus", field });
+export const focusMessage = (field: string, opts?: { blockIndex?: number | null }): FocusMessage => ({
+  type: "paperboy:focus",
+  field,
+  ...(opts?.blockIndex != null ? { blockIndex: opts.blockIndex } : {}),
+});
 
 export const dragSourceMessage = (payload: unknown): DragSourceMessage => ({ type: "paperboy:dragsource", payload });
 

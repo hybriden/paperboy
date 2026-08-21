@@ -153,7 +153,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const [previewRefresh, setPreviewRefresh] = useState(0);
   // Editor → preview sync: focusing/clicking a property highlights its region in
   // the preview. The counter re-triggers even when the same field is re-focused.
-  const [propFocus, setPropFocus] = useState<{ field: string; n: number } | null>(null);
+  const [propFocus, setPropFocus] = useState<{ field: string; blockIndex?: number; n: number } | null>(null);
   const propCounter = useRef(0);
 
   // ---- On-page edit (Optimizely-style OPE) ----------------------------------
@@ -182,15 +182,20 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     const el = (e.target as HTMLElement).closest?.("[data-pb-prop]");
     const field = el?.getAttribute("data-pb-prop");
     if (!field) return;
+    // A field row inside a block card also carries the block's index, so the
+    // preview highlight lands on THAT block's field, not the first name match.
+    const bi = el?.getAttribute("data-pb-prop-block");
+    const blockIndex = bi != null ? Number(bi) : undefined;
     // Defer to the NEXT FRAME (not a microtask, which still flushes mid-click
     // sequence): running setPropFocus synchronously in the capture phase
     // re-renders the field between a click's mousedown/focus and its click,
     // which swallows the click on controlled inputs — a boolean checkbox would
     // never toggle. Also skip when the field is unchanged so re-focusing the
     // same field (e.g. clicking a checkbox already focused) issues no re-render.
-    if (field === activeFieldRef.current) return;
-    activeFieldRef.current = field;
-    requestAnimationFrame(() => setPropFocus({ field, n: ++propCounter.current }));
+    const key = `${field}@${bi ?? ""}`;
+    if (key === activeFieldRef.current) return;
+    activeFieldRef.current = key;
+    requestAnimationFrame(() => setPropFocus({ field, blockIndex, n: ++propCounter.current }));
   };
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formRef = useRef<ContentDetail | null>(null);

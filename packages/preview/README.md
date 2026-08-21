@@ -70,6 +70,6 @@ import { parsePreviewMessage, patchMessage, focusMessage } from "@paperboycms/pr
 | `data-pb-field` | An editable field region (value = field name) |
 | `data-pb-area` | A content area that accepts block drops (value = field name) |
 | `data-pb-block-index` / `data-pb-block-type` | A rendered block inside an area |
-| `data-pb-field` inside a block root | That block's own field (v0.3+): `paperboy:edit` carries field + blockIndex, and `paperboy:patch` accepts an optional `blockIndex` scoping the live swap to that block |
+| `data-pb-field` inside a block root | That block's own field (v0.3+): `paperboy:edit` carries field + blockIndex, and `paperboy:patch` / `paperboy:focus` accept an optional `blockIndex` scoping the live swap / highlight to that block (focus falls back to flashing the block root when the field isn't tagged) |
 
 ⚠️ `data-pb-area`'s value must be the contentArea **field name** — the bridge posts it back to the editor as `paperboy:drop {field}`, which looks the field up on the content type. A boolean-ish marker (`data-pb-area="true"`) makes every drop fail; the bridge warns about it in the console. Prefer spreading `pbAreaAttrs(field, preview)` from `@paperboycms/client` instead of writing the attribute by hand (it also keeps public pages marker-free).
