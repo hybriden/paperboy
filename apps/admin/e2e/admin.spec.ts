@@ -704,6 +704,16 @@ test("block card header controls stay inside the card in a narrow form column", 
   expect(btnBox.x + btnBox.width, "Remove button must not overflow its block card").toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
 });
 
+/** The preview iframe (the web app on :8092) — polls because it mounts lazily. */
+async function waitPreviewFrame(page: Page) {
+  for (let i = 0; i < 40; i++) {
+    const f = page.frames().find((fr) => /:8092(\/|$)/.test(fr.url()));
+    if (f) return f;
+    await page.waitForTimeout(250);
+  }
+  throw new Error(`preview iframe never appeared; frames: ${page.frames().map((f) => f.url()).join(", ")}`);
+}
+
 test("visual editing: a preview 'edit' message switches tab + focuses the field/block", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
@@ -717,14 +727,7 @@ test("visual editing: a preview 'edit' message switches tab + focuses the field/
   // source = the iframe window), exactly as @paperboycms/preview does. Posting from
   // the admin page itself is now correctly ignored, which is the point.
   await page.getByRole("button", { name: "Side by side" }).click();
-  const previewFrame = await (async () => {
-    for (let i = 0; i < 40; i++) {
-      const f = page.frames().find((fr) => /:8092(\/|$)/.test(fr.url()));
-      if (f) return f;
-      await page.waitForTimeout(250);
-    }
-    throw new Error(`preview iframe never appeared; frames: ${page.frames().map((f) => f.url()).join(", ")}`);
-  })();
+  const previewFrame = await waitPreviewFrame(page);
 
   // SEO meta title → switches to the SEO tab and focuses the field.
   await previewFrame.evaluate(() => window.parent.postMessage({ type: "paperboy:edit", field: "metaTitle" }, "*"));
@@ -735,6 +738,28 @@ test("visual editing: a preview 'edit' message switches tab + focuses the field/
     window.parent.postMessage({ type: "paperboy:edit", field: "mainArea", blockIndex: 0 }, "*"),
   );
   await expect(page.locator("#pb-block-0")).toBeVisible({ timeout: 5000 });
+});
+
+test("visual editing: a field INSIDE a block opens the on-page overlay scoped to that block", async ({ page }) => {
+  await login(page);
+  await page.getByRole("treeitem", { name: /Home/ }).click();
+  await expect(editorName(page)).toHaveValue("Home");
+  // On-page mode: clicking a tagged field inside a rendered block must open the
+  // in-place overlay for THAT block's field — not bail out to the side-by-side
+  // form (reported live 2026-08-21: hero text only ever opened the block card).
+  await page.getByRole("button", { name: "On-page" }).click();
+  const frame = await waitPreviewFrame(page);
+  await frame.evaluate(() =>
+    window.parent.postMessage(
+      { type: "paperboy:edit", field: "title", blockIndex: 0, blockType: "HeroBlock", rect: { x: 40, y: 40, w: 240, h: 28 }, click: { x: 60, y: 54 } },
+      "*",
+    ),
+  );
+  await expect(page.getByText("Edit on page")).toBeVisible({ timeout: 5000 });
+  // The overlay edits the BLOCK's own field (HeroBlock.title); the form panel
+  // stays unmounted — dropping to side-by-side would render #pb-block-0.
+  await expect(page.getByRole("textbox", { name: "Title" })).toBeVisible();
+  await expect(page.locator("#pb-block-0")).toHaveCount(0);
 });
 
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {

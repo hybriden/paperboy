@@ -164,7 +164,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // bridge-reported rect; `ox`/`oy` is the CLICK offset within the element, so
   // the card opens where the editor clicked — a 2000px-tall richtext body
   // would otherwise anchor the card at its far-away bottom edge.
-  const [ope, setOpe] = useState<{ field: string; rect: PbRect; ox: number; oy: number; n: number } | null>(null);
+  // `block` scopes the overlay to a field INSIDE a content-area block instance
+  // (absent → a page-level field, the classic case).
+  const [ope, setOpe] = useState<{ field: string; rect: PbRect; ox: number; oy: number; n: number; block?: { area: string; index: number } } | null>(null);
   const opeRef = useRef<typeof ope>(null);
   useEffect(() => { opeRef.current = ope; }, [ope]);
   const opeModeRef = useRef(opeMode);
@@ -173,7 +175,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const opeDirtyRef = useRef(false);
   const closeOpeRef = useRef<(() => void) | null>(null);
   // Live patch for the page DOM (no reload while typing in the overlay).
-  const [livePatch, setLivePatch] = useState<{ field: string; text?: string; html?: string; n: number } | null>(null);
+  const [livePatch, setLivePatch] = useState<{ field: string; text?: string; html?: string; blockIndex?: number; n: number } | null>(null);
   const livePatchCounter = useRef(0);
   const activeFieldRef = useRef<string | null>(null);
   const activateProp = (e: React.FocusEvent | React.MouseEvent) => {
@@ -608,8 +610,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       const msg = parsePreviewMessage(e.data);
       if (!msg) return; // unknown/garbage (and forward-compat: future message types)
       if (msg.type === "paperboy:rect") {
-        // Anchor update for the open overlay (same field only).
-        if (msg.rect && opeRef.current && msg.field === opeRef.current.field && msg.blockIndex == null) {
+        // Anchor update for the open overlay (same field — and same block, when
+        // the overlay is scoped to a field inside a block).
+        const o = opeRef.current;
+        if (msg.rect && o && msg.field === o.field && (o.block ? msg.blockIndex === o.block.index : msg.blockIndex == null)) {
           setOpe((prev) => (prev ? { ...prev, rect: msg.rect } : prev));
         }
         return;
@@ -645,17 +649,44 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       const fieldName = typeof d.field === "string" ? d.field : null;
       const def = fieldName ? type?.fields.find((f) => f.name === fieldName) : undefined;
 
+      // A field INSIDE a rendered block: the bridge reports the field name PLUS
+      // the enclosing block's index. Resolve which contentArea holds that index
+      // and the field on the BLOCK's own type. Shared blocks resolve to null —
+      // their fields are edited on their own page — so the click falls through
+      // to the classic block-card flow.
+      const blockField = (() => {
+        if (d.blockIndex == null || !fieldName) return null;
+        const data = formRef.current?.data ?? {};
+        for (const areaDef of type?.fields.filter((f) => f.type === "contentArea") ?? []) {
+          const arr = data[areaDef.name];
+          if (!Array.isArray(arr)) continue;
+          const b = arr[d.blockIndex] as BlockInstance | undefined;
+          if (!b || b.ref !== null) continue;
+          if (d.blockType && b.blockType !== d.blockType) continue;
+          const fdef = types.find((t) => t.name === b.blockType)?.fields.find((f) => f.name === fieldName);
+          if (!fdef) continue;
+          return { name: fieldName, area: areaDef.name, group: areaDef.group, key: b.key, def: fdef };
+        }
+        return null;
+      })();
+
       // Click-to-caret: the bridge reports where INSIDE the field the click
       // landed (text snippet + offset). Long richtext/markdown fields use it to
       // open at the clicked text, not the top. Mailbox: the target editor may
       // mount later (OPE overlay / lazy TipTap chunk).
       const caret = (d as { caret?: { snippet?: string; offset?: number } }).caret;
-      if (fieldName && def && (def.type === "richtext" || def.type === "markdown") && typeof caret?.snippet === "string" && caret.snippet.length > 0) {
-        postCaret(`f-${fieldName}`, { snippet: caret.snippet, offset: typeof caret.offset === "number" ? caret.offset : 0 });
+      const caretDef = blockField?.def ?? def;
+      if (fieldName && caretDef && (caretDef.type === "richtext" || caretDef.type === "markdown") && typeof caret?.snippet === "string" && caret.snippet.length > 0) {
+        // The overlay's Field uses page-style `f-…` ids (the form is unmounted in
+        // on-page mode, so they can't collide); the side-by-side block card's
+        // editors are `bf-<key>-…`.
+        const opensOverlay = opeModeRef.current === "edit" && (!blockField || OPE_FIELD_TYPES.has(blockField.def.type));
+        const targetId = blockField && !opensOverlay ? `bf-${blockField.key}-${fieldName}` : `f-${fieldName}`;
+        postCaret(targetId, { snippet: caret.snippet, offset: typeof caret.offset === "number" ? caret.offset : 0 });
       }
 
       if (opeModeRef.current === "edit") {
-        if (d.blockIndex == null && d.rect) {
+        if (d.rect) {
           const click = (d as { click?: { x: number; y: number } }).click;
           const anchor = {
             rect: d.rect,
@@ -664,19 +695,24 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             oy: click ? Math.max(0, click.y - d.rect.y) : d.rect.h,
             n: ++propCounter.current,
           };
-          // The page NAME is marked on most frontends but isn't a data field —
-          // it's still on-page-editable (a plain text value on the version).
-          if (fieldName === "name") {
-            setOpe({ field: "name", ...anchor });
+          if (d.blockIndex == null) {
+            // The page NAME is marked on most frontends but isn't a data field —
+            // it's still on-page-editable (a plain text value on the version).
+            if (fieldName === "name") {
+              setOpe({ field: "name", ...anchor });
+              return;
+            }
+            if (def && OPE_FIELD_TYPES.has(def.type)) {
+              setOpe({ field: def.name, ...anchor });
+              return;
+            }
+            // A marker that doesn't map to anything editable: do nothing rather
+            // than yanking the editor out of on-page mode.
+            if (!def) return;
+          } else if (blockField && OPE_FIELD_TYPES.has(blockField.def.type)) {
+            setOpe({ field: blockField.name, block: { area: blockField.area, index: d.blockIndex }, ...anchor });
             return;
           }
-          if (def && OPE_FIELD_TYPES.has(def.type)) {
-            setOpe({ field: def.name, ...anchor });
-            return;
-          }
-          // A marker that doesn't map to anything editable: do nothing rather
-          // than yanking the editor out of on-page mode.
-          if (!def) return;
         }
         // Structural targets (blocks, content areas, references) want the form
         // panel — which on-page edit hides for real estate. Drop to
@@ -684,8 +720,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         setView("split");
       }
 
-      if (def) setTab(def.group);
-      const id = d.blockIndex != null ? `pb-block-${d.blockIndex}` : fieldName ? `f-${fieldName}` : null;
+      if (blockField) setTab(blockField.group);
+      else if (def) setTab(def.group);
+      const id = blockField
+        ? `bf-${blockField.key}-${blockField.name}`
+        : d.blockIndex != null ? `pb-block-${d.blockIndex}` : fieldName ? `f-${fieldName}` : null;
       if (id) {
         // Poll for the target: switching out of on-page mode REMOUNTS the form
         // panel, so a fixed delay raced the new DOM (clicking an empty content
@@ -708,9 +747,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
     // previewBaseUrl is in the deps so the origin check can't keep trusting a
-    // stale origin after Settings → Site changes the preview host.
+    // stale origin after Settings → Site changes the preview host; `types` so
+    // block-field resolution never runs against a stale type list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [type, site.data?.previewBaseUrl]);
+  }, [type, types, site.data?.previewBaseUrl]);
 
   // Close the on-page overlay; if anything was saved while it was open, do the
   // deferred preview reload now (the bridge restores the scroll position).
@@ -737,13 +777,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
   // Overlay typing → live DOM patch in the preview (text swaps directly;
   // richtext renders to HTML via a lazily-loaded TipTap serializer chunk).
-  function pushLivePatch(fieldDef: FieldDef, value: unknown) {
+  function pushLivePatch(fieldDef: FieldDef, value: unknown, blockIndex?: number) {
     if (fieldDef.type === "text" || fieldDef.type === "number") {
-      setLivePatch({ field: fieldDef.name, text: asText(value), n: ++livePatchCounter.current });
+      setLivePatch({ field: fieldDef.name, text: asText(value), blockIndex, n: ++livePatchCounter.current });
     } else if (fieldDef.type === "richtext") {
       void import("../lib/richtextHtml.js").then(({ richTextHtml }) => {
         const html = richTextHtml(value);
-        if (html != null) setLivePatch({ field: fieldDef.name, html, n: ++livePatchCounter.current });
+        if (html != null) setLivePatch({ field: fieldDef.name, html, blockIndex, n: ++livePatchCounter.current });
       });
     }
     // Other types: no in-place patch — the deferred reload on close reconciles.
@@ -1208,9 +1248,36 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             overlay={(() => {
               if (!ope || !type) return null;
               const isName = ope.field === "name";
-              const def = isName ? null : type.fields.find((f) => f.name === ope.field);
+              // Overlay scoped to a field inside a block: the def comes from the
+              // BLOCK's type and the value/commit path goes through the area array.
+              const blockScope = (() => {
+                if (!ope.block) return null;
+                const arr = form.data[ope.block.area];
+                const b = Array.isArray(arr) ? (arr[ope.block.index] as BlockInstance | undefined) : undefined;
+                if (!b || b.ref !== null) return null;
+                const fdef = types.find((t) => t.name === b.blockType)?.fields.find((f) => f.name === ope.field);
+                return fdef ? { def: fdef, block: b } : null;
+              })();
+              if (ope.block && !blockScope) return null; // block removed/replaced meanwhile
+              const def = isName ? null : blockScope ? blockScope.def : type.fields.find((f) => f.name === ope.field);
               if (!isName && !def) return null;
-              const current = isName ? form.name : form.data[def!.name];
+              const current = isName ? form.name : blockScope ? (blockScope.block.inline ?? {})[ope.field] : form.data[def!.name];
+              const freshCurrent = () => {
+                const f = formRef.current ?? form;
+                if (isName) return f.name;
+                if (!blockScope) return f.data[def!.name];
+                const arr = f.data[ope.block!.area];
+                return Array.isArray(arr) ? ((arr[ope.block!.index] as BlockInstance | undefined)?.inline ?? {})[ope.field] : undefined;
+              };
+              const commit = (v: unknown) => {
+                if (!blockScope) {
+                  setField(def!.name, v);
+                  return;
+                }
+                const fresh = (formRef.current ?? form).data[ope.block!.area];
+                const arr = Array.isArray(fresh) ? (fresh as BlockInstance[]) : [];
+                setField(ope.block!.area, arr.map((x, i) => (i === ope.block!.index ? { ...x, inline: { ...x.inline, [ope.field]: v } } : x)));
+              };
               const liveText = (text: string) => setLivePatch({ field: "name", text, n: ++livePatchCounter.current });
               const patchName = (v: string) => patch((prev) => ({ ...prev, name: v }));
               return {
@@ -1249,8 +1316,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                           types={types}
                           sharedBlocks={sharedBlocks.data ?? []}
                           onChange={(v) => {
-                            setField(def!.name, v);
-                            pushLivePatch(def!, v);
+                            commit(v);
+                            pushLivePatch(def!, v, ope.block?.index);
                           }}
                         />
                       )}
@@ -1263,14 +1330,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                               patchName(v);
                               liveText(v);
                             } else {
-                              setField(def!.name, v);
-                              pushLivePatch(def!, v);
+                              commit(v);
+                              pushLivePatch(def!, v, ope.block?.index);
                             }
                           }}
                           onPreview={(v) => {
-                            const f = formRef.current ?? form;
-                            if (isName) liveText(v ?? f.name);
-                            else pushLivePatch(def!, v ?? asText(f.data[def!.name]));
+                            if (isName) liveText(v ?? (formRef.current ?? form).name);
+                            else pushLivePatch(def!, v ?? asText(freshCurrent()), ope.block?.index);
                           }}
                         />
                       )}

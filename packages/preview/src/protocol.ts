@@ -83,6 +83,9 @@ export interface PatchMessage {
   field: string;
   text?: string;
   html?: string;
+  /** Scope the patch to the field INSIDE this block (data-pb-block-index).
+   *  Absent → first matching field on the page (the pre-0.3 behavior). */
+  blockIndex?: number | null;
 }
 
 export interface FocusMessage {
@@ -151,10 +154,15 @@ export function parsePreviewMessage(data: unknown): PaperboyMessage | null {
 
 /* --------- builders for the admin → iframe direction (pure, no DOM) -------- */
 
-export const patchMessage = (field: string, content: { text?: string; html?: string }): PatchMessage => ({
+export const patchMessage = (
+  field: string,
+  content: { text?: string; html?: string },
+  opts?: { blockIndex?: number | null },
+): PatchMessage => ({
   type: "paperboy:patch",
   field,
   ...content,
+  ...(opts?.blockIndex != null ? { blockIndex: opts.blockIndex } : {}),
 });
 
 export const focusMessage = (field: string): FocusMessage => ({ type: "paperboy:focus", field });

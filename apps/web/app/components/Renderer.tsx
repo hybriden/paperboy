@@ -131,8 +131,11 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
     return (
       <section className={`block block--full block--${b.display}`} data-block="HeroBlock" {...edit}>
         {img?.url ? <img className="hero-image" src={img.url} alt={img.alt ?? ""} loading="lazy" /> : null}
-        <h2>{asText(d.title)}</h2>
-        {d.subtitle ? <p>{asText(d.subtitle)}</p> : null}
+        {/* data-pb-field INSIDE a block: the preview bridge posts the field name
+            plus the enclosing block index, and the editor opens its on-page
+            overlay scoped to this block instance. */}
+        <h2 data-pb-field="title">{asText(d.title)}</h2>
+        {d.subtitle ? <p data-pb-field="subtitle">{asText(d.subtitle)}</p> : null}
         {cta ? <a href={href}>Learn more</a> : null}
       </section>
     );
@@ -140,8 +143,10 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
   if (b.blockType === "CardBlock") {
     return (
       <div className={`block card card--${b.display}`} data-block="CardBlock" {...edit}>
-        <h3>{asText(d.title)}</h3>
-        <Rich doc={d.body} className="richtext" />
+        <h3 data-pb-field="title">{asText(d.title)}</h3>
+        <div data-pb-field="body">
+          <Rich doc={d.body} className="richtext" />
+        </div>
       </div>
     );
   }

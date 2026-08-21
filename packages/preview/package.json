@@ -1,6 +1,6 @@
 {
   "name": "@paperboycms/preview",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Framework-agnostic on-page-editing bridge for the Paperboy headless CMS preview iframe â€” click-to-edit, drag-drop blocks, live patch. Zero runtime dependencies.",
   "license": "MIT",
   "repository": {
@@ -9,7 +9,14 @@
     "directory": "packages/preview"
   },
   "homepage": "https://github.com/hybriden/paperboy/tree/main/packages/preview#readme",
-  "keywords": ["paperboy", "cms", "headless-cms", "preview", "on-page-editing", "visual-editing"],
+  "keywords": [
+    "paperboy",
+    "cms",
+    "headless-cms",
+    "preview",
+    "on-page-editing",
+    "visual-editing"
+  ],
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -17,7 +24,10 @@
     ".": "./src/index.ts",
     "./protocol": "./src/protocol.ts"
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "publishConfig": {
     "access": "public",
     "main": "./dist/index.js",

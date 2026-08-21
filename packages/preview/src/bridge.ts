@@ -98,12 +98,17 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     (t as HTMLElement | null)?.closest?.(EDITABLE) ?? null;
 
   const describe = (el: HTMLElement) => {
-    const bi = el.getAttribute(ATTR.blockIndex);
+    // A field rendered INSIDE a block carries data-pb-field while the enclosing
+    // block root carries data-pb-block-index — report both so the admin can
+    // open the field editor scoped to that block instance. closest() includes
+    // el itself, so a plain block-root click keeps its pre-0.3 shape.
+    const blockEl = el.closest<HTMLElement>(`[${ATTR.blockIndex}]`);
+    const bi = blockEl?.getAttribute(ATTR.blockIndex) ?? null;
     const r = el.getBoundingClientRect();
     return {
       field: el.getAttribute(ATTR.field),
       blockIndex: bi != null ? Number(bi) : null,
-      blockType: el.getAttribute(ATTR.blockType),
+      blockType: blockEl?.getAttribute(ATTR.blockType) ?? null,
       rect: { x: r.x, y: r.y, w: r.width, h: r.height } as Rect,
     };
   };
@@ -223,7 +228,12 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     const msg = parsePreviewMessage(e.data);
     if (!msg) return;
     if (msg.type === "paperboy:patch") {
-      const el = doc.querySelector<HTMLElement>(`[${ATTR.field}="${cssEscape(msg.field)}"]`);
+      // blockIndex (sent for fields inside blocks) scopes the lookup to that
+      // block root, so same-named fields in sibling blocks stay untouched. An
+      // unresolvable scope falls back to the page-wide lookup (old behavior).
+      const scope: ParentNode =
+        (msg.blockIndex != null ? doc.querySelector(`[${ATTR.blockIndex}="${msg.blockIndex}"]`) : null) ?? doc;
+      const el = scope.querySelector<HTMLElement>(`[${ATTR.field}="${cssEscape(msg.field)}"]`);
       if (!el) return;
       if (typeof msg.html === "string") el.innerHTML = msg.html;
       else if (typeof msg.text === "string") el.textContent = msg.text;

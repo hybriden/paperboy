@@ -38,6 +38,42 @@ describe("initPreviewBridge", () => {
     teardown();
   });
 
+  it("posts field + enclosing blockIndex when a field INSIDE a block is clicked", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <section data-pb-block-index="2" data-pb-block-type="HeroBlock">
+        <h2 data-pb-field="title">Hi</h2>
+      </section>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    target.postMessage.mockClear();
+    document.querySelector("[data-pb-field]")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(target.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "paperboy:edit", field: "title", blockIndex: 2, blockType: "HeroBlock" }),
+      "*",
+    );
+    teardown();
+  });
+
+  it("paperboy:patch with blockIndex only touches the field inside THAT block", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <section data-pb-block-index="0"><h2 data-pb-field="title">A</h2></section>
+      <section data-pb-block-index="1"><h2 data-pb-field="title">B</h2></section>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    window.dispatchEvent(
+      new MessageEvent("message", { data: { type: "paperboy:patch", field: "title", text: "X", blockIndex: 1 }, source: target }),
+    );
+    const [a, b] = Array.from(document.querySelectorAll("[data-pb-field='title']"));
+    expect(a!.textContent).toBe("A");
+    expect(b!.textContent).toBe("X");
+    // Without blockIndex the first page-wide match is patched (pre-0.3 behavior).
+    window.dispatchEvent(
+      new MessageEvent("message", { data: { type: "paperboy:patch", field: "title", text: "Y" }, source: target }),
+    );
+    expect(a!.textContent).toBe("Y");
+    teardown();
+  });
+
   it("posts paperboy:drop with the area's field + parsed payload on drop", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-area="contentarea"><p>empty</p></div>`;
