@@ -92,7 +92,7 @@ export function PreviewPane({
    *  very tall element would otherwise push it out of sight. */
   overlay?: { rect: PbRect; ox: number; oy: number; content: React.ReactNode; onClose: () => void } | null;
   /** Live DOM patch for the page (text/html swap, no reload) — keyed by n. */
-  livePatch?: { field: string; text?: string; html?: string; n: number } | null;
+  livePatch?: { field: string; text?: string; html?: string; blockIndex?: number; n: number } | null;
 }) {
   const [device, setDevice] = useState<Device>("desktop");
   const [nonce, setNonce] = useState(0);
@@ -183,7 +183,7 @@ export function PreviewPane({
   // page reflects overlay typing WITHOUT a full iframe reload.
   useEffect(() => {
     if (livePatch?.field) {
-      postToPreview(patchMessage(livePatch.field, { text: livePatch.text, html: livePatch.html }));
+      postToPreview(patchMessage(livePatch.field, { text: livePatch.text, html: livePatch.html }, { blockIndex: livePatch.blockIndex }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [livePatch, targetOrigin]);
