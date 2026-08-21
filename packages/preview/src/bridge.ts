@@ -240,7 +240,13 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       if (tracked && !tracked.isConnected) tracked = el;
       onScrollOrResize();
     } else if (msg.type === "paperboy:focus") {
-      const el = doc.querySelector<HTMLElement>(`[${ATTR.field}="${cssEscape(msg.field)}"]`);
+      // blockIndex scopes the highlight to that block; a field the markup does
+      // not tag falls back to flashing the block root itself, so the editor's
+      // form always answers with SOME visible anchor on the page.
+      const blockEl = msg.blockIndex != null ? doc.querySelector<HTMLElement>(`[${ATTR.blockIndex}="${msg.blockIndex}"]`) : null;
+      const el =
+        (blockEl ?? doc).querySelector<HTMLElement>(`[${ATTR.field}="${cssEscape(msg.field)}"]`) ??
+        (msg.blockIndex != null ? blockEl : null);
       if (!el) return;
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.classList.add("pb-focus");

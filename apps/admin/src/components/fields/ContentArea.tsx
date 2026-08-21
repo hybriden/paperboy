@@ -410,12 +410,17 @@ function SortableBlock({
       {!isShared && type && (
         <div className="space-y-2 p-2.5">
           {type.fields.map((f) => (
-            <BlockField key={f.name} field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
-              disabled={disabled}
-              types={types}
-              sharedBlocks={sharedBlocks}
-              depth={depth}
-              onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })} />
+            // data-pb-prop(-block): focusing a field here highlights the SAME
+            // field inside this block in the preview (paperboy:focus w/ block
+            // scope). Top-level blocks only — the frontend indexes per area.
+            <div key={f.name} {...(depth === 0 ? { "data-pb-prop": f.name, "data-pb-prop-block": index } : {})}>
+              <BlockField field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
+                disabled={disabled}
+                types={types}
+                sharedBlocks={sharedBlocks}
+                depth={depth}
+                onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })} />
+            </div>
           ))}
         </div>
       )}

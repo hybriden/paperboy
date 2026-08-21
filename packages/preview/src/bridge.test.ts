@@ -74,6 +74,27 @@ describe("initPreviewBridge", () => {
     teardown();
   });
 
+  it("paperboy:focus with blockIndex highlights the field inside THAT block, falling back to the block root", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <section data-pb-block-index="0"><h2 data-pb-field="title">A</h2></section>
+      <section data-pb-block-index="1"><h2 data-pb-field="title">B</h2></section>
+      <section data-pb-block-index="2"><p>untagged fields</p></section>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    window.dispatchEvent(
+      new MessageEvent("message", { data: { type: "paperboy:focus", field: "title", blockIndex: 1 }, source: target }),
+    );
+    const [a, b] = Array.from(document.querySelectorAll("[data-pb-field='title']"));
+    expect(a!.classList.contains("pb-focus")).toBe(false);
+    expect(b!.classList.contains("pb-focus")).toBe(true);
+    // A field the markup doesn't tag → the block root itself flashes.
+    window.dispatchEvent(
+      new MessageEvent("message", { data: { type: "paperboy:focus", field: "intro", blockIndex: 2 }, source: target }),
+    );
+    expect(document.querySelector("[data-pb-block-index='2']")!.classList.contains("pb-focus")).toBe(true);
+    teardown();
+  });
+
   it("posts paperboy:drop with the area's field + parsed payload on drop", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-area="contentarea"><p>empty</p></div>`;
