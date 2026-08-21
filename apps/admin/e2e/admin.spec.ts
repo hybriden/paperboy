@@ -679,6 +679,31 @@ test("editor workspace panes are resizable (drag handles present)", async ({ pag
   await expect(editorName(page)).toHaveValue("Home");
 });
 
+test("block card header controls stay inside the card in a narrow form column", async ({ page }) => {
+  await login(page);
+  await page.getByRole("treeitem", { name: /Home/ }).click();
+  await expect(editorName(page)).toHaveValue("Home");
+  // Side by side squeezes the form into a narrow column; drag the form|preview
+  // divider to its far-left minimum — the narrowest legal layout. The block card
+  // header (title + display select + move/remove) must wrap, not paint outside
+  // the card (reported live 2026-08-21: chevrons + trash spilling into the pane).
+  await page.getByRole("button", { name: "Side by side" }).click();
+  const handle = page.getByRole("separator").last();
+  const hb = await handle.boundingBox();
+  if (hb) {
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(hb.x - 600, hb.y + hb.height / 2, { steps: 10 });
+    await page.mouse.up();
+  }
+  const card = page.locator('[id^="pb-block-"]').first();
+  await card.scrollIntoViewIfNeeded();
+  const remove = card.getByRole("button", { name: "Remove block" }).first();
+  const cardBox = (await card.boundingBox())!;
+  const btnBox = (await remove.boundingBox())!;
+  expect(btnBox.x + btnBox.width, "Remove button must not overflow its block card").toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
+});
+
 test("visual editing: a preview 'edit' message switches tab + focuses the field/block", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();

@@ -376,7 +376,9 @@ function SortableBlock({
 
   return (
     <li id={`pb-block-${index}`} ref={setNodeRef} style={style} className={`rounded border border-line bg-panel shadow-xs ${isDragging ? "opacity-60 ring-2 ring-accent" : ""}`}>
-      <div className="flex items-center gap-2 border-b border-line bg-canvas px-2 py-1.5">
+      {/* flex-wrap + grouped controls: in a narrow form column (side-by-side view)
+          the controls drop to their own row instead of painting outside the card. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-canvas px-2 py-1.5">
         <button {...attributes} {...listeners} className="cursor-grab text-muted active:cursor-grabbing" aria-label="Drag to reorder">
           <Icon.Grip width={16} height={16} />
         </button>
@@ -388,19 +390,21 @@ function SortableBlock({
         ) : (
           <span className="rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">inline</span>
         )}
-        <select
-          className="ml-auto rounded border border-line bg-panel px-1 py-0.5 text-xs text-fg"
-          value={block.display}
-          aria-label="Display option"
-          disabled={disabled}
-          onChange={(e) => onUpdate({ display: e.target.value as BlockDisplayOption })}
-        >
-          {DISPLAY_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
-        </select>
-        <div className="flex items-center gap-0.5">
-          <button className="rounded p-1 text-muted hover:bg-line disabled:opacity-40" aria-label="Move up" disabled={disabled} onClick={() => onMove(-1)}><Icon.Up width={14} height={14} /></button>
-          <button className="rounded p-1 text-muted hover:bg-line disabled:opacity-40" aria-label="Move down" disabled={disabled} onClick={() => onMove(1)}><Icon.Down width={14} height={14} /></button>
-          <button className="rounded p-1 text-danger hover:bg-danger/10 disabled:opacity-40" aria-label="Remove block" disabled={disabled} onClick={onRemove}><Icon.Trash width={14} height={14} /></button>
+        <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
+          <select
+            className="rounded border border-line bg-panel px-1 py-0.5 text-xs text-fg"
+            value={block.display}
+            aria-label="Display option"
+            disabled={disabled}
+            onChange={(e) => onUpdate({ display: e.target.value as BlockDisplayOption })}
+          >
+            {DISPLAY_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
+          </select>
+          <div className="flex items-center gap-0.5">
+            <button className="rounded p-1 text-muted hover:bg-line disabled:opacity-40" aria-label="Move up" disabled={disabled} onClick={() => onMove(-1)}><Icon.Up width={14} height={14} /></button>
+            <button className="rounded p-1 text-muted hover:bg-line disabled:opacity-40" aria-label="Move down" disabled={disabled} onClick={() => onMove(1)}><Icon.Down width={14} height={14} /></button>
+            <button className="rounded p-1 text-danger hover:bg-danger/10 disabled:opacity-40" aria-label="Remove block" disabled={disabled} onClick={onRemove}><Icon.Trash width={14} height={14} /></button>
+          </div>
         </div>
       </div>
       {!isShared && type && (
