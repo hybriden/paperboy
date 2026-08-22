@@ -1775,10 +1775,13 @@ export function WebhooksPanel() {
   const [created, setCreated] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
+  // Form submissions carry visitor personal data, so that event is never part
+  // of the catch-all default — it has to be asked for by name here.
+  const [sendSubmissions, setSendSubmissions] = useState(false);
 
   const create = useMutation({
-    mutationFn: () => api.createWebhook({ name, url }),
-    onSuccess: (r) => { setCreated(r.secret); setName(""); setUrl(""); void qc.invalidateQueries({ queryKey: ["webhooks"] }); },
+    mutationFn: () => api.createWebhook({ name, url, events: sendSubmissions ? ["content.published", "content.unpublished", "form.submitted"] : undefined }),
+    onSuccess: (r) => { setCreated(r.secret); setName(""); setUrl(""); setSendSubmissions(false); void qc.invalidateQueries({ queryKey: ["webhooks"] }); },
     onError: (e) => toast.error("Couldn’t create webhook", (e as Error).message),
   });
   const del = useMutation({
@@ -1790,11 +1793,15 @@ export function WebhooksPanel() {
   return (
     <PanelShell
       title="Webhooks"
-      hint="POSTed (HMAC-SHA256 signed) on publish/unpublish — wire up ISR revalidation or a CDN purge."
+      hint="POSTed (HMAC-SHA256 signed) on publish/unpublish — wire up ISR revalidation or a CDN purge. Can also forward form submissions, which is how a submission reaches email or a CRM."
       action={
         <div className="flex items-center gap-1.5">
           <input className="field-input py-1 text-xs" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Webhook name" />
           <input className="field-input py-1 text-xs" placeholder="https://…/hook" value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Webhook URL" />
+          <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted">
+            <input type="checkbox" checked={sendSubmissions} onChange={(e) => setSendSubmissions(e.target.checked)} />
+            Send form submissions
+          </label>
           <button className="btn-subtle px-2 py-1 text-xs" disabled={!url || !name} onClick={() => create.mutate()}><Icon.Plus width={14} height={14} /> Add</button>
         </div>
       }
@@ -1811,6 +1818,7 @@ export function WebhooksPanel() {
           <Icon.Link width={15} height={15} className="text-muted" />
           <span className="font-medium text-fg">{h.name}</span>
           <code className="max-w-[280px] truncate rounded bg-line/70 px-1 font-mono text-[11px] text-muted" title={h.url}>{h.url}</code>
+          {(h.events ?? []).includes("form.submitted") && <Badge tone="caution">form submissions</Badge>}
           {h.lastStatus != null && <Badge tone={h.lastStatus >= 200 && h.lastStatus < 300 ? "positive" : "critical"}>last {h.lastStatus}</Badge>}
           <button className="ml-auto rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => { if (confirm(`Delete webhook “${h.name}”?`)) del.mutate(h.id); }}>Delete</button>
         </div>

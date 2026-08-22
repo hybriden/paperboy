@@ -32,9 +32,10 @@ export interface WebhookEvent {
  * concern (n8n, Zapier, a Worker) reached through the same signed, SSRF-guarded,
  * delivery-logged pipe as publish events.
  *
- * `values` is opt-in per subscription because it carries visitor personal data
- * to a third party; without it a receiver still learns that a submission
- * happened and can fetch it with a management token if it is allowed to.
+ * The whole event is opt-in twice over, because it carries visitor personal
+ * data off the instance: the editor ticks "Send to integrations" on the form,
+ * AND the webhook must name `form.submitted` in its own event list — a
+ * catch-all subscription deliberately does NOT receive it (see PII_EVENTS).
  */
 export interface FormSubmittedEvent {
   event: "form.submitted";
@@ -52,6 +53,10 @@ export interface FormSubmittedEvent {
 export type AnyWebhookEvent = WebhookEvent | FormSubmittedEvent;
 
 const WEBHOOK_TIMEOUT_MS = 5000;
+
+/** Events whose payload contains visitor personal data. These are never
+ *  included in the "subscribe to everything" default — see dispatchWebhooks. */
+const PII_EVENTS = new Set<string>(["form.submitted"]);
 
 export function signPayload(secret: string, body: string): string {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
@@ -188,7 +193,14 @@ export async function dispatchWebhooks(
   const hooks = await db.select().from(webhook).where(eq(webhook.active, true));
   const subscribed = hooks.filter((h) => {
     const evts = (h.events as string[]) ?? [];
-    return evts.length === 0 || evts.includes(payload.event);
+    if (evts.includes(payload.event)) return true;
+    // An empty list means "every event" — but ONLY for content events. A
+    // form.submitted payload carries visitor personal data (names, addresses,
+    // free-text messages) to a third party, so it must be asked for by name: a
+    // hook wired up for deploy notifications, possibly to another team's
+    // vendor, must not silently start receiving enquiries. Every hook created
+    // before this event existed has an empty list.
+    return evts.length === 0 && !PII_EVENTS.has(payload.event);
   });
   const body = JSON.stringify(payload);
   return Promise.all(

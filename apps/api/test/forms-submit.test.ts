@@ -1,4 +1,4 @@
-import { submissionsToCsv } from "@paperboy/db";
+import { loadPublishedForm, submissionsToCsv } from "@paperboy/db";
 import { MIN_FILL_MS } from "@paperboy/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PREVIEW_KEY, PUBLIC_KEY, type Suite, authHeaders, login, setupApi } from "./helpers.js";
@@ -474,3 +474,85 @@ async function countSubmissions(): Promise<number> {
   });
   return (res.json() as { total: number }).total;
 }
+
+describe("the enforced definition cannot be chosen by the caller", () => {
+  /**
+   * The Form's operational settings (spam protection, retention, metadata
+   * capture, notification targets) are NOT localized: conceptually one value
+   * shared across language branches. But values are stored per locale-version,
+   * and a translated branch starts empty — so reading a single row picked by the
+   * caller's `locale` let a bot select a weaker policy. Delivery already fills
+   * non-localized fields from sibling variants; the submit path must not be
+   * laxer than the form the visitor was shown.
+   */
+  let hardenedId: string;
+
+  beforeAll(async () => {
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: authHeaders(admin),
+      payload: { type: "Form", locale: "en", name: "Locale hardening" },
+    });
+    hardenedId = (created.json() as { documentId: string }).documentId;
+
+    // en: the real policy — a Turnstile challenge and a 5-day retention.
+    await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${hardenedId}?locale=en`,
+      headers: authHeaders(admin),
+      payload: {
+        data: {
+          title: "Guarded", submitLabel: "Send", confirmation: "message",
+          spamProtection: "heuristics+turnstile", retentionDays: 5,
+          fields: [{ key: "x", blockType: "FormTextField", display: "automatic", ref: null, inline: { name: "note", label: "Note", required: true } }],
+        },
+      },
+    });
+    await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${hardenedId}/publish?locale=en`, headers: authHeaders(admin) });
+
+    // nb: a translator fills the labels only. The settings are absent here,
+    // exactly as the admin's translate flow leaves them.
+    await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${hardenedId}?locale=nb`,
+      headers: authHeaders(admin),
+      payload: {
+        data: {
+          title: "Beskyttet", submitLabel: "Send",
+          fields: [{ key: "x", blockType: "FormTextField", display: "automatic", ref: null, inline: { name: "note", label: "Notat", required: true } }],
+        },
+      },
+    });
+    await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${hardenedId}/publish?locale=nb`, headers: authHeaders(admin) });
+  });
+
+  const postTo = (payload: unknown) =>
+    s.app.inject({
+      method: "POST",
+      url: `/api/v1/delivery/forms/${hardenedId}/submissions`,
+      headers: { authorization: `Bearer ${PUBLIC_KEY}` },
+      payload,
+    });
+
+  it("cannot skip a Turnstile challenge by submitting under another locale", async () => {
+    // No test secret is configured, so a form that requires a challenge must
+    // refuse — under EVERY locale, not just the one that stored the setting.
+    const en = await postTo(good({ note: "hi" }, { locale: "en" }));
+    expect(en.statusCode).toBe(422);
+    const nb = await postTo(good({ note: "hei" }, { locale: "nb" }));
+    expect(nb.statusCode).toBe(422);
+  });
+
+  it("cannot weaken the policy with a locale that doesn't exist", async () => {
+    const res = await postTo(good({ note: "hi" }, { locale: "zz-ZZ" }));
+    expect(res.statusCode).toBe(422);
+  });
+
+  it("applies the retention the editor set, whichever locale is used", async () => {
+    // Same reasoning for privacy: a branch missing retentionDays must not fall
+    // back to the instance default and keep personal data far longer.
+    const form = await loadPublishedForm(s.app.db, "site_default", hardenedId, "nb");
+    expect(form?.settings.retentionDays).toBe(5);
+  });
+});
