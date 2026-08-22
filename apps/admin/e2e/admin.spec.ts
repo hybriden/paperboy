@@ -776,6 +776,27 @@ test("focusing a block field in the form highlights that block's field in the pr
   await expect(frame.locator('[data-pb-block-index="0"] [data-pb-field="title"]')).toHaveClass(/pb-focus/, { timeout: 3000 });
 });
 
+test("the 'no bridge' hint never appears for a frontend that runs the bridge", async ({ page }) => {
+  await login(page);
+  await page.getByRole("treeitem", { name: /Home/ }).click();
+  await expect(editorName(page)).toHaveValue("Home");
+  await page.getByRole("button", { name: "Side by side" }).click();
+  const frame = await waitPreviewFrame(page);
+  await frame.locator("body.pb-editing").waitFor({ state: "attached", timeout: 20_000 });
+  const hint = page.getByText("No response from the preview bridge");
+  // The hint appears 4s after a reset with no bridge activity. Switching device
+  // and locale re-runs that reset — with only the one-shot init announcement to
+  // go on, the admin went deaf and accused a working frontend. The ping/pong
+  // liveness probe must keep it silent through all of it.
+  await expect(hint).toHaveCount(0);
+  for (const device of ["tablet", "mobile", "desktop"]) {
+    await page.getByRole("button", { name: new RegExp(`^${device}$`, "i") }).click();
+    await page.waitForTimeout(1500);
+  }
+  await page.waitForTimeout(5000);
+  await expect(hint).toHaveCount(0);
+});
+
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();

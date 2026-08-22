@@ -50,6 +50,9 @@ back without ever embedding you.
 ```
 
 The bridge then:
+- answers `paperboy:ping` with `paperboy:preview-ready` (v0.3.2+), so the admin can
+  confirm the bridge is alive at any moment instead of relying on catching the
+  one-shot announcement it posts at init,
 - posts `paperboy:edit` when an editable region is clicked (with rect/click/caret),
 - posts `paperboy:drop` when a shared block/page is dragged from the Assets pane onto a `data-pb-area`,
 - streams `paperboy:rect` on scroll/resize, applies `paperboy:patch` (live swap) and `paperboy:focus`,

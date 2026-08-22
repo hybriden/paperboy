@@ -227,6 +227,13 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     if (!fromParent(e)) return; // sender check BEFORE parsing — see fromParent
     const msg = parsePreviewMessage(e.data);
     if (!msg) return;
+    if (msg.type === "paperboy:ping") {
+      // Liveness probe: answer with the same announcement sent at init, so the
+      // admin can confirm the bridge is alive at ANY time instead of having to
+      // catch that one-shot message (see PingMessage in ./protocol).
+      target?.postMessage({ type: "paperboy:preview-ready", version: PROTOCOL_VERSION }, postOrigin);
+      return;
+    }
     if (msg.type === "paperboy:patch") {
       // blockIndex (sent for fields inside blocks) scopes the lookup to that
       // block root, so same-named fields in sibling blocks stay untouched. An
