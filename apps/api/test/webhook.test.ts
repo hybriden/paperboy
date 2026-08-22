@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 import { createHmac } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { dispatchWebhooks } from "@paperboy/db";
 import { type Suite, authHeaders, login, setupApi } from "./helpers.js";
 
 interface Received {
@@ -102,5 +103,83 @@ describe("Webhooks (HMAC-signed publish events)", () => {
     const rows = res.json() as Array<Record<string, unknown>>;
     expect(rows.length).toBeGreaterThan(0);
     expect(rows[0]).not.toHaveProperty("secret");
+  });
+});
+
+/**
+ * `form.submitted` carries VISITOR PERSONAL DATA (names, addresses, free-text
+ * messages) to a third party, so it is not covered by the "subscribe to
+ * everything" default that content events use. Every webhook created through
+ * the admin has `events: []`, including ones wired up long before forms
+ * existed — a hook relaying deploy notifications to a vendor must not silently
+ * start receiving enquiries.
+ */
+describe("form.submitted requires an explicit subscription", () => {
+  let s: Suite;
+
+  beforeAll(async () => {
+    s = await setupApi();
+  });
+
+  afterAll(async () => {
+    await s.app.close();
+  });
+
+  it("does NOT deliver to a catch-all hook (events: [])", async () => {
+    const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/webhooks",
+      headers: authHeaders(admin),
+      payload: { name: "catch-all", url: "https://example.com/hook" },
+    });
+    expect(created.statusCode).toBe(200);
+
+    const results = await dispatchWebhooks(s.app.db, {
+      event: "form.submitted",
+      formId: "f1",
+      formName: "Contact",
+      submissionId: "sub_x",
+      siteId: "site_default",
+      locale: "en",
+      at: new Date().toISOString(),
+      values: { email: "visitor@example.com" },
+    });
+    // Not attempted at all — no delivery row, no request, no PII in flight.
+    expect(results).toHaveLength(0);
+  });
+
+  it("still delivers content events to a catch-all hook", async () => {
+    const results = await dispatchWebhooks(s.app.db, {
+      event: "content.published",
+      documentId: "d1",
+      type: "ArticlePage",
+      kind: "page",
+      locale: "en",
+      name: "Something",
+      urlPath: "/something",
+      at: new Date().toISOString(),
+    });
+    expect(results.length).toBeGreaterThan(0);
+  });
+
+  it("delivers form.submitted to a hook that names it", async () => {
+    const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/webhooks",
+      headers: authHeaders(admin),
+      payload: { name: "forms", url: "https://example.com/forms", events: ["form.submitted"] },
+    });
+    const results = await dispatchWebhooks(s.app.db, {
+      event: "form.submitted",
+      formId: "f1",
+      formName: "Contact",
+      submissionId: "sub_y",
+      siteId: "site_default",
+      locale: "en",
+      at: new Date().toISOString(),
+    });
+    expect(results).toHaveLength(1);
   });
 });

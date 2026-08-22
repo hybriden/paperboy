@@ -12,6 +12,7 @@ import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
+import { resolveDefaultLocale } from "./content.js";
 import { contentItem, contentVersion, formSubmission, siteSetting } from "./schema.js";
 
 /**
@@ -51,7 +52,6 @@ export interface PublishedForm {
   settings: FormSettings;
 }
 
-const asBool = (v: unknown): boolean => v === true;
 const asNum = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
 
@@ -90,21 +90,64 @@ export async function loadPublishedForm(
       ),
     );
   if (rows.length === 0) return null; // an unpublished form accepts nothing
-  const row = rows.find((r) => r.locale === locale) ?? rows[0]!;
 
+  // An unrecognised locale must not select a variant by accident: a caller
+  // sending a locale this form has never published in falls back to the site's
+  // default, not to whichever row the database happened to return first.
+  const known = rows.some((r) => r.locale === locale);
+  if (!known) locale = await resolveDefaultLocale(db, siteId);
+
+  // The LABELS come from the requested locale (that is what the visitor read).
+  // Everything policy-shaped is resolved across ALL published variants below.
+  const row = rows.find((r) => r.locale === locale) ?? rows[0]!;
   const data = (row.data ?? {}) as Record<string, unknown>;
+  const variants = rows.map((r) => (r.data ?? {}) as Record<string, unknown>);
+  // Prefer the requested variant's own value, then any sibling's.
+  const ordered = [data, ...variants.filter((v) => v !== data)];
+
+  /**
+   * The operational settings are NOT localized — one value, shared across
+   * language branches — but they are physically stored per locale-version, and
+   * a translated branch starts empty (workingData returns {} for a new locale).
+   * Reading only the requested row therefore let the CALLER pick which policy
+   * to be judged by: posting `locale: "nb"` against a form whose Turnstile
+   * challenge was configured in `en` skipped the challenge entirely, and a
+   * branch missing `retentionDays` fell back to the instance default, keeping
+   * personal data far longer than the editor asked.
+   *
+   * So: fill a missing value from a sibling variant (delivery already does this
+   * for non-localized fields), and where branches genuinely disagree, resolve
+   * the STRICT way — any variant demanding a challenge means a challenge, and
+   * the shortest declared retention wins. A setting that protects visitors must
+   * never be the laxest one an attacker can name.
+   */
+  const firstDefined = <T>(read: (v: Record<string, unknown>) => T | null | undefined): T | null => {
+    for (const v of ordered) {
+      const got = read(v);
+      if (got !== null && got !== undefined) return got;
+    }
+    return null;
+  };
+
+  const retentionDays = variants
+    .map((v) => asNum(v.retentionDays))
+    .filter((n): n is number => n !== null)
+    .reduce<number | null>((min, n) => (min === null || n < min ? n : min), null);
+  const requiresTurnstile = variants.some((v) => asStr(v.spamProtection) === "heuristics+turnstile");
+
+  const spec = formSpecFrom(data);
   return {
     formId,
     siteId,
     locale: row.locale,
     cv: row.cv,
     name: row.name,
-    spec: formSpecFrom(data),
+    spec: { ...spec, turnstile: spec.turnstile || requiresTurnstile },
     settings: {
-      retentionDays: asNum(data.retentionDays),
-      captureMetadata: asBool(data.captureMetadata),
-      notifyWebhooks: asBool(data.notifyWebhooks),
-      notifyEmail: asStr(data.notifyEmail),
+      retentionDays,
+      captureMetadata: firstDefined((v) => (typeof v.captureMetadata === "boolean" ? v.captureMetadata : null)) === true,
+      notifyWebhooks: firstDefined((v) => (typeof v.notifyWebhooks === "boolean" ? v.notifyWebhooks : null)) === true,
+      notifyEmail: firstDefined((v) => (typeof v.notifyEmail === "string" && v.notifyEmail ? v.notifyEmail : null)) ?? "",
     },
   };
 }
