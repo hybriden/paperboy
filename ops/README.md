@@ -12,6 +12,28 @@ runbook with it. The alert channel is a private ntfy.sh topic read from
 | `30 3 * * *` | `backup.sh` | `pg_dump -Fc` of the `paperboy` DB + tar of the uploads volume → `~/paperboy-backups/`, 14-day rotation, `pg_restore --list` sanity check, ntfy ping (OK daily / FAILED high-priority) |
 | `*/5 * * * *` | `monitor.sh` | API `/health` (local), `www.neoteric.no` + `cms.neoteric.no` front-door 200s, disk ≥90%, backup-freshness (<48h). Alerts via ntfy with a 1h per-check cooldown |
 
+## Backups now contain visitor personal data
+
+Since form submissions landed (migration 0022), the nightly `pg_dump` includes
+the `form_submission` table: names, email addresses, messages, and an IP address
+where a form opted into capturing one.
+
+Two consequences, both of which belong in any privacy notice or data-subject
+response:
+
+- **Deleting a submission — by retention sweep, by an editor, or by an
+  erase-by-email request — does not remove it from existing dumps.** With the
+  14-day rotation above, erased data survives in backups for up to 14 days and
+  then ages out on its own. That is a defensible retention story, but only if it
+  is stated rather than discovered.
+- **The dumps deserve the same care as the database.** They already sit
+  root-owned mode 600 on the box; if they are ever copied off-site, that
+  destination is now processing personal data too.
+
+If a request demands erasure from backups as well, the honest options are to
+restore-scrub-redump, or to shorten the rotation. Don't claim immediate
+deletion that the backup set contradicts.
+
 ## Restore
 
 ⚠️ **This procedure REPLACES live data.** Read it through first, and use the same
