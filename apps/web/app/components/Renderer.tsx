@@ -1,5 +1,7 @@
 import type { DeliveryContent } from "@paperboy/shared";
 import { blockData, contentAreas, pbAreaAttrs, renderRichText, type AreaBlock } from "@paperboycms/client";
+import { submitFormAction } from "../actions/submit-form";
+import { Form } from "./Form";
 import DOMPurify from "isomorphic-dompurify";
 import { marked } from "marked";
 import { fetchList } from "../lib/delivery";
@@ -152,6 +154,16 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
   }
   if (b.blockType === "ListBlock") {
     return <ListBlockTeasers d={d} locale={locale} preview={preview} edit={edit} />;
+  }
+  // A FORM referenced into the area. It must be a shared block: the submission
+  // is posted against the form's own documentId, which only a document has.
+  // The delivered `form` spec carries everything needed to draw it.
+  if (b.shared && b.content?.type === "Form" && b.content.form && b.content.documentId) {
+    return (
+      <div className={`block block--${b.display}`} data-block="Form" {...edit}>
+        <Form spec={b.content.form} formId={b.content.documentId} action={submitFormAction} />
+      </div>
+    );
   }
   // A PAGE dropped into the content area renders as a teaser — a compact card
   // linking to the page (Optimizely-style). A teaser ALWAYS links to the

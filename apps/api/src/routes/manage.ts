@@ -13,6 +13,7 @@ import {
   revokeMcpToken,
   createWebhook,
   deleteAsset,
+  deleteSubmission,
   deleteWebhook,
   dispatchWebhooks,
   getAgentReviewRequired,
@@ -37,6 +38,11 @@ import {
   updateLocale,
   deleteLocale,
   listUsers,
+  eraseSubmissionsByEmail,
+  exportSubmissions,
+  getSubmission,
+  listForms,
+  listSubmissions,
   listWebhooks,
   renameDeliveryKey,
   restoreContent,
@@ -1289,6 +1295,138 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       await deleteWebhook(app.db, req.accessCtx!, req.params.id);
       await audit(app.db, { actorUserId: req.user!.id, action: "webhook.delete", ip: req.ip, detail: { id: req.params.id } });
       return { ok: true };
+    },
+  );
+
+  /* --------------------------- form submissions --------------------------
+   * Visitor personal data, so: its own permission (never content.read), site
+   * scoped like content, and every read of the CSV audit-logged — an export is
+   * a copy of personal data leaving the system.
+   */
+  const SubmissionRowSchema = z.object({
+    submissionId: z.string(),
+    formId: z.string(),
+    locale: z.string(),
+    values: z.record(z.string(), z.unknown()),
+    fieldSnapshot: z.array(z.object({ name: z.string(), label: z.string(), kind: z.string() })),
+    meta: z.record(z.string(), z.unknown()),
+    createdAt: z.string(),
+    expiresAt: z.string().nullable(),
+  });
+
+  app.get(
+    "/forms",
+    { preHandler: [requirePermission("submission.read")], schema: { tags: ["manage"], summary: "Forms in the active site, with submission counts", response: { 200: z.array(z.object({ formId: z.string(), name: z.string(), submissions: z.number(), lastAt: z.string().nullable() })) } } },
+    async (req) => listForms(app.db, req.accessCtx!),
+  );
+
+  app.get(
+    "/forms/submissions",
+    {
+      preHandler: [requirePermission("submission.read")],
+      schema: {
+        tags: ["manage"],
+        summary: "List form submissions",
+        querystring: z.object({
+          formId: z.string().max(64).optional(),
+          limit: z.coerce.number().int().min(1).max(200).optional(),
+          offset: z.coerce.number().int().min(0).optional(),
+        }),
+        response: { 200: z.object({ items: z.array(SubmissionRowSchema), total: z.number() }) },
+      },
+    },
+    async (req) => listSubmissions(app.db, req.accessCtx!, req.query),
+  );
+
+  app.get(
+    "/forms/submissions.csv",
+    {
+      preHandler: [requirePermission("submission.read")],
+      schema: {
+        tags: ["manage"],
+        summary: "Export submissions as CSV",
+        querystring: z.object({ formId: z.string().max(64).optional() }),
+        response: { 200: z.string() },
+      },
+    },
+    async (req, reply) => {
+      const { csv, rows } = await exportSubmissions(app.db, req.accessCtx!, req.query.formId);
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "form.submissions_exported",
+        ip: req.ip,
+        detail: { formId: req.query.formId ?? null, rows },
+      });
+      reply.header("content-type", "text/csv; charset=utf-8");
+      reply.header("content-disposition", `attachment; filename="submissions-${req.query.formId ?? "all"}.csv"`);
+      return csv;
+    },
+  );
+
+  app.get(
+    "/forms/submissions/:submissionId",
+    {
+      preHandler: [requirePermission("submission.read")],
+      schema: {
+        tags: ["manage"],
+        params: z.object({ submissionId: z.string().max(64) }),
+        response: { 200: SubmissionRowSchema, 404: z.object({ error: z.string(), message: z.string() }) },
+      },
+    },
+    async (req, reply) => {
+      const row = await getSubmission(app.db, req.accessCtx!, req.params.submissionId);
+      if (!row) return reply.code(404).send({ error: "not_found", message: "Submission not found" });
+      return row;
+    },
+  );
+
+  app.delete(
+    "/forms/submissions/:submissionId",
+    {
+      preHandler: [requireCsrf, requirePermission("submission.manage")],
+      schema: {
+        tags: ["manage"],
+        params: z.object({ submissionId: z.string().max(64) }),
+        response: { 200: z.object({ ok: z.boolean() }) },
+      },
+    },
+    async (req) => {
+      const ok = await deleteSubmission(app.db, req.accessCtx!, req.params.submissionId);
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "form.submission_deleted",
+        ip: req.ip,
+        detail: { submissionId: req.params.submissionId, found: ok },
+      });
+      return { ok };
+    },
+  );
+
+  app.post(
+    "/forms/submissions/erase",
+    {
+      preHandler: [requireCsrf, requirePermission("submission.manage")],
+      schema: {
+        tags: ["manage"],
+        summary: "Erase every submission containing this email (data-subject erasure)",
+        description:
+          "Deletes all submissions in the active site whose answers contain the address, in any field. " +
+          "One auditable action so an erasure request can be answered completely.",
+        body: z.object({ email: z.string().min(3).max(320) }),
+        response: { 200: z.object({ deleted: z.number() }) },
+      },
+    },
+    async (req) => {
+      const res = await eraseSubmissionsByEmail(app.db, req.accessCtx!, req.body.email);
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "form.submissions_erased",
+        ip: req.ip,
+        // The address itself is the subject of an erasure request — record that
+        // one happened and how much it removed, not the address.
+        detail: { deleted: res.deleted },
+      });
+      return res;
     },
   );
 

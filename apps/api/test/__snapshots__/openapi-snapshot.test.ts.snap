@@ -69,6 +69,19 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "DELETE /api/v1/manage/forms/submissions/{submissionId}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:submissionId",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "DELETE /api/v1/manage/locales/{code}": {
     "requestBodyRequired": [],
     "requiredParams": [
@@ -196,6 +209,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "data",
       "documentId",
       "fieldTypes",
+      "form",
       "kind",
       "locale",
       "name",
@@ -219,6 +233,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "data",
       "documentId",
       "fieldTypes",
+      "form",
       "kind",
       "locale",
       "name",
@@ -242,6 +257,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "data",
       "documentId",
       "fieldTypes",
+      "form",
       "kind",
       "locale",
       "name",
@@ -265,6 +281,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "data",
       "documentId",
       "fieldTypes",
+      "form",
       "kind",
       "locale",
       "name",
@@ -348,6 +365,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "data",
       "documentId",
       "fieldTypes",
+      "form",
       "kind",
       "locale",
       "name",
@@ -650,6 +668,61 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "[]kind",
       "[]name",
       "[]parentId",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/forms": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]formId",
+      "[]lastAt",
+      "[]name",
+      "[]submissions",
+    ],
+    "summary": "Forms in the active site, with submission counts",
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/forms/submissions": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "items",
+      "total",
+    ],
+    "summary": "List form submissions",
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/forms/submissions.csv": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": "Export submissions as CSV",
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/forms/submissions/{submissionId}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:submissionId",
+    ],
+    "response200Props": [
+      "createdAt",
+      "expiresAt",
+      "fieldSnapshot",
+      "formId",
+      "locale",
+      "meta",
+      "submissionId",
+      "values",
     ],
     "summary": null,
     "tags": [
@@ -1118,6 +1191,17 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "auth",
     ],
   },
+  "POST /api/v1/delivery/forms/{documentId}/submissions": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:documentId",
+    ],
+    "response200Props": [],
+    "summary": "Submit a form (public)",
+    "tags": [
+      "delivery",
+    ],
+  },
   "POST /api/v1/manage/assets": {
     "requestBodyRequired": [],
     "requiredParams": [],
@@ -1503,6 +1587,19 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "parentId",
     ],
     "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/forms/submissions/erase": {
+    "requestBodyRequired": [
+      "email",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "deleted",
+    ],
+    "summary": "Erase every submission containing this email (data-subject erasure)",
     "tags": [
       "manage",
     ],

@@ -5,6 +5,7 @@ import {
   type ContentDetail,
   type ContentTypeDef,
   type FieldDef,
+  isFormType,
   type Locale,
   SEO_CONVENTION,
   SEO_FIELD_NAMES,
@@ -26,6 +27,7 @@ import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
 import { BuildFromBriefDialog } from "./BuildFromBrief.js";
+import { FormSubmissions } from "./FormSubmissions.js";
 import { ContentArea } from "./fields/ContentArea.js";
 import { MarkdownEditor } from "./fields/MarkdownEditor.js";
 import { ReferenceField } from "./fields/ReferenceField.js";
@@ -55,6 +57,17 @@ let blockKeyCounter = 0;
 const newBlockKey = () => `b_${Date.now().toString(36)}_${blockKeyCounter++}`;
 /** The Episerver-style editor views: form only / side-by-side / on-page edit. */
 type EditorView = "props" | "split" | "onpage";
+
+/**
+ * Pseudo property-group: the answers a Form block has collected.
+ *
+ * Submissions are visitor data, not properties of the block, but they ride the
+ * same tab strip on purpose — a Form is a `block`-kind document, so an editor
+ * looking for "where did the replies go?" opens the form itself. A separate
+ * screen would mean finding the form twice. Settings → Form submissions is the
+ * cross-form entry point for the same panel.
+ */
+const SUBMISSIONS_TAB = "Submissions";
 
 interface EditorProps {
   documentId: string;
@@ -109,13 +122,20 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     () => types.find((t) => t.name === detail.data?.type),
     [types, detail.data?.type],
   );
+  // Reading submissions is its own permission (they are visitor personal data),
+  // so the tab is offered only to a session that holds it. The panel still
+  // handles a 403 — a role can change under an open session.
+  const canReadSubmissions = user.permissions.includes("submission.read");
+  const groups = useMemo(() => {
+    const gs = type ? [...new Set(type.fields.map((f) => f.group))] : ["Content"];
+    return isFormType(type?.name ?? "") && canReadSubmissions ? [...new Set([...gs, SUBMISSIONS_TAB])] : gs;
+  }, [type, canReadSubmissions]);
   // Default the open tab to the type's FIRST group (not a hardcoded "Content"
   // that some types — e.g. the Frontpage — don't have, which showed an empty tab).
   useEffect(() => {
     if (!type) return;
-    const gs = [...new Set(type.fields.map((f) => f.group))];
-    setTab((prev) => (gs.includes(prev) ? prev : gs[0] ?? "Content"));
-  }, [type]);
+    setTab((prev) => (groups.includes(prev) ? prev : groups[0] ?? "Content"));
+  }, [type, groups]);
 
   // ----- local working copy + save state machine -----
   const [form, setForm] = useState<ContentDetail | null>(null);
@@ -831,7 +851,6 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     );
   }
 
-  const groups = type ? [...new Set(type.fields.map((f) => f.group))] : ["Content"];
   const isPage = form.kind === "page";
   // Live preview is a desktop-only split pane; never open it on phones.
   const previewOpen = view !== "props" && !mobile;
@@ -891,26 +910,34 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         ))}
       </div>
 
-      <div className="max-w-3xl space-y-5 p-4 sm:p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
-        {type?.fields
-          .filter((f) => f.group === tab)
-          .map((f) => (
-            <div key={f.name} data-pb-prop={f.name}>
-              <Field
-                field={f}
-                value={form.data[f.name]}
-                disabled={!canEdit}
-                types={types}
-                sharedBlocks={sharedBlocks.data ?? []}
-                onChange={(v) => setField(f.name, v)}
-                error={fieldErrors[f.name]}
-              />
-            </div>
-          ))}
-        {type && type.fields.filter((f) => f.group === tab).length === 0 && (
-          <p className="text-sm text-muted">No properties in this group.</p>
-        )}
-      </div>
+      {tab === SUBMISSIONS_TAB ? (
+        <div className="max-w-3xl p-4 sm:p-6">
+          {/* Keyed by document: switching to another Form must not carry over the
+              open page of the previous form's submissions. */}
+          <FormSubmissions key={documentId} formId={documentId} canManage={user.permissions.includes("submission.manage")} />
+        </div>
+      ) : (
+        <div className="max-w-3xl space-y-5 p-4 sm:p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
+          {type?.fields
+            .filter((f) => f.group === tab)
+            .map((f) => (
+              <div key={f.name} data-pb-prop={f.name}>
+                <Field
+                  field={f}
+                  value={form.data[f.name]}
+                  disabled={!canEdit}
+                  types={types}
+                  sharedBlocks={sharedBlocks.data ?? []}
+                  onChange={(v) => setField(f.name, v)}
+                  error={fieldErrors[f.name]}
+                />
+              </div>
+            ))}
+          {type && type.fields.filter((f) => f.group === tab).length === 0 && (
+            <p className="text-sm text-muted">No properties in this group.</p>
+          )}
+        </div>
+      )}
     </section>
   );
 

@@ -45,6 +45,51 @@ export type TypeTemplateExport = z.infer<typeof TypeTemplateExport>;
 
 /* ------------------------------ the library ------------------------------- */
 
+/* ---------------------------- form field pieces ---------------------------
+ * Shared across every form field block so the contract is identical: one key,
+ * one localized label, optional help, and a required flag. Kept as arrays that
+ * spread into a template's `fields` — the same field, defined once.
+ */
+
+/** A submission key: an identifier, because it becomes a JSON property name. */
+export const FIELD_KEY_PATTERN = "^[a-zA-Z][a-zA-Z0-9_]*$";
+const FIELD_KEY_HELP =
+  'The key this answer is stored under, e.g. "email" or "companyName". Letters, digits and underscores; must start with a letter. Not shown to visitors and not translated.';
+
+const FIELD_BASE = [
+  { name: "name", displayName: "Field key", type: "text", required: true, delivery: "public", validation: { pattern: FIELD_KEY_PATTERN, maxLength: 60 }, helpText: FIELD_KEY_HELP },
+  { name: "label", displayName: "Label", type: "text", localized: true, required: true, delivery: "public", helpText: "The question, as the visitor reads it. Always shown — a placeholder is not a label." },
+  { name: "helpText", displayName: "Help text", type: "text", localized: true, delivery: "public", helpText: "Optional hint shown under the field, e.g. an expected format." },
+  { name: "required", displayName: "Required", type: "boolean", delivery: "public", helpText: "Visitors cannot submit without answering." },
+] as const;
+
+const PLACEHOLDER = [
+  { name: "placeholder", displayName: "Placeholder", type: "text", localized: true, delivery: "public", helpText: "Faint example text inside the field. Never use it instead of a label." },
+] as const;
+
+/** Editor-authored error copy. WCAG 3.3.3 wants a suggestion, not just a
+ *  rejection — "Enter a valid email address", not "Invalid input". */
+const RULE_MESSAGE = [
+  { name: "errorMessage", displayName: "Error message", type: "text", localized: true, delivery: "public", helpText: 'Shown when the answer is rejected. Say how to fix it, e.g. "Enter a phone number with country code".' },
+] as const;
+
+const TEXT_RULES = [
+  ...PLACEHOLDER,
+  { name: "minLength", displayName: "Minimum length", type: "number", delivery: "public", validation: { min: 1, max: 10000 }, helpText: "Fewest characters accepted." },
+  { name: "maxLength", displayName: "Maximum length", type: "number", delivery: "public", validation: { min: 1, max: 10000 }, helpText: "Most characters accepted." },
+  { name: "pattern", displayName: "Pattern", type: "text", delivery: "public", validation: { maxLength: 300 }, helpText: "Optional regular expression the answer must match, e.g. ^\\+?[0-9 ]{8,}$ for a phone number." },
+  ...RULE_MESSAGE,
+] as const;
+
+/** Options for dropdowns and radio groups. One per line, `value|Label` to
+ *  separate the stored value from the shown label. */
+const CHOICES = [
+  {
+    name: "choices", displayName: "Options", type: "markdown", localized: true, required: true, delivery: "public",
+    helpText: 'One option per line. Write "value|Label" to store something different from what is shown, e.g. "support|I need help". A bare line is used as both.',
+  },
+] as const;
+
 /** The teaser/promote group: what a page shows when listed elsewhere.
  *  Every field falls back to the page's own content. */
 const TEASER_GROUP = [
@@ -423,6 +468,161 @@ const RAW_TEMPLATES = [
         helpText: "A collection of links that might be relevant to users who have scrolled to the bottom of the page.",
       },
       { name: "footerText", displayName: "Footer text", type: "richtext", localized: true, delivery: "public", helpText: "Rich text area for additional information in the footer." },
+    ],
+  },
+  /* --------------------------------- forms ---------------------------------
+   * A form is CONTENT: the Form block owns the copy and behaviour, and its
+   * `fields` area holds one block per question. That buys versioning,
+   * draft/publish, localized labels, RBAC, preview + on-page editing, MCP and
+   * drag-drop ordering with no new machinery — the model Optimizely Forms uses
+   * and Storyblok documents, rather than a parallel forms subsystem (Umbraco's
+   * approach, which re-implements permissions and versioning less well).
+   *
+   * Every field block shares the FIELD_BASE contract below. `name` is the key
+   * the submission is stored under, so it is validated like an identifier and
+   * is NOT localized — labels translate, keys don't.
+   */
+  {
+    name: "Form",
+    displayName: "Form",
+    kind: "block",
+    description: "A form visitors can fill in. Add one block per field; submissions are stored in the CMS.",
+    icon: "ph:list-checks",
+    fields: [
+      { name: "title", displayName: "Title", type: "text", localized: true, required: true, delivery: "public", helpText: "Heading shown above the form." },
+      { name: "intro", displayName: "Intro", type: "richtext", localized: true, delivery: "public", helpText: "Optional text above the first field — say what happens with the answers." },
+      {
+        name: "fields", displayName: "Fields", type: "contentArea", localized: true, delivery: "public",
+        allowedBlocks: [
+          "FormTextField", "FormEmailField", "FormTextareaField", "FormNumberField",
+          "FormDateField", "FormSelectField", "FormCheckboxField", "FormRadioField",
+          "FormConsentField", "FormStaticText",
+        ],
+        helpText: "One block per question, in the order visitors see them.",
+      },
+      { name: "submitLabel", displayName: "Submit button label", type: "text", localized: true, delivery: "public", helpText: 'What the button says, e.g. "Send message".' },
+      {
+        name: "confirmation", displayName: "After submitting", type: "select", delivery: "public",
+        options: [{ value: "message", label: "Show a message" }, { value: "redirect", label: "Go to a page" }],
+        helpText: "What the visitor sees once the form is sent.",
+      },
+      { name: "confirmationText", displayName: "Confirmation message", type: "richtext", localized: true, delivery: "public", helpText: "Shown in place of the form after a successful submission." },
+      { name: "redirectTo", displayName: "Redirect to", type: "link", localized: true, delivery: "public", helpText: "Where to send the visitor instead of showing a message." },
+      {
+        name: "spamProtection", displayName: "Spam protection", type: "select", delivery: "public",
+        options: [
+          { value: "heuristics", label: "Hidden field + timing (invisible)" },
+          { value: "heuristics+turnstile", label: "Hidden field + timing + Turnstile challenge" },
+        ],
+        helpText: "Timing and hidden-field checks are always on and invisible. Turnstile adds a visible challenge for forms that attract bots.",
+      },
+      {
+        name: "notifyWebhooks", displayName: "Send to integrations", type: "boolean", delivery: "private",
+        helpText: "Fire the form.submitted webhook so integrations (email, Slack, CRM) can pick the submission up.",
+      },
+      {
+        name: "retentionDays", displayName: "Delete submissions after (days)", type: "number", delivery: "private",
+        validation: { min: 1, max: 3650 },
+        helpText: "Submissions are deleted automatically once this many days old. Empty uses the instance default. Keeping personal data no longer than necessary is a GDPR requirement.",
+      },
+      {
+        name: "captureMetadata", displayName: "Store IP address and browser", type: "boolean", delivery: "private",
+        helpText: "Off by default. An IP address is personal data — only turn this on if you need it to investigate abuse.",
+      },
+      { name: "notifyEmail", displayName: "Notification recipients", type: "text", delivery: "private", helpText: "Comma-separated addresses for integrations to notify. Paperboy does not send mail itself; the webhook carries this through." },
+    ],
+  },
+  {
+    name: "FormTextField",
+    displayName: "Text field",
+    kind: "block",
+    description: "A single-line answer.",
+    icon: "ph:text-t",
+    fields: [...FIELD_BASE, ...TEXT_RULES],
+  },
+  {
+    name: "FormEmailField",
+    displayName: "Email field",
+    kind: "block",
+    description: "An email address, validated as one.",
+    icon: "ph:at",
+    fields: [...FIELD_BASE, ...PLACEHOLDER],
+  },
+  {
+    name: "FormTextareaField",
+    displayName: "Long answer",
+    kind: "block",
+    description: "A multi-line answer.",
+    icon: "ph:text-align-left",
+    fields: [...FIELD_BASE, ...TEXT_RULES, { name: "rows", displayName: "Visible rows", type: "number", delivery: "public", validation: { min: 2, max: 30 }, helpText: "How tall the box is. Default 5." }],
+  },
+  {
+    name: "FormNumberField",
+    displayName: "Number field",
+    kind: "block",
+    description: "A numeric answer.",
+    icon: "ph:hash",
+    fields: [
+      ...FIELD_BASE,
+      { name: "min", displayName: "Minimum", type: "number", delivery: "public", helpText: "Smallest accepted number." },
+      { name: "max", displayName: "Maximum", type: "number", delivery: "public", helpText: "Largest accepted number." },
+      ...RULE_MESSAGE,
+    ],
+  },
+  {
+    name: "FormDateField",
+    displayName: "Date field",
+    kind: "block",
+    description: "A date answer.",
+    icon: "ph:calendar-blank",
+    fields: [...FIELD_BASE, ...RULE_MESSAGE],
+  },
+  {
+    name: "FormSelectField",
+    displayName: "Dropdown",
+    kind: "block",
+    description: "Choose one option from a list.",
+    icon: "ph:caret-circle-down",
+    fields: [...FIELD_BASE, ...CHOICES, ...RULE_MESSAGE],
+  },
+  {
+    name: "FormRadioField",
+    displayName: "Choose one",
+    kind: "block",
+    description: "Radio buttons — one answer from a few visible options.",
+    icon: "ph:radio-button",
+    fields: [...FIELD_BASE, ...CHOICES, ...RULE_MESSAGE],
+  },
+  {
+    name: "FormCheckboxField",
+    displayName: "Checkbox",
+    kind: "block",
+    description: "A single yes/no checkbox.",
+    icon: "ph:check-square",
+    fields: [...FIELD_BASE, ...RULE_MESSAGE],
+  },
+  {
+    name: "FormConsentField",
+    displayName: "Consent checkbox",
+    kind: "block",
+    description: "A consent checkbox. The wording shown is stored with the answer, so the consent can be evidenced later.",
+    icon: "ph:shield-check",
+    fields: [
+      { name: "name", displayName: "Field key", type: "text", required: true, delivery: "public", validation: { pattern: FIELD_KEY_PATTERN, maxLength: 60 }, helpText: FIELD_KEY_HELP },
+      { name: "label", displayName: "Consent wording", type: "text", localized: true, required: true, delivery: "public", helpText: 'Exactly what the visitor agrees to, e.g. "I agree that my message may be stored so you can reply."' },
+      { name: "helpText", displayName: "Help text", type: "text", localized: true, delivery: "public", helpText: "Shown under the checkbox — link your privacy policy here." },
+      ...RULE_MESSAGE,
+    ],
+  },
+  {
+    name: "FormStaticText",
+    displayName: "Explanatory text",
+    kind: "block",
+    description: "Text between fields. Collects no answer.",
+    icon: "ph:paragraph",
+    fields: [
+      { name: "heading", displayName: "Heading", type: "text", localized: true, delivery: "public", helpText: "Optional small heading, e.g. to start a new section of the form." },
+      { name: "text", displayName: "Text", type: "richtext", localized: true, delivery: "public", helpText: "The text to show." },
     ],
   },
 ] as const;

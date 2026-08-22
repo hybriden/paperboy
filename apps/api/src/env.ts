@@ -60,6 +60,18 @@ const EnvSchema = z.object({
   // plus retries from ONE runner IP brush against 300, and the 429s surface as
   // flaky "treeitem not visible" failures; leave at 300 in production.
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+  // Form submissions per IP per form per minute. A real visitor sends one; the
+  // headroom is for a corrected re-submit after a validation error. Counted per
+  // (IP, form) so one scraped form can't exhaust the budget the others share.
+  FORM_SUBMIT_RATE_MAX: z.coerce.number().int().positive().default(10),
+  // Cloudflare Turnstile secret, for forms whose spam protection asks for a
+  // challenge. Server-side only — the SITE key belongs in the frontend. Without
+  // it, a form that requires a challenge REFUSES submissions rather than
+  // accepting unverifiable ones.
+  TURNSTILE_SECRET_KEY: z.string().optional(),
+  // How long submissions live when a form declares no retention of its own.
+  // Storage limitation is a GDPR requirement, so the default is finite: one year.
+  SUBMISSION_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
   // How much of the X-Forwarded-For chain to trust for req.ip (rate-limit keys +
   // audit IPs). "true" trusts ALL hops (a client can then spoof its IP) — fine only
   // when the API is unreachable except through a trusted proxy that overwrites XFF.

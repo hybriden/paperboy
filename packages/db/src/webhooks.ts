@@ -26,6 +26,31 @@ export interface WebhookEvent {
   at: string;
 }
 
+/**
+ * A visitor submitted a form. This is how a submission leaves Paperboy —
+ * Paperboy has no mail transport of its own, so notification is an integration
+ * concern (n8n, Zapier, a Worker) reached through the same signed, SSRF-guarded,
+ * delivery-logged pipe as publish events.
+ *
+ * `values` is opt-in per subscription because it carries visitor personal data
+ * to a third party; without it a receiver still learns that a submission
+ * happened and can fetch it with a management token if it is allowed to.
+ */
+export interface FormSubmittedEvent {
+  event: "form.submitted";
+  formId: string;
+  formName: string;
+  submissionId: string;
+  siteId: string;
+  locale: string;
+  at: string;
+  notifyEmail?: string;
+  values?: Record<string, unknown>;
+  fields?: { name: string; label: string; kind: string }[];
+}
+
+export type AnyWebhookEvent = WebhookEvent | FormSubmittedEvent;
+
 const WEBHOOK_TIMEOUT_MS = 5000;
 
 export function signPayload(secret: string, body: string): string {
@@ -158,7 +183,7 @@ export async function deleteWebhook(db: Database, ctx: AccessContext, id: number
  */
 export async function dispatchWebhooks(
   db: Database,
-  payload: WebhookEvent,
+  payload: AnyWebhookEvent,
 ): Promise<{ id: number; status: number | null; ok: boolean }[]> {
   const hooks = await db.select().from(webhook).where(eq(webhook.active, true));
   const subscribed = hooks.filter((h) => {

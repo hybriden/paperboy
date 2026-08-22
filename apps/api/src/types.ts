@@ -13,6 +13,9 @@ declare module "fastify" {
     previewSecret?: string;
     aiEnv: AiEnv;
     stockConfig: { unsplashKey?: string };
+    /** Public form submissions: the anti-spam secret, the per-form rate ceiling,
+     *  and the retention fallback for forms that declare none. */
+    formConfig: { turnstileSecret?: string; submitRateMax: number; retentionDays: number };
   }
   interface FastifyRequest {
     user: SessionUser | null;

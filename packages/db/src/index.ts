@@ -7,6 +7,7 @@ export * from "./dashboard.js";
 export * from "./assets.js";
 export * from "./folders.js";
 export * from "./delivery.js";
+export * from "./forms.js";
 export * from "./auth-store.js";
 export * from "./webhooks.js";
 export * from "./site.js";
