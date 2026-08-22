@@ -57,6 +57,27 @@ export interface TrashRow {
   name: string;
   deletedAt: string;
 }
+/** A Form document in the active site, with how much it has collected. */
+export interface FormRow {
+  formId: string;
+  name: string;
+  submissions: number;
+  lastAt: string | null;
+}
+/** One form submission — visitor PERSONAL DATA. `fieldSnapshot` is the form's
+ *  fields as they were AT THE TIME OF ANSWERING, so a row stays readable (and a
+ *  consent stays evidence) after the form itself is edited. */
+export interface SubmissionRow {
+  submissionId: string;
+  formId: string;
+  locale: string;
+  values: Record<string, unknown>;
+  fieldSnapshot: { name: string; label: string; kind: string }[];
+  meta: Record<string, unknown>;
+  createdAt: string;
+  /** When the retention sweep deletes this row; null = kept until removed by hand. */
+  expiresAt: string | null;
+}
 /** Full payload of one version — for the compare/diff view. */
 export interface VersionDetail {
   id: number;
@@ -406,6 +427,34 @@ export const api = {
   createWebhook: (body: { name: string; url: string; events?: string[] }) =>
     request<{ id: number; secret: string }>("POST", "/manage/webhooks", body),
   deleteWebhook: (id: number) => request<{ ok: boolean }>("DELETE", `/manage/webhooks/${id}`),
+
+  // form submissions — visitor personal data, so their own permissions:
+  // submission.read to look, submission.manage to delete or erase.
+  forms: (signal?: AbortSignal) => request<FormRow[]>("GET", "/manage/forms", undefined, signal),
+  submissions: (opts: { formId?: string; limit?: number; offset?: number } = {}, signal?: AbortSignal) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(opts)) if (v !== undefined && v !== "") qs.set(k, String(v));
+    return request<{ items: SubmissionRow[]; total: number }>("GET", `/manage/forms/submissions?${qs}`, undefined, signal);
+  },
+  submission: (submissionId: string, signal?: AbortSignal) =>
+    request<SubmissionRow>("GET", `/manage/forms/submissions/${encodeURIComponent(submissionId)}`, undefined, signal),
+  /** The CSV export, as raw text — `request` parses JSON and this response is
+   *  text/csv. The caller turns it into a download. */
+  submissionsCsv: async (formId?: string): Promise<string> => {
+    const headers: Record<string, string> = {};
+    if (activeSiteId) headers["x-paperboy-site"] = activeSiteId;
+    const res = await fetch(`${BASE}/manage/forms/submissions.csv${formId ? `?formId=${encodeURIComponent(formId)}` : ""}`, {
+      method: "GET",
+      credentials: "include",
+      headers,
+    });
+    if (res.status === 401) onUnauthorized?.();
+    if (!res.ok) return parseResponse<string>(res); // throws the server's error message
+    return res.text();
+  },
+  deleteSubmission: (submissionId: string) =>
+    request<{ ok: boolean }>("DELETE", `/manage/forms/submissions/${encodeURIComponent(submissionId)}`),
+  eraseSubmissions: (email: string) => request<{ deleted: number }>("POST", "/manage/forms/submissions/erase", { email }),
 
   audit: (
     opts: { limit?: number; before?: number; action?: string; documentId?: string; from?: string; to?: string } = {},

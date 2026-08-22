@@ -1,6 +1,6 @@
 {
   "name": "@paperboycms/client",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Typed client for the Paperboy headless CMS Delivery API â€” lists, search, media variants, render helpers, optional ETag cache. Zero dependencies, no codegen.",
   "license": "MIT",
   "repository": {
@@ -9,14 +9,25 @@
     "directory": "packages/client"
   },
   "homepage": "https://github.com/hybriden/paperboy/tree/main/packages/client#readme",
-  "keywords": ["paperboy", "cms", "headless-cms", "delivery-api", "typescript", "client", "sdk"],
+  "keywords": [
+    "paperboy",
+    "cms",
+    "headless-cms",
+    "delivery-api",
+    "typescript",
+    "client",
+    "sdk"
+  ],
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "publishConfig": {
     "access": "public",
     "main": "./dist/index.js",

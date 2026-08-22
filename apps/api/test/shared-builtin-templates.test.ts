@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+/** The Form's operational settings: instructions to the server, never content.
+ *  Delivering them would publish the site's notification recipients. */
+const FORM_SERVER_ONLY_FIELDS = new Set(["notifyWebhooks", "retentionDays", "captureMetadata", "notifyEmail"]);
+
 import {
   BUILTIN_TYPE_TEMPLATES,
   BUILTIN_TYPE_TEMPLATE_NAMES,
@@ -24,6 +28,10 @@ describe("Built-in type-template library", () => {
         "LinkItemBlock", "LinkListBlock", "PersonBlock", "PersonPage",
         "QuestionBlock", "QuoteBlock", "SectionPage", "StartPage", "TeaserListBlock", "TextBlock",
         "VideoBlock",
+        // Forms: the container plus one block per kind of question.
+        "Form", "FormCheckboxField", "FormConsentField", "FormDateField", "FormEmailField",
+        "FormNumberField", "FormRadioField", "FormSelectField", "FormStaticText",
+        "FormTextField", "FormTextareaField",
       ].sort(),
     );
   });
@@ -57,7 +65,15 @@ describe("Built-in type-template library", () => {
         expect(f.helpText, `${t.name}.${f.name} needs helpText`).toBeTruthy();
         // The library models rendered content — every field is meant for the
         // frontend, so private (the fail-closed default) would be a mistake.
-        expect(f.delivery, `${t.name}.${f.name} should be public`).toBe("public");
+        //
+        // The Form's OPERATIONAL settings are the deliberate exception: where
+        // notifications go, how long submissions are kept, and whether to store
+        // an IP address are instructions to the server, not content. Delivering
+        // them would hand every visitor the site's notification recipients.
+        const serverOnly = t.name === "Form" && FORM_SERVER_ONLY_FIELDS.has(f.name);
+        expect(f.delivery, `${t.name}.${f.name} should be ${serverOnly ? "private" : "public"}`).toBe(
+          serverOnly ? "private" : "public",
+        );
       }
     }
   });

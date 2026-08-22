@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, type FieldDef, type PublicPageEntry, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, isCreativeWorkType, parseStoredContentTypeDef, scalarToString, sortByRule } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, type FieldDef, type PublicPageEntry, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, formSpecFrom, isCreativeWorkType, isFormType, parseStoredContentTypeDef, scalarToString, sortByRule } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
 import type { Database } from "./client.js";
@@ -708,6 +708,11 @@ export async function resolveContent(
   if (item.kind === "page" && def) {
     seo = await computeSeo(ctx, perspective, documentId, def, found.row.name, urlPath, sanitized, found.usedLocale);
   }
+  // A Form ships a normalized, ready-to-render spec beside its raw fields, so a
+  // frontend never has to interpret block payloads to draw a form — and so the
+  // labels/rules it renders are exactly the ones the submit endpoint enforces.
+  // Computed from SANITIZED data, so a private field can never reach it.
+  const form = isFormType(item.type) ? formSpecFrom(sanitized) : undefined;
   return {
     documentId,
     type: item.type,
@@ -725,6 +730,7 @@ export async function resolveContent(
     // Public field types so a frontend renders by schema type, not value shape.
     fieldTypes: def ? publicFieldTypes(def) : {},
     seo,
+    ...(form ? { form } : {}),
   };
 }
 

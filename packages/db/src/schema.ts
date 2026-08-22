@@ -1,5 +1,6 @@
 import {
   bigint,
+  bigserial,
   boolean,
   index,
   integer,
@@ -303,6 +304,36 @@ export const webhook = pgTable("webhook", {
   lastStatus: integer("last_status"),
   lastAt: timestamp("last_at", { withTimezone: true }),
 });
+
+/**
+ * Visitor answers to a CMS-authored form (migration 0022).
+ *
+ * Not content: write-once, never edited, permission-gated separately
+ * (`submission.read`) and deleted on a schedule. `fieldSnapshot` freezes each
+ * field's label and kind as answered so renaming a label can't rewrite history,
+ * and `expiresAt` is what the retention sweeper acts on.
+ */
+export const formSubmission = pgTable(
+  "form_submission",
+  {
+    id: bigserial("id", { mode: "number" }).primaryKey(),
+    submissionId: text("submission_id").notNull().unique(),
+    siteId: text("site_id").notNull(),
+    formId: text("form_id").notNull(),
+    formCv: bigint("form_cv", { mode: "number" }).notNull().default(0),
+    locale: text("locale").notNull(),
+    values: jsonb("values").notNull(),
+    fieldSnapshot: jsonb("field_snapshot").notNull().default([]),
+    meta: jsonb("meta").notNull().default({}),
+    idempotencyKey: text("idempotency_key"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+  },
+  (t) => ({
+    formIdx: index("form_submission_form_idx").on(t.formId, t.createdAt),
+    siteIdx: index("form_submission_site_idx").on(t.siteId, t.createdAt),
+  }),
+);
 
 /** Site-wide key/value settings (e.g. the start page served at "/"). */
 export const siteSetting = pgTable("site_setting", {

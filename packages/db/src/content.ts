@@ -1214,7 +1214,10 @@ export async function updateContent(
   // Draft save: relaxed validation (required fields not enforced). On failure
   // the message names each field's expected JSON shape (with an example), so an
   // agent can self-correct instead of guessing.
-  const parsed = dataSchemaFor(type, false).safeParse(data);
+  // The resolver makes this validate INLINE block payloads too, not just the
+  // document's own fields — a malformed block used to persist and fail only in
+  // the visitor's browser (see contentAreaSchemaFor).
+  const parsed = dataSchemaFor(type, false, await blockTypeResolver(db)).safeParse(data);
   if (!parsed.success) throw Errors.validation(formatDataValidation(parsed.error, type), failedFields(parsed.error));
   // Placement rules ARE enforced even on draft save (allowed blocks / ref types).
   await assertAllowedTypes(db, type, data);
@@ -1446,7 +1449,7 @@ async function assertDraftPublishable(
   draft: typeof contentVersion.$inferSelect,
 ): Promise<void> {
   const type = await getContentType(db, item.type);
-  const parsed = dataSchemaFor(type, true).safeParse(draft.data);
+  const parsed = dataSchemaFor(type, true, await blockTypeResolver(db)).safeParse(draft.data);
   if (!parsed.success) {
     // Tell the (often agentic) caller HOW to recover, not just what's wrong:
     // the draft is salvageable with a partial update — no need to rebuild it.
@@ -1866,7 +1869,7 @@ export async function runScheduledPublish(
         continue;
       }
       const type = await getContentType(db, item.type);
-      const parsed = dataSchemaFor(type, true).safeParse(d.data);
+      const parsed = dataSchemaFor(type, true, await blockTypeResolver(db)).safeParse(d.data);
       if (!parsed.success) {
         // Re-validation failed (e.g. the type changed since scheduling). Leave as
         // a draft, drop the schedule, and record why so the editor can see it.

@@ -39,7 +39,13 @@ import {
    getSiteConfig,
   getTree,
   importStockImage,
+  deleteSubmission,
+  eraseSubmissionsByEmail,
+  exportSubmissions,
+  getSubmission,
   listAssets,
+  listForms,
+  listSubmissions,
   listAudit,
   listBlocks,
    listContentTypes,
@@ -522,6 +528,56 @@ tool(
     const r = await importTypeTemplates(db, ctx, defs, overwrite ?? false);
     mcpAudit("type_template.import", null, null, { created: r.created, updated: r.updated, skipped: r.skipped.map((s) => s.name), overwrite: overwrite ?? false });
     return r;
+  },
+);
+
+/* ---------------------------- form submissions --------------------------
+ * Read-only from the agent's side, plus the two GDPR actions. There is no
+ * `submit_form` tool on purpose: submitting is what a VISITOR does through the
+ * public endpoint, and an agent that could post submissions would just be a
+ * spam tool with a CMS login.
+ *
+ * These call the same db functions the REST routes do, so the permission checks
+ * (`submission.read` / `submission.manage`) and the site scope are inherited
+ * rather than re-implemented — an Author still cannot read visitor messages
+ * here, exactly as over HTTP.
+ */
+tool("list_forms", "List the forms in the active site with their submission counts. Submissions are visitor personal data and require the submission.read permission.", {},
+  () => listForms(db, ctx));
+tool(
+  "list_form_submissions",
+  "List form submissions (newest first). Answers come with a snapshot of the field labels as they were when submitted, so a later edit to the form does not rewrite history.",
+  { formId: z.string().optional().describe("Limit to one form's submissions (documentId of the Form)."), limit: z.number().optional(), offset: z.number().optional() },
+  ({ formId, limit, offset }) => listSubmissions(db, ctx, { formId, limit, offset }),
+);
+tool("get_form_submission", "Get one submission by its id.", { submissionId: z.string() },
+  ({ submissionId }) => getSubmission(db, ctx, submissionId));
+tool(
+  "export_form_submissions",
+  "Export submissions as CSV text. This is a copy of personal data — the export is audit-logged.",
+  { formId: z.string().optional() },
+  async ({ formId }) => {
+    const res = await exportSubmissions(db, ctx, formId);
+    mcpAudit("form.submissions_exported", formId ?? null, null, { rows: res.rows });
+    return res;
+  },
+);
+tool("delete_form_submission", "Delete one submission permanently.", { submissionId: z.string() },
+  async ({ submissionId }) => {
+    const ok = await deleteSubmission(db, ctx, submissionId);
+    mcpAudit("form.submission_deleted", null, null, { submissionId, found: ok });
+    return { ok };
+  });
+tool(
+  "erase_form_submissions",
+  "Data-subject erasure: delete EVERY submission in the active site whose answers contain this email address, in any field. Irreversible.",
+  { email: z.string().describe("The address to erase, matched case-insensitively across all answers.") },
+  async ({ email }) => {
+    const res = await eraseSubmissionsByEmail(db, ctx, email);
+    // The address is the subject of an erasure request — log that one happened
+    // and how much it removed, never the address itself.
+    mcpAudit("form.submissions_erased", null, null, { deleted: res.deleted });
+    return res;
   },
 );
 

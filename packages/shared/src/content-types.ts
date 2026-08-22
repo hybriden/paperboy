@@ -348,7 +348,67 @@ const ASSET_DOCUMENT_ID_MESSAGE =
  * defs. `strict` = enforce required fields (used at publish time); when false,
  * required fields may be missing (draft save).
  */
-export function dataSchemaFor(type: ContentTypeDef, strict: boolean): z.ZodTypeAny {
+export function dataSchemaFor(
+  type: ContentTypeDef,
+  strict: boolean,
+  blockTypes?: BlockTypeResolver,
+): z.ZodTypeAny {
+  return dataSchemaAtDepth(type, strict, blockTypes, 0);
+}
+
+/**
+ * Validate the INLINE payload of every block in a content area against that
+ * block type's OWN schema, and reject an unknown `blockType`.
+ *
+ * Without this, `inline` was `Record<string, unknown>`: a malformed block —
+ * missing the fields its type declares, or carrying keys the type has never
+ * heard of — persisted with a 200 and only failed at render time, in the
+ * visitor's browser. That is rule #1 (never garbage-in-success-out) with the
+ * failure moved one system away from the person who caused it. It matters most
+ * for FORM field blocks, where a bad definition reaches a public form, but the
+ * gap was general so the fix is general.
+ *
+ * Inline objects are STRICT (unknown keys rejected, unlike the passthrough at
+ * document level): a key the block type doesn't declare is never delivered, so
+ * accepting it only stores a lie. Verified against production data before
+ * enabling — no existing block carried an undeclared key.
+ */
+function contentAreaSchemaFor(
+  field: FieldDef,
+  strict: boolean,
+  blockTypes: BlockTypeResolver,
+  depth: number,
+): z.ZodTypeAny {
+  return ContentArea.superRefine((blocks, ctx) => {
+    if (depth >= MAX_INLINE_DEPTH) return;
+    blocks.forEach((b, i) => {
+      if (b.inline === null) return; // a shared reference carries no payload
+      const def = blockTypes(b.blockType);
+      // An UNKNOWN block type is not this check's business: `assertAllowedTypes`
+      // in the db layer already refuses it, with the canonical "not an installed
+      // content type" message that names the installed alternatives. Reporting
+      // it here too would shadow that better error with a worse one.
+      if (!def) return;
+      const inner = dataSchemaAtDepth(def, strict, blockTypes, depth + 1);
+      const res = (inner as z.ZodObject<z.ZodRawShape>).strict().safeParse(b.inline);
+      if (res.success) return;
+      for (const issue of res.error.issues) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [i, "inline", ...issue.path],
+          message: `${def.name}.${issue.path.join(".") || "(block)"}: ${issue.message}`,
+        });
+      }
+    });
+  });
+}
+
+function dataSchemaAtDepth(
+  type: ContentTypeDef,
+  strict: boolean,
+  blockTypes: BlockTypeResolver | undefined,
+  depth: number,
+): z.ZodTypeAny {
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const f of type.fields) {
     let s: z.ZodTypeAny;
@@ -399,7 +459,7 @@ export function dataSchemaFor(type: ContentTypeDef, strict: boolean): z.ZodTypeA
         s = ReferenceValue;
         break;
       case "contentArea":
-        s = ContentArea;
+        s = blockTypes ? contentAreaSchemaFor(f, strict, blockTypes, depth) : ContentArea;
         break;
     }
     // Required only enforced in strict (publish) mode.

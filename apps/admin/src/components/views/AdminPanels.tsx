@@ -2,11 +2,12 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName } from "@paperboy/shared";
-import { ACTIVE_SITE_KEY, type AiProviderName, api, ApiError, type ManagedUser, type SeoFilesConfig, type SiteRow } from "../../lib/api.js";
+import { ACTIVE_SITE_KEY, type AiProviderName, api, ApiError, type FormRow, type ManagedUser, type SeoFilesConfig, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
 import { ContentTypeEditor } from "../ContentTypeEditor.js";
+import { FormSubmissions } from "../FormSubmissions.js";
 import { Dialog, DialogContent } from "../ui/dialog.js";
 import { Badge } from "../ui/badge.js";
 import { Switch } from "../ui/switch.js";
@@ -1815,6 +1816,77 @@ export function WebhooksPanel() {
         </div>
       ))}
       {hooks.data?.length === 0 && <p className="p-4 text-sm text-muted">No webhooks.</p>}
+    </PanelShell>
+  );
+}
+
+/* ---------------------------- Form submissions -----------------------------
+ * The cross-form entry point: which forms exist and how much each has
+ * collected. Opening one shows exactly the panel the Form document's own
+ * "Submissions" tab renders — one component, two ways in.
+ */
+export function FormSubmissionsPanel() {
+  const { user } = useUser();
+  const canManage = user.permissions.includes("submission.manage");
+  const [openForm, setOpenForm] = useState<FormRow | null>(null);
+  const forms = useQuery({ queryKey: ["forms"], queryFn: ({ signal }) => api.forms(signal) });
+
+  if (openForm) {
+    return (
+      <section className="mb-8">
+        <button className="btn-ghost mb-3 px-1 text-sm" onClick={() => setOpenForm(null)}>
+          <Icon.Chevron width={14} height={14} className="rotate-180" /> All forms
+        </button>
+        <div className="mb-3">
+          <div className="eyebrow">Form</div>
+          <h3 className="section-title mt-1">{openForm.name}</h3>
+        </div>
+        <FormSubmissions key={openForm.formId} formId={openForm.formId} canManage={canManage} />
+      </section>
+    );
+  }
+
+  const rows = forms.data ?? [];
+  return (
+    <PanelShell
+      title="Form submissions"
+      hint="What visitors sent through this site’s forms. Personal data — read it, act on it, and delete it when you no longer need it."
+    >
+      {/* A failed load must not read as "no forms" — unknown state stays unknown. */}
+      {forms.isError ? (
+        <div className="p-4">
+          {forms.error instanceof ApiError && forms.error.status === 403 ? (
+            <Callout tone="caution" title="You can’t read form submissions">
+              Submissions need their own permission because they hold personal data. Ask an administrator if answering
+              these is part of your job.
+            </Callout>
+          ) : (
+            <Callout tone="critical" title="Couldn’t load the forms">
+              This isn’t an empty site — the list failed to load. Reload to try again.
+            </Callout>
+          )}
+        </div>
+      ) : forms.isLoading ? (
+        <p className="p-4 text-sm text-muted">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="p-4 text-sm text-muted">No forms on this site yet. Create a Form block to start collecting.</p>
+      ) : (
+        rows.map((f) => (
+          <div key={f.formId} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
+            <Icon.Block width={15} height={15} className="shrink-0 text-muted" />
+            <span className="min-w-0 flex-1 truncate font-medium text-fg">{f.name}</span>
+            <span className="shrink-0 text-[11px] text-muted">
+              {f.lastAt ? `last ${new Date(f.lastAt).toLocaleString()}` : "nothing yet"}
+            </span>
+            <Badge tone={f.submissions > 0 ? "primary" : "default"}>
+              <span className="tnum">{f.submissions}</span>
+            </Badge>
+            <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setOpenForm(f)}>
+              Open
+            </button>
+          </div>
+        ))
+      )}
     </PanelShell>
   );
 }

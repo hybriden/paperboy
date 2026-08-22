@@ -37,3 +37,35 @@ export async function fetchList(type: string | null, locale: string, preview: bo
     return []; // listing is decorative on this reference frontend — degrade quietly
   }
 }
+
+/**
+ * Post a form submission from the SERVER, so the delivery key never reaches the
+ * browser. The public key is enough to submit (any credential a public form can
+ * use is one an abuser could read anyway — the real defences are the rate limit
+ * and the spam checks), but keeping it server-side avoids handing scrapers a
+ * working key along with the page.
+ */
+export async function submitForm(input: {
+  formId: string;
+  values: Record<string, unknown>;
+  elapsedMs: number;
+  honeypot: string;
+  turnstileToken?: string;
+  locale?: string;
+  idempotencyKey?: string;
+}): Promise<
+  { ok: true; submissionId: string; confirmation: { type: "message" | "redirect"; text?: unknown } }
+  | { ok: false; fields: Record<string, string> }
+> {
+  const res = await published.submitForm(input.formId, {
+    values: input.values,
+    elapsedMs: input.elapsedMs,
+    honeypot: input.honeypot,
+    turnstileToken: input.turnstileToken,
+    locale: input.locale,
+    idempotencyKey: input.idempotencyKey,
+  });
+  return res.ok
+    ? { ok: true, submissionId: res.submissionId, confirmation: res.confirmation as { type: "message" | "redirect"; text?: unknown } }
+    : res;
+}

@@ -11,7 +11,7 @@ import { Badge } from "../ui/badge.js";
 import { SkeletonRows } from "../ui/skeleton.js";
 import { Surface } from "../ui/surface.js";
 import { useToast } from "../ui/toast.js";
-import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, LanguagesPanel, McpTokensPanel, PasswordPanel, SitePanel, StockImagesPanel, TrashPanel, TypeTemplatesPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
+import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, FormSubmissionsPanel, LanguagesPanel, McpTokensPanel, PasswordPanel, SitePanel, StockImagesPanel, TrashPanel, TypeTemplatesPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
@@ -354,6 +354,7 @@ export function SettingsView() {
     { key: "templates", label: "Type templates", group: "Content", show: has("contenttype.manage"), render: () => <TypeTemplatesPanel /> },
     { key: "languages", label: "Languages", group: "Content", show: true, render: () => <LanguagesPanel /> },
     { key: "site", label: "Site", group: "Content", show: has("content.publish"), render: () => <SitePanel /> },
+    { key: "submissions", label: "Form submissions", group: "Content", show: has("submission.read"), render: () => <FormSubmissionsPanel /> },
     { key: "users", label: "Users & roles", group: "Administration", show: has("user.manage"), render: () => <UsersPanel /> },
     { key: "keys", label: "API keys", group: "Administration", show: has("deliverykey.manage"), render: () => <DeliveryKeysPanel /> },
     { key: "mcp", label: "MCP", group: "Administration", show: has("user.manage"), render: () => <McpTokensPanel /> },

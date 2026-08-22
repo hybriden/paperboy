@@ -6,7 +6,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import swagger from "@fastify/swagger";
 import swaggerUI from "@fastify/swagger-ui";
-import { AppError, createDb, getAccessContext, getSessionUser, getSiteById, readSession, runScheduledPublish } from "@paperboy/db";
+import { AppError, audit, createDb, getAccessContext, getSessionUser, getSiteById, readSession, runScheduledPublish, runSubmissionRetention } from "@paperboy/db";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
   type ZodTypeProvider,
@@ -19,6 +19,7 @@ import { type Env, parseTrustProxy } from "./env.js";
 import { registerAiRoutes } from "./routes/ai.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDeliveryRoutes } from "./routes/delivery.js";
+import { registerSubmitRoutes } from "./routes/submit.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMediaRoutes } from "./routes/media.js";
 import { registerManageRoutes } from "./routes/manage.js";
@@ -86,6 +87,11 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     AI_MODEL: env.AI_MODEL,
   });
   app.decorate("stockConfig", { unsplashKey: env.UNSPLASH_ACCESS_KEY });
+  app.decorate("formConfig", {
+    turnstileSecret: env.TURNSTILE_SECRET_KEY,
+    submitRateMax: env.NODE_ENV === "test" ? 100_000 : env.FORM_SUBMIT_RATE_MAX,
+    retentionDays: env.SUBMISSION_RETENTION_DAYS,
+  });
 
   await app.register(cookie, { secret: env.SESSION_SECRET });
   await app.register(cors, { origin: env.CORS_ORIGIN, credentials: true });
@@ -188,6 +194,11 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   await app.register(registerManageRoutes, { prefix: "/api/v1/manage" });
   await app.register(registerAiRoutes, { prefix: "/api/v1/ai" });
   await app.register(registerDeliveryRoutes, { prefix: "/api/v1/delivery" });
+  // Public form submissions. Registered SEPARATELY from the delivery routes
+  // even though it shares their URL prefix: delivery is the read chokepoint and
+  // its preHandler resolves a read perspective, while this is the one anonymous
+  // WRITE path and owns its own credential check, rate limit and CORS rules.
+  await app.register(registerSubmitRoutes, { prefix: "/api/v1/delivery" });
   // Image transforms (?w=&format=&q=) — the :file param route also serves
   // originals; the static wildcard above remains as fallback for nested paths.
   await app.register(registerMediaRoutes);
@@ -202,6 +213,25 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     }, 60_000);
     if (typeof schedTimer.unref === "function") schedTimer.unref();
     app.addHook("onClose", async () => clearInterval(schedTimer));
+
+    // Submission retention sweep. In-process and ON BY DEFAULT, deliberately:
+    // Umbraco Forms ships the same per-form policy but it silently does nothing
+    // until a separate scheduled task is enabled in configuration, so editors
+    // believe data is being deleted when it isn't. Hourly is plenty for a
+    // day-granularity policy, and each sweep logs its count so deletion is provable.
+    const sweep = async (): Promise<void> => {
+      const { deleted } = await runSubmissionRetention(db);
+      if (deleted > 0) {
+        app.log.info({ deleted }, "form submissions deleted by retention policy");
+        await audit(db, { action: "form.retention_sweep", detail: { deleted } });
+      }
+    };
+    void sweep().catch((err) => app.log.error({ err }, "submission retention (boot) failed"));
+    const retentionTimer = setInterval(() => {
+      void sweep().catch((err) => app.log.error({ err }, "submission retention failed"));
+    }, 3_600_000);
+    if (typeof retentionTimer.unref === "function") retentionTimer.unref();
+    app.addHook("onClose", async () => clearInterval(retentionTimer));
   }
 
   return app;

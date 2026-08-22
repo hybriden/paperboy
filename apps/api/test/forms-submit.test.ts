@@ -1,0 +1,476 @@
+import { submissionsToCsv } from "@paperboy/db";
+import { MIN_FILL_MS } from "@paperboy/shared";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { PREVIEW_KEY, PUBLIC_KEY, type Suite, authHeaders, login, setupApi } from "./helpers.js";
+
+/**
+ * The public form-submission endpoint — Paperboy's ONLY anonymous write path.
+ *
+ * This file is the security contract for it. Each test below stands in for a
+ * specific way a public write endpoint gets abused, so a future refactor that
+ * reopens one of these holes fails here rather than in production:
+ *
+ *  - it must not be authenticated by a cookie (that is what makes "no CSRF
+ *    token needed" true rather than merely convenient);
+ *  - a delivery key must not reach another site's form;
+ *  - answers must be validated against the CURRENT PUBLISHED definition, and
+ *    unknown fields rejected instead of silently stored;
+ *  - spam heuristics must be indistinguishable from success on the wire;
+ *  - a retried submission must not create a second row;
+ *  - submissions must never appear in any delivery READ.
+ */
+
+let s: Suite;
+let admin: { cookie: string; csrf: string };
+let formId: string;
+
+const FORM_FIELDS = [
+  {
+    key: "f1",
+    blockType: "FormTextField",
+    display: "automatic",
+    ref: null,
+    inline: { name: "fullName", label: "Your name", required: true, maxLength: 80 },
+  },
+  {
+    key: "f2",
+    blockType: "FormEmailField",
+    display: "automatic",
+    ref: null,
+    inline: { name: "email", label: "Email", required: true },
+  },
+  {
+    key: "f3",
+    blockType: "FormTextareaField",
+    display: "automatic",
+    ref: null,
+    inline: { name: "message", label: "Message", required: false, maxLength: 500, rows: 6 },
+  },
+  {
+    key: "f4",
+    blockType: "FormSelectField",
+    display: "automatic",
+    ref: null,
+    inline: { name: "topic", label: "Topic", required: false, choices: "support|I need help\nsales|Buying" },
+  },
+  {
+    key: "f5",
+    blockType: "FormConsentField",
+    display: "automatic",
+    ref: null,
+    inline: { name: "consent", label: "I agree that my message may be stored so you can reply." },
+  },
+  {
+    key: "f6",
+    blockType: "FormStaticText",
+    display: "automatic",
+    ref: null,
+    inline: { heading: "About your enquiry", text: null },
+  },
+];
+
+/** A submission body that passes the invisible heuristics. */
+const good = (values: Record<string, unknown>, extra: Record<string, unknown> = {}) => ({
+  values,
+  elapsedMs: MIN_FILL_MS + 500,
+  ...extra,
+});
+
+const submit = (
+  payload: unknown,
+  opts: { key?: string; headers?: Record<string, string>; id?: string } = {},
+) =>
+  s.app.inject({
+    method: "POST",
+    url: `/api/v1/delivery/forms/${opts.id ?? formId}/submissions`,
+    headers: { authorization: `Bearer ${opts.key ?? PUBLIC_KEY}`, ...opts.headers },
+    payload,
+  });
+
+beforeAll(async () => {
+  s = await setupApi();
+  admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+
+  // Install the built-in Form types, then author a form as content.
+  for (const name of [
+    "Form", "FormTextField", "FormEmailField", "FormTextareaField",
+    "FormSelectField", "FormConsentField", "FormStaticText",
+  ]) {
+    const res = await s.app.inject({
+      method: "POST",
+      url: `/api/v1/manage/type-templates/${name}/instantiate`,
+      headers: authHeaders(admin),
+      payload: {},
+    });
+    if (res.statusCode >= 400) throw new Error(`instantiate ${name}: ${res.statusCode} ${res.body}`);
+  }
+
+  const created = await s.app.inject({
+    method: "POST",
+    url: "/api/v1/manage/content",
+    headers: authHeaders(admin),
+    payload: { type: "Form", locale: "en", name: "Contact us" },
+  });
+  if (created.statusCode >= 400) throw new Error(`create form: ${created.statusCode} ${created.body}`);
+  formId = (created.json() as { documentId: string }).documentId;
+
+  const updated = await s.app.inject({
+    method: "PUT",
+    url: `/api/v1/manage/content/${formId}?locale=en`,
+    headers: authHeaders(admin),
+    payload: {
+      data: {
+        title: "Contact us",
+        submitLabel: "Send message",
+        confirmation: "message",
+        fields: FORM_FIELDS,
+        retentionDays: 30,
+      },
+    },
+  });
+  if (updated.statusCode >= 400) throw new Error(`update form: ${updated.statusCode} ${updated.body}`);
+
+  const published = await s.app.inject({
+    method: "POST",
+    url: `/api/v1/manage/content/${formId}/publish?locale=en`,
+    headers: authHeaders(admin),
+  });
+  if (published.statusCode >= 400) throw new Error(`publish form: ${published.statusCode} ${published.body}`);
+});
+
+afterAll(async () => {
+  await s.app.close();
+});
+
+describe("the form definition reaches the frontend as a schema", () => {
+  it("delivers a normalized form spec, never markup", async () => {
+    const res = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/delivery/content/${formId}`,
+      headers: { authorization: `Bearer ${PUBLIC_KEY}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = res.json() as { form?: { fields: { name: string; kind: string; required: boolean }[]; submitLabel: string; honeypotField: string } };
+    expect(body.form).toBeTruthy();
+    expect(body.form!.submitLabel).toBe("Send message");
+    // The honeypot's NAME is public on purpose: the frontend has to render it.
+    expect(body.form!.honeypotField).toBeTruthy();
+    const byName = Object.fromEntries(body.form!.fields.map((f) => [f.name, f]));
+    expect(byName.fullName!.kind).toBe("text");
+    expect(byName.email!.kind).toBe("email");
+    expect(byName.consent!.required).toBe(true); // consent is required whatever the editor ticked
+    // Static text is delivered as a field with no name — it collects nothing.
+    expect(body.form!.fields.some((f) => f.kind === "static" && f.name === "")).toBe(true);
+  });
+
+  it("never exposes the form's private operational settings", async () => {
+    const res = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/delivery/content/${formId}`,
+      headers: { authorization: `Bearer ${PUBLIC_KEY}` },
+    });
+    const body = res.json() as { data: Record<string, unknown>; fieldTypes: Record<string, string> };
+    for (const secret of ["retentionDays", "captureMetadata", "notifyWebhooks", "notifyEmail"]) {
+      expect(body.data[secret], secret).toBeUndefined();
+      expect(body.fieldTypes[secret], secret).toBeUndefined();
+    }
+  });
+});
+
+describe("accepting a submission", () => {
+  it("stores a valid submission and returns the confirmation", async () => {
+    const res = await submit(
+      good({ fullName: "Ada Lovelace", email: "ada@example.com", message: "Hello", topic: "support", consent: true }),
+    );
+    expect(res.statusCode).toBe(202);
+    const body = res.json() as { ok: boolean; submissionId: string; confirmation: { type: string } };
+    expect(body.ok).toBe(true);
+    expect(body.submissionId).toMatch(/^sub_/);
+    expect(body.confirmation.type).toBe("message");
+  });
+
+  it("coerces what HTML forms actually send (strings, 'on')", async () => {
+    const res = await submit(good({ fullName: " Grace ", email: "grace@example.com", consent: "on" }));
+    expect(res.statusCode).toBe(202);
+    const list = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/manage/forms/submissions?formId=${formId}`,
+      headers: { cookie: admin.cookie },
+    });
+    const items = (list.json() as { items: { values: Record<string, unknown> }[] }).items;
+    const stored = items.find((i) => i.values.email === "grace@example.com");
+    expect(stored?.values.fullName).toBe("Grace"); // trimmed
+    expect(stored?.values.consent).toBe(true); // "on" → true
+  });
+
+  it("stores a snapshot of the fields as answered", async () => {
+    const list = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/manage/forms/submissions?formId=${formId}`,
+      headers: { cookie: admin.cookie },
+    });
+    const first = (list.json() as { items: { fieldSnapshot: { name: string; label: string }[] }[] }).items[0]!;
+    const consent = first.fieldSnapshot.find((f) => f.name === "consent");
+    // The consent WORDING is the evidence — it must survive a later edit.
+    expect(consent?.label).toContain("stored so you can reply");
+  });
+
+  it("applies the form's retention window", async () => {
+    const list = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/manage/forms/submissions?formId=${formId}`,
+      headers: { cookie: admin.cookie },
+    });
+    const first = (list.json() as { items: { createdAt: string; expiresAt: string | null }[] }).items[0]!;
+    expect(first.expiresAt).toBeTruthy();
+    const days = (Date.parse(first.expiresAt!) - Date.parse(first.createdAt)) / 86_400_000;
+    expect(Math.round(days)).toBe(30);
+  });
+
+  it("does not store IP or user-agent unless the form asks for it", async () => {
+    const list = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/manage/forms/submissions?formId=${formId}`,
+      headers: { cookie: admin.cookie },
+    });
+    for (const row of (list.json() as { items: { meta: Record<string, unknown> }[] }).items) {
+      expect(row.meta).toEqual({});
+    }
+  });
+});
+
+describe("rejecting a submission", () => {
+  it("returns 422 with a message PER FIELD, not one flat string", async () => {
+    const res = await submit(good({ fullName: "", email: "not-an-email", consent: true }));
+    expect(res.statusCode).toBe(422);
+    const body = res.json() as { ok: boolean; error: string; fields: Record<string, string> };
+    expect(body.ok).toBe(false);
+    expect(body.fields.fullName).toBeTruthy();
+    expect(body.fields.email).toMatch(/valid email/i);
+  });
+
+  it("refuses an unticked consent box", async () => {
+    const res = await submit(good({ fullName: "Ada", email: "ada@example.com", consent: false }));
+    expect(res.statusCode).toBe(422);
+    expect((res.json() as { fields: Record<string, string> }).fields.consent).toBeTruthy();
+  });
+
+  it("refuses an option that isn't in the editor's list", async () => {
+    const res = await submit(
+      good({ fullName: "Ada", email: "ada@example.com", consent: true, topic: "invoices" }),
+    );
+    expect(res.statusCode).toBe(422);
+    expect((res.json() as { fields: Record<string, string> }).fields.topic).toBeTruthy();
+  });
+
+  it("REJECTS an unknown field instead of silently dropping it", async () => {
+    // Silently storing (or discarding) a field the form doesn't have is the
+    // garbage-in-success-out failure rule #1 exists to prevent.
+    const res = await submit(
+      good({ fullName: "Ada", email: "ada@example.com", consent: true, isAdmin: true, extra: "x" }),
+    );
+    expect(res.statusCode).toBe(422);
+  });
+
+  it("enforces the editor's length limits", async () => {
+    const res = await submit(
+      good({ fullName: "A".repeat(200), email: "ada@example.com", consent: true }),
+    );
+    expect(res.statusCode).toBe(422);
+    expect((res.json() as { fields: Record<string, string> }).fields.fullName).toMatch(/too long/i);
+  });
+});
+
+describe("spam heuristics", () => {
+  it("drops a submission with the honeypot filled — and looks like a success", async () => {
+    const before = await countSubmissions();
+    const res = await submit(
+      good({ fullName: "Bot", email: "bot@example.com", consent: true }, { honeypot: "http://spam.example" }),
+    );
+    // Indistinguishable from success on the wire: a bot learns nothing.
+    expect(res.statusCode).toBe(202);
+    expect((res.json() as { ok: boolean }).ok).toBe(true);
+    expect(await countSubmissions()).toBe(before); // but nothing was stored
+  });
+
+  it("drops an implausibly fast submission", async () => {
+    const before = await countSubmissions();
+    const res = await s.app.inject({
+      method: "POST",
+      url: `/api/v1/delivery/forms/${formId}/submissions`,
+      headers: { authorization: `Bearer ${PUBLIC_KEY}` },
+      payload: { values: { fullName: "Bot", email: "bot2@example.com", consent: true }, elapsedMs: 100 },
+    });
+    expect(res.statusCode).toBe(202);
+    expect(await countSubmissions()).toBe(before);
+  });
+
+  it("accepts a submission with no timer at all (JS-disabled visitor)", async () => {
+    const before = await countSubmissions();
+    const res = await s.app.inject({
+      method: "POST",
+      url: `/api/v1/delivery/forms/${formId}/submissions`,
+      headers: { authorization: `Bearer ${PUBLIC_KEY}` },
+      payload: { values: { fullName: "No JS", email: "nojs@example.com", consent: true } },
+    });
+    expect(res.statusCode).toBe(202);
+    expect(await countSubmissions()).toBe(before + 1);
+  });
+});
+
+describe("the trust boundary", () => {
+  it("rejects a submission with no delivery key", async () => {
+    const res = await s.app.inject({
+      method: "POST",
+      url: `/api/v1/delivery/forms/${formId}/submissions`,
+      payload: good({ fullName: "Ada", email: "ada@example.com", consent: true }),
+    });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it("treats a COOKIE-bearing request exactly like an anonymous one", async () => {
+    // The reason this endpoint needs no anti-CSRF token is that it has no
+    // ambient authority to steal. If a session cookie ever starts granting
+    // anything here, that reasoning collapses — so assert it never does.
+    const res = await s.app.inject({
+      method: "POST",
+      url: `/api/v1/delivery/forms/${formId}/submissions`,
+      headers: { cookie: admin.cookie, "x-csrf-token": admin.csrf },
+      payload: good({ fullName: "Ada", email: "ada@example.com", consent: true }),
+    });
+    expect(res.statusCode).toBe(401); // the cookie bought exactly nothing
+  });
+
+  it("accepts a preview key too (previewing a form must work)", async () => {
+    const res = await submit(
+      good({ fullName: "Preview", email: "preview@example.com", consent: true }),
+      { key: PREVIEW_KEY },
+    );
+    expect(res.statusCode).toBe(202);
+  });
+
+  it("404s an unknown or non-Form document", async () => {
+    const res = await submit(good({ fullName: "Ada", email: "a@b.co", consent: true }), { id: "does_not_exist" });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("404s a form that is not published", async () => {
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: authHeaders(admin),
+      payload: { type: "Form", locale: "en", name: "Draft only" },
+    });
+    const draftId = (created.json() as { documentId: string }).documentId;
+    const res = await submit(good({}), { id: draftId });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("never exposes submissions through a delivery read", async () => {
+    const res = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/delivery/content/${formId}?populate=3`,
+      headers: { authorization: `Bearer ${PREVIEW_KEY}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const raw = res.body.toLowerCase();
+    expect(raw).not.toContain("ada@example.com");
+    expect(raw).not.toContain("submission");
+  });
+});
+
+describe("idempotency", () => {
+  it("returns the same submission for a repeated Idempotency-Key", async () => {
+    const before = await countSubmissions();
+    const payload = good({ fullName: "Retry", email: "retry@example.com", consent: true });
+    const key = "idem-test-key-1";
+    const first = await submit(payload, { headers: { "idempotency-key": key } });
+    const second = await submit(payload, { headers: { "idempotency-key": key } });
+    expect(first.statusCode).toBe(202);
+    expect(second.statusCode).toBe(202);
+    expect((second.json() as { submissionId: string }).submissionId).toBe(
+      (first.json() as { submissionId: string }).submissionId,
+    );
+    expect(await countSubmissions()).toBe(before + 1); // one row, not two
+  });
+});
+
+describe("management access", () => {
+  it("requires submission.read — an Author cannot read visitor messages", async () => {
+    const author = await login(s.app, "author@paperboy.test", "Author!Passw0rd");
+    const res = await s.app.inject({
+      method: "GET",
+      url: "/api/v1/manage/forms/submissions",
+      headers: { cookie: author.cookie },
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it("exports CSV with the answers under their labels", async () => {
+    const res = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/manage/forms/submissions.csv?formId=${formId}`,
+      headers: { cookie: admin.cookie },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/csv");
+    expect(res.body).toContain("Your name");
+    expect(res.body).toContain("ada@example.com");
+  });
+
+  it("erases every submission containing an address (data-subject erasure)", async () => {
+    await submit(good({ fullName: "Erase Me", email: "erase@example.com", consent: true }));
+    const res = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/forms/submissions/erase",
+      headers: authHeaders(admin),
+      payload: { email: "ERASE@example.com" }, // case-insensitive
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as { deleted: number }).deleted).toBeGreaterThan(0);
+    const after = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/manage/forms/submissions?formId=${formId}&limit=200`,
+      headers: { cookie: admin.cookie },
+    });
+    expect(after.body).not.toContain("erase@example.com");
+  });
+
+  it("lists the site's forms with counts", async () => {
+    const res = await s.app.inject({
+      method: "GET",
+      url: "/api/v1/manage/forms",
+      headers: { cookie: admin.cookie },
+    });
+    expect(res.statusCode).toBe(200);
+    const rows = res.json() as { formId: string; submissions: number }[];
+    expect(rows.find((r) => r.formId === formId)?.submissions).toBeGreaterThan(0);
+  });
+});
+
+describe("CSV escaping", () => {
+  it("neutralises a formula so a spreadsheet can't execute an answer", () => {
+    const csv = submissionsToCsv([
+      {
+        submissionId: "sub_1",
+        formId: "f",
+        locale: "en",
+        values: { note: "=cmd|' /c calc'!A1" },
+        fieldSnapshot: [{ name: "note", label: "Note", kind: "text" }],
+        meta: {},
+        createdAt: "2026-08-22T10:00:00.000Z",
+        expiresAt: null,
+      },
+    ]);
+    expect(csv).toContain("\"'=cmd"); // prefixed, so Excel treats it as text
+  });
+});
+
+async function countSubmissions(): Promise<number> {
+  const res = await s.app.inject({
+    method: "GET",
+    url: `/api/v1/manage/forms/submissions?formId=${formId}&limit=1`,
+    headers: { cookie: admin.cookie },
+  });
+  return (res.json() as { total: number }).total;
+}

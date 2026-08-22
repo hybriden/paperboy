@@ -65,8 +65,142 @@ export interface DeliveryContent {
    *  "datetime" | "select" | "link"). Render each field by its SCHEMA type
    *  rather than sniffing the value's shape. Private fields are never listed. */
   fieldTypes: Record<string, string>;
+  /** Ready-to-render form contract — present only on a Form. */
+  form?: FormSpec;
   /** Normalized SEO/schema.org contract — present on pages, null otherwise. */
   seo: DeliverySeo | null;
+}
+
+/* ------------------------------- forms ----------------------------------- */
+
+/** One field of a delivered form. Render by `kind`, never by guessing. */
+export interface FormField {
+  kind: "text" | "email" | "textarea" | "number" | "date" | "select" | "radio" | "checkbox" | "consent" | "static";
+  /** The submission key. Empty for `static`, which collects no answer. */
+  name: string;
+  label: string;
+  required: boolean;
+  helpText?: string;
+  placeholder?: string;
+  /** The editor's own error copy — show this instead of a generic message. */
+  errorMessage?: string;
+  rows?: number;
+  min?: number;
+  max?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  choices?: { value: string; label: string }[];
+  heading?: string;
+  text?: unknown;
+}
+
+/**
+ * A form as delivered: everything needed to render it, and nothing that only
+ * the server should know. The rules here are the same ones the submit endpoint
+ * enforces, so client-side validation is a courtesy, never the gate.
+ */
+export interface FormSpec {
+  title: string;
+  intro?: unknown;
+  fields: FormField[];
+  submitLabel: string;
+  confirmation: "message" | "redirect";
+  confirmationText?: unknown;
+  redirectTo?: { href: string; text?: string } | null;
+  /** Render a Turnstile widget and pass its token to `submitForm`. */
+  turnstile: boolean;
+  /** Name for the hidden input a bot fills and a human never sees. */
+  honeypotField: string;
+  minFillMs: number;
+}
+
+export interface FormConfirmation {
+  type: "message" | "redirect";
+  text?: unknown;
+  redirectTo?: { href: string; text?: string } | null;
+}
+
+export type FormSubmitResult =
+  | { ok: true; submissionId: string; confirmation: FormConfirmation }
+  | { ok: false; fields: Record<string, string> };
+
+/** The form spec of a delivered item, or null when it isn't a form. */
+export function formOf(content: { form?: FormSpec } | null | undefined): FormSpec | null {
+  return content?.form ?? null;
+}
+
+/**
+ * Start the fill timer. Call when the form renders and pass `elapsed()` to
+ * `submitForm`: a submission completed faster than a human could type is
+ * discarded, and a form that reports nothing loses that protection.
+ */
+export function formTimer(): { elapsed: () => number } {
+  const started = Date.now();
+  return { elapsed: () => Date.now() - started };
+}
+
+/**
+ * Field attributes for accessible markup, derived from the spec.
+ *
+ * WCAG-correct by construction: the label is associated by id, help text and
+ * error text are announced through `aria-describedby`, a failing field is
+ * marked `aria-invalid`, and `required` is set programmatically rather than
+ * being implied by an asterisk. Frameworks spread this onto their own inputs —
+ * we deliberately never hand back HTML strings.
+ */
+export function fieldAttrs(
+  field: FormField,
+  opts: { idPrefix?: string; error?: string; value?: unknown } = {},
+): {
+  id: string;
+  name: string;
+  required: boolean;
+  describedBy?: string;
+  helpId: string;
+  errorId: string;
+  input: Record<string, string | number | boolean | undefined>;
+} {
+  const prefix = opts.idPrefix ?? "pb";
+  const id = `${prefix}-${field.name || field.kind}`;
+  const helpId = `${id}-help`;
+  const errorId = `${id}-error`;
+  const described = [field.helpText ? helpId : null, opts.error ? errorId : null].filter(Boolean).join(" ");
+  const input: Record<string, string | number | boolean | undefined> = {
+    id,
+    name: field.name,
+    required: field.required || undefined,
+    "aria-required": field.required || undefined,
+    "aria-invalid": opts.error ? true : undefined,
+    "aria-describedby": described || undefined,
+    placeholder: field.placeholder,
+  };
+  if (field.kind === "email") input.type = "email";
+  else if (field.kind === "number") input.type = "number";
+  else if (field.kind === "date") input.type = "date";
+  else if (field.kind === "checkbox" || field.kind === "consent") input.type = "checkbox";
+  else if (field.kind === "text") input.type = "text";
+  if (field.minLength != null) input.minLength = field.minLength;
+  if (field.maxLength != null) input.maxLength = field.maxLength;
+  if (field.min != null) input.min = field.min;
+  if (field.max != null) input.max = field.max;
+  if (field.pattern) input.pattern = field.pattern;
+  if (field.kind === "textarea" && field.rows) input.rows = field.rows;
+  return { id, name: field.name, required: field.required, describedBy: described || undefined, helpId, errorId, input };
+}
+
+/** Attributes for the honeypot input: hidden from sight AND from assistive
+ *  technology, and never focusable, so no real visitor can fill it by accident. */
+export function honeypotAttrs(spec: FormSpec): {
+  name: string;
+  wrapperStyle: string;
+  input: Record<string, string | number | boolean>;
+} {
+  return {
+    name: spec.honeypotField,
+    wrapperStyle: "position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden",
+    input: { name: spec.honeypotField, type: "text", tabIndex: -1, autoComplete: "off", "aria-hidden": "true" },
+  };
 }
 
 export interface PaperboyClientOptions {
@@ -267,6 +401,65 @@ export function createClient(options: PaperboyClientOptions) {
       return r.body ?? { items: [], total: 0 };
     },
 
+    /**
+     * Submit a form. The only WRITE this client makes.
+     *
+     * `elapsedMs` is how long the visitor had the form open — send the real
+     * number (see `formTimer`), because an implausibly fast submission is
+     * silently discarded as a bot. Pass `idempotencyKey` (any uuid) so a retry
+     * after a timeout can't create a second submission.
+     *
+     * Resolves to a discriminated result rather than throwing on invalid input:
+     * a 422 carries one message per field, which the caller renders beside the
+     * input it belongs to.
+     */
+    async submitForm(
+      formId: string,
+      input: {
+        values: Record<string, unknown>;
+        elapsedMs?: number;
+        honeypot?: string;
+        turnstileToken?: string;
+        locale?: string;
+        idempotencyKey?: string;
+      },
+    ): Promise<FormSubmitResult> {
+      const url = `${base}/api/v1/delivery/forms/${encodeURIComponent(formId)}/submissions`;
+      const headers: Record<string, string> = {
+        authorization: `Bearer ${options.key}`,
+        "content-type": "application/json",
+      };
+      if (input.idempotencyKey) headers["idempotency-key"] = input.idempotencyKey;
+      const res = await doFetch(url, {
+        ...options.fetchInit,
+        method: "POST",
+        headers: { ...(options.fetchInit?.headers as Record<string, string>), ...headers },
+        body: JSON.stringify({
+          values: input.values,
+          elapsedMs: input.elapsedMs,
+          honeypot: input.honeypot ?? "",
+          turnstileToken: input.turnstileToken,
+          locale: input.locale,
+        }),
+      });
+      if (res.status === 422) {
+        const body = (await res.json()) as { fields?: Record<string, string> };
+        return { ok: false, fields: body.fields ?? { _form: "The form could not be submitted." } };
+      }
+      if (!res.ok) {
+        let message = `Form submission failed (${res.status})`;
+        try {
+          const body = (await res.json()) as { message?: string };
+          if (body.message) message = body.message;
+        } catch {
+          /* non-JSON error body */
+        }
+        throw new PaperboyError(res.status, message, null);
+      }
+      const body = (await res.json()) as { submissionId: string; confirmation: FormConfirmation };
+      return { ok: true, submissionId: body.submissionId, confirmation: body.confirmation };
+    },
+
     mediaUrl,
     mediaSrcset,
   };
@@ -400,7 +593,18 @@ export interface AreaBlock {
    *  resolved page/block's own `fieldTypes` via `content`). */
   fieldTypes?: Record<string, string>;
   /** Shared block / referenced page (resolved at populate >= 1). */
-  content?: { kind?: string; name?: string; urlPath?: string | null; data?: Record<string, unknown>; fieldTypes?: Record<string, string> };
+  content?: {
+    documentId?: string;
+    /** Content type name — how a renderer tells a Form from a teaser. */
+    type?: string;
+    kind?: string;
+    name?: string;
+    urlPath?: string | null;
+    data?: Record<string, unknown>;
+    fieldTypes?: Record<string, string>;
+    /** Present when the referenced document is a Form. */
+    form?: FormSpec;
+  };
 }
 
 /** A block's field values: inline blocks carry `data`, shared blocks `content.data`. */

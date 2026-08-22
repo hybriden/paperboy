@@ -211,6 +211,44 @@ export const DeliverySeo = z.object({
 });
 export type DeliverySeo = z.infer<typeof DeliverySeo>;
 
+/** One field in a delivered form (mirrors FormFieldSpec in ./forms.ts, which is
+ *  the implementation; this is the wire contract the OpenAPI schema shows). */
+export const DeliveryFormField = z.object({
+  kind: z.enum(["text", "email", "textarea", "number", "date", "select", "radio", "checkbox", "consent", "static"]),
+  name: z.string(),
+  label: z.string(),
+  required: z.boolean(),
+  helpText: z.string().optional(),
+  placeholder: z.string().optional(),
+  errorMessage: z.string().optional(),
+  rows: z.number().optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  minLength: z.number().optional(),
+  maxLength: z.number().optional(),
+  pattern: z.string().optional(),
+  choices: z.array(z.object({ value: z.string(), label: z.string() })).optional(),
+  heading: z.string().optional(),
+  text: z.unknown().optional(),
+});
+
+export const DeliveryFormSpec = z.object({
+  title: z.string(),
+  intro: z.unknown().optional(),
+  fields: z.array(DeliveryFormField),
+  submitLabel: z.string(),
+  confirmation: z.enum(["message", "redirect"]),
+  confirmationText: z.unknown().optional(),
+  redirectTo: z.object({ href: z.string(), text: z.string().optional() }).nullable().optional(),
+  /** Whether the visitor must pass a Turnstile challenge before submitting. */
+  turnstile: z.boolean(),
+  /** The hidden input a bot fills and a human never sees. */
+  honeypotField: z.string(),
+  /** Minimum milliseconds a human needs; faster submissions are dropped. */
+  minFillMs: z.number(),
+});
+export type DeliveryFormSpec = z.infer<typeof DeliveryFormSpec>;
+
 /** Delivery API content shape (public). References are shallow unless populated. */
 export const DeliveryContent = z.object({
   documentId: z.string(),
@@ -235,6 +273,11 @@ export const DeliveryContent = z.object({
   fieldTypes: z.record(z.string(), z.string()),
   /** Normalized SEO/schema.org contract — present on pages, null otherwise. */
   seo: DeliverySeo.nullable(),
+  /** Ready-to-render form contract — present only on a Form. The fields, rules
+   *  and error copy here are exactly what the submit endpoint enforces, so a
+   *  frontend renders from the schema instead of interpreting block payloads
+   *  (and never receives pre-rendered markup it cannot restyle). */
+  form: DeliveryFormSpec.optional(),
 });
 export type DeliveryContent = z.infer<typeof DeliveryContent>;
 
