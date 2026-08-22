@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isPreviewActivity, isPreviewOrigin, originOf } from "./preview-origin.js";
+import { PREVIEW_TOKEN_SKEW_MS, isPreviewActivity, isPreviewOrigin, originOf, previewTokenUsable } from "./preview-origin.js";
 
 /**
  * The admin's postMessage handler turns `paperboy:drop` into a block append that
@@ -88,5 +88,33 @@ describe("isPreviewActivity", () => {
     expect(isPreviewActivity("https://web.example.com", preview, "paperboy:preview-ready")).toBe(false);
     expect(isPreviewActivity("https://web.example.com", preview, { type: 42 })).toBe(false);
     expect(isPreviewActivity("https://web.example.com", preview, null)).toBe(false);
+  });
+});
+
+describe("previewTokenUsable", () => {
+  const now = 1_700_000_000_000;
+
+  it("accepts a token with comfortable life left", () => {
+    expect(previewTokenUsable(now + 10 * 60_000, now)).toBe(true);
+  });
+
+  it("rejects an EXPIRED token — framing one drops preview mode silently", () => {
+    // The frontend renders published content with no bridge, which the admin
+    // then reports as "no response from the preview bridge" (2026-08-22).
+    expect(previewTokenUsable(now - 1, now)).toBe(false);
+    expect(previewTokenUsable(now - 20 * 60_000, now)).toBe(false);
+  });
+
+  it("rejects a token inside the skew window (it can die mid-load)", () => {
+    expect(previewTokenUsable(now + 30_000, now)).toBe(false);
+    expect(previewTokenUsable(now + PREVIEW_TOKEN_SKEW_MS, now)).toBe(false);
+    expect(previewTokenUsable(now + PREVIEW_TOKEN_SKEW_MS + 1, now)).toBe(true);
+  });
+
+  it("rejects a missing or nonsense expiry", () => {
+    expect(previewTokenUsable(undefined, now)).toBe(false);
+    expect(previewTokenUsable(null, now)).toBe(false);
+    expect(previewTokenUsable(Number.NaN, now)).toBe(false);
+    expect(previewTokenUsable(Number.POSITIVE_INFINITY, now)).toBe(false);
   });
 });

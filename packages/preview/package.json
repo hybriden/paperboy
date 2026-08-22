@@ -1,6 +1,6 @@
 {
   "name": "@paperboycms/preview",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Framework-agnostic on-page-editing bridge for the Paperboy headless CMS preview iframe â€” click-to-edit, drag-drop blocks, live patch. Zero runtime dependencies.",
   "license": "MIT",
   "repository": {

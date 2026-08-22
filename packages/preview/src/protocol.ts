@@ -110,6 +110,17 @@ export interface DragEndMessage {
   type: "paperboy:dragend";
 }
 
+/** Liveness probe (admin → iframe). The bridge answers with `preview-ready`.
+ *  Detecting the bridge from its one-shot init announcement alone is racy — the
+ *  admin can reset its own state (view/refresh bookkeeping) after the frame has
+ *  already announced, and then waits forever for a message that never repeats,
+ *  showing a "no bridge" hint over a perfectly working preview. Asking is
+ *  deterministic. Bridges older than 0.3.2 ignore this and are still detected
+ *  by their init announcement. */
+export interface PingMessage {
+  type: "paperboy:ping";
+}
+
 /** Cross-origin iframes don't receive the parent's drag events, so the admin
  *  catches the drag over an overlay and forwards the pointer position (in the
  *  iframe's own viewport coords) here; the bridge hit-tests which content area
@@ -128,7 +139,7 @@ export interface DropAtMessage {
 }
 
 export type FromPreview = ReadyMessage | EditMessage | RectMessage | DropMessage;
-export type ToPreview = PatchMessage | FocusMessage | DragSourceMessage | DragEndMessage | DragAtMessage | DropAtMessage;
+export type ToPreview = PatchMessage | FocusMessage | DragSourceMessage | DragEndMessage | DragAtMessage | DropAtMessage | PingMessage;
 export type PaperboyMessage = FromPreview | ToPreview;
 
 const KNOWN_TYPES = new Set<string>([
@@ -142,6 +153,7 @@ const KNOWN_TYPES = new Set<string>([
   "paperboy:dragend",
   "paperboy:drag-at",
   "paperboy:drop-at",
+  "paperboy:ping",
 ]);
 
 /**
@@ -178,6 +190,8 @@ export const focusMessage = (field: string, opts?: { blockIndex?: number | null 
 export const dragSourceMessage = (payload: unknown): DragSourceMessage => ({ type: "paperboy:dragsource", payload });
 
 export const dragEndMessage = (): DragEndMessage => ({ type: "paperboy:dragend" });
+
+export const pingMessage = (): PingMessage => ({ type: "paperboy:ping" });
 
 export const dragAtMessage = (x: number, y: number): DragAtMessage => ({ type: "paperboy:drag-at", x, y });
 

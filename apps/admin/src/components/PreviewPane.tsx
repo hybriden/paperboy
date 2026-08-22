@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage } from "@paperboycms/preview/protocol";
+import { dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage, pingMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
-import { isPreviewActivity, originOf } from "../lib/preview-origin.js";
+import { isPreviewActivity, originOf, previewTokenUsable } from "../lib/preview-origin.js";
 import { Surface } from "./ui/surface.js";
 
 /**
@@ -161,6 +161,20 @@ export function PreviewPane({
     const t = setTimeout(() => setQuiet(true), 4000);
     return () => clearTimeout(t);
   }, [nonce, device, urlPath, locale]);
+  // ASK the frame instead of only listening for its one-shot init announcement:
+  // any reset above (or an iframe that was already loaded when this pane
+  // mounted) otherwise leaves us waiting for a message that never repeats, and
+  // the hint below appears over a working preview (reported 2026-08-20 and
+  // again 2026-08-22). A bridge ≥0.3.2 answers every ping with preview-ready;
+  // older ones ignore it and are still caught by the listener above.
+  useEffect(() => {
+    if (bridgeSeen || !targetOrigin) return;
+    const probe = () => postToPreview(pingMessage());
+    probe();
+    const id = setInterval(probe, 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bridgeSeen, targetOrigin, nonce, device, urlPath, locale]);
   useEffect(() => {
     const onStart = (e: Event) => {
       const payload = (e as CustomEvent).detail;
@@ -213,16 +227,41 @@ export function PreviewPane({
   // redirect, no Secure cookie) — works over plain HTTP and any host. The token is
   // minted per session by the API; a cross-origin iframe can't rely on cookies,
   // which is why this rides in the query string at all.
+  // The token lives 15 minutes (PREVIEW_TOKEN_TTL_MS). It must be FRESH whenever
+  // we frame a page: an expired one makes the frontend render published content
+  // with no bridge, which reads exactly like "this frontend has no bridge" (see
+  // previewTokenUsable). So refetch in the background too — a tab left idle
+  // otherwise wakes up holding a dead token — and always on mount/focus.
   const previewToken = useQuery({
     queryKey: ["preview-token"],
     queryFn: ({ signal }) => api.previewToken(signal),
     refetchInterval: PREVIEW_TOKEN_REFRESH_MS,
-    refetchOnMount: false,
-    staleTime: PREVIEW_TOKEN_REFRESH_MS,
+    refetchIntervalInBackground: true,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    staleTime: 0,
     retry: false,
   });
-  const src = previewToken.data
-    ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(previewToken.data.token)}&n=${nonce}`
+  // A dead token is worse than none: it silently downgrades the preview to the
+  // published page. Render "Preparing preview…" for the moment a refetch takes.
+  const usableToken = previewTokenUsable(previewToken.data?.expiresAt) ? previewToken.data : undefined;
+  const lastMintRef = useRef(0);
+  useEffect(() => {
+    if (!previewToken.data || usableToken) return;
+    // Mint a live one — but SCHEDULE it behind a cooldown rather than bailing
+    // out: if the token still reads as dead (clock skew between API and
+    // browser) the deps stop changing, so an early return would strand the
+    // pane on "Preparing preview…" until the next interval. One mint per 5s.
+    const wait = Math.max(0, 5000 - (Date.now() - lastMintRef.current));
+    const t = setTimeout(() => {
+      lastMintRef.current = Date.now();
+      void previewToken.refetch();
+    }, wait);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewToken.data, usableToken]);
+  const src = usableToken
+    ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(usableToken.token)}&n=${nonce}`
     : null;
 
   // Fit the device viewport to the pane WIDTH (the dimension that matters for a

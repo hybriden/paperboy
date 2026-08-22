@@ -95,6 +95,19 @@ describe("initPreviewBridge", () => {
     teardown();
   });
 
+  it("answers paperboy:ping with preview-ready (liveness probe)", () => {
+    const target = makeTarget();
+    const teardown = initPreviewBridge({ target, badge: false });
+    target.postMessage.mockClear();
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:ping" }, source: target }));
+    expect(target.postMessage).toHaveBeenCalledWith(expect.objectContaining({ type: "paperboy:preview-ready" }), "*");
+    // Repeatable: the admin may probe several times while it waits.
+    target.postMessage.mockClear();
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:ping" }, source: target }));
+    expect(target.postMessage).toHaveBeenCalledTimes(1);
+    teardown();
+  });
+
   it("posts paperboy:drop with the area's field + parsed payload on drop", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-area="contentarea"><p>empty</p></div>`;

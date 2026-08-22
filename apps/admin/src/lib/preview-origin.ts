@@ -13,6 +13,27 @@
  * editor clicking an external link inside the preview is enough).
  */
 
+/**
+ * Grace period on the preview token. The frontend REJECTS an expired token and
+ * falls back to rendering published content — with no bridge, no on-page
+ * editing and no live updates, which is indistinguishable from a frontend that
+ * never shipped the bridge at all. That produced a "No response from the
+ * preview bridge" hint accusing a perfectly good frontend (reported
+ * 2026-08-22), so the admin must never frame a page with a dead token: it
+ * mints a fresh one instead, and treats a token this close to expiry as dead
+ * (covers clock skew + the frame's own load time).
+ */
+export const PREVIEW_TOKEN_SKEW_MS = 60_000;
+
+/** Is this token still safe to hand to the preview frame? */
+export function previewTokenUsable(
+  expiresAt: number | null | undefined,
+  now: number = Date.now(),
+  skewMs: number = PREVIEW_TOKEN_SKEW_MS,
+): boolean {
+  return typeof expiresAt === "number" && Number.isFinite(expiresAt) && expiresAt - skewMs > now;
+}
+
 /** Origin of an absolute URL, or null when it isn't parseable. */
 export function originOf(url: string | null | undefined): string | null {
   if (!url) return null;
