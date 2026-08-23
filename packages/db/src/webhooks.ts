@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
@@ -17,6 +17,8 @@ import { webhook, webhookDelivery } from "./schema.js";
 
 export interface WebhookEvent {
   event: "content.published" | "content.unpublished";
+  /** Which site the content belongs to — dispatch only reaches that site's hooks. */
+  siteId: string;
   documentId: string;
   type: string;
   kind: string;
@@ -145,7 +147,9 @@ export async function postFollowingRedirectsSafely(
 
 export async function listWebhooks(db: Database, ctx: AccessContext) {
   requirePermission(ctx, "webhook.manage");
-  const rows = await db.select().from(webhook).orderBy(desc(webhook.id));
+  // Site-scoped like content, assets and delivery keys: another site's
+  // subscriptions are invisible here, not merely filtered from a default view.
+  const rows = await db.select().from(webhook).where(eq(webhook.siteId, ctx.siteId)).orderBy(desc(webhook.id));
   // Never expose the signing secret after creation.
   return rows.map((r) => ({
     id: r.id,
@@ -169,14 +173,15 @@ export async function createWebhook(
   const secret = `whsec_${nanoid(32)}`;
   const rows = await db
     .insert(webhook)
-    .values({ name: input.name, url: input.url, secret, events: input.events ?? [], createdBy: ctx.userId })
+    .values({ siteId: ctx.siteId, name: input.name, url: input.url, secret, events: input.events ?? [], createdBy: ctx.userId })
     .returning({ id: webhook.id });
   return { id: rows[0]!.id, secret };
 }
 
 export async function deleteWebhook(db: Database, ctx: AccessContext, id: number): Promise<void> {
   requirePermission(ctx, "webhook.manage");
-  await db.delete(webhook).where(eq(webhook.id, id));
+  // Scoped: an id from another site is a no-op, not a cross-site delete.
+  await db.delete(webhook).where(and(eq(webhook.id, id), eq(webhook.siteId, ctx.siteId)));
 }
 
 /**
@@ -190,7 +195,14 @@ export async function dispatchWebhooks(
   db: Database,
   payload: AnyWebhookEvent,
 ): Promise<{ id: number; status: number | null; ok: boolean }[]> {
-  const hooks = await db.select().from(webhook).where(eq(webhook.active, true));
+  // Partitioned by site. Before this, one brand's hook received every brand's
+  // events — and once form.submitted joined them, that meant another site's
+  // visitors' personal data, which the delivery and management chokepoints
+  // would both have refused to hand over.
+  const hooks = await db
+    .select()
+    .from(webhook)
+    .where(and(eq(webhook.active, true), eq(webhook.siteId, payload.siteId)));
   const subscribed = hooks.filter((h) => {
     const evts = (h.events as string[]) ?? [];
     if (evts.includes(payload.event)) return true;

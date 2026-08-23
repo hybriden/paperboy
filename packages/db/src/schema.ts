@@ -294,6 +294,9 @@ export const auditLog = pgTable("audit_log", {
 /** Outbound webhook subscriptions — HMAC-signed POST on publish/unpublish. */
 export const webhook = pgTable("webhook", {
   id: serial("id").primaryKey(),
+  /** The site this subscription belongs to (migration 0023). Events are
+   *  dispatched per site, so one brand's hook never sees another's data. */
+  siteId: text("site_id").notNull().default("site_default"),
   name: text("name").notNull(),
   url: text("url").notNull(),
   secret: text("secret").notNull(),
