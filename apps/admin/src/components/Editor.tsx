@@ -2149,7 +2149,7 @@ function Field({
           onChange={(e) => onChange(e.target.value || null)} />
       )}
       {field.type === "select" && <SelectField id={id} field={field} types={types} value={value} disabled={disabled} onChange={onChange} />}
-      {field.type === "reference" && <ReferenceField id={id} value={value} disabled={disabled} onChange={onChange} />}
+      {field.type === "reference" && <ReferenceField id={id} allowedTypes={field.allowedTypes} value={value} disabled={disabled} onChange={onChange} />}
       {field.type === "link" && <LinkField id={id} value={value} disabled={disabled} onChange={onChange} />}
       {field.type === "image" && (
         <ImageField id={id} value={value} disabled={disabled} onChange={onChange} />

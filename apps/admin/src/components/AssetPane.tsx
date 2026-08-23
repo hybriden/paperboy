@@ -145,7 +145,7 @@ function CreateBlockDialog({
   onCreated: (id: string) => void;
 }) {
   const qc = useQueryClient();
-  const [type, setType] = useState(blockTypes[0]?.name ?? "");
+  const [type, setType] = useState(blockTypes.find((t) => !t.nestedOnly)?.name ?? blockTypes[0]?.name ?? "");
   const [name, setName] = useState("");
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => { nameRef.current?.focus(); }, []);
@@ -166,7 +166,16 @@ function CreateBlockDialog({
       <DialogContent title="New shared block" description="A reusable block with its own publishing lifecycle." size="sm">
         <label className="field-label" htmlFor="nb-type">Block type</label>
         <select id="nb-type" className="field-input mb-3" value={type} onChange={(e) => setType(e.target.value)}>
-          {blockTypes.map((t) => <option key={t.name} value={t.name}>{t.displayName}</option>)}
+          {/* Parts (a form's field blocks) CAN be shared deliberately — one
+              consent checkbox reused across forms — but they are the rare case,
+              so they go last under their own heading instead of burying the
+              four everyday block types among ten of them. */}
+          {blockTypes.filter((t) => !t.nestedOnly).map((t) => <option key={t.name} value={t.name}>{t.displayName}</option>)}
+          {blockTypes.some((t) => t.nestedOnly) && (
+            <optgroup label="Parts (used inside another type)">
+              {blockTypes.filter((t) => t.nestedOnly).map((t) => <option key={t.name} value={t.name}>{t.displayName}</option>)}
+            </optgroup>
+          )}
         </select>
         <label className="field-label" htmlFor="nb-name">Name</label>
         <input id="nb-name" ref={nameRef} aria-label="Name" className="field-input mb-4" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Campaign banner" />
