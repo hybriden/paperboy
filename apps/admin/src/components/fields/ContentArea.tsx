@@ -25,6 +25,7 @@ import { ImageField } from "../MediaLibrary.js";
 import { useToast } from "../ui/toast.js";
 import { MarkdownEditor } from "./MarkdownEditor.js";
 import { ReferenceField } from "./ReferenceField.js";
+import { SharedBlockPicker } from "./SharedBlockPicker.js";
 import { RichText } from "./RichText.js";
 
 let keyCounter = 0;
@@ -84,6 +85,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   // insert immediately; several → a popover at the drop point; none → toast.
   const imageCandidates = allowed.filter((t) => t.kind === "block" && t.fields.some((f) => f.type === "image"));
   const [imagePicker, setImagePicker] = useState<{ x: number; y: number; documentId: string; index: number } | null>(null);
+  const [pickerOpen, setPickerOpen] = useState<{ x: number; y: number } | null>(null);
 
   /** Insertion index from the drop's Y position over the block rows. */
   function dropIndex(e: React.DragEvent): number {
@@ -221,19 +223,36 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
             + {t.displayName}
           </button>
         ))}
-        {sharedBlocks.length > 0 && (
-          <details className="relative">
-            <summary className="btn-subtle cursor-pointer list-none px-2 py-1 text-xs">+ Shared block</summary>
-            <div className="absolute z-10 mt-1 w-56 rounded border border-line bg-panel text-fg p-1 shadow-panel">
-              {sharedBlocks.map((b) => (
-                <button key={b.documentId} className="block w-full truncate rounded px-2 py-1 text-left text-xs hover:bg-canvas"
-                  onClick={() => addShared(b.documentId, b.type)}>
-                  {b.name} <span className="text-muted">· {b.type}</span>
-                </button>
-              ))}
-            </div>
-          </details>
-        )}
+        {/* Reuse: place an EXISTING shared block (or a page, as a teaser). A
+            shared block belongs to no page, so the same document can appear in
+            any area that allows its type. */}
+        <div className="relative">
+          <button
+            type="button"
+            className="btn-subtle px-2 py-1 text-xs"
+            aria-expanded={pickerOpen !== null}
+            onClick={(e) => {
+              if (pickerOpen) return setPickerOpen(null);
+              const r = e.currentTarget.getBoundingClientRect();
+              setPickerOpen({ x: r.left, y: r.bottom + 4 });
+            }}
+          >
+            + Existing block
+          </button>
+          {pickerOpen && (
+            <SharedBlockPicker
+              at={pickerOpen}
+              allowedBlocks={field.allowedBlocks}
+              sharedBlocks={sharedBlocks}
+              pages={pages.data ?? []}
+              onPick={(documentId, blockType) => {
+                addShared(documentId, blockType);
+                setPickerOpen(null);
+              }}
+              onClose={() => setPickerOpen(null)}
+            />
+          )}
+        </div>
       </div>
       )}
 
