@@ -169,7 +169,7 @@ test("create → edit → add block → translate → publish (with toast)", asy
   // Wait for navigation to the NEW page before touching fields — the editor
   // behind the dialog (often Home) has its own Heading + block headings.
   // Scoped to #editor: while the dialog is closing its Name input also matches.
-  await expect(page.locator("#editor").getByRole("textbox", { name: "Name" })).toHaveValue(pageName, { timeout: 15_000 });
+  await expect(editorName(page)).toHaveValue(pageName, { timeout: 15_000 });
 
   // The page's own heading field — block fields inside content areas can carry
   // the same label, so target the field id, not an unscoped role lookup.
@@ -208,7 +208,7 @@ test("translate offer is directionless: content authored only in nb offers trans
   await dlg.getByLabel("Content type").selectOption("ArticlePage");
   await dlg.getByLabel("Name").fill(pageName);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
-  await expect(page.locator("#editor").getByRole("textbox", { name: "Name" })).toHaveValue(pageName, { timeout: 15_000 });
+  await expect(editorName(page)).toHaveValue(pageName, { timeout: 15_000 });
 
   // Author content ONLY in nb; the en variant created by the dialog stays empty.
   await page.getByLabel("Language").selectOption("nb");
@@ -382,14 +382,14 @@ test("duplicate a page from the tree context menu → opens a (copy)", async ({ 
   await dlg.getByLabel("Name").fill(unique);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
   // Scoped to #editor: while the dialog is closing, its Name input also matches.
-  const editorName = page.locator("#editor").getByRole("textbox", { name: "Name" });
-  await expect(editorName).toHaveValue(unique, { timeout: 10_000 });
+  const nameInput = editorName(page);
+  await expect(nameInput).toHaveValue(unique, { timeout: 10_000 });
 
   // Right-click the new page → Duplicate.
   await page.getByRole("treeitem", { name: new RegExp(unique) }).click({ button: "right" });
   await page.getByRole("menuitem", { name: "Duplicate" }).click();
   // The editor navigates to the clone, whose name carries "(copy)".
-  await expect(editorName).toHaveValue(`${unique} (copy)`, { timeout: 10_000 });
+  await expect(nameInput).toHaveValue(`${unique} (copy)`, { timeout: 10_000 });
 });
 
 test("version history dialog lists versions and can restore", async ({ page }) => {
@@ -868,6 +868,14 @@ test("on-page edit of a block field called 'name' edits the BLOCK, not the page 
   const input = page.getByRole("textbox", { name: "Person name" });
   await expect(input).toBeVisible();
   await expect(input).toHaveValue("Hans Christian");
+
+  // Put HeroBlock back. Leaving the extra field behind makes a RE-RUN of the
+  // earlier tests ambiguous on "Name" ("Person name" also matches), which is
+  // invisible in CI's fresh database and bites every local repeat run.
+  await page.request.put("/api/v1/manage/content-types/HeroBlock", {
+    headers,
+    data: { ...hero, fields: hero.fields.filter((f) => f.name !== "name") },
+  });
 });
 
 test("building a form: the key fills itself in from the label, and a clash is called out", async ({ page }) => {
@@ -939,6 +947,65 @@ test("building a form: the key fills itself in from the label, and a clash is ca
   // Clean up: this test creates a shared block at the root.
   const del = await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
   expect(del.ok(), `delete form: ${del.status()}`).toBe(true);
+});
+
+test("the existing-block picker searches, and never offers a block the area forbids", async ({ page }) => {
+  await login(page);
+  // A shared block belongs to no page — it can be reused in any area that allows
+  // its type. The picker is how that is reached. It must not list a block this
+  // area rejects: allowedBlocks is enforced when the write lands, so offering one
+  // only buys a validation error a few clicks later.
+  const me = await page.request.get("/api/v1/auth/me");
+  const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+  const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
+
+  const inst = await page.request.post("/api/v1/manage/type-templates/Form/instantiate", {
+    headers,
+    data: { withBlocks: true, updateExisting: true },
+  });
+  expect(inst.ok(), `instantiate Form: ${inst.status()}`).toBe(true);
+
+  // A shared block whose type the Form's `fields` area does NOT allow.
+  const outsider = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: "CardBlock", parentId: null, locale: "en", name: `Picker outsider ${Date.now()}` },
+  });
+  expect(outsider.ok(), `create CardBlock: ${outsider.status()} ${await outsider.text()}`).toBe(true);
+  const outsiderDoc = (await outsider.json()) as { documentId: string; name: string };
+  const outsiderName = outsiderDoc.name;
+
+  const created = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: "Form", parentId: null, locale: "en", name: `Picker form ${Date.now()}` },
+  });
+  const formDoc = (await created.json()) as { documentId: string };
+
+  await page.goto(`/edit/${formDoc.documentId}`);
+  await page.reload();
+  await expect(page.getByTestId("content-area-fields")).toBeVisible({ timeout: 20_000 });
+
+  await page.getByRole("button", { name: "+ Existing block" }).click();
+  const picker = page.getByRole("dialog", { name: "Insert an existing block" });
+  await expect(picker).toBeVisible();
+
+  // The CardBlock is a shared block, but not one this area accepts.
+  await expect(picker.getByText(outsiderName)).toHaveCount(0);
+  // ...and the editor is told, rather than left hunting for it.
+  await expect(picker.getByText(/not allowed in this area/)).toBeVisible();
+
+  // Search narrows what IS offered. Pages are placeable anywhere (as teasers).
+  await picker.getByRole("searchbox", { name: "Search blocks and pages" }).fill("home");
+  await expect(picker.getByText("Pages (as teaser)")).toBeVisible();
+  await picker.getByRole("searchbox", { name: "Search blocks and pages" }).fill("zzz-no-such-block");
+  await expect(picker.getByText(/Nothing matches/)).toBeVisible();
+
+  // Escape closes it.
+  await page.keyboard.press("Escape");
+  await expect(picker).toHaveCount(0);
+
+  for (const id of [formDoc.documentId, outsiderDoc.documentId]) {
+    await page.request.delete(`/api/v1/manage/content/${id}`, { headers });
+  }
 });
 
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
