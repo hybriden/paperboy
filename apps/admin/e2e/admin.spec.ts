@@ -1138,6 +1138,76 @@ test("a reference field offers what its allowedTypes say — including blocks", 
   await page.request.delete(`/api/v1/manage/content-types/${typeName}`, { headers });
 });
 
+test("the link editor picks a PAGE, so the link cannot rot", async ({ page }) => {
+  await login(page);
+  // A link field used to be one text box labelled "https://… or /path", which
+  // made the most common case — pointing at a page — a hand-typed string that
+  // breaks the moment someone renames a slug. It now stores the page's
+  // documentId and delivery resolves the live path.
+  const me = await page.request.get("/api/v1/auth/me");
+  const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+  const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
+
+  const typeName = "LinkGuiProbePage";
+  const def = {
+    name: typeName,
+    displayName: "Link GUI probe",
+    kind: "page",
+    fields: [{ name: "cta", displayName: "Call to action", type: "link", delivery: "public" }],
+  };
+  const created = await page.request.post("/api/v1/manage/content-types", { headers, data: def });
+  if (created.status() === 409) {
+    expect((await page.request.put(`/api/v1/manage/content-types/${typeName}`, { headers, data: def })).ok()).toBe(true);
+  } else {
+    expect(created.ok(), `create type: ${created.status()} ${await created.text()}`).toBe(true);
+  }
+
+  const probe = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: typeName, parentId: null, locale: "en", name: `Link GUI probe ${Date.now()}` },
+  });
+  const doc = (await probe.json()) as { documentId: string };
+
+  await page.goto(`/edit/${doc.documentId}`);
+  await page.reload();
+  const modes = page.getByRole("radiogroup", { name: "Link type" });
+  await expect(modes).toBeVisible({ timeout: 20_000 });
+
+  // An empty link starts on Page — the option that cannot rot.
+  await expect(modes.getByRole("radio", { name: "Page" })).toHaveAttribute("aria-checked", "true");
+
+  // Pick a page by searching for it.
+  // The field's <label for> names the control, so that is what it is called.
+  await page.getByRole("button", { name: "Call to action" }).click();
+  const picker = page.getByRole("dialog", { name: "Choose a page" });
+  await picker.getByRole("searchbox", { name: "Search pages" }).fill("home");
+  await picker.getByRole("button", { name: "Home", exact: true }).click();
+  await expect(page.getByText("follows the page")).toBeVisible();
+
+  // The editor autosaves on a debounce — wait for it before reading the API.
+  await expect(page.getByText("All changes saved")).toBeVisible({ timeout: 15_000 });
+
+  // It stored the IDENTITY, not a path.
+  const saved = await page.request.get(`/api/v1/manage/content/${doc.documentId}?locale=en`);
+  const cta = ((await saved.json()) as { data: { cta?: { documentId?: string; href?: string } } }).data.cta;
+  expect(cta?.documentId, "the page's documentId is what got stored").toBeTruthy();
+  expect(cta?.href ?? "").toBe("");
+
+  // Switching to URL warns about a scheme the write chokepoint would reject,
+  // before the save rather than after it.
+  await modes.getByRole("radio", { name: "URL" }).click();
+  await page.getByRole("textbox", { name: "Link URL" }).fill("javascript:alert(1)");
+  await expect(page.getByText(/would run code in the visitor/)).toBeVisible();
+
+  // Anchor mode builds the fragment for the editor.
+  await modes.getByRole("radio", { name: "Anchor" }).click();
+  await page.getByRole("textbox", { name: "Anchor on this page" }).fill("contact");
+  await expect(page.getByText("#contact", { exact: false })).toBeVisible();
+
+  await page.request.delete(`/api/v1/manage/content/${doc.documentId}`, { headers });
+  await page.request.delete(`/api/v1/manage/content-types/${typeName}`, { headers });
+});
+
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();

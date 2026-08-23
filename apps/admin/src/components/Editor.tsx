@@ -30,6 +30,7 @@ import { BuildFromBriefDialog } from "./BuildFromBrief.js";
 import { FormSubmissions } from "./FormSubmissions.js";
 import { ContentArea } from "./fields/ContentArea.js";
 import { MarkdownEditor } from "./fields/MarkdownEditor.js";
+import { LinkField } from "./fields/LinkField.js";
 import { ReferenceField } from "./fields/ReferenceField.js";
 import { RichText } from "./fields/RichText.js";
 import { ImageField, StockQueryContext } from "./MediaLibrary.js";
@@ -2200,20 +2201,3 @@ function SelectField({ id, field, types, value, disabled, onChange }: { id: stri
   );
 }
 
-function LinkField({ id, value, disabled, onChange }: { id: string; value: unknown; disabled: boolean; onChange: (v: unknown) => void }) {
-  const v = (value as { href?: string; text?: string; target?: string; title?: string } | null) ?? {};
-  const set = (patch: Record<string, string | undefined>) => {
-    const next = { ...v, ...patch };
-    onChange(next.href || next.text || next.title ? next : null);
-  };
-  return (
-    <div className="grid grid-cols-2 gap-2">
-      <input id={id} className="field-input col-span-2" placeholder="https://… or /path" value={v.href ?? ""} disabled={disabled} onChange={(e) => set({ href: e.target.value })} aria-label="Link URL" />
-      <input className="field-input" placeholder="Link text" value={v.text ?? ""} disabled={disabled} onChange={(e) => set({ text: e.target.value })} aria-label="Link text" />
-      <select className="field-input" value={v.target ?? "_self"} disabled={disabled} onChange={(e) => set({ target: e.target.value })} aria-label="Link target">
-        <option value="_self">Same tab</option>
-        <option value="_blank">New tab</option>
-      </select>
-    </div>
-  );
-}

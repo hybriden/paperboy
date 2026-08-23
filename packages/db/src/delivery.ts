@@ -397,6 +397,8 @@ async function sanitize(
       } else {
         out[f.name] = { documentId: rv.documentId, type: rv.type ?? null };
       }
+    } else if (f.type === "link" && v != null) {
+      out[f.name] = await resolveLink(ctx, perspective, v, loc);
     } else if (f.type === "richtext" && v && typeof v === "object") {
       // Image srcs are stored as uploaded (usually relative /uploads/… paths);
       // absolutize at read time like image FIELDS, so any frontend origin works.
@@ -463,6 +465,51 @@ async function urlPathOf(
     cur = row.parentId;
   }
   return `/${segments.join("/")}`;
+}
+
+/**
+ * A delivered link.
+ *
+ * An INTERNAL link stores the target's documentId, so the href is computed here
+ * from the page's live urlPath — rename a slug or move the page and every link
+ * to it follows. `urlPathOf` is perspective- and site-aware, which gives two
+ * things for free: a link to a page that is not published resolves to "" in the
+ * published perspective rather than sending a visitor to a 404, and a link
+ * across sites cannot resolve at all.
+ *
+ * The output keeps BOTH halves — the resolved `href` every frontend already
+ * reads, and the `documentId` for anything that wants the identity (mirroring
+ * Optimizely's headless ContentReference {key, url}). A string value is
+ * tolerated so a TEXT field retyped to `link` delivers correctly before its
+ * stored values have been rewritten.
+ */
+async function resolveLink(
+  ctx: DeliveryCtx,
+  perspective: Perspective,
+  raw: unknown,
+  loc: string,
+): Promise<Record<string, unknown> | null> {
+  if (typeof raw === "string") return raw.trim() ? { href: raw.trim() } : null;
+  if (!raw || typeof raw !== "object") return null;
+  const v = raw as { href?: unknown; documentId?: unknown; anchor?: unknown; text?: unknown; target?: unknown; title?: unknown };
+  const anchor = typeof v.anchor === "string" && v.anchor ? `#${v.anchor.replace(/^#/, "")}` : "";
+  const documentId = typeof v.documentId === "string" && v.documentId ? v.documentId : "";
+
+  let href = typeof v.href === "string" ? v.href : "";
+  if (documentId) {
+    const path = await urlPathOf(ctx, perspective, documentId, loc);
+    href = path ? `${path}${anchor}` : "";
+  } else if (anchor && !href) {
+    // Anchor-only link ("jump to a section of this page").
+    href = anchor;
+  }
+
+  const out: Record<string, unknown> = { href };
+  if (documentId) out.documentId = documentId;
+  for (const k of ["text", "target", "title"] as const) {
+    if (typeof v[k] === "string" && v[k]) out[k] = v[k];
+  }
+  return out;
 }
 
 /**
