@@ -53,8 +53,10 @@ test("side-by-side view loads the preview iframe pointing at the web app", async
   const src = await iframe.getAttribute("src");
   expect(src, "iframe src").toContain("/en");
   expect(src, "iframe carries the preview secret").toContain("pb=");
-  // The persistent draft banner is shown in preview (inspect) mode.
-  await expect(page.getByText(/click any heading, text or block to edit/i)).toBeVisible();
+  // The persistent draft banner is shown in preview (inspect) mode. It states the
+  // STATE ("showing drafts"); the click-to-edit instruction was retired from it,
+  // since a hint that never leaves stops being read.
+  await expect(page.getByText(/showing drafts/i)).toBeVisible();
 });
 
 test("postMessage focus bridge: paperboy:edit focuses + flashes the form field", async ({ page }) => {

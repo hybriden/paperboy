@@ -61,6 +61,12 @@ export function EditView() {
   // Each side pane can be pinned (always shown, in-flow) or set to auto-hide
   // (collapsed to an edge rail that flies out on hover).
   const [treePinned, toggleTree] = usePinned("pb-pin-tree", true);
+  // Assets stays DOCKED by default. Auto-hiding it reclaims ~300px and takes the
+  // preview from 41% to 74% — tempting, and tried — but the pane is the drag
+  // SOURCE for shared blocks and media, and its contents are unreachable while
+  // it is a hover rail: "drag a shared block into a content area" simply stops
+  // working. Preview room is not worth breaking a core flow to get; the pin is
+  // there for anyone who wants the trade.
   const [assetsPinned, toggleAssets] = usePinned("pb-pin-assets", true);
   // Persisted workspace split, one layout per pin config (was PanelGroup autoSaveId pre-v4).
   const workspaceLayout = useDefaultLayout({ id: `paperboy-workspace-${treePinned ? "t" : "x"}${assetsPinned ? "a" : "x"}` });
@@ -141,7 +147,7 @@ export function EditView() {
       >
         {treePinned && (
           <>
-            <Panel id="tree" defaultSize="20" minSize="12" collapsible collapsedSize={0} className="flex flex-col border-r border-line bg-panel">
+            <Panel id="tree" defaultSize="17" minSize="12" collapsible collapsedSize={0} className="flex flex-col border-r border-line bg-panel">
               {tree}
             </Panel>
             <ResizeHandle />
@@ -170,7 +176,7 @@ export function EditView() {
         {assetsPinned && (
           <>
             <ResizeHandle />
-            <Panel id="assets" defaultSize="18" minSize="12" collapsible collapsedSize={0} className="min-w-0">
+            <Panel id="assets" defaultSize="15" minSize="12" collapsible collapsedSize={0} className="min-w-0">
               {assets}
             </Panel>
           </>
