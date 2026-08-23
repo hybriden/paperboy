@@ -1208,6 +1208,45 @@ test("the link editor picks a PAGE, so the link cannot rot", async ({ page }) =>
   await page.request.delete(`/api/v1/manage/content-types/${typeName}`, { headers });
 });
 
+test("clicking outside a property in on-page mode STAYS in on-page mode", async ({ page }) => {
+  await login(page);
+  // Reported 2026-08-23: "if i click outside a property in on page edit, it jumps
+  // straight into side by side edit". A click on page background bubbles to the
+  // nearest [data-pb-field], which is normally the content area wrapping the
+  // blocks — and a content area is not editable in place, so the handler used to
+  // fall through to setView("split") and yank the page away.
+  await page.getByRole("treeitem", { name: /Home/ }).click();
+  await expect(editorName(page)).toHaveValue("Home");
+  await page.getByRole("button", { name: "On-page" }).click();
+  const onpage = page.getByRole("button", { name: "On-page" });
+  await expect(onpage).toHaveAttribute("aria-pressed", "true");
+
+  const frame = await waitPreviewFrame(page);
+  // The content area of the seeded Home page, as the bridge would report it.
+  await frame.evaluate(() =>
+    window.parent.postMessage(
+      { type: "paperboy:edit", field: "mainArea", rect: { x: 40, y: 400, w: 600, h: 220 }, click: { x: 300, y: 500 } },
+      "*",
+    ),
+  );
+  await page.waitForTimeout(1200);
+
+  // The mode the editor chose is still the mode they are in.
+  await expect(onpage).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("button", { name: "Side by side" })).toHaveAttribute("aria-pressed", "false");
+
+  // And an editable field still opens its overlay, so nothing was broken to
+  // achieve that.
+  await frame.evaluate(() =>
+    window.parent.postMessage(
+      { type: "paperboy:edit", field: "heading", rect: { x: 40, y: 80, w: 400, h: 40 }, click: { x: 60, y: 90 } },
+      "*",
+    ),
+  );
+  await expect(page.getByText("Edit on page")).toBeVisible({ timeout: 5000 });
+  await expect(onpage).toHaveAttribute("aria-pressed", "true");
+});
+
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
