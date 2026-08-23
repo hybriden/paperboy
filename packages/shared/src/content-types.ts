@@ -128,7 +128,7 @@ export const FieldDef = z.object({
    * only returned by the public Delivery API when explicitly marked "public".
    */
   delivery: z.enum(["public", "private"]).default("private"),
-  /** For contentArea: which block content-types may be placed here ([] = any block). Editor hint (not write-enforced). */
+  /** For contentArea: which block content-types may be placed here ([] = any non-nestedOnly block). Write-enforced (assertAllowedTypes); PAGES are always placeable as teasers. */
   allowedBlocks: z.array(z.string().max(60)).default([]),
   /** For reference: which content-types may be referenced ([] = any). Write-enforced. */
   allowedTypes: z.array(z.string().max(60)).default([]),
@@ -199,6 +199,32 @@ export const ContentTypeDef = z
      * CollectionPage; else WebPage).
      */
     schemaType: z.string().max(60).optional(),
+    /**
+     * AVAILABILITY: this type is only ever a PART of something else, so it is
+     * never offered where "any block" goes.
+     *
+     * `allowedBlocks` states the rule from the container's side and defaults to
+     * "any block", which left no way to say the opposite — that a type has no
+     * standalone meaning. The ten form field blocks are the case in point: a
+     * "Date field" is only interpretable by the Form that compiles it into a
+     * spec, yet every content area with no allow-list offered all ten of them
+     * alongside real page blocks.
+     *
+     * A nested-only type is excluded from the unconstrained block palette and
+     * picker, grouped apart in the content-type list, and ignored by the
+     * unused-blocks housekeeping count. It stays fully listed in a content
+     * area's `allowedBlocks` picker — that is how a container opts in — and it
+     * stays a normal block otherwise: shareable (one Consent checkbox reused
+     * across forms), versioned, localized, RBAC'd, editable over MCP.
+     *
+     * This is availability metadata, deliberately NOT a fourth `kind`: kind
+     * carries storage semantics (page → slug/tree, block → inline/shareable,
+     * global → singleton) that a part does not change. Storyblok's
+     * nestable-vs-content-type setting and Optimizely's AvailableContentTypes
+     * are the same idea; Umbraco Forms instead makes fields a separate
+     * subsystem and re-implements versioning and permissions around them.
+     */
+    nestedOnly: z.boolean().default(false),
   })
   // Field names must be unique within a type (else dataSchemaFor / delivery collide).
   .refine(
@@ -519,6 +545,18 @@ export function fieldFormatHint(f: FieldDef): { format: string; example: unknown
  * non-alphanumeric run collapsed to one hyphen.
  * "Llama.CPP" → "llama-cpp", "RTX Spark" → "rtx-spark", "Blåbær" → "blabaer".
  */
+/**
+ * The block types offerable where a content area allows ANY block.
+ *
+ * ONE authority for "any block", because five surfaces asked the question
+ * separately (the palette's no-allow-list fallback, the reuse picker, the
+ * content-type list's counts, the unused-blocks housekeeping) and each would
+ * otherwise have to remember the `nestedOnly` half of it.
+ */
+export function generalBlockTypes<T extends { kind: string; nestedOnly?: boolean }>(types: T[]): T[] {
+  return types.filter((t) => t.kind === "block" && !t.nestedOnly);
+}
+
 export function slugifyValue(raw: string): string {
   return raw
     .trim()

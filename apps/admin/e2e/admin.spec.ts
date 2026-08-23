@@ -1008,6 +1008,68 @@ test("the existing-block picker searches, and never offers a block the area forb
   }
 });
 
+test("an area that allows ANY block still does not offer parts (a form's field blocks)", async ({ page }) => {
+  await login(page);
+  // "Any block" must not mean "including the ten field blocks of a Form".
+  // A Date field has no meaning outside the Form that compiles it into a spec,
+  // yet an area with no allow-list offered all ten beside real page blocks.
+  const me = await page.request.get("/api/v1/auth/me");
+  const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+  const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
+
+  const inst = await page.request.post("/api/v1/manage/type-templates/Form/instantiate", {
+    headers,
+    data: { withBlocks: true, updateExisting: true },
+  });
+  expect(inst.ok(), `instantiate Form: ${inst.status()}`).toBe(true);
+
+  // A page type whose area declares NO allowedBlocks — the "any block" case.
+  const typeName = "PartsProbePage";
+  await page.request.put(`/api/v1/manage/content-types/${typeName}`, {
+    headers,
+    data: {
+      name: typeName,
+      displayName: "Parts probe page",
+      kind: "page",
+      fields: [{ name: "openArea", displayName: "Open area", type: "contentArea", delivery: "public", allowedBlocks: [] }],
+    },
+  }).catch(() => undefined);
+  const createType = await page.request.post("/api/v1/manage/content-types", {
+    headers,
+    data: {
+      name: typeName,
+      displayName: "Parts probe page",
+      kind: "page",
+      fields: [{ name: "openArea", displayName: "Open area", type: "contentArea", delivery: "public", allowedBlocks: [] }],
+    },
+  });
+  expect([200, 409]).toContain(createType.status());
+
+  const created = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: typeName, parentId: null, locale: "en", name: `Parts probe ${Date.now()}` },
+  });
+  expect(created.ok(), `create page: ${created.status()} ${await created.text()}`).toBe(true);
+  const doc = (await created.json()) as { documentId: string };
+
+  await page.goto(`/edit/${doc.documentId}`);
+  await page.reload();
+  const palette = page.getByLabel("Block palette");
+  await expect(palette).toBeVisible({ timeout: 20_000 });
+
+  // Populated with real page blocks…
+  await expect(palette.getByRole("button", { name: "+ Hero", exact: true })).toBeVisible();
+  // …and free of the parts.
+  for (const part of ["+ Date field", "+ Number field", "+ Consent checkbox", "+ Explanatory text"]) {
+    await expect(palette.getByRole("button", { name: part, exact: true }), part).toHaveCount(0);
+  }
+  // The Form itself is real page composition and stays on offer.
+  await expect(palette.getByRole("button", { name: "+ Form", exact: true })).toBeVisible();
+
+  await page.request.delete(`/api/v1/manage/content/${doc.documentId}`, { headers });
+  await page.request.delete(`/api/v1/manage/content-types/${typeName}`, { headers });
+});
+
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
