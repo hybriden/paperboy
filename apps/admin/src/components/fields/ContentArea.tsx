@@ -22,6 +22,7 @@ import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from
 import { api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { ImageField } from "../MediaLibrary.js";
+import { LinkField } from "./LinkField.js";
 import { useToast } from "../ui/toast.js";
 import { MarkdownEditor } from "./MarkdownEditor.js";
 import { ReferenceField } from "./ReferenceField.js";
@@ -592,11 +593,10 @@ function BlockField({ field, fieldId, value, onChange, onCommit, disabled = fals
           {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>
       )}
-      {field.type === "link" && (
-        <input disabled={disabled} id={id} aria-label={field.displayName} className="field-input py-1" placeholder="https://… or /path"
-          value={((value as { href?: string } | null) ?? {}).href ?? ""}
-          onChange={(e) => onChange(e.target.value ? { ...(value as object), href: e.target.value } : null)} />
-      )}
+      {/* A block's link field gets the SAME editor as a page's — it used to be a
+          bare href input here, so an inline block could not set link text, a
+          target, or (now) a page target at all. */}
+      {field.type === "link" && <LinkField id={id} value={value} onChange={onChange} disabled={disabled} />}
       {field.type === "reference" && <ReferenceField id={id} allowedTypes={field.allowedTypes} value={value} onChange={onChange} disabled={disabled} />}
       {field.type === "image" && <ImageField id={id} value={value} onChange={onChange} disabled={disabled} />}
     </div>

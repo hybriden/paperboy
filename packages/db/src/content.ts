@@ -1170,12 +1170,16 @@ async function assertAllowedTypes(db: Database, type: ContentTypeDef, data: Reco
 }
 
 /** Reads, validates and persists references for a (document, locale) data blob. */
+/** How deep into nested inline blocks reference extraction walks. */
+const MAX_REFERENCE_DEPTH = 4;
+
 async function rebuildReferences(
   db: Database,
   documentId: string,
   loc: string,
   type: ContentTypeDef,
   data: Record<string, unknown>,
+  blockTypes: BlockTypeResolver,
 ): Promise<void> {
   await db
     .delete(contentReference)
@@ -1186,33 +1190,45 @@ async function rebuildReferences(
       ),
     );
   const refs: (typeof contentReference.$inferInsert)[] = [];
-  for (const f of type.fields) {
-    const v = data[f.name];
-    if (v == null) continue;
-    if (f.type === "reference" && typeof v === "object") {
-      const rv = v as { documentId?: string; type?: string };
-      if (rv.documentId)
-        refs.push({
-          fromDocumentId: documentId,
-          fromLocale: loc,
-          toDocumentId: rv.documentId,
-          toType: rv.type ?? "",
-          fieldName: f.name,
-        });
-    }
-    if (f.type === "contentArea" && Array.isArray(v)) {
-      for (const block of v as Array<{ ref?: string | null; blockType?: string }>) {
-        if (block?.ref)
-          refs.push({
-            fromDocumentId: documentId,
-            fromLocale: loc,
-            toDocumentId: block.ref,
-            toType: block.blockType ?? "",
-            fieldName: f.name,
-          });
+  const add = (toDocumentId: string, toType: string, fieldName: string) => {
+    refs.push({ fromDocumentId: documentId, fromLocale: loc, toDocumentId, toType, fieldName });
+  };
+
+  /**
+   * Collect the outgoing references of one field set. Recurses into a content
+   * area's INLINE block data, because a block's own reference and link fields
+   * point at content just as much as a top-level field does — the front page's
+   * hero CTA is an inline block, so tracking only the top level would miss the
+   * links that matter most. Depth-capped like the coercion chokepoint.
+   */
+  const collect = (fields: ContentTypeDef["fields"], values: Record<string, unknown>, prefix: string, depth: number) => {
+    for (const f of fields) {
+      const v = values[f.name];
+      if (v == null) continue;
+      const path = prefix ? `${prefix}.${f.name}` : f.name;
+      if (f.type === "reference" && typeof v === "object") {
+        const rv = v as { documentId?: string; type?: string };
+        if (rv.documentId) add(rv.documentId, rv.type ?? "", path);
+      }
+      // An INTERNAL link is a reference: that is the whole point of storing the
+      // documentId instead of a path. Recording it here is what makes link
+      // integrity possible — which pages link here, and what breaks if this one
+      // is deleted or unpublished.
+      if (f.type === "link" && typeof v === "object") {
+        const lv = v as { documentId?: string };
+        if (lv.documentId) add(lv.documentId, "", path);
+      }
+      if (f.type === "contentArea" && Array.isArray(v)) {
+        for (const block of v as Array<{ ref?: string | null; blockType?: string; inline?: unknown }>) {
+          if (block?.ref) add(block.ref, block.blockType ?? "", path);
+          if (depth <= 0 || !block?.inline || typeof block.inline !== "object") continue;
+          const blockDef = blockTypes(block.blockType ?? "");
+          if (blockDef) collect(blockDef.fields, block.inline as Record<string, unknown>, path, depth - 1);
+        }
       }
     }
-  }
+  };
+  collect(type.fields, data, "", MAX_REFERENCE_DEPTH);
   if (refs.length) await db.insert(contentReference).values(refs);
 }
 
@@ -1409,7 +1425,7 @@ export async function updateContent(
     }
   }
 
-  await rebuildReferences(db, documentId, loc, type, data);
+  await rebuildReferences(db, documentId, loc, type, data, await blockTypeResolver(db));
   return getContent(db, ctx, documentId, loc);
 }
 
@@ -2533,7 +2549,7 @@ export async function restoreVersion(
       comment: `Restored from v${src.versionNumber}`,
     });
   }
-  await rebuildReferences(db, documentId, loc, type, data);
+  await rebuildReferences(db, documentId, loc, type, data, await blockTypeResolver(db));
   return getContent(db, ctx, documentId, loc);
 }
 
@@ -2612,7 +2628,7 @@ export async function cloneContent(
       data,
       createdBy: ctx.userId,
     });
-    await rebuildReferences(db, newId, code, type, data);
+    await rebuildReferences(db, newId, code, type, data, await blockTypeResolver(db));
     count++;
   }
   // If the source had no version at all, seed an empty draft so the doc is editable.

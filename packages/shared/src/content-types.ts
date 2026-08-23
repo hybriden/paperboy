@@ -107,7 +107,25 @@ export const LinkValue = z.object({
     .refine((h) => isSafeUrl(h), {
       message:
         'Link href must start with http://, https://, mailto:, tel:, "/" or "#" — other schemes (javascript:, data:) are rejected because they execute in the visitor\'s browser. Example: {"href":"https://example.com","text":"Example"}',
-    }),
+    })
+    .default(""),
+  /**
+   * INTERNAL target: the documentId of a page in this site. Delivery resolves it
+   * to that page's live urlPath at read time, so the link cannot rot — renaming
+   * a slug or moving the page rewrites every link to it, and a link to a page
+   * that is not published resolves to "" in the published perspective rather
+   * than 404ing a visitor.
+   *
+   * A hand-typed path can do none of that: it is a string nobody can follow
+   * backwards. Optimizely stores internal links as permanent GUID-based
+   * references for the same reason, and explicitly does NOT support them on
+   * plain string properties. The delivered shape keeps BOTH halves — the
+   * identity and the resolved href — mirroring their headless
+   * ContentReference {key, url}.
+   */
+  documentId: z.string().max(64).optional(),
+  /** Fragment appended to the resolved path ("faq" → /about#faq). */
+  anchor: z.string().max(120).optional(),
   text: z.string().max(300).optional(),
   target: z.enum(["_self", "_blank"]).optional(),
   title: z.string().max(300).optional(),
@@ -1153,6 +1171,32 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
       // normalize to null ("no image") instead of persisting an empty pseudo-id
       // with a success response (Harmonix 2026-06-12).
       return v === "" ? null : v;
+    }
+    case "link": {
+      // A bare string is the destination. This is what makes retyping a
+      // URL-shaped TEXT field to `link` safe: the stored strings coerce on the
+      // next write instead of failing validation, and an agent that sends
+      // "https://…" for a link field gets the obvious meaning rather than a
+      // rejection. Meaning-preserving, so it belongs here (rule #3).
+      const unwrapped = unwrapTextCarrier(value);
+      if (typeof unwrapped === "string") {
+        const trimmed = unwrapped.trim();
+        return trimmed === "" ? null : { href: trimmed };
+      }
+      if (unwrapped && typeof unwrapped === "object" && !Array.isArray(unwrapped)) {
+        const o = { ...(unwrapped as Record<string, unknown>) };
+        // `url` is the name every other system uses for this key (and what
+        // agents reach for); accept it rather than dropping the destination.
+        if (typeof o.url === "string" && typeof o.href !== "string") {
+          o.href = o.url;
+          delete o.url;
+        }
+        // A resolved internal link read back into a write carries both; the
+        // documentId is the authority, so don't let a stale href override it.
+        if (typeof o.documentId === "string" && o.documentId) o.href = "";
+        return o;
+      }
+      return unwrapped;
     }
     default:
       return value;
