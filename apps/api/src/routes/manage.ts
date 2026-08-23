@@ -151,7 +151,9 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
    */
   function emitContentEvent(
     event: "content.published" | "content.unpublished",
-    detail: { documentId: string; type: string; kind: string; locale: string; name: string; urlPath: string | null },
+    // siteId comes from the request's ACTIVE site: dispatch is partitioned per
+    // site, so a hook belonging to another brand never sees this event.
+    detail: { siteId: string; documentId: string; type: string; kind: string; locale: string; name: string; urlPath: string | null },
   ): void {
     void dispatchWebhooks(app.db, { event, ...detail, at: new Date().toISOString() }).catch(() => undefined);
   }
@@ -490,7 +492,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await publishContent(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.publish", documentId: req.params.documentId, locale, ip: req.ip });
-      emitContentEvent("content.published", { documentId: r.documentId, type: r.type, kind: r.kind, locale, name: r.name, urlPath: r.urlPath });
+      emitContentEvent("content.published", { siteId: req.accessCtx!.siteId, documentId: r.documentId, type: r.type, kind: r.kind, locale, name: r.name, urlPath: r.urlPath });
       return r;
     },
   );
@@ -533,7 +535,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await unpublishContent(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.unpublish", documentId: req.params.documentId, locale, ip: req.ip });
-      emitContentEvent("content.unpublished", { documentId: r.documentId, type: r.type, kind: r.kind, locale, name: r.name, urlPath: r.urlPath });
+      emitContentEvent("content.unpublished", { siteId: req.accessCtx!.siteId, documentId: r.documentId, type: r.type, kind: r.kind, locale, name: r.name, urlPath: r.urlPath });
       return r;
     },
   );

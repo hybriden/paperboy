@@ -27,7 +27,7 @@ import {
   loadAuthorized,
   requirePermission,
 } from "./scope.js";
-import { auditLog, contentItem, contentReference, contentType, contentVersion, locale, site } from "./schema.js";
+import { DEFAULT_SITE_ID, auditLog, contentItem, contentReference, contentType, contentVersion, locale, site } from "./schema.js";
 import { getAgentReviewRequired } from "./site.js";
 import { dispatchWebhooks } from "./webhooks.js";
 
@@ -1800,6 +1800,7 @@ export async function schedulePublish(
     const urlPath = item.kind === "page" ? await computePath(db, documentId, loc) : null;
     void dispatchWebhooks(db, {
       event: "content.published",
+      siteId: item.siteId,
       documentId,
       type: item.type,
       kind: item.kind,
@@ -1887,6 +1888,7 @@ export async function runScheduledPublish(
       const urlPath = item.kind === "page" ? await computePath(db, d.documentId, d.locale) : null;
       await dispatchWebhooks(db, {
         event: "content.published",
+        siteId: item.siteId,
         documentId: d.documentId,
         type: item.type,
         kind: item.kind,
@@ -1932,6 +1934,7 @@ export async function runScheduledPublish(
       await db.update(contentVersion).set({ isCurrentPublished: false }).where(eq(contentVersion.id, s.id));
       await dispatchWebhooks(db, {
         event: "content.unpublished",
+        siteId: item?.siteId ?? DEFAULT_SITE_ID,
         documentId: s.documentId,
         type: item?.type ?? "",
         kind: item?.kind ?? "",

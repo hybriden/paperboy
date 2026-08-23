@@ -1279,7 +1279,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             livePatch={livePatch}
             overlay={(() => {
               if (!ope || !type) return null;
-              const isName = ope.field === "name";
+              // "name" means the PAGE TITLE only when the overlay isn't scoped to
+              // a block. A block may legitimately have its own field called
+              // `name` — a hero rendering a person's name, say — and treating
+              // that as the page title opened the wrong input, showing "Home"
+              // where the editor expected "Hans Christian" (reported 2026-08-23).
+              const isName = !ope.block && ope.field === "name";
               // Overlay scoped to a field inside a block: the def comes from the
               // BLOCK's type and the value/commit path goes through the area array.
               const blockScope = (() => {

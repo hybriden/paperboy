@@ -152,6 +152,7 @@ describe("form.submitted requires an explicit subscription", () => {
   it("still delivers content events to a catch-all hook", async () => {
     const results = await dispatchWebhooks(s.app.db, {
       event: "content.published",
+      siteId: "site_default",
       documentId: "d1",
       type: "ArticlePage",
       kind: "page",
@@ -161,6 +162,38 @@ describe("form.submitted requires an explicit subscription", () => {
       at: new Date().toISOString(),
     });
     expect(results.length).toBeGreaterThan(0);
+  });
+
+  it("never delivers another SITE's event to this site's hook", async () => {
+    // Every other resource that can carry content or visitor data is partitioned
+    // by site. Webhooks were the exception, which stopped being cosmetic once
+    // submissions rode the same pipe: brand A's hook received brand B's
+    // visitors' names and messages, a read the delivery and management
+    // chokepoints would both have refused.
+    const results = await dispatchWebhooks(s.app.db, {
+      event: "form.submitted",
+      formId: "f1",
+      formName: "Contact",
+      submissionId: "sub_other_site",
+      siteId: "site_some_other_brand",
+      locale: "en",
+      at: new Date().toISOString(),
+      values: { email: "visitor@example.com" },
+    });
+    expect(results).toHaveLength(0);
+
+    const contentElsewhere = await dispatchWebhooks(s.app.db, {
+      event: "content.published",
+      siteId: "site_some_other_brand",
+      documentId: "d9",
+      type: "ArticlePage",
+      kind: "page",
+      locale: "en",
+      name: "Another brand's page",
+      urlPath: "/x",
+      at: new Date().toISOString(),
+    });
+    expect(contentElsewhere).toHaveLength(0);
   });
 
   it("delivers form.submitted to a hook that names it", async () => {

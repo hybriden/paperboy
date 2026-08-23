@@ -50,9 +50,11 @@ async function login(page: Page, email = "admin@paperboy.test", password = "Admi
   }
 }
 
-/** The editor toolbar's Name input — scoped so a (closing) dialog's Name never matches. */
+/** The editor toolbar's Name input — scoped so a (closing) dialog's Name never
+ *  matches, and EXACT so a block field whose label merely contains "name"
+ *  (e.g. "Person name") isn't ambiguous with the page's own Name. */
 function editorName(page: Page) {
-  return page.locator("#editor").getByRole("textbox", { name: "Name" });
+  return page.locator("#editor").getByRole("textbox", { name: "Name", exact: true });
 }
 
 // The dedicated login-screen test still needs the real form; keep one form login.
@@ -795,6 +797,77 @@ test("the 'no bridge' hint never appears for a frontend that runs the bridge", a
   }
   await page.waitForTimeout(5000);
   await expect(hint).toHaveCount(0);
+});
+
+test("on-page edit of a block field called 'name' edits the BLOCK, not the page title", async ({ page }) => {
+  await login(page);
+  // "name" is the page-title convention in the on-page overlay, but it is also a
+  // perfectly ordinary field name for a block — a hero that renders a person's
+  // name, for instance. Clicking it used to open the PAGE title input, showing
+  // "Home" where the editor expected the person (reported live 2026-08-23).
+  const me = await page.request.get("/api/v1/auth/me");
+  const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+  const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
+
+  // Give the hero block its own `name` field (additive, optional).
+  const heroRes = await page.request.get("/api/v1/manage/content-types/HeroBlock");
+  const hero = (await heroRes.json()) as { fields: { name: string }[]; [k: string]: unknown };
+  if (!hero.fields.some((f) => f.name === "name")) {
+    const put = await page.request.put("/api/v1/manage/content-types/HeroBlock", {
+      headers,
+      data: {
+        ...hero,
+        fields: [
+          ...hero.fields,
+          { name: "name", displayName: "Person name", type: "text", delivery: "public", helpText: "The person's name." },
+        ],
+      },
+    });
+    expect(put.ok(), `add name field: ${put.status()} ${await put.text()}`).toBe(true);
+  }
+
+  // Fill it on the Home page's existing hero block.
+  const tree = await page.request.get("/api/v1/manage/content/tree");
+  const home = ((await tree.json()) as { documentId: string; name: string }[]).find((n) => /Home/.test(n.name))!;
+  const current = await page.request.get(`/api/v1/manage/content/${home.documentId}?locale=en`);
+  const data = ((await current.json()) as { data: Record<string, unknown> }).data;
+  const area = (Array.isArray(data.mainArea) ? data.mainArea : []) as { blockType: string; inline: Record<string, unknown> | null }[];
+  const heroIndex = area.findIndex((b) => b.blockType === "HeroBlock" && b.inline !== null);
+  expect(heroIndex, "the seeded Home page has an inline hero block").toBeGreaterThanOrEqual(0);
+  const save = await page.request.put(`/api/v1/manage/content/${home.documentId}?locale=en`, {
+    headers,
+    data: {
+      data: {
+        ...data,
+        mainArea: area.map((b, i) => (i === heroIndex ? { ...b, inline: { ...b.inline, name: "Hans Christian" } } : b)),
+      },
+    },
+  });
+  expect(save.ok(), `save hero name: ${save.status()} ${await save.text()}`).toBe(true);
+
+  // The SPA cached the content types before this test changed them.
+  await page.reload();
+  await page.getByRole("treeitem", { name: /Home/ }).click();
+  await expect(editorName(page)).toHaveValue("Home");
+  await page.getByRole("button", { name: "On-page" }).click();
+  const frame = await waitPreviewFrame(page);
+  await frame.locator("body.pb-editing").waitFor({ state: "attached", timeout: 20_000 });
+
+  await frame.evaluate(
+    (i) =>
+      window.parent.postMessage(
+        { type: "paperboy:edit", field: "name", blockIndex: i, blockType: "HeroBlock", rect: { x: 30, y: 30, w: 200, h: 24 }, click: { x: 40, y: 40 } },
+        "*",
+      ),
+    heroIndex,
+  );
+
+  await expect(page.getByText("Edit on page")).toBeVisible({ timeout: 5000 });
+  // The overlay must hold the BLOCK's value. The page title here would mean the
+  // page-name convention swallowed a legitimate block field.
+  const input = page.getByRole("textbox", { name: "Person name" });
+  await expect(input).toBeVisible();
+  await expect(input).toHaveValue("Hans Christian");
 });
 
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
