@@ -201,6 +201,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
   const [icon, setIcon] = useState(initial?.icon ?? "ph:file");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [schemaType, setSchemaType] = useState(initial?.schemaType ?? "");
+  const [nestedOnly, setNestedOnly] = useState(initial?.nestedOnly ?? false);
   const [fields, setFields] = useState<DraftField[]>(
     // The reserved SEO group is injected on read but is system-managed — never
     // edited or stored here, so it can't be removed. Filter it out of the CRUD
@@ -318,6 +319,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
       description,
       icon,
       ...(schemaType.trim() ? { schemaType: schemaType.trim() } : {}),
+      nestedOnly,
       fields: fields.map(({ _key, ...f }) => f),
     };
     const parsed = ContentTypeDef.safeParse(def);
@@ -393,6 +395,23 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
             <label className="field-label" htmlFor="ct-icon">Icon</label>
             <IconPicker id="ct-icon" value={icon} onChange={setIcon} />
           </div>
+          {kind === "block" && (
+            // AVAILABILITY, not storage: a part is still a block (shareable,
+            // versioned, localized). It is simply never offered where "any
+            // block" goes, because it has no meaning outside its parent.
+            <div className="col-span-2">
+              <Switch
+                checked={nestedOnly}
+                onCheckedChange={setNestedOnly}
+                label="Only used inside another type (a part)"
+              />
+              <p className="mt-1 text-xs text-muted">
+                Parts are left out of the block palette and the reuse picker unless a content area names
+                them in its allowed blocks — how a form’s field blocks work. Turn this on for a block that
+                makes no sense on its own.
+              </p>
+            </div>
+          )}
           <div className="col-span-2">
             <label className="field-label" htmlFor="ct-desc">Description</label>
             <input id="ct-desc" aria-label="Description" className="field-input" value={description} onChange={(e) => setDescription(e.target.value)} />

@@ -17,7 +17,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { duplicateFieldKeys, fieldKeyFromLabel, isFormFieldType } from "@paperboy/shared";
+import { duplicateFieldKeys, fieldKeyFromLabel, generalBlockTypes, isFormFieldType } from "@paperboy/shared";
 import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
 import { api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
@@ -61,7 +61,9 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   // field" ninth in the Form palette, behind "Checkbox" and "Choose one").
   const allowed = field.allowedBlocks.length
     ? field.allowedBlocks.flatMap((name) => types.find((t) => t.name === name) ?? [])
-    : types.filter((t) => t.kind === "block");
+    // No allow-list means "any block" — which must NOT include the parts that
+    // only make sense inside a specific parent (a Form's ten field blocks).
+    : generalBlockTypes(types);
   // Page names for teaser entries (same key/cache as ReferenceField).
   const pages = useQuery({ queryKey: ["pages"], queryFn: ({ signal }) => api.pages(signal) });
 
@@ -243,6 +245,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
             <SharedBlockPicker
               at={pickerOpen}
               allowedBlocks={field.allowedBlocks}
+              nestedOnlyTypes={new Set(types.filter((t) => t.nestedOnly).map((t) => t.name))}
               sharedBlocks={sharedBlocks}
               pages={pages.data ?? []}
               onPick={(documentId, blockType) => {

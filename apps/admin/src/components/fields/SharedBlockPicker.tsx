@@ -25,6 +25,7 @@ export interface PickerBlock {
 export function SharedBlockPicker({
   at,
   allowedBlocks,
+  nestedOnlyTypes,
   sharedBlocks,
   pages,
   onPick,
@@ -32,9 +33,12 @@ export function SharedBlockPicker({
 }: {
   /** Where the trigger sits, in viewport coordinates. */
   at: { x: number; y: number };
-  /** Empty means the area accepts any block type. */
+  /** Empty means the area accepts any block type that is not a nested-only part. */
   allowedBlocks: string[];
   sharedBlocks: PickerBlock[];
+  /** Type names that are only ever a PART of another type — never offered here
+   *  unless the area names them explicitly. */
+  nestedOnlyTypes: Set<string>;
   /** Pages render as teasers and are always placeable — never in allowedBlocks. */
   pages: PickerBlock[];
   onPick: (documentId: string, blockType: string) => void;
@@ -57,7 +61,7 @@ export function SharedBlockPicker({
   const { blocks, teasers, hiddenByRules } = useMemo(() => {
     const placeable = allowedBlocks.length
       ? sharedBlocks.filter((b) => allowedBlocks.includes(b.type))
-      : sharedBlocks;
+      : sharedBlocks.filter((b) => !nestedOnlyTypes.has(b.type));
     const match = (b: PickerBlock) => {
       const q = query.trim().toLowerCase();
       if (!q) return true;
@@ -68,7 +72,7 @@ export function SharedBlockPicker({
       teasers: pages.filter(match),
       hiddenByRules: sharedBlocks.length - placeable.length,
     };
-  }, [allowedBlocks, sharedBlocks, pages, query]);
+  }, [allowedBlocks, nestedOnlyTypes, sharedBlocks, pages, query]);
 
   const first = blocks[0] ?? teasers[0];
 

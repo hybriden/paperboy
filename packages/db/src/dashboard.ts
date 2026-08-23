@@ -209,15 +209,28 @@ export async function getDashboard(db: Database, ctx: AccessContext): Promise<Da
   // contentTypeUsage omits fully-unused types, so walk the full type list.
   const usage = await contentTypeUsage(db);
   const typeRows = await db
-    .select({ name: contentType.name, displayName: contentType.displayName, kind: contentType.kind })
+    .select({
+      name: contentType.name,
+      displayName: contentType.displayName,
+      kind: contentType.kind,
+      // Nested-only types are PARTS (a form's field blocks): they are installed
+      // as a set and only some get used, so an unused one is a part of the
+      // library sitting available — not a modelling mistake to clean up. Left
+      // in, ten field types made eight permanent entries on this list.
+      nestedOnly: sql<boolean>`coalesce((${contentType.definition} ->> 'nestedOnly')::boolean, false)`,
+    })
     .from(contentType)
     .orderBy(asc(contentType.name));
   const emptyTypeRows = typeRows.filter((t) => {
+    if (t.nestedOnly) return false;
     const u = usage[t.name];
     return !u || (u.items === 0 && u.inlineIn === 0);
   });
   const emptyTypes = emptyTypeRows.length;
-  const emptyTypesList = emptyTypeRows.slice(0, LIST_LIMIT);
+  // Drop the internal nestedOnly flag — the delivered shape is name/displayName/kind.
+  const emptyTypesList = emptyTypeRows
+    .slice(0, LIST_LIMIT)
+    .map(({ name, displayName, kind }) => ({ name, displayName, kind }));
 
   // Raster images without alt text — an accessibility gap the vision alt-text
   // helper can now actually fix, so surface the images themselves (a bare

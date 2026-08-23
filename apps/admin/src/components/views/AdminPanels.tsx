@@ -127,13 +127,37 @@ export function TwoFactorPanel() {
 }
 
 /* ----------------------------- Content model ------------------------------ */
-type KindFilter = "all" | "page" | "block" | "global";
+type KindFilter = "all" | "page" | "block" | "part" | "global";
 const KIND_TABS: { key: KindFilter; label: string }[] = [
   { key: "all", label: "All" },
   { key: "page", label: "Pages" },
   { key: "block", label: "Blocks" },
+  { key: "part", label: "Parts" },
   { key: "global", label: "Globals" },
 ];
+
+/**
+ * Which types a kind tab shows.
+ *
+ * "Parts" cuts ACROSS kind: a nested-only type is still stored as a block, but
+ * it is never page composition — a Form's ten field types would otherwise pad
+ * "Blocks" with entries an editor can never usefully place there.
+ */
+function matchesKindFilter(t: { kind: string; nestedOnly?: boolean }, f: KindFilter): boolean {
+  if (f === "all") return true;
+  if (f === "part") return Boolean(t.nestedOnly);
+  return t.kind === f && !t.nestedOnly;
+}
+
+function kindCounts<T extends { kind: string; nestedOnly?: boolean }>(all: T[]): Record<KindFilter, number> {
+  return {
+    all: all.length,
+    page: all.filter((t) => matchesKindFilter(t, "page")).length,
+    block: all.filter((t) => matchesKindFilter(t, "block")).length,
+    part: all.filter((t) => matchesKindFilter(t, "part")).length,
+    global: all.filter((t) => matchesKindFilter(t, "global")).length,
+  };
+}
 
 /** One-line usage summary: pages/globals → instances; blocks → shared + inline. */
 function usageLabel(kind: string, u: { items: number; inlineIn: number } | undefined): string {
@@ -171,18 +195,13 @@ export function ContentTypesPanel() {
     if (t) setEditor({ mode: "edit", initial: t });
   }, [types.data, canManage]);
 
-  const counts: Record<KindFilter, number> = {
-    all: all.length,
-    page: all.filter((t) => t.kind === "page").length,
-    block: all.filter((t) => t.kind === "block").length,
-    global: all.filter((t) => t.kind === "global").length,
-  };
-  const shown = kind === "all" ? all : all.filter((t) => t.kind === kind);
+  const counts = kindCounts(all);
+  const shown = all.filter((t) => matchesKindFilter(t, kind));
 
   return (
     <PanelShell
       title="Content types"
-      hint="The data model: pages, blocks and globals editors fill in. Public fields are exposed by the Delivery API."
+      hint="The data model editors fill in. Pages, blocks and globals stand on their own; PARTS only exist inside another type (a form’s fields), so they are never offered as general blocks. Public fields are exposed by the Delivery API."
       action={canManage ? <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setPicker(true)}><Icon.Plus width={14} height={14} /> New content type</button> : undefined}
     >
       {/* Kind filter */}
@@ -435,13 +454,8 @@ export function TypeTemplatesPanel() {
   }
 
   const all = templates.data ?? [];
-  const counts: Record<KindFilter, number> = {
-    all: all.length,
-    page: all.filter((t) => t.kind === "page").length,
-    block: all.filter((t) => t.kind === "block").length,
-    global: all.filter((t) => t.kind === "global").length,
-  };
-  const shown = kind === "all" ? all : all.filter((t) => t.kind === kind);
+  const counts = kindCounts(all);
+  const shown = all.filter((t) => matchesKindFilter(t, kind));
 
   return (
     <PanelShell
