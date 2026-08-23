@@ -870,6 +870,77 @@ test("on-page edit of a block field called 'name' edits the BLOCK, not the page 
   await expect(input).toHaveValue("Hans Christian");
 });
 
+test("building a form: the key fills itself in from the label, and a clash is called out", async ({ page }) => {
+  await login(page);
+  // The field key is an identifier the answer is stored under — the one
+  // genuinely technical thing in building a form. An editor should get it for
+  // free from the label they already typed, and be TOLD when two fields collide:
+  // formSpecFrom keeps the first, so the second silently never reaches visitors.
+  const me = await page.request.get("/api/v1/auth/me");
+  const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+  const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
+
+  // The Form block plus the field blocks its area allow-lists.
+  const inst = await page.request.post("/api/v1/manage/type-templates/Form/instantiate", {
+    headers,
+    data: { withBlocks: true, updateExisting: true },
+  });
+  expect(inst.ok(), `instantiate Form: ${inst.status()} ${await inst.text()}`).toBe(true);
+
+  const created = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: "Form", parentId: null, locale: "en", name: `E2E form ${Date.now()}` },
+  });
+  expect(created.ok(), `create form: ${created.status()} ${await created.text()}`).toBe(true);
+  const { documentId } = (await created.json()) as { documentId: string };
+
+  // The SPA cached the content types before this test created them.
+  await page.goto(`/edit/${documentId}`);
+  await page.reload();
+  const area = page.getByTestId("content-area-fields");
+  await expect(area).toBeVisible({ timeout: 20_000 });
+
+  // Two questions, added the way an editor adds them: one click each.
+  const palette = page.getByLabel("Block palette");
+  await palette.getByRole("button", { name: "+ Text field", exact: true }).click();
+  await palette.getByRole("button", { name: "+ Email field", exact: true }).click();
+
+  // The LABEL comes first on a form field — the key is derived from it, so it
+  // has no business being the first thing an editor meets.
+  const first = area.locator("li#pb-block-0");
+  await expect(first.getByRole("textbox").first()).toHaveAttribute("aria-label", "Label");
+
+  // Type the label, leave the field: the key appears by itself.
+  const firstKey = first.getByRole("textbox", { name: "Field key" });
+  await expect(firstKey).toHaveValue("");
+  await first.getByRole("textbox", { name: "Label" }).fill("Company name");
+  await first.getByRole("textbox", { name: "Label" }).blur();
+  await expect(firstKey).toHaveValue("companyName");
+
+  // A key the editor typed themselves is never overwritten by a later label edit —
+  // stored answers are keyed by it.
+  await firstKey.fill("firm");
+  await first.getByRole("textbox", { name: "Label" }).fill("Company or organisation");
+  await first.getByRole("textbox", { name: "Label" }).blur();
+  await expect(firstKey).toHaveValue("firm");
+
+  // Second field, same key: both cards say so, because either could be the mistake.
+  const second = area.locator("li#pb-block-1");
+  const clash = /Another field already uses the key/;
+  await expect(page.getByText(clash)).toHaveCount(0);
+  await second.getByRole("textbox", { name: "Field key" }).fill("firm");
+  await expect(first.getByText(clash)).toBeVisible();
+  await expect(second.getByText(clash)).toBeVisible();
+
+  // Resolved by giving it its own key.
+  await second.getByRole("textbox", { name: "Field key" }).fill("email");
+  await expect(page.getByText(clash)).toHaveCount(0);
+
+  // Clean up: this test creates a shared block at the root.
+  const del = await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+  expect(del.ok(), `delete form: ${del.status()}`).toBe(true);
+});
+
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();

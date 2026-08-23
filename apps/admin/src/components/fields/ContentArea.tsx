@@ -17,6 +17,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { duplicateFieldKeys, fieldKeyFromLabel, isFormFieldType } from "@paperboy/shared";
 import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
 import { api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
@@ -49,8 +50,16 @@ const MAX_AREA_DEPTH = 4;
 
 export function ContentArea({ field, value, onChange, types, sharedBlocks, disabled = false, depth = 0 }: Props) {
   const blocks = value ?? [];
+  // Form fields only: two sharing a key means the second never reaches the
+  // visitor (formSpecFrom keeps the first). Warn on the field itself — a form
+  // that silently drops a question the editor filled in and published is the
+  // authoring-side version of garbage-in-success-out. Empty elsewhere.
+  const duplicateKeys = duplicateFieldKeys(blocks);
+  // Follow the order the type author DECLARED — they list the everyday fields
+  // first, while `types` arrives sorted by internal name (which put "Text
+  // field" ninth in the Form palette, behind "Checkbox" and "Choose one").
   const allowed = field.allowedBlocks.length
-    ? types.filter((t) => field.allowedBlocks.includes(t.name))
+    ? field.allowedBlocks.flatMap((name) => types.find((t) => t.name === name) ?? [])
     : types.filter((t) => t.kind === "block");
   // Page names for teaser entries (same key/cache as ReferenceField).
   const pages = useQuery({ queryKey: ["pages"], queryFn: ({ signal }) => api.pages(signal) });
@@ -272,6 +281,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
                   types={types}
                   sharedBlocks={sharedBlocks}
                   depth={depth}
+                  duplicateKeys={duplicateKeys}
                 />
               ))}
             </ul>
@@ -343,6 +353,24 @@ function ImageBlockPicker({
   );
 }
 
+/**
+ * A block's data after one of its fields changed.
+ *
+ * For a FORM FIELD block, leaving the Label also fills the field key when it is
+ * still empty ("Company name" → "companyName") — that key is the one genuinely
+ * technical thing an editor would otherwise have to invent. Only when empty:
+ * the key is what stored answers are keyed by, so editing a label must never
+ * silently re-key a form that already has submissions.
+ */
+function withDerivedKey(block: BlockInstance, fieldName: string, value: unknown): Record<string, unknown> {
+  const inline = { ...block.inline };
+  if (fieldName !== "label" || !isFormFieldType(block.blockType)) return inline;
+  if (typeof inline.name === "string" && inline.name.trim()) return inline;
+  const derived = fieldKeyFromLabel(typeof value === "string" ? value : "");
+  // No usable key (an emoji-only label) — leave it rather than write a broken one.
+  return derived ? { ...inline, name: derived } : inline;
+}
+
 function SortableBlock({
   block,
   index,
@@ -355,6 +383,7 @@ function SortableBlock({
   types,
   sharedBlocks,
   depth,
+  duplicateKeys,
 }: {
   block: BlockInstance;
   index: number;
@@ -367,12 +396,23 @@ function SortableBlock({
   types: ContentTypeDef[];
   sharedBlocks: { documentId: string; name: string; type: string }[];
   depth: number;
+  duplicateKeys: Set<string>;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.key, disabled });
   const style = { transform: CSS.Transform.toString(transform), transition };
   const isShared = block.ref !== null;
   // A referenced PAGE renders as a teaser on the site (not as a block).
   const isTeaser = isShared && type?.kind === "page";
+  const isFormField = !isShared && isFormFieldType(block.blockType);
+  const storedKey = (block.inline ?? {}).name;
+  const ownKey = isFormField && typeof storedKey === "string" ? storedKey.trim() : "";
+  const clashingKey = ownKey && duplicateKeys.has(ownKey) ? ownKey : "";
+  // A form field asks its question with the Label, so that comes first; the key
+  // is derived from it and goes last. Presentation only — the schema is
+  // unchanged, so this also fixes types created before the key was derivable.
+  const fields = isFormField && type
+    ? [...type.fields].sort((a, b) => Number(a.name === "name") - Number(b.name === "name"))
+    : (type?.fields ?? []);
 
   return (
     <li id={`pb-block-${index}`} ref={setNodeRef} style={style} className={`rounded border border-line bg-panel shadow-xs ${isDragging ? "opacity-60 ring-2 ring-accent" : ""}`}>
@@ -407,9 +447,15 @@ function SortableBlock({
           </div>
         </div>
       </div>
+      {clashingKey && (
+        <p className="border-b border-draft/40 bg-draft/10 px-2.5 py-1.5 text-xs text-draft">
+          Another field already uses the key <code className="font-mono">{clashingKey}</code>, so only the first one
+          reaches the form. Give this field a key of its own.
+        </p>
+      )}
       {!isShared && type && (
         <div className="space-y-2 p-2.5">
-          {type.fields.map((f) => (
+          {fields.map((f) => (
             // data-pb-prop(-block): focusing a field here highlights the SAME
             // field inside this block in the preview (paperboy:focus w/ block
             // scope). Top-level blocks only — the frontend indexes per area.
@@ -419,7 +465,13 @@ function SortableBlock({
                 types={types}
                 sharedBlocks={sharedBlocks}
                 depth={depth}
-                onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })} />
+                onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })}
+                // Only the one field that can derive something gets a commit
+                // handler — otherwise tabbing through any text field would fire
+                // an identical update and mark the document dirty.
+                onCommit={isFormField && f.name === "label"
+                  ? (v) => onUpdate({ inline: { ...withDerivedKey(block, f.name, v), [f.name]: v } })
+                  : undefined} />
             </div>
           ))}
         </div>
@@ -434,11 +486,14 @@ function SortableBlock({
   );
 }
 
-function BlockField({ field, fieldId, value, onChange, disabled = false, types, sharedBlocks, depth }: {
+function BlockField({ field, fieldId, value, onChange, onCommit, disabled = false, types, sharedBlocks, depth }: {
   field: FieldDef;
   fieldId: string;
   value: unknown;
   onChange: (v: unknown) => void;
+  /** Fired when the visitor leaves a text field, for edits that should land
+   *  once rather than per keystroke (deriving a form field's key from it). */
+  onCommit?: (v: unknown) => void;
   disabled?: boolean;
   types: ContentTypeDef[];
   sharedBlocks: { documentId: string; name: string; type: string }[];
@@ -477,7 +532,9 @@ function BlockField({ field, fieldId, value, onChange, disabled = false, types, 
     <div>
       <label className="field-label text-[12px]" htmlFor={id}>{field.displayName}</label>
       {field.type === "text" && (
-        <input disabled={disabled} id={id} aria-label={field.displayName} className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} />
+        <input disabled={disabled} id={id} aria-label={field.displayName} className="field-input py-1" value={(value as string) ?? ""}
+          onChange={(e) => onChange(e.target.value)}
+          onBlur={onCommit ? (e) => onCommit(e.target.value) : undefined} />
       )}
       {field.type === "markdown" && (
         <MarkdownEditor id={id} value={(value as string) ?? ""} onChange={(v) => onChange(v)} minHeight={160} disabled={disabled} />

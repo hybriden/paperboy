@@ -388,5 +388,67 @@ export function isFormFieldType(typeName: string): boolean {
   return typeName in BLOCK_KIND;
 }
 
+/* --------------------------- authoring the form ---------------------------
+ * A field key is an identifier the answer is stored under, and it is the first
+ * control an editor meets on every field — the one genuinely technical step in
+ * building a form. These two helpers let the admin remove it from the job:
+ * derive the key from the label already typed, and name a collision out loud
+ * instead of dropping the field in silence.
+ */
+
+/** Letters no NFKD decomposition recovers; the Nordic ones matter most here. */
+const KEY_TRANSLITERATIONS: Record<string, string> = {
+  æ: "ae", ø: "oe", å: "aa", ä: "ae", ö: "oe", ü: "ue", ß: "ss", ð: "d", þ: "th",
+};
+
+/**
+ * `"Company name"` → `"companyName"`; `"Ønsket dato"` → `"oensketDato"`.
+ *
+ * Returns `""` when the label leaves nothing usable, so a caller can leave the
+ * key alone rather than writing a broken one over it. The result always
+ * satisfies FIELD_KEY_PATTERN (`^[a-zA-Z][a-zA-Z0-9_]*$`, max 60).
+ */
+export function fieldKeyFromLabel(label: string): string {
+  const words = label
+    .toLowerCase()
+    .replace(/[æøåäöüßðþ]/g, (c) => KEY_TRANSLITERATIONS[c] ?? c)
+    .normalize("NFKD")
+    .replace(/[̀-ͯ]/g, "") // strip the accents NFKD just split off
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  if (words.length === 0) return "";
+  const key = words.map((w, i) => (i === 0 ? w : w.replace(/^./, (c) => c.toUpperCase()))).join("");
+  // A key must START with a letter, so a label like "1st choice" needs a lead.
+  return (/^[0-9]/.test(key) ? `f${key}` : key).slice(0, 60);
+}
+
+/**
+ * Field keys used by more than one field in a `fields` area.
+ *
+ * Two fields with one key would overwrite each other's answer, so
+ * `formSpecFrom` keeps only the first. Unwarned, that reads to the editor as a
+ * field they filled in and published that never appeared on the site — so the
+ * admin shows this on every field involved, not just the dropped one: either of
+ * them could be the mistake.
+ */
+export function duplicateFieldKeys(area: readonly unknown[]): Set<string> {
+  const seen = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const raw of area) {
+    if (!raw || typeof raw !== "object") continue;
+    const b = raw as { blockType?: unknown; inline?: unknown; data?: unknown };
+    if (typeof b.blockType !== "string" || !isFormFieldType(b.blockType)) continue;
+    // `inline` is the stored shape, `data` the delivered one (see formSpecFrom).
+    const payload = (b.inline ?? b.data) as Record<string, unknown> | null | undefined;
+    if (!payload || typeof payload !== "object") continue;
+    const key = typeof payload.name === "string" ? payload.name.trim() : "";
+    // A blank key is the required-field validation's job, not a collision.
+    if (!key) continue;
+    if (seen.has(key)) duplicates.add(key);
+    seen.add(key);
+  }
+  return duplicates;
+}
+
 /** Type-only re-export so callers can pass a resolver without importing both. */
 export type { BlockTypeResolver };
