@@ -12,8 +12,10 @@ import {
   coerceData,
   dataSchemaFor,
   detectContentLanguage,
+  duplicateFieldKeys,
   expectedLanguageForLocale,
   fieldFormatHint,
+  isFormType,
   sortByRule,
   stripSeoGroup,
   tiptapToPlainText,
@@ -1471,6 +1473,23 @@ async function assertDraftPublishable(
         `Set the real name first via update_content {documentId, locale: "${loc}", name: "<the title>"} ` +
         `(or set_field {field: "name"}), then publish again.`,
     );
+  }
+  // A form stores one answer per key, so two fields sharing one means the
+  // second never reaches a visitor — formSpecFrom keeps the first. The admin
+  // warns while editing, but an agent writing over MCP/REST has no admin to
+  // read: without this the publish succeeded and served a form missing a
+  // question nobody was told about (agent-API rule 1, rule 2 for the wording).
+  if (isFormType(item.type)) {
+    const area = (draft.data as { fields?: unknown }).fields;
+    const clashes = [...duplicateFieldKeys(Array.isArray(area) ? area : [])];
+    if (clashes.length > 0) {
+      throw Errors.validation(
+        `This form has two fields with the same key: ${clashes.map((k) => `"${k}"`).join(", ")}. ` +
+          "A form stores one answer per key, so only the first field would reach visitors. " +
+          "Give each field its own `name` in the fields area — e.g. \"email\" and \"workEmail\" " +
+          "— then publish again. Labels may repeat; keys may not.",
+      );
+    }
   }
   // Defence-in-depth: sibling URL segments stay unique at publish time too.
   if (item.kind === "page" && draft.slug) {

@@ -379,6 +379,98 @@ describe("the trust boundary", () => {
   });
 });
 
+describe("two fields, one key", () => {
+  /** A form authored over the API/MCP the way an agent would build one. */
+  async function formWithKeys(name: string, keys: string[]) {
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: authHeaders(admin),
+      payload: { type: "Form", locale: "en", name },
+    });
+    const id = (created.json() as { documentId: string }).documentId;
+    const saved = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${id}?locale=en`,
+      headers: authHeaders(admin),
+      payload: {
+        data: {
+          title: name,
+          submitLabel: "Send",
+          confirmation: "message",
+          fields: keys.map((key, i) => ({
+            key: `b${i}`,
+            blockType: "FormTextField",
+            display: "automatic",
+            ref: null,
+            inline: { name: key, label: `Question ${i + 1}`, required: true },
+          })),
+        },
+      },
+    });
+    const published = await s.app.inject({
+      method: "POST",
+      url: `/api/v1/manage/content/${id}/publish?locale=en`,
+      headers: authHeaders(admin),
+      payload: {},
+    });
+    return { id, saved, published };
+  }
+
+  it("cannot be PUBLISHED — the second field would silently never reach visitors", async () => {
+    // The admin warns while editing, but an agent writing over MCP/REST sees no
+    // admin. Without this gate the publish succeeded and the form served ONE
+    // question: filled in, published, absent — rule #1, at the write path.
+    const { saved, published } = await formWithKeys("Clashing keys", ["email", "email"]);
+    // A draft still saves: drafts are deliberately relaxed (work in progress).
+    expect(saved.statusCode).toBe(200);
+    expect(published.statusCode).toBe(422);
+    const body = published.body;
+    // Self-teaching: name the key, say what breaks, show the shape of a fix.
+    expect(body).toContain("email");
+    expect(body).toMatch(/two fields|same key|one answer per key/i);
+  });
+
+  it("publishes once each field has its own key", async () => {
+    const { published } = await formWithKeys("Distinct keys", ["email", "workEmail"]);
+    expect(published.statusCode, published.body).toBe(200);
+  });
+
+  it("does not begrudge two static-text blocks, which hold no key", async () => {
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: authHeaders(admin),
+      payload: { type: "Form", locale: "en", name: "Static twice" },
+    });
+    const id = (created.json() as { documentId: string }).documentId;
+    await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${id}?locale=en`,
+      headers: authHeaders(admin),
+      payload: {
+        data: {
+          title: "Static twice",
+          submitLabel: "Send",
+          confirmation: "message",
+          fields: [
+            { key: "s1", blockType: "FormStaticText", display: "automatic", ref: null, inline: { heading: "About you" } },
+            { key: "s2", blockType: "FormStaticText", display: "automatic", ref: null, inline: { heading: "About the work" } },
+            { key: "t1", blockType: "FormTextField", display: "automatic", ref: null, inline: { name: "note", label: "Note", required: true } },
+          ],
+        },
+      },
+    });
+    const published = await s.app.inject({
+      method: "POST",
+      url: `/api/v1/manage/content/${id}/publish?locale=en`,
+      headers: authHeaders(admin),
+      payload: {},
+    });
+    expect(published.statusCode, published.body).toBe(200);
+  });
+});
+
 describe("idempotency", () => {
   it("returns the same submission for a repeated Idempotency-Key", async () => {
     const before = await countSubmissions();
