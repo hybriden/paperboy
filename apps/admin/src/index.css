@@ -142,7 +142,10 @@
 }
 
 @utility field-label {
-  @apply mb-1 block text-[13px] font-semibold text-fg;
+  /* 6px, not 4px: the gap to a field's OWN input must read as tighter than
+     the 20px gap to the next field, or the two blur together. Measured
+     2026-08-23 — controls are already 34px, which is why only the gap moved. */
+  @apply mb-1.5 block text-[13px] font-semibold text-fg;
 }
 
 @utility field-input {

@@ -14,6 +14,7 @@ import {
 import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
+import { fieldWidthClass } from "../lib/field-width.js";
 import { postCaret } from "../lib/caret.js";
 import { applyRichTextStrings, collectRichTextStrings } from "../lib/richtext-strings.js";
 import { pickTranslateSource } from "../lib/translate-offer.js";
@@ -912,17 +913,20 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       </div>
 
       {tab === SUBMISSIONS_TAB ? (
-        <div className="max-w-3xl p-4 sm:p-6">
+        <div className="mx-auto max-w-3xl p-4 sm:p-6">
           {/* Keyed by document: switching to another Form must not carry over the
               open page of the previous form's submissions. */}
           <FormSubmissions key={documentId} formId={documentId} canManage={user.permissions.includes("submission.manage")} />
         </div>
       ) : (
-        <div className="max-w-3xl space-y-5 p-4 sm:p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
+        // mx-auto: with the fields capped, a left-hugging column left a sea of
+        // white beside it in All properties. In the narrow side-by-side pane the
+        // cap never binds, so centring is a no-op there.
+        <div className="mx-auto max-w-3xl space-y-5 p-4 sm:p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
           {type?.fields
             .filter((f) => f.group === tab)
             .map((f) => (
-              <div key={f.name} data-pb-prop={f.name}>
+              <div key={f.name} data-pb-prop={f.name} className={fieldWidthClass(f)}>
                 <Field
                   field={f}
                   value={form.data[f.name]}
@@ -952,12 +956,6 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       {/* Workflow toolbar */}
       <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-panel px-4 py-1.5">
         <div className="flex items-center gap-2">
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-            form.status === "published" ? "bg-published/10 text-published" : "bg-draft/10 text-draft"
-          }`}>
-            <span className={`h-2 w-2 rounded-full ${form.status === "published" ? "bg-published" : "bg-draft"}`} />
-            {form.status === "published" ? (form.hasUnpublishedChanges ? "Published · changes" : "Published") : "Draft"}
-          </span>
           {/* Agent provenance. The actionable "Needs review" badge only shows when
               the site requires agent review (Settings → MCP); otherwise an agent
               write is surfaced as a passive "agent-edited" label. */}
@@ -1071,6 +1069,15 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               ))}
             </div>
           )}
+          {/* The state and the button that changes it are ONE decision, so they sit
+              together. This pill used to live at the far left of the toolbar,
+              ~900px from Publish. */}
+          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+            form.status === "published" ? "bg-published/10 text-published" : "bg-draft/10 text-draft"
+          }`}>
+            <span className={`h-2 w-2 rounded-full ${form.status === "published" ? "bg-published" : "bg-draft"}`} />
+            {form.status === "published" ? (form.hasUnpublishedChanges ? "Published · changes" : "Published") : "Draft"}
+          </span>
           {canPublish && (
             <div className="flex items-stretch">
               <button

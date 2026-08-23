@@ -305,12 +305,16 @@ export function PreviewPane({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Persistent "viewing drafts" banner (editors must know). */}
+      {/* Persistent "viewing drafts" banner (editors must know). The STATE stays —
+          it is a correctness signal, not a hint — but the "click any element" tail
+          is gone from preview mode: an instruction that never leaves becomes
+          furniture, and click-to-edit is learned in one sitting. On-page mode
+          keeps its instruction, because that mode is entered deliberately. */}
       <div className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium ${mode === "edit" ? "bg-accent/15 text-accent-700" : "bg-draft/15 text-draft"}`} role="status">
         <span className={`h-2 w-2 rounded-full ${mode === "edit" ? "bg-accent" : "bg-draft"}`} />
         {mode === "edit"
           ? "On-page editing — click an element to edit it right here"
-          : "Preview — click any heading, text or block to edit it"}
+          : "Preview · showing drafts"}
       </div>
       <div className="flex items-center gap-2 border-b border-line bg-panel px-3 py-2">
         <div className="flex rounded border border-line p-0.5">

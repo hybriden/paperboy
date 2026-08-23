@@ -20,6 +20,7 @@ import { useEffect, useMemo, useState } from "react";
 import { duplicateFieldKeys, fieldKeyFromLabel, generalBlockTypes, isFormFieldType } from "@paperboy/shared";
 import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
 import { api } from "../../lib/api.js";
+import { fieldWidthClass } from "../../lib/field-width.js";
 import { Icon } from "../../lib/icons.js";
 import { ImageField } from "../MediaLibrary.js";
 import { LinkField } from "./LinkField.js";
@@ -497,7 +498,9 @@ function SortableBlock({
             // data-pb-prop(-block): focusing a field here highlights the SAME
             // field inside this block in the preview (paperboy:focus w/ block
             // scope). Top-level blocks only — the frontend indexes per area.
-            <div key={f.name} {...(depth === 0 ? { "data-pb-prop": f.name, "data-pb-prop-block": index } : {})}>
+            // Same width discipline as a page's own fields — a block's date field
+            // was still stretching to the column.
+            <div key={f.name} className={fieldWidthClass(f)} {...(depth === 0 ? { "data-pb-prop": f.name, "data-pb-prop-block": index } : {})}>
               <BlockField field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
                 disabled={disabled}
                 types={types}
