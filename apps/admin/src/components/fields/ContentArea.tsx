@@ -16,7 +16,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { duplicateFieldKeys, fieldKeyFromLabel, generalBlockTypes, isFormFieldType } from "@paperboy/shared";
 import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
 import { api } from "../../lib/api.js";
@@ -56,6 +56,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   // that silently drops a question the editor filled in and published is the
   // authoring-side version of garbage-in-success-out. Empty elsewhere.
   const duplicateKeys = duplicateFieldKeys(blocks);
+  const nestedOnlyTypes = useMemo(() => new Set(types.filter((t) => t.nestedOnly).map((t) => t.name)), [types]);
   // Follow the order the type author DECLARED — they list the everyday fields
   // first, while `types` arrives sorted by internal name (which put "Text
   // field" ninth in the Form palette, behind "Checkbox" and "Choose one").
@@ -165,9 +166,23 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
         }
         if (!p.documentId || !p.blockType) return;
         if (p.kind === "block") {
-          // allowedBlocks constrains which BLOCK types may be placed here.
-          const ok = !field.allowedBlocks.length || field.allowedBlocks.includes(p.blockType);
-          if (ok) addShared(p.documentId, p.blockType);
+          // Mirror the write rule exactly (assertAllowedTypes): allowedBlocks
+          // constrains which BLOCK types land here, and an area with no
+          // allow-list takes any GENERAL block — not a part. Say why instead of
+          // silently swallowing the drop, which read as a broken drag.
+          const named = field.allowedBlocks.includes(p.blockType);
+          if (field.allowedBlocks.length && !named) {
+            toast.error("Can’t drop that block here", `This area doesn’t allow ${p.blockType}.`);
+            return;
+          }
+          if (!field.allowedBlocks.length && nestedOnlyTypes.has(p.blockType)) {
+            toast.error(
+              "Can’t drop that block here",
+              `${p.blockType} is a part — it belongs inside the type that lists it, not loose in a page.`,
+            );
+            return;
+          }
+          addShared(p.documentId, p.blockType);
         } else if (p.kind === "page") {
           // Pages are always placeable (rendered as teasers, not as blocks).
           addShared(p.documentId, p.blockType);
@@ -245,7 +260,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
             <SharedBlockPicker
               at={pickerOpen}
               allowedBlocks={field.allowedBlocks}
-              nestedOnlyTypes={new Set(types.filter((t) => t.nestedOnly).map((t) => t.name))}
+              nestedOnlyTypes={nestedOnlyTypes}
               sharedBlocks={sharedBlocks}
               pages={pages.data ?? []}
               onPick={(documentId, blockType) => {
@@ -582,7 +597,7 @@ function BlockField({ field, fieldId, value, onChange, onCommit, disabled = fals
           value={((value as { href?: string } | null) ?? {}).href ?? ""}
           onChange={(e) => onChange(e.target.value ? { ...(value as object), href: e.target.value } : null)} />
       )}
-      {field.type === "reference" && <ReferenceField id={id} value={value} onChange={onChange} disabled={disabled} />}
+      {field.type === "reference" && <ReferenceField id={id} allowedTypes={field.allowedTypes} value={value} onChange={onChange} disabled={disabled} />}
       {field.type === "image" && <ImageField id={id} value={value} onChange={onChange} disabled={disabled} />}
     </div>
   );

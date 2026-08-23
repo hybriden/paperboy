@@ -1129,7 +1129,15 @@ async function assertAllowedTypes(db: Database, type: ContentTypeDef, data: Reco
         // 200, and delivered `data:{}, fieldTypes:{}` — the inline payload silently
         // vanished. Three successes and a blank page is the retry loop rule #1 exists
         // to prevent, so the type must at least exist. Self-teaching (rule #2).
-        const known = await db.select({ name: contentType.name, kind: contentType.kind }).from(contentType).where(eq(contentType.name, bt)).limit(1);
+        const known = await db
+          .select({
+            name: contentType.name,
+            kind: contentType.kind,
+            nestedOnly: sql<boolean>`coalesce((${contentType.definition} ->> 'nestedOnly')::boolean, false)`,
+          })
+          .from(contentType)
+          .where(eq(contentType.name, bt))
+          .limit(1);
         if (!known[0]) {
           const installed = (await db.select({ name: contentType.name }).from(contentType).where(inArray(contentType.kind, ["block", "page"])).orderBy(asc(contentType.name))).map((r) => r.name);
           throw Errors.validation(
@@ -1142,6 +1150,19 @@ async function assertAllowedTypes(db: Database, type: ContentTypeDef, data: Reco
           // always placeable — its type name is never in allowedBlocks.
           if (known[0].kind === "page") continue;
           throw Errors.validation(`Content area "${f.name}" does not allow block "${bt}"`);
+        }
+        // "Any block" means any GENERAL block. A nested-only type is a PART of
+        // one specific parent (a Form's field blocks), so an area that never
+        // named it has not opted in — and a part placed loose in a page body
+        // delivers a block no frontend can render, the same success-then-blank
+        // failure the unknown-blockType branch above exists to stop.
+        if (!f.allowedBlocks.length && known[0].nestedOnly) {
+          throw Errors.validation(
+            `Content area "${f.name}" does not accept "${bt}": it is a PART, only used inside another type ` +
+              `(its own parent lists it in that area's allowed blocks). This area allows any GENERAL block. ` +
+              `Place it inside the type it belongs to, or — if you really mean it here — add "${bt}" to ` +
+              `this area's allowedBlocks on content type "${type.name}".`,
+          );
         }
       }
     }

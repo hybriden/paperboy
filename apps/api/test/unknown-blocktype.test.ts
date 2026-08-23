@@ -93,3 +93,109 @@ describe("unknown blockType is rejected at the write chokepoint", () => {
     expect(res.json().message as string).toMatch(/not an installed content type/i);
   });
 });
+
+/**
+ * A PART must not land in an area that merely allows "any block".
+ *
+ * `nestedOnly` says a type is only ever part of another one — a Form's field
+ * blocks. "Any block" therefore means any GENERAL block: without this, a Date
+ * field dropped into an article body saved 200 and delivered a block no
+ * frontend can render, which is the same garbage-in-success-out the unknown
+ * blockType case above exists to stop. An area that names the part explicitly
+ * in allowedBlocks has opted in and is untouched.
+ */
+describe("nested-only parts are rejected where any block goes", () => {
+  let s: Suite;
+  let admin: Awaited<ReturnType<typeof login>>;
+
+  beforeAll(async () => {
+    s = await setupApi();
+    admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    for (const name of ["Form", "FormDateField"]) {
+      const r = await s.app.inject({
+        method: "POST",
+        url: `/api/v1/manage/type-templates/${name}/instantiate`,
+        headers: authHeaders(admin),
+        payload: { updateExisting: true },
+      });
+      expect(r.statusCode, r.body).toBe(200);
+    }
+  });
+  afterAll(async () => {
+    await s.app.close();
+  });
+
+  const partBlock = {
+    key: "p1",
+    blockType: "FormDateField",
+    display: "automatic",
+    shared: false,
+    ref: null,
+    inline: { name: "when", label: "When" },
+  };
+
+  async function typeWithArea(typeName: string, allowedBlocks: string[]) {
+    const def = {
+      name: typeName,
+      displayName: typeName,
+      kind: "page",
+      fields: [{ name: "area", displayName: "Area", type: "contentArea", delivery: "public", allowedBlocks }],
+    };
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content-types",
+      headers: authHeaders(admin),
+      payload: def,
+    });
+    if (created.statusCode === 409) {
+      const put = await s.app.inject({
+        method: "PUT",
+        url: `/api/v1/manage/content-types/${typeName}`,
+        headers: authHeaders(admin),
+        payload: def,
+      });
+      expect(put.statusCode, put.body).toBe(200);
+    } else {
+      expect(created.statusCode, created.body).toBe(200);
+    }
+    const page = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: authHeaders(admin),
+      payload: { type: typeName, parentId: null, locale: "en", name: `${typeName} instance` },
+    });
+    expect(page.statusCode, page.body).toBe(200);
+    return page.json().documentId as string;
+  }
+
+  const save = (documentId: string, data: Record<string, unknown>) =>
+    s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${documentId}?locale=en`,
+      headers: authHeaders(admin),
+      payload: { data },
+    });
+
+  it("refuses a part in an area with no allow-list, and says how to fix it", async () => {
+    const id = await typeWithArea("PartsOpenArea", []);
+    const res = await save(id, { area: [partBlock] });
+    expect(res.statusCode, res.body).toBe(422);
+    // Self-teaching (rule 2): name the type, say what it is, offer the way out.
+    expect(res.body).toContain("FormDateField");
+    expect(res.body).toMatch(/part|only used inside|allowed blocks/i);
+  });
+
+  it("accepts the same part where the area names it explicitly", async () => {
+    const id = await typeWithArea("PartsOptedIn", ["FormDateField"]);
+    const res = await save(id, { area: [partBlock] });
+    expect(res.statusCode, res.body).toBe(200);
+  });
+
+  it("still accepts a general block in an area with no allow-list", async () => {
+    const id = await typeWithArea("PartsOpenArea2", []);
+    const res = await save(id, {
+      area: [{ key: "g1", blockType: "HeroBlock", display: "automatic", shared: false, ref: null, inline: {} }],
+    });
+    expect(res.statusCode, res.body).toBe(200);
+  });
+});

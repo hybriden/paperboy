@@ -1070,6 +1070,74 @@ test("an area that allows ANY block still does not offer parts (a form's field b
   await page.request.delete(`/api/v1/manage/content-types/${typeName}`, { headers });
 });
 
+test("a reference field offers what its allowedTypes say — including blocks", async ({ page }) => {
+  await login(page);
+  // The picker listed PAGES only, so a reference constrained to a block type
+  // (a section pointing at a shared Form) had an empty dropdown reading
+  // "choose a page" — the value could only be set through the API. It also
+  // ignored allowedTypes, offering pages the write then rejects.
+  const me = await page.request.get("/api/v1/auth/me");
+  const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+  const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
+
+  const inst = await page.request.post("/api/v1/manage/type-templates/Form/instantiate", {
+    headers,
+    data: { withBlocks: true, updateExisting: true },
+  });
+  expect(inst.ok(), `instantiate Form: ${inst.status()}`).toBe(true);
+
+  const typeName = "RefProbePage";
+  const def = {
+    name: typeName,
+    displayName: "Ref probe page",
+    kind: "page",
+    fields: [{ name: "pickedForm", displayName: "Picked form", type: "reference", delivery: "public", allowedTypes: ["Form"] }],
+  };
+  const createType = await page.request.post("/api/v1/manage/content-types", { headers, data: def });
+  if (createType.status() === 409) {
+    const put = await page.request.put(`/api/v1/manage/content-types/${typeName}`, { headers, data: def });
+    expect(put.ok(), `update probe type: ${put.status()}`).toBe(true);
+  } else {
+    expect(createType.ok(), `create probe type: ${createType.status()} ${await createType.text()}`).toBe(true);
+  }
+
+  const formName = `Ref target form ${Date.now()}`;
+  const form = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: "Form", parentId: null, locale: "en", name: formName },
+  });
+  expect(form.ok(), `create form: ${form.status()}`).toBe(true);
+  const formDoc = (await form.json()) as { documentId: string };
+
+  const probe = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: typeName, parentId: null, locale: "en", name: `Ref probe ${Date.now()}` },
+  });
+  const probeDoc = (await probe.json()) as { documentId: string };
+
+  await page.goto(`/edit/${probeDoc.documentId}`);
+  await page.reload();
+  const picker = page.getByLabel("Picked form");
+  await expect(picker).toBeVisible({ timeout: 20_000 });
+
+  // The Form is offered…
+  await expect(picker.locator("option", { hasText: formName })).toHaveCount(1);
+  // …and pages are NOT, because allowedTypes says Form only.
+  await expect(picker.locator("option", { hasText: "Home" })).toHaveCount(0);
+  // The placeholder names what is being chosen, not "a page".
+  await expect(picker.locator("option").first()).not.toHaveText(/choose a page/);
+
+  // Picking it round-trips through a save.
+  await picker.selectOption({ label: formName });
+  const saved = await page.request.get(`/api/v1/manage/content/${probeDoc.documentId}?locale=en`);
+  expect(saved.ok()).toBe(true);
+
+  for (const id of [probeDoc.documentId, formDoc.documentId]) {
+    await page.request.delete(`/api/v1/manage/content/${id}`, { headers });
+  }
+  await page.request.delete(`/api/v1/manage/content-types/${typeName}`, { headers });
+});
+
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
