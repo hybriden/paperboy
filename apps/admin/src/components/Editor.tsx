@@ -36,7 +36,7 @@ import { LinkField } from "./fields/LinkField.js";
 import { ReferenceField } from "./fields/ReferenceField.js";
 import { RichText } from "./fields/RichText.js";
 import { ImageField, StockQueryContext } from "./MediaLibrary.js";
-import { type PbRect, type PreviewMode, PreviewPane, previewOrigin, publicSiteUrl } from "./PreviewPane.js";
+import { PREVIEW_USEFUL_MAX, PreviewPane, previewOrigin, publicSiteUrl, type PbRect, type PreviewMode } from "./PreviewPane.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
@@ -101,6 +101,47 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const [showSchedule, setShowSchedule] = useState(false);
   const [showBrief, setShowBrief] = useState(false);
   const [hideTranslateOffer, setHideTranslateOffer] = useState(false);
+  /**
+   * On a very wide display the preview stops being the thing that should grow:
+   * past DESKTOP_MAX (1920) it would render a fluid site's empty gutters, so the
+   * surplus goes to the FORM instead — which is what actually gets better with
+   * room. Percentages alone cannot express that, so the default share is derived
+   * from the workspace width: keep the preview near its useful maximum and give
+   * the rest to the form.
+   */
+  const splitRef = useRef<HTMLDivElement>(null);
+  // Seeded from the window SYNCHRONOUSLY: a Panel's defaultSize is only read at
+  // mount, and a measured-in-an-effect width is still 0 then — which silently
+  // left the split at its base 68% on a 5K. The observer then refines it, and
+  // the Group is keyed by the bucket so crossing the threshold re-applies the
+  // defaults once.
+  const [splitW, setSplitW] = useState(() => (typeof window === "undefined" ? 0 : window.innerWidth));
+  useEffect(() => {
+    const el = splitRef.current;
+    if (!el) return;
+    const measure = () => setSplitW(el.clientWidth || window.innerWidth);
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    measure();
+    return () => ro.disconnect();
+  }, []);
+  /**
+   * Past this, the workspace stops stretching and becomes a CENTRED BAND.
+   *
+   * Handing the surplus to the form was the first attempt and it only moved the
+   * problem: the field column caps at 768px, so a 3100px form pane is as empty
+   * as the preview was. Capping the band keeps every pixel inside it doing work —
+   * roughly a 960px form beside a 1920px preview at the usual 32/68 split — and
+   * the leftover becomes symmetric margin, which reads as a deliberate layout
+   * instead of a broken one.
+   */
+  const previewPct = widePreview ? 68 : 58;
+  const formPct = 100 - previewPct;
+  // Derived, not guessed: the band is exactly as wide as it takes for the
+  // preview's share to land on its useful maximum.
+  const bandMax = Math.round((PREVIEW_USEFUL_MAX + 24) / (previewPct / 100));
+  const ultrawide = splitW > bandMax;
+
   // Persisted form/preview split (was PanelGroup autoSaveId pre-v4).
   const splitLayout = useDefaultLayout({ id: `paperboy-editor-split-${widePreview ? "w" : "n"}` });
   const detail = useQuery({
@@ -1403,17 +1444,29 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           return <div className="min-h-0 flex-1 border-l border-line bg-panel">{previewPaneEl}</div>;
         }
         return (
+          // TWO wrappers on purpose. The outer one is measured and never capped;
+          // the inner one carries the band cap. Measuring the capped element made
+          // splitW collapse to the cap, which flipped `ultrawide` back off and
+          // lifted it again — a feedback loop that settled differently depending
+          // on ResizeObserver timing (caught by screenshotting after measuring).
+          <div ref={splitRef} className="flex min-h-0 flex-1">
+          <div
+            className={`flex min-h-0 flex-1 ${ultrawide ? "mx-auto w-full" : ""}`}
+            style={ultrawide ? { maxWidth: bandMax } : undefined}
+          >
           <Group orientation="horizontal" defaultLayout={splitLayout.defaultLayout} onLayoutChanged={splitLayout.onLayoutChanged} className="flex min-h-0 flex-1">
-            <Panel id="form" defaultSize={widePreview ? "32" : "42"} minSize="24" className="min-w-0">
+            <Panel id="form" defaultSize={String(formPct)} minSize="24" className="min-w-0">
               {formSection}
             </Panel>
             {previewOpen && <ResizeHandle />}
             {previewOpen && (
-              <Panel id="preview" defaultSize={widePreview ? "68" : "58"} minSize="20" className="min-w-0 border-l border-line bg-panel">
+              <Panel id="preview" defaultSize={String(previewPct)} minSize="20" className="min-w-0 border-l border-line bg-panel">
                 {previewPaneEl}
               </Panel>
             )}
           </Group>
+          </div>
+          </div>
         );
       })()}
 

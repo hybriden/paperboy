@@ -60,6 +60,26 @@ type Device = "desktop" | "tablet" | "mobile";
 // pane (scaled) so "desktop" shows the true desktop layout, not a
 // narrow column that trips the site's mobile breakpoints.
 const WIDTHS: Record<Device, number> = { desktop: 1280, tablet: 834, mobile: 390 };
+/**
+ * Desktop is FLUID between two bounds, not a fixed 1280.
+ *
+ * The floor is the old fixed width, and it is load-bearing: in a narrow
+ * side-by-side pane the iframe must never actually BE 500px, or the site renders
+ * its mobile layout and the editor reviews the wrong thing. Scaling a 1280
+ * render down keeps the desktop layout.
+ *
+ * The ceiling exists because past roughly here a fluid site is only centring its
+ * container in ever-wider empty gutters — rendering at 3800px on an ultrawide
+ * previews emptiness and costs everything else on screen. Between the bounds the
+ * frame simply fills the pane at 1:1: no upscaling (which would blur), and none
+ * of the 32%-of-the-pane dead space the fixed 1280 produced on a 1870px pane
+ * (measured 2026-08-23 — collapsing the side panes to make room for the preview
+ * made the waste worse, which is backwards).
+ */
+const DESKTOP_MIN = WIDTHS.desktop;
+/** Exported: the editor sizes the form/preview split against the same number,
+ *  so "the preview stops growing here" is stated once. */
+export const PREVIEW_USEFUL_MAX = 1920;
 // Real device viewport heights so `100vh` sections look right (not inflated).
 const HEIGHTS: Record<Device, number> = { desktop: 860, tablet: 1112, mobile: 844 };
 
@@ -268,9 +288,14 @@ export function PreviewPane({
   // desktop layout), then make the iframe tall enough to FILL the pane height so
   // there's no empty gap — the page scrolls inside the iframe. For tablet/mobile
   // (taller than the pane) we also cap by height so the whole device shows.
-  const target = WIDTHS[device];
-  const vh = HEIGHTS[device];
   const pad = 16;
+  const vh = HEIGHTS[device];
+  // Tablet and mobile emulate a device viewport (fixed width, scaled to fit).
+  // Desktop is a fluid canvas: it takes the pane's width, bounded.
+  const target =
+    device === "desktop"
+      ? Math.round(Math.min(PREVIEW_USEFUL_MAX, Math.max(DESKTOP_MIN, box.w ? box.w - pad : DESKTOP_MIN)))
+      : WIDTHS[device];
   const widthScale = box.w ? (box.w - pad) / target : 1;
   const fitScale = box.w && box.h ? Math.min((box.w - pad) / target, (box.h - pad) / vh) : 1;
   const scale = Math.max(0.1, Math.min(1, device === "desktop" ? widthScale : fitScale));
