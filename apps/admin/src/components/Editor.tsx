@@ -15,6 +15,7 @@ import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { fieldWidthClass } from "../lib/field-width.js";
+import { opeAction } from "../lib/ope-target.js";
 import { postCaret } from "../lib/caret.js";
 import { applyRichTextStrings, collectRichTextStrings } from "../lib/richtext-strings.js";
 import { pickTranslateSource } from "../lib/translate-offer.js";
@@ -619,7 +620,6 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Field types that get an anchored on-page overlay in edit mode; structural
   // fields (contentArea/reference) genuinely want the sidebar's context, and
   // block clicks keep the classic focus flow too.
-  const OPE_FIELD_TYPES = new Set(["text", "markdown", "richtext", "boolean", "number", "datetime", "select", "link", "image"]);
 
   // Visual on-page editing: the preview iframe posts which field/block was
   // clicked. In INSPECT mode → switch to its tab and scroll/focus the sidebar
@@ -697,6 +697,19 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         return null;
       })();
 
+      // One rule, unit-tested in lib/ope-target: on-page is a mode the editor
+      // chose, so a click never changes it. (It used to fall through to
+      // setView("split") — clicking page background, which bubbles to the
+      // content area, teleported the whole editor into side-by-side.)
+      const action = opeAction({
+        mode: opeModeRef.current,
+        hasRect: Boolean(d.rect),
+        blockIndex: d.blockIndex ?? null,
+        fieldName,
+        pageFieldType: def?.type,
+        blockFieldType: blockField?.def.type,
+      });
+
       // Click-to-caret: the bridge reports where INSIDE the field the click
       // landed (text snippet + offset). Long richtext/markdown fields use it to
       // open at the clicked text, not the top. Mailbox: the target editor may
@@ -707,44 +720,36 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         // The overlay's Field uses page-style `f-…` ids (the form is unmounted in
         // on-page mode, so they can't collide); the side-by-side block card's
         // editors are `bf-<key>-…`.
-        const opensOverlay = opeModeRef.current === "edit" && (!blockField || OPE_FIELD_TYPES.has(blockField.def.type));
+        const opensOverlay = action.kind === "overlay";
         const targetId = blockField && !opensOverlay ? `bf-${blockField.key}-${fieldName}` : `f-${fieldName}`;
         postCaret(targetId, { snippet: caret.snippet, offset: typeof caret.offset === "number" ? caret.offset : 0 });
       }
 
-      if (opeModeRef.current === "edit") {
-        if (d.rect) {
-          const click = (d as { click?: { x: number; y: number } }).click;
-          const anchor = {
-            rect: d.rect,
-            // Anchor the card at the click, not the element box — clamped inside.
-            ox: click ? Math.max(0, click.x - d.rect.x) : 0,
-            oy: click ? Math.max(0, click.y - d.rect.y) : d.rect.h,
-            n: ++propCounter.current,
-          };
-          if (d.blockIndex == null) {
-            // The page NAME is marked on most frontends but isn't a data field —
-            // it's still on-page-editable (a plain text value on the version).
-            if (fieldName === "name") {
-              setOpe({ field: "name", ...anchor });
-              return;
-            }
-            if (def && OPE_FIELD_TYPES.has(def.type)) {
-              setOpe({ field: def.name, ...anchor });
-              return;
-            }
-            // A marker that doesn't map to anything editable: do nothing rather
-            // than yanking the editor out of on-page mode.
-            if (!def) return;
-          } else if (blockField && OPE_FIELD_TYPES.has(blockField.def.type)) {
-            setOpe({ field: blockField.name, block: { area: blockField.area, index: d.blockIndex }, ...anchor });
-            return;
-          }
+      if (action.kind === "stay") {
+        if (action.hint === "form-only") {
+          toast.toast({
+            title: "Edited in the form",
+            description: "This one is a block or a nested area — switch to Side by side or All properties to change it.",
+            variant: "info",
+          });
         }
-        // Structural targets (blocks, content areas, references) want the form
-        // panel — which on-page edit hides for real estate. Drop to
-        // side-by-side so the sidebar flow below has somewhere to land.
-        setView("split");
+        return;
+      }
+
+      if (action.kind === "overlay" && d.rect) {
+        const click = (d as { click?: { x: number; y: number } }).click;
+        const anchor = {
+          rect: d.rect,
+          // Anchor the card at the click, not the element box — clamped inside.
+          ox: click ? Math.max(0, click.x - d.rect.x) : 0,
+          oy: click ? Math.max(0, click.y - d.rect.y) : d.rect.h,
+          n: ++propCounter.current,
+        };
+        if (action.target === "name") setOpe({ field: "name", ...anchor });
+        else if (action.target === "block" && blockField && d.blockIndex != null) {
+          setOpe({ field: blockField.name, block: { area: blockField.area, index: d.blockIndex }, ...anchor });
+        } else if (def) setOpe({ field: def.name, ...anchor });
+        return;
       }
 
       if (blockField) setTab(blockField.group);
