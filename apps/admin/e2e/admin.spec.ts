@@ -1247,6 +1247,49 @@ test("clicking outside a property in on-page mode STAYS in on-page mode", async 
   await expect(onpage).toHaveAttribute("aria-pressed", "true");
 });
 
+test("Publish is inert when there is nothing to publish, and wakes up on a change", async ({ page }) => {
+  await login(page);
+  // Reported: a page with no pending changes shows the same full-emphasis
+  // Publish button as one with changes. Worse than ambiguous — the API answers
+  // "Nothing to publish (no draft changes)" with a 409, so it was a primary
+  // button that could only produce an error toast.
+  const me = await page.request.get("/api/v1/auth/me");
+  const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+  const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
+
+  const created = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: "LandingPage", parentId: null, locale: "en", name: `Publish state ${Date.now()}` },
+  });
+  expect(created.ok(), `create: ${created.status()} ${await created.text()}`).toBe(true);
+  const { documentId } = (await created.json()) as { documentId: string };
+
+  // Fill the required field and publish, so the page is live with NO pending changes.
+  const saved = await page.request.put(`/api/v1/manage/content/${documentId}?locale=en`, {
+    headers,
+    data: { data: { heading: "Nothing pending" } },
+  });
+  expect(saved.ok(), `save: ${saved.status()} ${await saved.text()}`).toBe(true);
+  const published = await page.request.post(`/api/v1/manage/content/${documentId}/publish?locale=en`, { headers, data: {} });
+  expect(published.ok(), `publish: ${published.status()} ${await published.text()}`).toBe(true);
+
+  await page.goto(`/edit/${documentId}`);
+  const publishBtn = page.getByRole("button", { name: "Publish", exact: true });
+  await expect(publishBtn).toBeVisible({ timeout: 20_000 });
+
+  // Up to date: the button must not invite a click the server will refuse.
+  await expect(publishBtn).toBeDisabled();
+
+  // Making a change wakes it up.
+  const heading = page.locator("#f-heading");
+  await expect(heading).toBeVisible();
+  await heading.fill("Now there is something to publish");
+  await expect(page.getByText("All changes saved")).toBeVisible({ timeout: 15_000 });
+  await expect(publishBtn).toBeEnabled();
+
+  await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+});
+
 test("visual editing: the admin IGNORES an edit message that is not from the preview origin", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();

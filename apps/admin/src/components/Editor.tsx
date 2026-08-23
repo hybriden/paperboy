@@ -320,6 +320,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   }, [form, onName]);
 
   const canEdit = user.permissions.includes("content.update");
+
   const canPublish = user.permissions.includes("content.publish");
 
   // A variant is "empty" when it has no saved version (scaffold, versionNumber
@@ -900,6 +901,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   }
 
   const isPage = form.kind === "page";
+  // Publishing is only an ACTION when there is something to publish; the API
+  // 409s otherwise ("Nothing to publish (no draft changes)").
+  const nothingToPublish = form.status === "published" && !form.hasUnpublishedChanges;
   // Live preview is a desktop-only split pane; never open it on phones.
   const previewOpen = view !== "props" && !mobile;
   // Hoisted on purpose: the preview message handler (registered while the
@@ -1125,17 +1129,25 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             {form.status === "published" ? (form.hasUnpublishedChanges ? "Published · changes" : "Published") : "Draft"}
           </span>
           {canPublish && (
+            // Nothing pending is a REAL state, not a cosmetic one: publishContent
+            // answers "Nothing to publish (no draft changes)" with a 409, so a
+            // full-emphasis button here could only ever produce an error toast.
+            // It drops to the quiet variant and goes inert, which also makes the
+            // button agree with the status pill beside it instead of contradicting
+            // it. A taken-down page reads as status "draft", so re-publishing it
+            // stays available.
             <div className="flex items-stretch">
               <button
-                className="btn-primary rounded-r-none"
+                className={`${nothingToPublish ? "btn-subtle" : "btn-primary"} rounded-r-none`}
                 onClick={() => publish.mutate()}
-                disabled={publish.isPending || !canEdit}
+                disabled={publish.isPending || !canEdit || nothingToPublish}
+                title={nothingToPublish ? "Nothing to publish — the live version already matches this draft." : undefined}
               >
                 {publish.isPending ? "Publishing…" : "Publish"}
               </button>
               <Menu>
                 <MenuTrigger
-                  className="btn-primary rounded-l-none border-l border-accent-fg/25 px-1.5"
+                  className={`${nothingToPublish ? "btn-subtle border-l-line" : "btn-primary border-l-accent-fg/25"} rounded-l-none border-l px-1.5`}
                   aria-label="More publish actions"
                 >
                   <Icon.ChevronDown width={15} height={15} />
