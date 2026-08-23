@@ -133,6 +133,15 @@
   @apply btn border border-line bg-panel text-fg hover:bg-canvas;
 }
 
+@utility btn-inert {
+  /* A control with NOTHING TO DO — currently only Publish on an up-to-date page.
+     Deliberately a filled, legible, obviously-inactive control rather than a
+     ghost of the primary button: `btn`'s disabled:opacity-50 over a light fill
+     reads as "still loading", so the opacity is reset and the muted tone does
+     the work instead. text-muted on this fill is ~5:1 in both themes. */
+  @apply btn border border-line bg-line/50 text-muted disabled:opacity-100;
+}
+
 @utility btn-danger {
   /* text-danger-fg, NOT text-white: dark theme lightens --c-danger to
        rgb(248 120 120), where white text is ~2.7:1 and fails WCAG 1.4.3.

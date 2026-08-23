@@ -1138,7 +1138,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             // stays available.
             <div className="flex items-stretch">
               <button
-                className={`${nothingToPublish ? "btn-subtle" : "btn-primary"} rounded-r-none`}
+                className={`${nothingToPublish ? "btn-inert" : "btn-primary"} rounded-r-none`}
                 onClick={() => publish.mutate()}
                 disabled={publish.isPending || !canEdit || nothingToPublish}
                 title={nothingToPublish ? "Nothing to publish — the live version already matches this draft." : undefined}
@@ -1147,7 +1147,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               </button>
               <Menu>
                 <MenuTrigger
-                  className={`${nothingToPublish ? "btn-subtle border-l-line" : "btn-primary border-l-accent-fg/25"} rounded-l-none border-l px-1.5`}
+                  className={`${nothingToPublish ? "btn-inert border-l-line" : "btn-primary border-l-accent-fg/25"} rounded-l-none border-l px-1.5`}
                   aria-label="More publish actions"
                 >
                   <Icon.ChevronDown width={15} height={15} />
