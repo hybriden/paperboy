@@ -1025,7 +1025,7 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
         <span className="field-label">Preview base URL</span>
         <input aria-label="Preview base URL" className="field-input" type="url" inputMode="url" placeholder="https://example.com" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} />
         <span className="mt-1 block text-xs text-muted">
-          Preview opens <code>{(previewUrl || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Empty = fall back to the admin host on :8092.
+          Preview opens <code>{(previewUrl || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Empty = fall back to the admin host on :4321.
         </span>
       </label>
 

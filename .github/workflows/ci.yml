@@ -154,10 +154,16 @@ jobs:
         timeout-minutes: 20
         # COOKIE_SECURE=false: the suite logs in over http://localhost:8090
         # (the same reason live-deploy runs need ADMIN_URL=https://…).
-        run: docker compose up -d --build --wait
+        # --profile web: the reference frontend is opt-in now, and this suite
+        # drives the preview pane, which frames it on :8092.
+        run: docker compose --profile web up -d --build --wait
         env:
           COOKIE_SECURE: "false"
           ALLOW_INSECURE_COOKIES: "true"
+          # The seed defaults the site's preview URL to the Astro starter
+          # (:4321), which does not exist in CI. Point it at the reference
+          # frontend this suite actually runs.
+          SITE_PREVIEW_URL: "http://localhost:8092"
           # The stack runs NODE_ENV=production, so env.ts now refuses the
           # compose `prod-*-please-override` placeholder secrets (S2-H2). Supply
           # real (non-placeholder) test secrets so the api boots — exactly what

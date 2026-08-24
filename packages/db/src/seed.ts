@@ -222,7 +222,7 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
     // install — the editor sees an empty pane with no hint that a frontend is
     // what's missing. 4321 is the Astro starter's dev port; override for any
     // other frontend (Settings -> Site -> Preview URL, or SITE_PREVIEW_URL).
-    previewBaseUrl: process.env.SITE_PREVIEW_URL ?? "http://localhost:4321",
+    previewBaseUrl: process.env.SITE_PREVIEW_URL || "http://localhost:4321",
   });
 
   // Content types.
