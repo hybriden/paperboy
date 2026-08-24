@@ -1,0 +1,85 @@
+name: Release images
+
+# Publish the two container images this stack is built from, so running Paperboy
+# does not require building it from source.
+#
+# Why this exists: compose built `paperboy/app:latest` and `paperboy/admin:latest`
+# LOCALLY, which meant anyone who wanted to run the CMS had to clone this repo and
+# wait for a full pnpm monorepo build. It also made "clone the frontend starter and
+# get a CMS with it" impossible — there was nothing to pull. With these published,
+# the Astro starter's demo compose can bring up the whole thing from one clone.
+#
+#   ghcr.io/hybriden/paperboy-app     api · init(migrate+seed) · web · mcp
+#   ghcr.io/hybriden/paperboy-admin   the admin SPA behind nginx
+#
+# Both come from the one Dockerfile in this repo (targets `app` and `admin`).
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+# The only job here that needs more than read: pushing packages. Nothing else is
+# granted, so a compromised dependency in a build cannot touch the repo.
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-images-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  images:
+    name: build + push (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: app
+            image: paperboy-app
+          - target: admin
+            image: paperboy-admin
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}
+          # `latest` tracks main so the documented compose files keep working;
+          # the sha tag is what you pin a real deployment to, because "latest"
+          # is not a version and cannot be rolled back to.
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          target: ${{ matrix.target }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # The admin SPA inlines VITE_* at build time. VITE_WEB_URL is left EMPTY
+          # on purpose: a published image must not carry one deployment's frontend
+          # origin. At runtime the admin reads the site's preview URL from the API,
+          # which is the setting that actually belongs to a deployment.
+          build-args: |
+            VITE_WEB_URL=
+          cache-from: type=gha,scope=${{ matrix.target }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.target }}

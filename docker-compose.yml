@@ -33,6 +33,9 @@ services:
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-Admin!Passw0rd}
       PAPERBOY_PUBLIC_KEY: ${PAPERBOY_PUBLIC_KEY:-pk_live_seed_public_key_value}
       PAPERBOY_PREVIEW_KEY: ${PAPERBOY_PREVIEW_KEY:-prv_seed_preview_key_value}
+      # Which frontend the admin's preview pane frames. Defaults to the Astro
+      # starter's dev port; empty behaves as unset.
+      SITE_PREVIEW_URL: ${SITE_PREVIEW_URL:-}
       # The image sets NODE_ENV=production, so seeding a FRESH database refuses
       # these published demo defaults and omits the editor/author/viewer logins.
       # Set ALLOW_DEMO_CREDENTIALS=true for a throwaway demo, or (better) give the

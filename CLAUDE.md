@@ -82,6 +82,20 @@ Editors build forms as **content**, and submissions stay in this instance's Post
 - One provider seam in `packages/shared` (`chat()` + `postAnthropicMessages`/`postOpenAiChat`), two dialects: **Anthropic** (Messages API) or any **OpenAI-compatible** Chat Completions endpoint (OpenAI, OpenRouter, Groq, Ollama…; `max_tokens` auto-retries as `max_completion_tokens`). Config (provider/key/model/baseUrl) + the agentReview gate are instance-global (Settings → AI); `resolveAiRuntimeConfig` (packages/db) is the ONE resolver the API and MCP share. **Key/provider/baseUrl resolve as a UNIT from one source (DB unit wins, else env), and a key is bound to the provider it was saved under** — switching provider clears the old key; env keys are vendor-bound (`ANTHROPIC_API_KEY`→anthropic, `OPENAI_API_KEY`+`OPENAI_BASE_URL`→openai, `AI_PROVIDER` picks when both are set). This is a security rule, not a convenience: an admin-set baseUrl must never receive a key entered for another vendor. `POST /manage/site/ai/test` does a REAL model roundtrip (key presence can't catch a wrong baseUrl/model). Surfaces: the admin copy desk (improve/rewrite/draft-about-a-topic/variants), translate (incl. richtext), vision alt text (`POST /ai/alt-text` sends the actual image bytes, site-partitioned), schema.org field suggestions, the "Build from brief" agent (provider-neutral tool loop in `apps/api/src/agent.ts`), MCP `ai_assist` (resolves the CMS-stored config, not just env).
 - **No key → model-requiring tasks REFUSE** with a self-teaching `AiUnavailableError` — never echo the input dressed up as a result (rule #1 below; the old improve fallback did exactly that). Only meta_title/meta_description/summarize keep truncation fallbacks, labeled `basic`. The admin disables model-requiring entry points with an honest hint when no key is set.
 
+## Published container images
+`ghcr.io/hybriden/paperboy-app` (api · init · web · mcp) and
+`ghcr.io/hybriden/paperboy-admin` (the SPA behind nginx) are built and pushed by
+`.github/workflows/release-images.yml` on every push to main (`latest` + `sha-…`)
+and on `v*` tags (semver). Both come from the one `Dockerfile` (targets `app`,
+`admin`). They exist so running Paperboy does not require building it: the Astro
+starter's `docker-compose.demo.yml` pulls them to bring up CMS + admin + site from
+a single clone. Compose in THIS repo still BUILDS locally — that is correct for
+development; don't switch it to pulling. The admin image is built with an EMPTY
+`VITE_WEB_URL` on purpose: a published image must not carry one deployment's
+frontend origin, and at runtime the admin reads the site's preview URL from the
+API instead. **GHCR packages start private** — a new package needs its visibility
+set to public once, or anonymous `docker pull` 401s.
+
 ## Published npm packages
 `@paperboycms/client` and `@paperboycms/preview` ship to npm (independently versioned).
 - **Publish with `pnpm publish` from the package dir** — `publishConfig` rewrites the dev `src/` entry points to `dist/` at publish time; a raw `npm publish` would ship TypeScript sources (this bit once: preview 0.1.1 exists because of it).

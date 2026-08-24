@@ -22,8 +22,10 @@ const PREVIEW_TOKEN_REFRESH_MS = 10 * 60 * 1000;
 function fallbackWebUrl(): string {
   const env = import.meta.env.VITE_WEB_URL as string | undefined;
   if (env) return env;
-  if (typeof window !== "undefined") return `${window.location.protocol}//${window.location.hostname}:8092`;
-  return "http://localhost:8092";
+  // 4321 is the Astro starter's dev port. It used to be 8092 (apps/web), but
+  // that is opt-in now, so guessing it would frame a port nothing serves.
+  if (typeof window !== "undefined") return `${window.location.protocol}//${window.location.hostname}:4321`;
+  return "http://localhost:4321";
 }
 
 /**
