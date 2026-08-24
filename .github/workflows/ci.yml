@@ -108,10 +108,16 @@ jobs:
       - name: Bring up the documented stack (no extra env)
         run: docker compose up -d --build --wait
 
-      - name: The three documented URLs must answer
+      - name: The documented URLs must answer (api + admin)
         run: |
           curl --retry 20 --retry-delay 3 --retry-all-errors -fsS http://localhost:8091/health/ready
           curl --retry 20 --retry-delay 3 --retry-all-errors -fsS -o /dev/null http://localhost:8090/
+
+      # The reference frontend is opt-in now, so the OPT-IN has to be tested too:
+      # a profile nobody exercises is a profile that quietly stops working.
+      - name: The reference frontend answers when its profile is used
+        run: |
+          docker compose --profile web up -d --build --wait web
           curl --retry 20 --retry-delay 3 --retry-all-errors -fsS -o /dev/null http://localhost:8092/
 
       - name: Show logs on failure

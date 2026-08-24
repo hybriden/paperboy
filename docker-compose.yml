@@ -124,9 +124,15 @@ services:
         condition: service_healthy
     ports:
       - "8092:8092"
-    # Reference frontend (apps/web), reachable at http://localhost:8092.
-    # In production you'd deploy your own front end that reads the public
-    # Delivery API over HTTP — this one ships so the stack works out of the box.
+    # OPT-IN, like mcp: `docker compose --profile web up -d web`.
+    #
+    # apps/web is the REFERENCE frontend — it exists to prove the delivery
+    # contract in a second framework (Next.js, Draft Mode preview) and its tests
+    # pin that contract. It is not the site you build on, and starting it by
+    # default was actively confusing: a new user got two frontends on two ports,
+    # and the one that came up was not the one with a design. The front end you
+    # actually want is the Astro starter — see README.
+    profiles: ["web"]
 
   admin:
     build:

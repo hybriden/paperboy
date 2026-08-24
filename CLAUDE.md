@@ -33,7 +33,9 @@ The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds
 - Tests are unaffected: they import `seed()` directly, which stays unguarded.
 
 ## Ports & env
-- admin **8090**, api **8091**, web **8092**, Postgres **5433** (host) → 5432 (container).
+- admin **8090**, api **8091**, Postgres **5433** (host) → 5432 (container).
+- **`web` (8092) is OPT-IN** (`docker compose --profile web up -d web`), like `mcp`. `apps/web` is the reference consumer that pins the delivery contract in a second framework — it is NOT the website a user builds on, and starting it by default meant a newcomer got two frontends on two ports with the designed one (the Astro starter, :4321) not among them. The quickstart CI job exercises the profile, so the opt-in path cannot rot. **Upgrade gotcha:** `docker compose down` SKIPS profiled services, so an existing `paperboy-web-1` container keeps running after this change until you remove it explicitly (`docker compose --profile web down`, or `docker rm -f paperboy-web-1`).
+- The seed sets the default site's **preview URL to `http://localhost:4321`** (the Astro starter; override with `SITE_PREVIEW_URL`). Empty, the admin's side-by-side pane has nothing to frame and reads as broken.
 - MCP **8093** (optional, opt-in): `MCP_TOKEN=mcp_… docker compose --profile mcp up -d --no-deps mcp` serves the MCP over Streamable HTTP at `/mcp` (Bearer = `MCP_TOKEN`). Default is stdio; HTTP mode is only for remote clients.
 - pnpm is at `~/.npm-global/bin` — prefix commands with `export PATH="$HOME/.npm-global/bin:$PATH"`.
 - DB URL (host): `postgresql://paperboy:paperboy@localhost:5433/paperboy`.

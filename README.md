@@ -121,10 +121,26 @@ the right area, edits patch live. Protocol and details in
 ## Quickstart (Docker)
 ```bash
 ./scripts/setup.sh              # generates .env: unique secrets + your admin password
-docker compose up -d            # db → init(migrate+seed) → api → web → admin
+docker compose up -d            # db → init(migrate+seed) → api → admin
 # Admin   http://localhost:8090   (login printed by setup.sh — save it)
 # API     http://localhost:8091   (OpenAPI UI at /docs)
-# Web     http://localhost:8092
+```
+
+That is the CMS. For the **website**, use the
+[Astro starter](https://github.com/hybriden/paperboy-astro-starter) — a separate
+repo that renders every built-in content type in a real design:
+
+```bash
+git clone https://github.com/hybriden/paperboy-astro-starter my-site
+cd my-site && npm install && npm run setup   # finds this CMS and reads its keys
+npm run dev                                   # http://localhost:4321
+```
+
+`apps/web` in THIS repo is the reference consumer, not your website: it exists to
+pin the delivery contract in a second framework. It is opt-in —
+`docker compose --profile web up -d web` puts it on :8092 — because starting two
+frontends by default, only one of which has a design, confused everybody who
+tried it.
 ```
 `setup.sh` is required, not optional, and it is safe to re-run (an existing `.env` is
 never overwritten). Paperboy refuses to boot on the placeholder secrets committed in
@@ -197,7 +213,7 @@ pnpm install
 docker compose up -d db
 export DATABASE_URL=postgresql://paperboy:paperboy@localhost:5433/paperboy
 pnpm db:seed
-pnpm dev                        # api :8091, admin :8090, web :8092
+pnpm dev                        # api :8091, admin :8090, web :8092 (reference consumer)
 ```
 
 ## Test
