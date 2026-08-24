@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "node:crypto";
-import { verifyPreviewToken } from "@paperboy/shared/preview-token";
+import { verifyPreviewToken } from "@paperboycms/client/preview-token";
 
 /** The committed dev default — must never grant access in production (S2-M2). */
 const DEV_PREVIEW_SECRET = "dev-preview-secret-change-me";
@@ -38,12 +38,18 @@ export function matchesPreviewSecret(provided: string | null | undefined): boole
  *
  * Same production guard as above — the committed dev default never verifies
  * anything in production.
+ *
+ * The verification itself comes from `@paperboycms/client/preview-token`, the same
+ * published package any frontend uses. Nothing here is vendored from the CMS
+ * repo, so this file can be copied into your own app as-is — which is the point
+ * of a reference frontend. Async because that package is WebCrypto (it also has
+ * to run on Workers, which has no synchronous HMAC).
  */
-export function matchesPreviewToken(provided: string | null | undefined): boolean {
+export async function matchesPreviewToken(provided: string | null | undefined): Promise<boolean> {
   if (!provided) return false;
   const secret = process.env.PREVIEW_SECRET ?? DEV_PREVIEW_SECRET;
   if (process.env.NODE_ENV === "production" && secret === DEV_PREVIEW_SECRET) return false;
-  return verifyPreviewToken(secret, provided);
+  return await verifyPreviewToken(secret, provided);
 }
 
 /**

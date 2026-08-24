@@ -14,15 +14,19 @@ function publicOrigin(): string {
   return (process.env.SITE_ORIGIN ?? "http://localhost:8092").replace(/\/+$/, "");
 }
 
-/** Preview can be entered two ways: Next draft-mode cookie, OR a ?pb=<secret>
- *  query param. The query path avoids Secure cookies/redirects, so it works over
- *  plain HTTP and any host (the in-editor preview iframe uses it). The secret is
- *  compared in constant time and the committed dev default never matches in prod. */
-function isPreview(enabled: boolean, sp: Record<string, string | string[] | undefined>): boolean {
+/** Preview can be entered three ways: the Next draft-mode cookie, a short-lived
+ *  ?pbt= token (what the in-editor iframe sends), or a ?pb=<secret> query param
+ *  for server-side callers. The query paths avoid Secure cookies/redirects, so
+ *  they work over plain HTTP and any host. Both values are compared in constant
+ *  time and the committed dev default never matches in prod. */
+async function isPreview(
+  enabled: boolean,
+  sp: Record<string, string | string[] | undefined>,
+): Promise<boolean> {
   if (enabled) return true;
   // ?pbt= — a short-lived token minted by the API for a signed-in editor. This is
   // what the in-editor iframe uses; the browser never holds the long-lived secret.
-  if (matchesPreviewToken(typeof sp.pbt === "string" ? sp.pbt : undefined)) return true;
+  if (await matchesPreviewToken(typeof sp.pbt === "string" ? sp.pbt : undefined)) return true;
   // ?pb= — the long-lived secret. Still honoured for server-side/CLI callers that
   // legitimately hold it, but nothing browser-delivered should ever carry it.
   return matchesPreviewSecret(typeof sp.pb === "string" ? sp.pb : undefined);
@@ -45,7 +49,7 @@ export async function generateMetadata({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }): Promise<Metadata> {
   const { locale, path } = await params;
-  const preview = isPreview((await draftMode()).isEnabled, await searchParams);
+  const preview = await isPreview((await draftMode()).isEnabled, await searchParams);
   const content = await resolve(locale, path, preview);
   if (!content) return { title: "Not found" };
 
@@ -129,7 +133,7 @@ export default async function ContentPage({
   const { locale, path } = await params;
   const isRoot = (path ?? []).length === 0;
   const urlPath = isRoot ? "" : `/${(path ?? []).join("/")}`;
-  const preview = isPreview((await draftMode()).isEnabled, await searchParams);
+  const preview = await isPreview((await draftMode()).isEnabled, await searchParams);
   const content = await resolve(locale, path, preview);
 
   // A ListPage lists its children of the configured type (newest first) —
