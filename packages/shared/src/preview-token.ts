@@ -20,6 +20,12 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * SERVER-ONLY (node:crypto). Deliberately NOT re-exported from the package index —
  * it is reached via `@paperboy/shared/preview-token`, so the browser bundle can
  * never pull it in.
+ *
+ * This is the SIGNING half, and it stays here because the API is the only thing
+ * that signs. The VERIFYING half that frontends need ships to npm as
+ * `@paperboycms/client/preview-token` (WebCrypto, so it also runs on Workers) —
+ * point frontends at that rather than growing another copy of this file, and keep
+ * the two in step via `apps/api/test/client-preview-token.test.ts`.
  */
 
 /** How long a freshly minted token stays valid. */
