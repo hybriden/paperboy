@@ -1,6 +1,6 @@
 {
   "name": "@paperboycms/client",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Typed client for the Paperboy headless CMS Delivery API â€” lists, search, media variants, render helpers, optional ETag cache. Zero dependencies, no codegen.",
   "license": "MIT",
   "repository": {
@@ -22,7 +22,8 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./preview-token": "./src/preview-token.ts"
   },
   "files": [
     "dist",
@@ -36,6 +37,10 @@
       ".": {
         "types": "./dist/index.d.ts",
         "import": "./dist/index.js"
+      },
+      "./preview-token": {
+        "types": "./dist/preview-token.d.ts",
+        "import": "./dist/preview-token.js"
       }
     }
   },

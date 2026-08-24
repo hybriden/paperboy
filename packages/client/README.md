@@ -89,3 +89,38 @@ import type { DeliverySeo } from "@paperboycms/client";
 const seo = post!.seo; // null on non-page kinds
 // URLs in `seo` are relative — absolutize against your site origin before emitting.
 ```
+
+## Preview tokens (server-side)
+
+Rendering drafts means deciding, per request, whether the caller is allowed to see
+them. The admin never puts `PREVIEW_SECRET` in a browser: it asks its own API for a
+signed, minutes-long token and passes it to your frontend as `?pbt=`. Verify it
+with the subpath export:
+
+```ts
+import { verifyPreviewToken, constantTimeEqual } from "@paperboycms/client/preview-token";
+
+const preview =
+  // ?pbt= — the short-lived token the in-editor preview iframe sends.
+  (await verifyPreviewToken(process.env.PREVIEW_SECRET!, url.searchParams.get("pbt"))) ||
+  // ?pb= — the long-lived secret, for server-side callers that legitimately hold it.
+  constantTimeEqual(url.searchParams.get("pb") ?? "", process.env.PREVIEW_SECRET!);
+
+const cms = createClient({
+  baseUrl: process.env.PAPERBOY_API_URL!,
+  key: preview ? process.env.PAPERBOY_PREVIEW_KEY! : process.env.PAPERBOY_PUBLIC_KEY!,
+});
+```
+
+`PREVIEW_SECRET` must be byte-identical to the API's. Notes:
+
+- **It's a separate subpath on purpose.** Its first argument is your secret, so it
+  must never be reachable from a browser bundle — importing it from
+  `@paperboycms/client` is deliberately impossible.
+- **WebCrypto, so it runs anywhere** — Node, Cloudflare Workers, Deno, Bun. That's
+  why it's async: Workers has no synchronous HMAC.
+- **It fails closed**: malformed tokens, a tampered or absent MAC, an expired
+  expiry, and an unset secret all return `false`. The MAC is checked *before* the
+  expiry, so a forged token can't be used to probe expiry behaviour.
+- If your `PREVIEW_SECRET` still falls back to a committed dev default, guard that
+  in production yourself — see `apps/web/app/lib/preview.ts` in the Paperboy repo.
