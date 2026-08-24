@@ -82,6 +82,18 @@ Editors build forms as **content**, and submissions stay in this instance's Post
 - One provider seam in `packages/shared` (`chat()` + `postAnthropicMessages`/`postOpenAiChat`), two dialects: **Anthropic** (Messages API) or any **OpenAI-compatible** Chat Completions endpoint (OpenAI, OpenRouter, Groq, Ollama…; `max_tokens` auto-retries as `max_completion_tokens`). Config (provider/key/model/baseUrl) + the agentReview gate are instance-global (Settings → AI); `resolveAiRuntimeConfig` (packages/db) is the ONE resolver the API and MCP share. **Key/provider/baseUrl resolve as a UNIT from one source (DB unit wins, else env), and a key is bound to the provider it was saved under** — switching provider clears the old key; env keys are vendor-bound (`ANTHROPIC_API_KEY`→anthropic, `OPENAI_API_KEY`+`OPENAI_BASE_URL`→openai, `AI_PROVIDER` picks when both are set). This is a security rule, not a convenience: an admin-set baseUrl must never receive a key entered for another vendor. `POST /manage/site/ai/test` does a REAL model roundtrip (key presence can't catch a wrong baseUrl/model). Surfaces: the admin copy desk (improve/rewrite/draft-about-a-topic/variants), translate (incl. richtext), vision alt text (`POST /ai/alt-text` sends the actual image bytes, site-partitioned), schema.org field suggestions, the "Build from brief" agent (provider-neutral tool loop in `apps/api/src/agent.ts`), MCP `ai_assist` (resolves the CMS-stored config, not just env).
 - **No key → model-requiring tasks REFUSE** with a self-teaching `AiUnavailableError` — never echo the input dressed up as a result (rule #1 below; the old improve fallback did exactly that). Only meta_title/meta_description/summarize keep truncation fallbacks, labeled `basic`. The admin disables model-requiring entry points with an honest hint when no key is set.
 
+## The frontend starter (separate repo)
+`hybriden/paperboy-astro-starter` is the Astro frontend users are meant to build
+on: it renders every built-in content type, and its `docker-compose.demo.yml`
+pulls the images below to bring up **CMS + admin + site + demo content** from one
+clone. Its `scripts/demo-content.mjs` builds a whole demo site through the
+Management API — a useful worked example, and the thing to update when a built-in
+type's shape changes. Two contracts it depends on: the admin frames previews as
+`{previewBaseUrl}/{locale}{urlPath}` (so a frontend must accept a locale prefix),
+and the CMS's generated `sitemap.xml`/`llms.txt` use that same
+`/{locale}{urlPath}` scheme — a frontend that serves unprefixed paths must build
+those two itself from `GET /delivery/pages` rather than proxying them.
+
 ## Published container images
 `ghcr.io/hybriden/paperboy-app` (api · init · web · mcp) and
 `ghcr.io/hybriden/paperboy-admin` (the SPA behind nginx) are built and pushed by
