@@ -211,7 +211,19 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
 
   // The Default site (multisite). All seeded content/keys/assets/scopes belong
   // to it via the column DEFAULT; the FK needs this row to exist first.
-  await db.insert(site).values({ id: DEFAULT_SITE_ID, slug: "default", name: "Default site", defaultLocale: "en", active: true });
+  await db.insert(site).values({
+    id: DEFAULT_SITE_ID,
+    slug: "default",
+    name: "Default site",
+    defaultLocale: "en",
+    active: true,
+    // Point the admin's preview pane at a frontend out of the box. Left empty,
+    // side-by-side editing has nothing to frame and looks broken on a fresh
+    // install — the editor sees an empty pane with no hint that a frontend is
+    // what's missing. 4321 is the Astro starter's dev port; override for any
+    // other frontend (Settings -> Site -> Preview URL, or SITE_PREVIEW_URL).
+    previewBaseUrl: process.env.SITE_PREVIEW_URL ?? "http://localhost:4321",
+  });
 
   // Content types.
   for (const t of TYPES) {
