@@ -141,6 +141,20 @@ describe("submissionSchemaFor", () => {
     expect(Object.keys(submissionErrors(res.error!))).toContain("name");
   });
 
+  it("uses the editor's own error copy when a required field is ABSENT, not just empty", () => {
+    // Found while building the demo site: the editor wrote a message, the visitor
+    // got "Invalid input: expected string, received undefined". An omitted key
+    // failed the TYPE check before the presence refine could run, so the copy the
+    // editor wrote was never reached — the one case where a helpful message
+    // matters most, since the field is the one they forgot.
+    const withCopy = form([
+      { blockType: "FormTextField", inline: { name: "message", label: "Message", required: true, errorMessage: "A sentence or two is plenty." } },
+    ]);
+    const res = submissionSchemaFor(withCopy).safeParse({});
+    expect(res.success).toBe(false);
+    expect(submissionErrors(res.error!).message).toBe("A sentence or two is plenty.");
+  });
+
   it("treats an empty string as missing for a required field", () => {
     const res = parse({ ...valid, name: "" });
     expect(res.success).toBe(false);

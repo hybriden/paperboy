@@ -287,23 +287,35 @@ export function submissionSchemaFor(spec: FormSpec): z.ZodType<Record<string, un
   for (const f of spec.fields) {
     if (f.kind === "static") continue;
     const message = f.errorMessage;
+    /**
+     * The message for "no answer at all".
+     *
+     * A missing key fails the base TYPE check ("expected string, received
+     * undefined") before any refine runs, so the presence refine below could
+     * never speak for it — a visitor who forgot a field got Zod's wording
+     * instead of the editor's, in the one case where the message matters most.
+     * Passing it to the base type covers that path; the refine still covers a
+     * present-but-empty answer. Only for REQUIRED fields: on an optional one,
+     * "is required" would be a lie.
+     */
+    const missing = f.required ? (message ?? `"${f.label || f.name}" is required.`) : message;
     let s: z.ZodTypeAny;
     switch (f.kind) {
       case "email": {
-        let e = z.string().max(MAX_ANSWER_LENGTH);
+        let e = z.string({ message: missing }).max(MAX_ANSWER_LENGTH);
         e = e.regex(EMAIL_RE, message ?? `Enter a valid email address for "${f.label || f.name}".`);
         s = e;
         break;
       }
       case "number": {
-        let n = z.number({ message: message ?? `"${f.label || f.name}" must be a number.` });
+        let n = z.number({ message: missing ?? `"${f.label || f.name}" must be a number.` });
         if (f.min != null) n = n.min(f.min, message ?? `"${f.label || f.name}" must be ${f.min} or more.`);
         if (f.max != null) n = n.max(f.max, message ?? `"${f.label || f.name}" must be ${f.max} or less.`);
         s = n;
         break;
       }
       case "date":
-        s = z.string().max(40).refine((v) => v === "" || !Number.isNaN(Date.parse(v)), {
+        s = z.string({ message: missing }).max(40).refine((v) => v === "" || !Number.isNaN(Date.parse(v)), {
           message: message ?? `Enter a valid date for "${f.label || f.name}".`,
         });
         break;
@@ -318,14 +330,14 @@ export function submissionSchemaFor(spec: FormSpec): z.ZodType<Record<string, un
       case "radio": {
         const values = (f.choices ?? []).map((c) => c.value);
         s = values.length
-          ? z.string().refine((v) => values.includes(v), {
+          ? z.string({ message: missing }).refine((v) => values.includes(v), {
               message: message ?? `Choose one of: ${values.join(", ")}.`,
             })
-          : z.string().max(MAX_ANSWER_LENGTH);
+          : z.string({ message: missing }).max(MAX_ANSWER_LENGTH);
         break;
       }
       default: {
-        let t = z.string().max(f.maxLength ?? MAX_ANSWER_LENGTH, message ?? `"${f.label || f.name}" is too long (max ${f.maxLength ?? MAX_ANSWER_LENGTH} characters).`);
+        let t = z.string({ message: missing }).max(f.maxLength ?? MAX_ANSWER_LENGTH, message ?? `"${f.label || f.name}" is too long (max ${f.maxLength ?? MAX_ANSWER_LENGTH} characters).`);
         if (f.minLength != null) t = t.min(f.minLength, message ?? `"${f.label || f.name}" must be at least ${f.minLength} characters.`);
         if (f.pattern) {
           try {
@@ -340,6 +352,7 @@ export function submissionSchemaFor(spec: FormSpec): z.ZodType<Record<string, un
 
     if (f.required) {
       // An empty string satisfies z.string() but not a required question.
+      //
       shape[f.name] = f.kind === "checkbox"
         ? z.literal(true, { message: message ?? `"${f.label || f.name}" is required.` })
         : s.refine((v) => v !== "" && v !== null && v !== undefined, {
