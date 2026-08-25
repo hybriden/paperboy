@@ -320,6 +320,7 @@ const RAW_TEMPLATES = [
     name: "AccordionItemBlock",
     displayName: "Accordion item",
     kind: "block",
+    nestedOnly: true,
     description: "Heading and expandable content to use in an accordion list.",
     icon: "ph:caret-circle-down",
     fields: [
@@ -349,6 +350,7 @@ const RAW_TEMPLATES = [
     name: "QuestionBlock",
     displayName: "Question with answer",
     kind: "block",
+    nestedOnly: true,
     description: "The question should be short, but the answer can be longer and more descriptive.",
     icon: "ph:chat-circle-text",
     fields: [
@@ -395,6 +397,7 @@ const RAW_TEMPLATES = [
     name: "LinkItemBlock",
     displayName: "Link item",
     kind: "block",
+    nestedOnly: true,
     description: "A single link — used in link lists and menus.",
     icon: "ph:arrow-square-out",
     fields: [
