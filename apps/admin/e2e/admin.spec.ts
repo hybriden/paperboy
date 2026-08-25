@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
-import { type Page, expect, test } from "@playwright/test";
+import { type Locator, type Page, expect, test } from "@playwright/test";
 
 const SHOT = "../../proof/screenshots";
 // Playwright runs from apps/admin (the config's directory).
@@ -178,7 +178,8 @@ test("create → edit → add block → translate → publish (with toast)", asy
   await page.getByRole("button", { name: "URL settings" }).click(); // slug lives in the URL popover
   await page.getByLabel("Slug").fill(`e2e-${Date.now().toString().slice(-5)}`);
   await page.keyboard.press("Escape"); // close the popover
-  await page.getByRole("button", { name: "+ Hero" }).click();
+  await addBlock(page, "Hero");
+  await openBlock(page);
   await page.getByLabel("Title").first().fill("E2E hero");
   await page.waitForTimeout(1100); // autosave round-trip
 
@@ -528,8 +529,9 @@ test("an image dropped on a block's image field uploads ONCE (no duplicate asset
   await expect(editorName(page)).toHaveValue(unique, { timeout: 10000 });
 
   // An inline Hero block — its image field sits INSIDE the content area.
-  await page.getByRole("button", { name: "+ Hero" }).click();
+  await addBlock(page, "Hero");
   const area = page.getByTestId("content-area-mainArea");
+  await openBlock(area);
   await expect(area.getByRole("button", { name: "Choose image" }).first()).toBeVisible();
 
   const mediaCount = async () => {
@@ -587,8 +589,9 @@ test("dragging an EXISTING library image onto an image field references it — n
   await dlg.getByLabel("Name").fill(unique);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
   await expect(editorName(page)).toHaveValue(unique, { timeout: 10000 });
-  await page.getByRole("button", { name: "+ Hero" }).click();
+  await addBlock(page, "Hero");
   const area = page.getByTestId("content-area-mainArea");
+  await openBlock(area);
   await expect(area.getByRole("button", { name: "Choose image" }).first()).toBeVisible();
 
   // Upload exactly one real asset to reference (page context → session cookie).
@@ -700,11 +703,38 @@ test("block card header controls stay inside the card in a narrow form column", 
   }
   const card = page.locator('[id^="pb-block-"]').first();
   await card.scrollIntoViewIfNeeded();
-  const remove = card.getByRole("button", { name: "Remove block" }).first();
+  // Row actions live behind one overflow trigger; it is the rightmost control,
+  // so it is the one that would paint outside a narrow card.
+  const actions = card.getByRole("button", { name: /^Actions for / }).first();
   const cardBox = (await card.boundingBox())!;
-  const btnBox = (await remove.boundingBox())!;
-  expect(btnBox.x + btnBox.width, "Remove button must not overflow its block card").toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
+  const btnBox = (await actions.boundingBox())!;
+  expect(btnBox.x + btnBox.width, "Row actions must not overflow their block row").toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
 });
+
+/**
+ * Add a block the way an editor does: open the area's "Add block" menu and pick
+ * a type. (It used to be one chip per type sitting above the area — seventeen of
+ * them on a normal page.) The menu is portalled to the body, so the item is
+ * looked up on the page even when the trigger is scoped to one area.
+ */
+async function addBlock(page: Page, name: string, scope?: Locator) {
+  await (scope ?? page).getByRole("button", { name: "Add block" }).first().click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}
+
+/**
+ * Open a block row so its fields are on screen.
+ *
+ * A content area lists blocks as compact rows and only the open one shows its
+ * fields, so a test that fills a block field has to open it first — the same
+ * click an editor makes. Idempotent: already-open rows are left alone.
+ */
+async function openBlock(scope: Page | Locator, index = 0) {
+  const row = scope.locator(`li#pb-block-${index}`);
+  const toggle = row.locator("> div > button[aria-expanded]");
+  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+  return row;
+}
 
 /** The preview iframe (the web app on :8092) — polls because it mounts lazily. */
 async function waitPreviewFrame(page: Page) {
@@ -908,14 +938,13 @@ test("building a form: the key fills itself in from the label, and a clash is ca
   const area = page.getByTestId("content-area-fields");
   await expect(area).toBeVisible({ timeout: 20_000 });
 
-  // Two questions, added the way an editor adds them: one click each.
-  const palette = page.getByLabel("Block palette");
-  await palette.getByRole("button", { name: "+ Text field", exact: true }).click();
-  await palette.getByRole("button", { name: "+ Email field", exact: true }).click();
+  // Two questions, added the way an editor adds them.
+  await addBlock(page, "Text field", area);
+  await addBlock(page, "Email field", area);
 
   // The LABEL comes first on a form field — the key is derived from it, so it
   // has no business being the first thing an editor meets.
-  const first = area.locator("li#pb-block-0");
+  const first = await openBlock(area, 0);
   await expect(first.getByRole("textbox").first()).toHaveAttribute("aria-label", "Label");
 
   // Type the label, leave the field: the key appears by itself.
@@ -932,17 +961,18 @@ test("building a form: the key fills itself in from the label, and a clash is ca
   await first.getByRole("textbox", { name: "Label" }).blur();
   await expect(firstKey).toHaveValue("firm");
 
-  // Second field, same key: both cards say so, because either could be the mistake.
-  const second = area.locator("li#pb-block-1");
-  const clash = /Another field already uses the key/;
-  await expect(page.getByText(clash)).toHaveCount(0);
+  // Second field, same key: both ROWS say so, because either could be the
+  // mistake — and on the row you can see which two clash without opening either.
+  const second = await openBlock(area, 1);
+  const clash = area.getByText("duplicate key");
+  await expect(clash).toHaveCount(0);
   await second.getByRole("textbox", { name: "Field key" }).fill("firm");
-  await expect(first.getByText(clash)).toBeVisible();
-  await expect(second.getByText(clash)).toBeVisible();
+  await expect(first.getByText("duplicate key")).toBeVisible();
+  await expect(second.getByText("duplicate key")).toBeVisible();
 
   // Resolved by giving it its own key.
   await second.getByRole("textbox", { name: "Field key" }).fill("email");
-  await expect(page.getByText(clash)).toHaveCount(0);
+  await expect(clash).toHaveCount(0);
 
   // Clean up: this test creates a shared block at the root.
   const del = await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
@@ -984,7 +1014,9 @@ test("the existing-block picker searches, and never offers a block the area forb
   await page.reload();
   await expect(page.getByTestId("content-area-fields")).toBeVisible({ timeout: 20_000 });
 
-  await page.getByRole("button", { name: "+ Existing block" }).click();
+  // Reuse lives in the Add block menu now, beside the types you can create.
+  await page.getByRole("button", { name: "Add block" }).first().click();
+  await page.getByRole("menuitem", { name: /^Existing block/ }).click();
   const picker = page.getByRole("dialog", { name: "Insert an existing block" });
   await expect(picker).toBeVisible();
 
@@ -1054,17 +1086,29 @@ test("an area that allows ANY block still does not offer parts (a form's field b
 
   await page.goto(`/edit/${doc.documentId}`);
   await page.reload();
+  await page.getByRole("button", { name: "Add block" }).first().click({ timeout: 20_000 });
   const palette = page.getByLabel("Block palette");
   await expect(palette).toBeVisible({ timeout: 20_000 });
 
   // Populated with real page blocks…
-  await expect(palette.getByRole("button", { name: "+ Hero", exact: true })).toBeVisible();
+  await expect(palette.getByRole("menuitem", { name: "Hero", exact: true })).toBeVisible();
   // …and free of the parts.
-  for (const part of ["+ Date field", "+ Number field", "+ Consent checkbox", "+ Explanatory text"]) {
-    await expect(palette.getByRole("button", { name: part, exact: true }), part).toHaveCount(0);
+  // The form fields, and the three composition parts that used to leak into the
+  // page-level list — an "Accordion item" chosen here renders as nothing.
+  for (const part of [
+    "Date field",
+    "Number field",
+    "Consent checkbox",
+    "Explanatory text",
+    "Accordion item",
+    "Link item",
+    "Question with answer",
+  ]) {
+    await expect(palette.getByRole("menuitem", { name: part, exact: true }), part).toHaveCount(0);
   }
   // The Form itself is real page composition and stays on offer.
-  await expect(palette.getByRole("button", { name: "+ Form", exact: true })).toBeVisible();
+  await expect(palette.getByRole("menuitem", { name: "Form", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
 
   await page.request.delete(`/api/v1/manage/content/${doc.documentId}`, { headers });
   await page.request.delete(`/api/v1/manage/content-types/${typeName}`, { headers });

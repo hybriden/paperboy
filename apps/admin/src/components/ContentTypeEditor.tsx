@@ -101,7 +101,7 @@ function IconPicker({ id, value, onChange }: { id?: string; value: string; onCha
       </PopoverTrigger>
       <PopoverContent className="w-[296px]">
         <input
-          className="field-input mb-2 py-1 text-sm"
+          className="field-input mb-2 py-1"
           placeholder={`Search ${all.length || ""} icons…`}
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -437,13 +437,13 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
           {fields.map((f) => (
             <div key={f._key} className="rounded-(--radius) border border-line bg-canvas/60 p-2.5">
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                <input className="field-input py-1 font-mono text-xs" placeholder="fieldName" value={f.name} onChange={(e) => patchField(f._key, { name: e.target.value })} aria-label="Field name" />
-                <input className="field-input py-1 text-xs" placeholder="Display name" value={f.displayName} onChange={(e) => patchField(f._key, { displayName: e.target.value })} aria-label="Field display name" />
-                <select className="field-input py-1 text-xs" value={f.type} aria-label="Field type"
+                <input className="field-input font-mono" placeholder="fieldName" value={f.name} onChange={(e) => patchField(f._key, { name: e.target.value })} aria-label="Field name" />
+                <input className="field-input" placeholder="Display name" value={f.displayName} onChange={(e) => patchField(f._key, { displayName: e.target.value })} aria-label="Field display name" />
+                <select className="field-input" value={f.type} aria-label="Field type"
                   onChange={(e) => patchField(f._key, { type: e.target.value as FieldType, allowedBlocks: [], allowedTypes: [] })}>
                   {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
-                <input className="field-input py-1 text-xs" placeholder="Group" value={f.group} onChange={(e) => patchField(f._key, { group: e.target.value })} aria-label="Field group" />
+                <input className="field-input" placeholder="Group" value={f.group} onChange={(e) => patchField(f._key, { group: e.target.value })} aria-label="Field group" />
               </div>
 
               <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-2">
@@ -591,7 +591,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                 return (
                   <label key={role} className="flex items-center justify-between gap-2 text-sm">
                     <span className="text-muted">{SEO_ROLE_LABELS[role]}</span>
-                    <select className="field-input py-1 text-xs" style={{ maxWidth: 200 }} value={current}
+                    <select className="field-input" style={{ maxWidth: 200 }} value={current}
                       onChange={(e) => assignSeoRole(role, e.target.value)} aria-label={`SEO ${role} field`}>
                       <option value="">Auto (by field name)</option>
                       {opts.map((f) => <option key={f._key} value={f._key}>{f.displayName || f.name}</option>)}
@@ -658,9 +658,9 @@ function OptionsEditor({
       <div className="space-y-1">
         {options.map((o, i) => (
           <div key={i} className="flex items-center gap-1.5">
-            <input className="field-input py-1 font-mono text-xs" placeholder="value" value={o.value} aria-label="Option value"
+            <input className="field-input font-mono" placeholder="value" value={o.value} aria-label="Option value"
               onChange={(e) => patch(i, { value: e.target.value })} />
-            <input className="field-input py-1 text-xs" placeholder="Label" value={o.label} aria-label="Option label"
+            <input className="field-input" placeholder="Label" value={o.label} aria-label="Option label"
               onChange={(e) => patch(i, { label: e.target.value })} />
             <button className="rounded p-1 text-danger hover:bg-danger/10" aria-label="Remove option" onClick={() => onChange(options.filter((_, j) => j !== i))}>
               <Icon.Trash width={13} height={13} />
@@ -697,18 +697,18 @@ function ValidationEditor({
       <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Validation</span>
       {type === "text" ? (
         <>
-          <input className="field-input w-24 py-1 text-xs" type="number" placeholder="min len" value={v.minLength ?? ""} aria-label="Minimum length"
+          <input className="field-input w-24 py-1" type="number" placeholder="min len" value={v.minLength ?? ""} aria-label="Minimum length"
             onChange={(e) => set({ minLength: num(e.target.value) })} />
-          <input className="field-input w-24 py-1 text-xs" type="number" placeholder="max len" value={v.maxLength ?? ""} aria-label="Maximum length"
+          <input className="field-input w-24 py-1" type="number" placeholder="max len" value={v.maxLength ?? ""} aria-label="Maximum length"
             onChange={(e) => set({ maxLength: num(e.target.value) })} />
-          <input className="field-input w-40 py-1 font-mono text-xs" placeholder="regex pattern" value={v.pattern ?? ""} aria-label="Pattern"
+          <input className="field-input w-40 py-1 font-mono" placeholder="regex pattern" value={v.pattern ?? ""} aria-label="Pattern"
             onChange={(e) => set({ pattern: e.target.value || undefined })} />
         </>
       ) : (
         <>
-          <input className="field-input w-24 py-1 text-xs" type="number" placeholder="min" value={v.min ?? ""} aria-label="Minimum"
+          <input className="field-input w-24 py-1" type="number" placeholder="min" value={v.min ?? ""} aria-label="Minimum"
             onChange={(e) => set({ min: num(e.target.value) })} />
-          <input className="field-input w-24 py-1 text-xs" type="number" placeholder="max" value={v.max ?? ""} aria-label="Maximum"
+          <input className="field-input w-24 py-1" type="number" placeholder="max" value={v.max ?? ""} aria-label="Maximum"
             onChange={(e) => set({ max: num(e.target.value) })} />
         </>
       )}
