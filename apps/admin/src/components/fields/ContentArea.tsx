@@ -494,6 +494,8 @@ function SortableBlock({
   duplicateKeys: Set<string>;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.key, disabled });
+  // Own ref alongside dnd-kit's, so opening a row can bring it into view.
+  const rowRef = useRef<HTMLLIElement | null>(null);
   const style = { transform: CSS.Transform.toString(transform), transition };
   const isShared = block.ref !== null;
   // A referenced PAGE renders as a teaser on the site (not as a block).
@@ -523,10 +525,36 @@ function SortableBlock({
   const canOpen = Boolean(onToggle) && !isShared && Boolean(type);
   const isOpen = open && canOpen;
 
+  /**
+   * Bring a freshly opened row into view.
+   *
+   * A row near the bottom of a long area opened its fields BELOW the fold, so
+   * the click read as doing nothing until you scrolled to find them. `nearest`
+   * rather than `start`: a row already on screen should not jump, and a row
+   * taller than the viewport aligns to its top, which puts the block's name and
+   * its first field together.
+   *
+   * After a frame, because the fields are laid out in the same commit and the
+   * row's height is not final until they are.
+   */
+  useEffect(() => {
+    if (!isOpen) return;
+    const frame = requestAnimationFrame(() => {
+      rowRef.current?.scrollIntoView({
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+        block: "nearest",
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [isOpen]);
+
   return (
     <li
       id={`pb-block-${index}`}
-      ref={setNodeRef}
+      ref={(node) => {
+        setNodeRef(node);
+        rowRef.current = node;
+      }}
       style={style}
       className={`rounded-(--radius-field) border bg-panel ${
         isOpen ? "border-accent/40" : "border-line"
