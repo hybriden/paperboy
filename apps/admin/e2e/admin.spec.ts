@@ -111,12 +111,25 @@ test("shell + tree + editor render; axe clean in LIGHT and DARK", async ({ page 
   await page.getByRole("menuitem", { name: "Dark" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   // The 160ms `transition-colors` on inputs must SETTLE before the contrast
-  // scan — axe mid-transition sees blended (failing) colors. Wait for a
-  // field-input's color to reach the dark-theme foreground.
-  await page.waitForFunction(() => {
-    const el = document.querySelector(".field-input");
-    return el && getComputedStyle(el).color === "rgb(236, 233, 225)";
-  });
+  // scan — axe mid-transition sees blended (failing) colors.
+  //
+  // Waits for the colour to STOP CHANGING rather than for one specific rgb():
+  // the old form hardcoded a token value and read "whichever .field-input is
+  // first in the DOM", so it broke the moment the properties pane's markup
+  // changed. Two equal samples 120ms apart means a 160ms transition is done.
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector(".field-input");
+      if (!el) return false;
+      const now = getComputedStyle(el).color;
+      const w = window as unknown as { __pbLastColor?: string };
+      const settled = w.__pbLastColor === now;
+      w.__pbLastColor = now;
+      return settled;
+    },
+    undefined,
+    { polling: 120 },
+  );
   await page.screenshot({ path: `${SHOT}/03-editor-dark.png` });
   await axeClean(page, "editor-dark");
 });
@@ -461,7 +474,7 @@ test("drag a shared block from the Assets pane into a content area", async ({ pa
   await expect(editorName(page)).toHaveValue(unique, { timeout: 10000 });
 
   const area = page.getByTestId("content-area-mainArea");
-  await expect(area).toContainText(/Click a block above|drag a shared block/i);
+  await expect(area).toContainText(/drag in a shared block/i);
   // Drag the seeded "Featured Card" shared block from the Assets pane into the area.
   // Playwright's dragTo() uses mouse simulation and drops the custom dataTransfer
   // payload, so dispatch a real HTML5 drag sequence sharing one DataTransfer — this
@@ -511,7 +524,9 @@ test("drag an IMAGE into a content area → a block carrying it is auto-created"
   });
   // A Hero block instance appeared, its image field populated (the fake id
   // renders the "not found" state — the structural insert is the contract).
+  // The row appears immediately; the image field is inside it, so open it.
   await expect(area.getByText("Hero", { exact: false }).first()).toBeVisible({ timeout: 10_000 });
+  await openBlock(area);
   await expect(area.getByText(/Image not found/)).toBeVisible();
 
   // Cleanup: trash the throwaway page.
