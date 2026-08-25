@@ -7,15 +7,19 @@ export function MenuContent({
   children,
   align = "end",
   className = "",
+  label,
 }: {
   children: React.ReactNode;
   align?: "start" | "center" | "end";
   className?: string;
+  /** Accessible name, for a menu whose trigger does not already describe it. */
+  label?: string;
 }) {
   return (
     <RMenu.Portal>
       <RMenu.Content
         align={align}
+        aria-label={label}
         sideOffset={6}
         className={`z-50 min-w-[200px] overflow-hidden rounded-lg border border-line bg-panel p-1 shadow-pop data-[state=open]:animate-slide-up ${className}`}
       >

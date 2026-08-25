@@ -9,28 +9,43 @@ import type { FieldDef } from "@paperboy/shared";
  * from what the type DECLARES — the field's kind and its own maxLength — so
  * nobody building a content type has to think about layout.
  *
+ * THREE steps, not five values. The principle above is right, but the caps were
+ * 130 / 210 / 340 / 440 / 520px, which put fifteen controls on four different
+ * right edges in one panel (measured 2026-08-25) — and whitespace only reads as
+ * deliberate when the edges bounding it are. A scale of three says the same
+ * thing about expected input length while giving the eye three edges to learn
+ * instead of five to measure.
+ *
  * Multi-line fields (markdown, richtext), content areas and composites (link,
  * image) get no cap: there the width IS the point.
  *
  * One home, because a block's fields must read the same as a page's.
  */
+
+/** Enough for a date, a number, a code — anything you read at a glance. */
+const SHORT = "max-w-[13rem]";
+/** Enough for a title, a name, a select — one line of real language. */
+const MEDIUM = "max-w-[26rem]";
+/** No cap: the width carries meaning. */
+const FULL = "";
+
 export function fieldWidthClass(field: FieldDef): string {
   switch (field.type) {
     case "datetime":
-      return "max-w-[210px]";
     case "number":
-      return "max-w-[130px]";
+      return SHORT;
     case "select":
-      return field.multiple ? "" : "max-w-[340px]";
+      return field.multiple ? FULL : MEDIUM;
     case "reference":
-      return "max-w-[440px]";
+      return MEDIUM;
     case "text": {
-      // A single line never needs more than ~60 characters of box.
+      // A short declared maxLength is the type telling us this is a label, not
+      // a sentence — so it gets the short box rather than the medium one.
       const max = field.validation?.maxLength;
-      if (max && max <= 40) return "max-w-[340px]";
-      return "max-w-[520px]";
+      if (max && max <= 40) return SHORT;
+      return MEDIUM;
     }
     default:
-      return "";
+      return FULL;
   }
 }

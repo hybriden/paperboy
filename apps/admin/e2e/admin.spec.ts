@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
-import { type Page, expect, test } from "@playwright/test";
+import { type Locator, type Page, expect, test } from "@playwright/test";
 
 const SHOT = "../../proof/screenshots";
 // Playwright runs from apps/admin (the config's directory).
@@ -111,12 +111,25 @@ test("shell + tree + editor render; axe clean in LIGHT and DARK", async ({ page 
   await page.getByRole("menuitem", { name: "Dark" }).click();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   // The 160ms `transition-colors` on inputs must SETTLE before the contrast
-  // scan — axe mid-transition sees blended (failing) colors. Wait for a
-  // field-input's color to reach the dark-theme foreground.
-  await page.waitForFunction(() => {
-    const el = document.querySelector(".field-input");
-    return el && getComputedStyle(el).color === "rgb(236, 233, 225)";
-  });
+  // scan — axe mid-transition sees blended (failing) colors.
+  //
+  // Waits for the colour to STOP CHANGING rather than for one specific rgb():
+  // the old form hardcoded a token value and read "whichever .field-input is
+  // first in the DOM", so it broke the moment the properties pane's markup
+  // changed. Two equal samples 120ms apart means a 160ms transition is done.
+  await page.waitForFunction(
+    () => {
+      const el = document.querySelector(".field-input");
+      if (!el) return false;
+      const now = getComputedStyle(el).color;
+      const w = window as unknown as { __pbLastColor?: string };
+      const settled = w.__pbLastColor === now;
+      w.__pbLastColor = now;
+      return settled;
+    },
+    undefined,
+    { polling: 120 },
+  );
   await page.screenshot({ path: `${SHOT}/03-editor-dark.png` });
   await axeClean(page, "editor-dark");
 });
@@ -178,7 +191,8 @@ test("create → edit → add block → translate → publish (with toast)", asy
   await page.getByRole("button", { name: "URL settings" }).click(); // slug lives in the URL popover
   await page.getByLabel("Slug").fill(`e2e-${Date.now().toString().slice(-5)}`);
   await page.keyboard.press("Escape"); // close the popover
-  await page.getByRole("button", { name: "+ Hero" }).click();
+  await addBlock(page, "Hero");
+  await openBlock(page);
   await page.getByLabel("Title").first().fill("E2E hero");
   await page.waitForTimeout(1100); // autosave round-trip
 
@@ -366,6 +380,10 @@ test("media: upload an image in the asset pane and pick it in an image field", a
   await expect(assets.locator("img")).toHaveCount(1, { timeout: 10_000 });
 
   // The Hero block's "Background image" image field → pick the uploaded asset.
+  // The block's fields are behind its row, so open it first: this page's block
+  // comes from the seed rather than from a palette click, which is why it needs
+  // opening here and not just after an add.
+  await openBlock(page);
   await page.getByRole("button", { name: "Choose image" }).first().click();
   const picker = page.getByRole("dialog", { name: "Choose image" });
   await expect(picker).toBeVisible();
@@ -456,7 +474,7 @@ test("drag a shared block from the Assets pane into a content area", async ({ pa
   await expect(editorName(page)).toHaveValue(unique, { timeout: 10000 });
 
   const area = page.getByTestId("content-area-mainArea");
-  await expect(area).toContainText(/Click a block above|drag a shared block/i);
+  await expect(area).toContainText(/drag in a shared block/i);
   // Drag the seeded "Featured Card" shared block from the Assets pane into the area.
   // Playwright's dragTo() uses mouse simulation and drops the custom dataTransfer
   // payload, so dispatch a real HTML5 drag sequence sharing one DataTransfer — this
@@ -506,7 +524,9 @@ test("drag an IMAGE into a content area → a block carrying it is auto-created"
   });
   // A Hero block instance appeared, its image field populated (the fake id
   // renders the "not found" state — the structural insert is the contract).
+  // The row appears immediately; the image field is inside it, so open it.
   await expect(area.getByText("Hero", { exact: false }).first()).toBeVisible({ timeout: 10_000 });
+  await openBlock(area);
   await expect(area.getByText(/Image not found/)).toBeVisible();
 
   // Cleanup: trash the throwaway page.
@@ -528,8 +548,9 @@ test("an image dropped on a block's image field uploads ONCE (no duplicate asset
   await expect(editorName(page)).toHaveValue(unique, { timeout: 10000 });
 
   // An inline Hero block — its image field sits INSIDE the content area.
-  await page.getByRole("button", { name: "+ Hero" }).click();
+  await addBlock(page, "Hero");
   const area = page.getByTestId("content-area-mainArea");
+  await openBlock(area);
   await expect(area.getByRole("button", { name: "Choose image" }).first()).toBeVisible();
 
   const mediaCount = async () => {
@@ -587,8 +608,9 @@ test("dragging an EXISTING library image onto an image field references it — n
   await dlg.getByLabel("Name").fill(unique);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
   await expect(editorName(page)).toHaveValue(unique, { timeout: 10000 });
-  await page.getByRole("button", { name: "+ Hero" }).click();
+  await addBlock(page, "Hero");
   const area = page.getByTestId("content-area-mainArea");
+  await openBlock(area);
   await expect(area.getByRole("button", { name: "Choose image" }).first()).toBeVisible();
 
   // Upload exactly one real asset to reference (page context → session cookie).
@@ -700,11 +722,41 @@ test("block card header controls stay inside the card in a narrow form column", 
   }
   const card = page.locator('[id^="pb-block-"]').first();
   await card.scrollIntoViewIfNeeded();
-  const remove = card.getByRole("button", { name: "Remove block" }).first();
+  // Row actions live behind one overflow trigger; it is the rightmost control,
+  // so it is the one that would paint outside a narrow card.
+  const actions = card.getByRole("button", { name: /^Actions for / }).first();
   const cardBox = (await card.boundingBox())!;
-  const btnBox = (await remove.boundingBox())!;
-  expect(btnBox.x + btnBox.width, "Remove button must not overflow its block card").toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
+  const btnBox = (await actions.boundingBox())!;
+  expect(btnBox.x + btnBox.width, "Row actions must not overflow their block row").toBeLessThanOrEqual(cardBox.x + cardBox.width + 1);
 });
+
+/**
+ * Add a block the way an editor does: open the area's "Add block" menu and pick
+ * a type. (It used to be one chip per type sitting above the area — seventeen of
+ * them on a normal page.) The menu is portalled to the body, so the item is
+ * looked up on the page even when the trigger is scoped to one area.
+ */
+async function addBlock(page: Page, name: string, scope?: Locator) {
+  await (scope ?? page).getByRole("button", { name: "Add block" }).first().click();
+  await page.getByRole("menuitem", { name, exact: true }).click();
+}
+
+/**
+ * Open a block row so its fields are on screen.
+ *
+ * A content area lists blocks as compact rows and only the open one shows its
+ * fields, so a test that fills a block field has to open it first — the same
+ * click an editor makes. Idempotent: already-open rows are left alone.
+ */
+async function openBlock(scope: Page | Locator, index = 0) {
+  const row = scope.locator(`li#pb-block-${index}`);
+  // :not([aria-haspopup]) — the row's overflow menu is a Radix trigger, which
+  // carries aria-expanded as well. The disclosure is the one that expands
+  // without opening a popup.
+  const toggle = row.locator("> div > button[aria-expanded]:not([aria-haspopup])");
+  if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+  return row;
+}
 
 /** The preview iframe (the web app on :8092) — polls because it mounts lazily. */
 async function waitPreviewFrame(page: Page) {
@@ -771,7 +823,10 @@ test("focusing a block field in the form highlights that block's field in the pr
   await page.getByRole("button", { name: "Side by side" }).click();
   const frame = await waitPreviewFrame(page);
   await frame.locator("body.pb-editing").waitFor({ state: "attached", timeout: 20_000 });
-  // Focus the HERO block's Title editor in the form (block card, area index 0).
+  // Focus the HERO block's Title editor in the form (block row, area index 0).
+  // The field lives inside the row, so open it first — which is also what a
+  // preview click does on the way in.
+  await openBlock(page);
   await page.locator("#bf-h1-title").click();
   // paperboy:focus carries the block index, so the flash lands on THAT block's
   // field in the page — not on the first same-named field or the whole area.
@@ -908,14 +963,13 @@ test("building a form: the key fills itself in from the label, and a clash is ca
   const area = page.getByTestId("content-area-fields");
   await expect(area).toBeVisible({ timeout: 20_000 });
 
-  // Two questions, added the way an editor adds them: one click each.
-  const palette = page.getByLabel("Block palette");
-  await palette.getByRole("button", { name: "+ Text field", exact: true }).click();
-  await palette.getByRole("button", { name: "+ Email field", exact: true }).click();
+  // Two questions, added the way an editor adds them.
+  await addBlock(page, "Text field", area);
+  await addBlock(page, "Email field", area);
 
   // The LABEL comes first on a form field — the key is derived from it, so it
   // has no business being the first thing an editor meets.
-  const first = area.locator("li#pb-block-0");
+  const first = await openBlock(area, 0);
   await expect(first.getByRole("textbox").first()).toHaveAttribute("aria-label", "Label");
 
   // Type the label, leave the field: the key appears by itself.
@@ -932,17 +986,18 @@ test("building a form: the key fills itself in from the label, and a clash is ca
   await first.getByRole("textbox", { name: "Label" }).blur();
   await expect(firstKey).toHaveValue("firm");
 
-  // Second field, same key: both cards say so, because either could be the mistake.
-  const second = area.locator("li#pb-block-1");
-  const clash = /Another field already uses the key/;
-  await expect(page.getByText(clash)).toHaveCount(0);
+  // Second field, same key: both ROWS say so, because either could be the
+  // mistake — and on the row you can see which two clash without opening either.
+  const second = await openBlock(area, 1);
+  const clash = area.getByText("duplicate key");
+  await expect(clash).toHaveCount(0);
   await second.getByRole("textbox", { name: "Field key" }).fill("firm");
-  await expect(first.getByText(clash)).toBeVisible();
-  await expect(second.getByText(clash)).toBeVisible();
+  await expect(first.getByText("duplicate key")).toBeVisible();
+  await expect(second.getByText("duplicate key")).toBeVisible();
 
   // Resolved by giving it its own key.
   await second.getByRole("textbox", { name: "Field key" }).fill("email");
-  await expect(page.getByText(clash)).toHaveCount(0);
+  await expect(clash).toHaveCount(0);
 
   // Clean up: this test creates a shared block at the root.
   const del = await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
@@ -984,7 +1039,9 @@ test("the existing-block picker searches, and never offers a block the area forb
   await page.reload();
   await expect(page.getByTestId("content-area-fields")).toBeVisible({ timeout: 20_000 });
 
-  await page.getByRole("button", { name: "+ Existing block" }).click();
+  // Reuse lives in the Add block menu now, beside the types you can create.
+  await page.getByRole("button", { name: "Add block" }).first().click();
+  await page.getByRole("menuitem", { name: /^Existing block/ }).click();
   const picker = page.getByRole("dialog", { name: "Insert an existing block" });
   await expect(picker).toBeVisible();
 
@@ -1054,17 +1111,40 @@ test("an area that allows ANY block still does not offer parts (a form's field b
 
   await page.goto(`/edit/${doc.documentId}`);
   await page.reload();
-  const palette = page.getByLabel("Block palette");
-  await expect(palette).toBeVisible({ timeout: 20_000 });
+  // Wait for the editor to SETTLE before opening the menu. The old assertion on
+  // an always-rendered chip row did this implicitly; a menu is transient, so a
+  // re-render arriving mid-click (a query resolving after the reload) closes it
+  // again and the palette is simply not there.
+  const openArea = page.getByTestId("content-area-openArea");
+  await expect(openArea).toBeVisible({ timeout: 20_000 });
+
+  await openArea.getByRole("button", { name: "Add block" }).click();
+
+  // Asserted on the menuitem ROLE, not on the menu's aria-label: the items are
+  // the contract this test is about, and a portalled menu's own labelling is
+  // not something to hang a parts-availability test on.
+  const palette = page.getByRole("menu");
+  await expect(palette.getByRole("menuitem").first()).toBeVisible({ timeout: 20_000 });
 
   // Populated with real page blocks…
-  await expect(palette.getByRole("button", { name: "+ Hero", exact: true })).toBeVisible();
+  await expect(palette.getByRole("menuitem", { name: "Hero", exact: true })).toBeVisible();
   // …and free of the parts.
-  for (const part of ["+ Date field", "+ Number field", "+ Consent checkbox", "+ Explanatory text"]) {
-    await expect(palette.getByRole("button", { name: part, exact: true }), part).toHaveCount(0);
+  // The form fields, and the three composition parts that used to leak into the
+  // page-level list — an "Accordion item" chosen here renders as nothing.
+  for (const part of [
+    "Date field",
+    "Number field",
+    "Consent checkbox",
+    "Explanatory text",
+    "Accordion item",
+    "Link item",
+    "Question with answer",
+  ]) {
+    await expect(palette.getByRole("menuitem", { name: part, exact: true }), part).toHaveCount(0);
   }
   // The Form itself is real page composition and stays on offer.
-  await expect(palette.getByRole("button", { name: "+ Form", exact: true })).toBeVisible();
+  await expect(palette.getByRole("menuitem", { name: "Form", exact: true })).toBeVisible();
+  await page.keyboard.press("Escape");
 
   await page.request.delete(`/api/v1/manage/content/${doc.documentId}`, { headers });
   await page.request.delete(`/api/v1/manage/content-types/${typeName}`, { headers });

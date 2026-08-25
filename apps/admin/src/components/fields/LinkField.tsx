@@ -177,12 +177,12 @@ export function LinkField({
               onClose={() => setPickerOpen(false)}
             />
           )}
-          <label className="field-label mt-2 text-[12px]" htmlFor={`${id}-anchor`}>
+          <label className="field-label mt-2" htmlFor={`${id}-anchor`}>
             Section on that page (optional)
           </label>
           <input
             id={`${id}-anchor`}
-            className="field-input py-1"
+            className="field-input"
             placeholder="e.g. faq"
             value={(v.anchor ?? "").replace(/^#/, "")}
             disabled={disabled}
@@ -258,10 +258,10 @@ export function LinkField({
 
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="field-label text-[12px]" htmlFor={`${id}-text`}>Link text</label>
+          <label className="field-label" htmlFor={`${id}-text`}>Link text</label>
           <input
             id={`${id}-text`}
-            className="field-input py-1"
+            className="field-input"
             placeholder={selectedPage || "What the link says"}
             value={v.text ?? ""}
             disabled={disabled}
@@ -269,10 +269,10 @@ export function LinkField({
           />
         </div>
         <div>
-          <label className="field-label text-[12px]" htmlFor={`${id}-target`}>Opens in</label>
+          <label className="field-label" htmlFor={`${id}-target`}>Opens in</label>
           <select
             id={`${id}-target`}
-            className="field-input py-1"
+            className="field-input"
             value={v.target ?? "_self"}
             disabled={disabled}
             onChange={(e) => set({ target: e.target.value === "_blank" ? "_blank" : "" })}
