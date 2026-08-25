@@ -1119,8 +1119,12 @@ test("an area that allows ANY block still does not offer parts (a form's field b
   await expect(openArea).toBeVisible({ timeout: 20_000 });
 
   await openArea.getByRole("button", { name: "Add block" }).click();
-  const palette = page.getByLabel("Block palette");
-  await expect(palette).toBeVisible({ timeout: 20_000 });
+
+  // Asserted on the menuitem ROLE, not on the menu's aria-label: the items are
+  // the contract this test is about, and a portalled menu's own labelling is
+  // not something to hang a parts-availability test on.
+  const palette = page.getByRole("menu");
+  await expect(palette.getByRole("menuitem").first()).toBeVisible({ timeout: 20_000 });
 
   // Populated with real page blocks…
   await expect(palette.getByRole("menuitem", { name: "Hero", exact: true })).toBeVisible();
