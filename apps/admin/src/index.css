@@ -48,6 +48,7 @@
 
   --radius: var(--radius);
   --radius-lg: var(--radius-lg);
+  --radius-field: var(--radius-field);
 
   --shadow-panel: var(--shadow-panel);
   --shadow-pop: var(--shadow-pop);
@@ -153,12 +154,51 @@
 @utility field-label {
   /* 6px, not 4px: the gap to a field's OWN input must read as tighter than
      the 20px gap to the next field, or the two blur together. Measured
-     2026-08-23 — controls are already 34px, which is why only the gap moved. */
-  @apply mb-1.5 block text-[13px] font-semibold text-fg;
+     2026-08-23 — controls are already 34px, which is why only the gap moved.
+   *
+   * MEDIUM, not semibold, and one size at every nesting depth. Every label
+     bold is emphasis on nothing: measured 2026-08-25, a panel had 13px/600
+     labels at the top level and 12px/600 inside a block — same semantic role,
+     two treatments — and the labels were the loudest thing in a form whose
+     VALUES are the content. Do not re-add a `text-[12px]` override for nested
+     fields; a label's role does not change with depth. */
+  @apply mb-1.5 block text-[13px] font-medium text-fg;
 }
 
+/*
+ * ONE control height, one text size, one radius — for every input, select and
+ * combobox in the app. Measured 2026-08-25: a single properties panel held
+ * five heights (24/30/30/30/34px), three text sizes and four paddings, all of
+ * it from `py-*` and `text-*` overrides at the call site rather than from any
+ * decision. The height is set here so an override cannot drift it again.
+ *
+ * A textarea sizes itself from `rows`, so it opts out BY NAME (field-textarea)
+ * instead of by accident.
+ */
 @utility field-input {
-  @apply w-full rounded-(--radius) border border-line bg-panel px-2.5 py-1.5 text-sm text-fg outline-hidden transition-colors placeholder:text-muted/70 focus:border-accent;
+  @apply w-full rounded-(--radius-field) border border-line bg-panel px-2.5 text-[13px] text-fg outline-hidden transition-colors placeholder:text-muted/70 focus:border-accent;
+  height: 2rem;
+}
+
+/* The one deliberate exception: controls that sit IN a toolbar or a block
+   header, where 32px would outgrow the bar around them. Named, so it reads as
+   a choice at the call site. */
+@utility field-input-dense {
+  @apply field-input;
+  height: 1.75rem;
+  @apply px-2 text-xs;
+}
+
+@utility field-textarea {
+  @apply field-input py-1.5;
+  height: auto;
+}
+
+/* The rhythm between fields, owned by the CONTAINER. Fields must not carry
+   their own bottom margins: that is how a panel ended up with gaps of
+   44 / 80 / 91 / 94 / 194px in one scroll. */
+@utility field-stack {
+  @apply flex flex-col gap-5;
 }
 
 @utility col-rule {
@@ -233,6 +273,9 @@
 
     --radius: 9px;
     --radius-lg: 14px;
+    /* Forms get their own, smaller radius: --radius is tuned for cards and
+       buttons, and at control height it reads as a pill rather than a box. */
+    --radius-field: 6px;
     --shadow-panel:
       0 1px 2px rgb(16 24 40 / 0.04), 0 6px 16px -6px rgb(16 24 40 / 0.1);
     --shadow-pop:

@@ -15,6 +15,7 @@ import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { fieldWidthClass } from "../lib/field-width.js";
+import { blockAtPath, type BlockPath } from "../lib/block-path.js";
 import { opeAction } from "../lib/ope-target.js";
 import { postCaret } from "../lib/caret.js";
 import { applyRichTextStrings, collectRichTextStrings } from "../lib/richtext-strings.js";
@@ -794,8 +795,15 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         return;
       }
 
-      if (blockField) setTab(blockField.group);
-      else if (def) setTab(def.group);
+      // Clicking a block's field in the preview OPENS that block's row before
+      // focusing the field — the field only exists in the DOM while its row is
+      // expanded, so without this the focus had nothing to land on.
+      if (blockField) {
+        setTab(blockField.group);
+        setBlockPath([{ field: blockField.area, key: blockField.key }]);
+      } else if (def) {
+        setTab(def.group);
+      }
       const id = blockField
         ? `bf-${blockField.key}-${blockField.name}`
         : d.blockIndex != null ? `pb-block-${d.blockIndex}` : fieldName ? `f-${fieldName}` : null;
@@ -881,6 +889,41 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [saveState]);
+
+  /**
+   * Which block row is OPEN, as a path from the document down.
+   *
+   * A content area lists its blocks as compact rows and the open one shows its
+   * fields underneath, in place — so the area you are working in stays on screen
+   * and there is nothing to navigate back from. A path rather than a single key
+   * because opening a block inside an open block must not collapse its parent:
+   * `[{mainArea, hero-key}, {items, item-key}]` is one chain, and every other
+   * row at every level is closed.
+   *
+   * Tried and rejected: replacing the pane's contents with the block's fields
+   * (you lose sight of the page and the area — measured against a real edit) and
+   * a modal (hides the area AND the live preview, and stacks two deep on a Form
+   * block's field parts).
+   *
+   * These hooks sit ABOVE the loading/error returns below, because hooks after
+   * an early return run on some renders and not others — React counts them and
+   * throws "rendered more hooks than during the previous render".
+   */
+  const [blockPath, setBlockPath] = useState<BlockPath>([]);
+
+  // Leaving the document (or switching locale — the editor remounts) must not
+  // strand the pane inside a block that the new document does not have.
+  useEffect(() => {
+    setBlockPath([]);
+  }, [documentId, locale]);
+
+  // The path points at something that is gone (an undo, or another editor's save
+  // arriving): step back out rather than rendering an empty form under a live
+  // breadcrumb. `form` may still be null here — this runs before the guards.
+  const formData = form?.data;
+  useEffect(() => {
+    if (blockPath.length > 0 && formData && !blockAtPath(formData, blockPath)) setBlockPath([]);
+  }, [blockPath, formData]);
 
   // Error first: on a failed load `form` never initialises, so the loading
   // check would swallow the error and spin forever (e.g. a deleted document).
@@ -985,6 +1028,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                   sharedBlocks={sharedBlocks.data ?? []}
                   onChange={(v) => setField(f.name, v)}
                   error={fieldErrors[f.name]}
+                  openPath={blockPath}
+                  onOpenPath={setBlockPath}
                 />
               </div>
             ))}
@@ -1036,7 +1081,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         <label className="ml-2 flex items-center gap-1.5 text-sm text-muted">
           <Icon.Globe width={16} height={16} />
           <select
-            className="rounded border border-line bg-panel px-2 py-1 text-sm text-fg"
+            className="field-input-dense w-auto"
             value={locale}
             onChange={(e) => setLocale(e.target.value)}
             aria-label="Language"
@@ -2115,7 +2160,7 @@ function OverlayAi({
         }}
       >
         <input
-          className="field-input min-w-0 flex-1 py-1 text-xs"
+          className="field-input min-w-0 flex-1 py-1"
           placeholder="Ask the desk… e.g. shorten to 8 words"
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
@@ -2160,6 +2205,8 @@ function Field({
   types,
   sharedBlocks,
   error,
+  openPath,
+  onOpenPath,
 }: {
   field: FieldDef;
   value: unknown;
@@ -2168,6 +2215,9 @@ function Field({
   types: ContentTypeDef[];
   sharedBlocks: { documentId: string; name: string; type: string }[];
   error?: string;
+  /** Which block row is open, and how to change it — see Editor's `blockPath`. */
+  openPath?: BlockPath;
+  onOpenPath?: (next: BlockPath) => void;
 }) {
   const id = `f-${field.name}`;
   if (field.type === "contentArea") {
@@ -2187,6 +2237,8 @@ function Field({
           // read-only user got a live palette and inputs whose every keystroke
           // autosaved into a 403.
           disabled={disabled}
+          openPath={openPath}
+          onOpenPath={onOpenPath}
         />
         <FieldError>{error}</FieldError>
       </div>
