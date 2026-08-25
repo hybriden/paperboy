@@ -16,6 +16,7 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
 import { fieldWidthClass } from "../lib/field-width.js";
 import { blockAtPath, type BlockPath } from "../lib/block-path.js";
+import { filterFields } from "../lib/field-filter.js";
 import { opeAction } from "../lib/ope-target.js";
 import { postCaret } from "../lib/caret.js";
 import { applyRichTextStrings, collectRichTextStrings } from "../lib/richtext-strings.js";
@@ -911,10 +912,20 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
    */
   const [blockPath, setBlockPath] = useState<BlockPath>([]);
 
+  /**
+   * Property filter. Empty = the pane behaves exactly as it always did, showing
+   * the open group; non-empty = matches from EVERY group, captioned.
+   *
+   * Additive on purpose: the tab strip keeps working, and nobody has to learn a
+   * new way to reach the fields they already know where to find.
+   */
+  const [fieldQuery, setFieldQuery] = useState("");
+
   // Leaving the document (or switching locale — the editor remounts) must not
   // strand the pane inside a block that the new document does not have.
   useEffect(() => {
     setBlockPath([]);
+    setFieldQuery("");
   }, [documentId, locale]);
 
   // The path points at something that is gone (an undo, or another editor's save
@@ -952,6 +963,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Hoisted on purpose: the preview message handler (registered while the
   // editor may still be loading) closes over this — a `const` here would stay
   // un-initialized in that closure (TDZ) and crash the first drop.
+  // Filter results, recomputed per render — cheap (a type has tens of fields,
+  // not thousands) and always in step with the query.
+  const filtered = filterFields(type?.fields ?? [], fieldQuery);
+  const matchCount = filtered.reduce((n, g) => n + g.fields.length, 0);
+
   function setField(name: string, value: unknown) {
     patch((prev) => ({ ...prev, data: { ...prev.data, [name]: value } }));
     // Editing a field clears its inline error.
@@ -1005,6 +1021,29 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         ))}
       </div>
 
+      {/* Filtering answers "which group is that field in?" better than any
+          amount of tidying does. Hidden on the submissions tab, which is a table
+          rather than a form. */}
+      {tab !== SUBMISSIONS_TAB && (type?.fields.length ?? 0) > 6 && (
+        <div className="flex items-center gap-2 border-b border-line bg-canvas px-4 py-2">
+          <input
+            className="field-input-dense max-w-[18rem]"
+            type="search"
+            aria-label="Filter properties"
+            placeholder="Filter properties…"
+            value={fieldQuery}
+            onChange={(e) => setFieldQuery(e.target.value)}
+          />
+          {fieldQuery.trim() && (
+            <span className="text-xs text-muted">
+              {matchCount === 0
+                ? "no property matches"
+                : `${matchCount} propert${matchCount === 1 ? "y" : "ies"}, all groups`}
+            </span>
+          )}
+        </div>
+      )}
+
       {tab === SUBMISSIONS_TAB ? (
         <div className="mx-auto max-w-3xl p-4 sm:p-6">
           {/* Keyed by document: switching to another Form must not carry over the
@@ -1016,25 +1055,62 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         // white beside it in All properties. In the narrow side-by-side pane the
         // cap never binds, so centring is a no-op there.
         <div className="mx-auto max-w-3xl space-y-5 p-4 sm:p-6" onFocusCapture={activateProp} onClickCapture={activateProp}>
-          {type?.fields
-            .filter((f) => f.group === tab)
-            .map((f) => (
-              <div key={f.name} data-pb-prop={f.name} className={fieldWidthClass(f)}>
-                <Field
-                  field={f}
-                  value={form.data[f.name]}
-                  disabled={!canEdit}
-                  types={types}
-                  sharedBlocks={sharedBlocks.data ?? []}
-                  onChange={(v) => setField(f.name, v)}
-                  error={fieldErrors[f.name]}
-                  openPath={blockPath}
-                  onOpenPath={setBlockPath}
-                />
-              </div>
-            ))}
-          {type && type.fields.filter((f) => f.group === tab).length === 0 && (
-            <p className="text-sm text-muted">No properties in this group.</p>
+          {filtered.length > 0 ? (
+            /* Filtering: matches from every group, each under its group's name,
+               so the answer includes WHERE the field lives — which is the thing
+               you did not know when you started typing. */
+            filtered.map((g) => (
+              <section key={g.group} className="space-y-5">
+                <p className="border-b border-line pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+                  {g.group}
+                </p>
+                {g.fields.map((f) => (
+                  <div key={f.name} data-pb-prop={f.name} className={fieldWidthClass(f)}>
+                    <Field
+                      field={f}
+                      value={form.data[f.name]}
+                      disabled={!canEdit}
+                      types={types}
+                      sharedBlocks={sharedBlocks.data ?? []}
+                      onChange={(v) => setField(f.name, v)}
+                      error={fieldErrors[f.name]}
+                      openPath={blockPath}
+                      onOpenPath={setBlockPath}
+                    />
+                  </div>
+                ))}
+              </section>
+            ))
+          ) : fieldQuery.trim() ? (
+            <p className="text-sm text-muted">
+              No property matches “{fieldQuery.trim()}”.{" "}
+              <button type="button" className="underline" onClick={() => setFieldQuery("")}>
+                Clear the filter
+              </button>
+            </p>
+          ) : (
+            <>
+              {type?.fields
+                .filter((f) => f.group === tab)
+                .map((f) => (
+                  <div key={f.name} data-pb-prop={f.name} className={fieldWidthClass(f)}>
+                    <Field
+                      field={f}
+                      value={form.data[f.name]}
+                      disabled={!canEdit}
+                      types={types}
+                      sharedBlocks={sharedBlocks.data ?? []}
+                      onChange={(v) => setField(f.name, v)}
+                      error={fieldErrors[f.name]}
+                      openPath={blockPath}
+                      onOpenPath={setBlockPath}
+                    />
+                  </div>
+                ))}
+              {type && type.fields.filter((f) => f.group === tab).length === 0 && (
+                <p className="text-sm text-muted">No properties in this group.</p>
+              )}
+            </>
           )}
         </div>
       )}
