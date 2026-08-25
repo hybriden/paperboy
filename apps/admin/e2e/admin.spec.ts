@@ -1111,7 +1111,14 @@ test("an area that allows ANY block still does not offer parts (a form's field b
 
   await page.goto(`/edit/${doc.documentId}`);
   await page.reload();
-  await page.getByRole("button", { name: "Add block" }).first().click({ timeout: 20_000 });
+  // Wait for the editor to SETTLE before opening the menu. The old assertion on
+  // an always-rendered chip row did this implicitly; a menu is transient, so a
+  // re-render arriving mid-click (a query resolving after the reload) closes it
+  // again and the palette is simply not there.
+  const openArea = page.getByTestId("content-area-openArea");
+  await expect(openArea).toBeVisible({ timeout: 20_000 });
+
+  await openArea.getByRole("button", { name: "Add block" }).click();
   const palette = page.getByLabel("Block palette");
   await expect(palette).toBeVisible({ timeout: 20_000 });
 
