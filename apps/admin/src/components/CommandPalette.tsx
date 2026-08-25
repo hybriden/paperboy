@@ -15,14 +15,20 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   const [selected, setSelected] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Reset on open so the palette never shows a stale query, and focus the input
-  // (replaces autoFocus on the field).
-  useEffect(() => {
+  // Reset on open so the palette never shows a stale query. During render
+  // rather than in an effect — an effect paints the old query for one frame.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
     if (open) {
       setQuery("");
       setDebounced("");
-      inputRef.current?.focus();
     }
+  }
+  // Focusing IS a DOM side effect, so that half stays an effect (it replaces
+  // autoFocus on the field).
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
   }, [open]);
   // Debounce the server search so we don't hit the API on every keystroke.
   useEffect(() => {
@@ -71,9 +77,14 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
       : firstContent
         ? `content ${firstContent.documentId}`
         : "";
-  useEffect(() => {
+  // Highlight the first row whenever the result set changes, leaving arrow-key
+  // selection alone in between. During render for the same reason as above.
+  const resultsKey = `${debounced}\u0000${firstValue}`;
+  const [highlightedFor, setHighlightedFor] = useState(resultsKey);
+  if (highlightedFor !== resultsKey) {
+    setHighlightedFor(resultsKey);
     setSelected(firstValue);
-  }, [firstValue, debounced]);
+  }
 
   return (
     <RDialog.Root open={open} onOpenChange={onOpenChange}>

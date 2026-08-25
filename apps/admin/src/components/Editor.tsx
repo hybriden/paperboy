@@ -1753,24 +1753,24 @@ function VersionsDialog({
   const [selA, setSelA] = useState<number | null>(null);
   const [selB, setSelB] = useState<number | null>(null);
   const [comparing, setComparing] = useState(false);
-  useEffect(() => {
-    if (rows.length < 2 || selA != null || selB != null) return;
+  // Seeded during render rather than in an effect, which painted one frame with
+  // nothing selected. The guard is self-terminating: the first pass sets both
+  // ends, so the immediate re-render falls straight through it.
+  if (rows.length >= 2 && selA == null && selB == null) {
     // Review mode jumps straight to the published → draft diff (the pre-publish
     // "what am I about to ship?"). Falls back to the two newest if there's no
     // clean published/draft pair.
-    if (mode === "review") {
-      const published = rows.find((r) => r.isCurrentPublished);
-      const draft = rows.find((r) => r.status === "draft");
-      if (published && draft && published.id !== draft.id) {
-        setSelA(published.id);
-        setSelB(draft.id);
-        setComparing(true);
-        return;
-      }
+    const published = mode === "review" ? rows.find((r) => r.isCurrentPublished) : undefined;
+    const draft = mode === "review" ? rows.find((r) => r.status === "draft") : undefined;
+    if (published && draft && published.id !== draft.id) {
+      setSelA(published.id);
+      setSelB(draft.id);
+      setComparing(true);
+    } else {
+      setSelB(rows[0]!.id);
+      setSelA(rows[1]!.id);
     }
-    setSelB(rows[0]!.id);
-    setSelA(rows[1]!.id);
-  }, [rows, selA, selB, mode]);
+  }
   const canCompare = selA != null && selB != null && selA !== selB;
 
   return (

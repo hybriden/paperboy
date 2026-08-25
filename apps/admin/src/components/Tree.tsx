@@ -134,7 +134,11 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
   // ----- whole-tree drag-and-drop (reorder + drag-to-nest) -----
   const qc = useQueryClient();
   const toast = useToast();
-  const registry = useRef<Map<string, { parentId: string | null }>>(new Map());
+  // A stable Map that rows write into and drag maths reads. Held in state, not
+  // a ref: it is read during render (below, into the dnd object) and a ref read
+  // there is invisible to React. useState's initializer also creates it ONCE —
+  // useRef(new Map()) allocated a throwaway Map on every render.
+  const [registry] = useState<Map<string, { parentId: string | null }>>(() => new Map());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [over, setOver] = useState<{ id: string; mode: DropMode } | null>(null);
   const dragEnabled = !filter; // filtering hides siblings, so disable drag while filtering
@@ -163,7 +167,7 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
     setActiveId(null);
     setOver(null);
     if (!drop || drop.id === id) return;
-    const target = registry.current.get(drop.id);
+    const target = registry.get(drop.id);
     if (!target) return;
     if (drop.mode === "inside") {
       move.mutate({ id, parentId: drop.id });
@@ -175,7 +179,7 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
     }
   }
 
-  const dnd: TreeDnd = { registry: registry.current, activeId, over, dragEnabled };
+  const dnd: TreeDnd = { registry, activeId, over, dragEnabled };
 
   return (
     <div className="flex h-full flex-col">
@@ -792,7 +796,12 @@ function CreateDialog(props: {
   onCreated: (id: string) => void;
 }) {
   const qc = useQueryClient();
-  const [type, setType] = useState(props.types[0]?.name ?? "");
+  // The dialog can mount before the types query resolves, so the effective type
+  // FALLS BACK to the first option rather than being filled in by an effect: the
+  // select would otherwise show the first option while the state stayed "" and
+  // Create was disabled forever.
+  const [chosenType, setChosenType] = useState("");
+  const type = chosenType || props.types[0]?.name || "";
   const [name, setName] = useState("");
   // Focus the name input on mount (replaces autoFocus — the a11y-clean pattern
   // used by the sibling CreateBlockDialog).
@@ -800,11 +809,6 @@ function CreateDialog(props: {
   useEffect(() => {
     nameRef.current?.focus();
   }, []);
-  // The dialog can mount before the types query resolves; the select would then
-  // SHOW the first option while the state stays "" — Create disabled forever.
-  useEffect(() => {
-    if (!type && props.types[0]) setType(props.types[0].name);
-  }, [props.types, type]);
   const create = useMutation({
     mutationFn: () => api.create({ type, parentId: props.parentId, locale: props.locale, name }),
     onSuccess: (created) => {
@@ -818,7 +822,7 @@ function CreateDialog(props: {
       <Surface elevation={2} radius="lg" padding="lg" className="w-[min(400px,94vw)] animate-scale-in">
         <h3 className="mb-3 text-base font-bold text-fg">{props.parentId ? "Create child content" : "Create content"}</h3>
         <label className="field-label" htmlFor="ctype">Content type</label>
-        <select id="ctype" className="field-input mb-3" value={type} onChange={(e) => setType(e.target.value)}>
+        <select id="ctype" className="field-input mb-3" value={type} onChange={(e) => setChosenType(e.target.value)}>
           {props.types.map((t) => <option key={t.name} value={t.name}>{t.displayName} ({t.kind})</option>)}
         </select>
         <label className="field-label" htmlFor="cname">Name</label>

@@ -187,13 +187,25 @@ export function ContentTypesPanel() {
   // #model:TypeName opens that type's editor once the list has loaded. The
   // hash is consumed so closing the editor doesn't re-open it. Manage-gated:
   // others land on the list itself.
-  useEffect(() => {
+  // Read ONCE at mount — window.location is an external system, not a render
+  // input — then consumed during render as soon as the list can satisfy it, so
+  // the editor opens in the same paint as the list rather than a frame later.
+  const [pendingModel, setPendingModel] = useState(() => {
     const m = /^#model:(.+)$/.exec(window.location.hash);
-    if (!m || !types.data || !canManage) return;
-    const t = types.data.find((x) => x.name === decodeURIComponent(m[1]!));
-    history.replaceState(null, "", `${window.location.pathname}#model`);
+    return m ? decodeURIComponent(m[1]!) : null;
+  });
+  if (pendingModel && types.data && canManage) {
+    const t = types.data.find((x) => x.name === pendingModel);
+    setPendingModel(null);
     if (t) setEditor({ mode: "edit", initial: t });
-  }, [types.data, canManage]);
+  }
+  // Rewriting the hash is a browser mutation, so that half stays an effect.
+  useEffect(() => {
+    if (pendingModel !== null) return;
+    if (window.location.hash.startsWith("#model:")) {
+      history.replaceState(null, "", `${window.location.pathname}#model`);
+    }
+  }, [pendingModel]);
 
   const counts = kindCounts(all);
   const shown = all.filter((t) => matchesKindFilter(t, kind));
@@ -944,10 +956,12 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
   const [startPageId, setStartPageId] = useState(site.startPageId ?? "");
   const [canonicalUrl, setCanonicalUrl] = useState(site.canonicalBaseUrl ?? "");
   const [files, setFiles] = useState(() => filesOf(site));
-  const lastSaved = useRef(saved);
-  if (lastSaved.current !== saved) {
+  // React's documented "adjust state when a prop changes", which needs a value
+  // React itself tracks: a render-phase ref write is invisible to it.
+  const [lastSaved, setLastSaved] = useState(saved);
+  if (lastSaved !== saved) {
     // The site changed under us (after a save elsewhere) — resync the draft.
-    lastSaved.current = saved;
+    setLastSaved(saved);
     setName(site.name);
     setSlug(site.slug);
     setPreviewUrl(site.previewBaseUrl ?? "");

@@ -27,5 +27,3 @@ declare module "fastify" {
     deliverySiteId: string | null;
   }
 }
-
-export {};

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import Fastify from "fastify";
 import { loadEnv, parseTrustProxy } from "../src/env.js";
 
 // S2-H2: the production fail-fast guard must refuse ALL shipped placeholder
@@ -81,9 +82,33 @@ describe("parseTrustProxy (M9: configurable trusted-proxy boundary)", () => {
     expect(parseTrustProxy("true")).toBe(true);
     expect(parseTrustProxy("false")).toBe(false);
   });
-  it("maps a numeric string to a hop count", () => {
-    expect(parseTrustProxy("1")).toBe(1);
-    expect(parseTrustProxy("2")).toBe(2);
+  // GHSA-3m5p-2c4r-xxw2: the hop-count form compiles to a predicate that
+  // structurally IGNORES the connecting address, so fastify's X-Forwarded-*
+  // guard degrades to `0 < n` — true for every n >= 1. Anyone who can reach this
+  // origin directly could still spoof req.ip, request.host and request.protocol.
+  // fastify 5.12.1 disabled the form at runtime and dropped it from the type, so
+  // accepting it here would leave an operator believing a boundary is enforced
+  // while it silently is not. It is REFUSED, not coerced (rule #1).
+  it("REFUSES a hop count and teaches the replacement", () => {
+    expect(() => parseTrustProxy("1")).toThrow(/hop count/i);
+    expect(() => parseTrustProxy("2")).toThrow(/TRUST_PROXY/);
+    expect(() => parseTrustProxy("1")).toThrow(/GHSA-3m5p-2c4r-xxw2/);
+    // A refusal that does not say what to write instead is a dead end.
+    expect(() => parseTrustProxy("1")).toThrow(/uniquelocal|CIDR/);
+  });
+
+  it("keeps the address-validating forms usable", () => {
+    expect(parseTrustProxy("uniquelocal")).toEqual(["uniquelocal"]);
+    expect(parseTrustProxy("10.0.0.0/8")).toEqual(["10.0.0.0/8"]);
+  });
+
+  // The values docker-compose and .env.example ship must actually BOOT. Fastify
+  // validates trustProxy when the instance is created, so a bad default would be
+  // a crash on start — worse than the spoofing it replaced.
+  it("the shipped defaults are values fastify accepts", () => {
+    for (const shipped of ["uniquelocal", "false", "10.0.0.0/8, 172.16.0.0/12"]) {
+      expect(() => Fastify({ logger: false, trustProxy: parseTrustProxy(shipped) }).close()).not.toThrow();
+    }
   });
   it("maps a CSV to a trimmed list of trusted proxies", () => {
     expect(parseTrustProxy("10.0.0.0/8, 172.16.0.0/12")).toEqual(["10.0.0.0/8", "172.16.0.0/12"]);
