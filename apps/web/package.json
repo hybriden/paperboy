@@ -15,8 +15,8 @@
     "@paperboycms/preview": "workspace:*",
     "@paperboy/shared": "workspace:*",
     "isomorphic-dompurify": "^3",
-    "marked": "^18.0.7",
-    "next": "^16.3.1",
+    "marked": "^18.0.10",
+    "next": "^16.3.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
