@@ -16,12 +16,15 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { duplicateFieldKeys, fieldKeyFromLabel, generalBlockTypes, isFormFieldType } from "@paperboy/shared";
+import { blockSummary, type BlockPath } from "../../lib/block-path.js";
+import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "../ui/menu.js";
 import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
 import { api } from "../../lib/api.js";
 import { fieldWidthClass } from "../../lib/field-width.js";
 import { Icon } from "../../lib/icons.js";
+import { TypeIcon } from "../../lib/typeIcons.js";
 import { ImageField } from "../MediaLibrary.js";
 import { LinkField } from "./LinkField.js";
 import { useToast } from "../ui/toast.js";
@@ -39,6 +42,17 @@ interface Props {
   onChange: (next: BlockInstance[]) => void;
   types: ContentTypeDef[];
   sharedBlocks: { documentId: string; name: string; type: string }[];
+  /**
+   * Which block row is open, as a path from the document down, and how to change
+   * it. A row in THIS area is open when the path's step for this depth names it;
+   * its own prefix is `openPath.slice(0, depth)`, which is always correct because
+   * a nested area is only mounted when the open chain runs through it.
+   *
+   * Absent means "cannot be opened" — the area still lists, reorders and removes,
+   * which is what a not-yet-wired caller gets.
+   */
+  openPath?: BlockPath;
+  onOpenPath?: (next: BlockPath) => void;
   /** Read-only (no content.update). Hides the palette and locks every control. */
   disabled?: boolean;
   /** Nesting level (a contentArea field INSIDE an inline block renders another
@@ -51,7 +65,10 @@ const DISPLAY_OPTIONS: BlockDisplayOption[] = ["automatic", "full", "wide", "nar
 /** Deepest inline nesting the editor renders (page → block → … ). */
 const MAX_AREA_DEPTH = 4;
 
-export function ContentArea({ field, value, onChange, types, sharedBlocks, disabled = false, depth = 0 }: Props) {
+export function ContentArea({ field, value, onChange, types, sharedBlocks, disabled = false, depth = 0, openPath, onOpenPath }: Props) {
+  // The shared-block picker positions itself from a rect; the menu item that
+  // opens it has unmounted by then, so the anchor is the row it sat in.
+  const addRef = useRef<HTMLSpanElement>(null);
   const blocks = value ?? [];
   // Form fields only: two sharing a key means the second never reaches the
   // visitor (formSpecFrom keeps the first). Warn on the field itself — a form
@@ -226,56 +243,6 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-      {/* Block palette — click to add (drag the grip on a block to reorder).
-          Hidden entirely when read-only; offering controls that can only produce a
-          403 is worse than not showing them. */}
-      {!disabled && (
-      <div className="mb-2 flex flex-wrap gap-1.5" aria-label="Block palette">
-        {allowed.map((t) => (
-          <button
-            key={t.name}
-            type="button"
-            onClick={() => addInline(t.name)}
-            className="rounded-full border border-accent/40 bg-accent/5 px-3 py-1 text-xs font-medium text-accent-700 hover:bg-accent/10"
-            title={`Add ${t.displayName}`}
-          >
-            + {t.displayName}
-          </button>
-        ))}
-        {/* Reuse: place an EXISTING shared block (or a page, as a teaser). A
-            shared block belongs to no page, so the same document can appear in
-            any area that allows its type. */}
-        <div className="relative">
-          <button
-            type="button"
-            className="btn-subtle px-2 py-1 text-xs"
-            aria-expanded={pickerOpen !== null}
-            onClick={(e) => {
-              if (pickerOpen) return setPickerOpen(null);
-              const r = e.currentTarget.getBoundingClientRect();
-              setPickerOpen({ x: r.left, y: r.bottom + 4 });
-            }}
-          >
-            + Existing block
-          </button>
-          {pickerOpen && (
-            <SharedBlockPicker
-              at={pickerOpen}
-              allowedBlocks={field.allowedBlocks}
-              nestedOnlyTypes={nestedOnlyTypes}
-              sharedBlocks={sharedBlocks}
-              pages={pages.data ?? []}
-              onPick={(documentId, blockType) => {
-                addShared(documentId, blockType);
-                setPickerOpen(null);
-              }}
-              onClose={() => setPickerOpen(null)}
-            />
-          )}
-        </div>
-      </div>
-      )}
-
       {/* Content area */}
       <div
         data-testid={`content-area-${field.name}`}
@@ -298,7 +265,9 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
                 // The palette is hidden when read-only, so don't tell the user to
                 // "click a block above" — there is nothing above.
                 ? "You don\u2019t have permission to edit this area."
-                : "Click a block above to add it, or drag in a shared block (Assets pane), a page (content tree — shown as a teaser), or an image (library or your desktop)."}
+                // The palette used to sit above this text; adding is now the
+                // button below it, so "above" would point at nothing.
+                : "Nothing here yet."}
           </p>
         ) : (
           <SortableContext items={blocks.map((b) => b.key)} strategy={verticalListSortingStrategy}>
@@ -316,6 +285,20 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
                   onUpdate={(patch) => updateBlock(b.key, patch)}
                   onRemove={() => removeBlock(b.key)}
                   onMove={(d) => move(b.key, d)}
+                  open={openPath?.[depth]?.key === b.key}
+                  onToggle={
+                    onOpenPath && openPath
+                      ? () =>
+                          onOpenPath(
+                            openPath[depth]?.key === b.key
+                              // Closing: drop this step and everything under it.
+                              ? openPath.slice(0, depth)
+                              : [...openPath.slice(0, depth), { field: field.name, key: b.key }],
+                          )
+                      : undefined
+                  }
+                  openPath={openPath}
+                  onOpenPath={onOpenPath}
                   disabled={disabled}
                   types={types}
                   sharedBlocks={sharedBlocks}
@@ -325,6 +308,71 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
               ))}
             </ul>
           </SortableContext>
+        )}
+
+        {/* ADDING happens after the list, not before it.
+         *
+         * This used to be a row of one accent-tinted chip per allowed type —
+         * seventeen of them on a normal page area, 419x122px, repeated inside
+         * every nested area, above the content itself. It was the loudest thing
+         * in the properties pane and it pushed the actual content down.
+         *
+         * One button, and the type list is one click away in a menu. Hidden
+         * entirely when read-only: offering a control that can only produce a
+         * 403 is worse than not showing it. */}
+        {!disabled && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-2">
+            <Menu>
+              <MenuTrigger asChild>
+                <button type="button" className="btn-subtle px-2 py-1 text-xs">
+                  <Icon.Plus width={14} height={14} />
+                  Add block
+                </button>
+              </MenuTrigger>
+              <MenuContent align="start" label="Block palette">
+                {/* The same icon the content tree shows for this type — a list of
+                    seventeen names is read word by word; a list of seventeen
+                    marks is scanned. */}
+                {allowed.map((t) => (
+                  <MenuItem key={t.name} onSelect={() => addInline(t.name)}>
+                    <TypeIcon name={t.icon} fallback="blocks" width={15} height={15} className="shrink-0 text-muted" />
+                    {t.displayName}
+                  </MenuItem>
+                ))}
+                {allowed.length > 0 && <MenuSeparator />}
+                {/* Reuse: place an EXISTING shared block (or a page, as a
+                    teaser). A shared block belongs to no page, so the same
+                    document can appear in any area that allows its type. */}
+                <MenuItem
+                  onSelect={() => {
+                    const r = addRef.current?.getBoundingClientRect();
+                    setPickerOpen({ x: r?.left ?? 0, y: (r?.bottom ?? 0) + 4 });
+                  }}
+                >
+                  Existing block…
+                </MenuItem>
+              </MenuContent>
+            </Menu>
+
+            <span ref={addRef} className="text-xs text-muted">
+              or drag in a shared block, a page, or an image
+            </span>
+
+            {pickerOpen && (
+              <SharedBlockPicker
+                at={pickerOpen}
+                allowedBlocks={field.allowedBlocks}
+                nestedOnlyTypes={nestedOnlyTypes}
+                sharedBlocks={sharedBlocks}
+                pages={pages.data ?? []}
+                onPick={(documentId, blockType) => {
+                  addShared(documentId, blockType);
+                  setPickerOpen(null);
+                }}
+                onClose={() => setPickerOpen(null)}
+              />
+            )}
+          </div>
         )}
       </div>
 
@@ -418,6 +466,10 @@ function SortableBlock({
   onUpdate,
   onRemove,
   onMove,
+  open = false,
+  onToggle,
+  openPath,
+  onOpenPath,
   disabled = false,
   types,
   sharedBlocks,
@@ -431,6 +483,10 @@ function SortableBlock({
   onUpdate: (patch: Partial<BlockInstance>) => void;
   onRemove: () => void;
   onMove: (d: -1 | 1) => void;
+  open?: boolean;
+  onToggle?: () => void;
+  openPath?: BlockPath;
+  onOpenPath?: (next: BlockPath) => void;
   disabled?: boolean;
   types: ContentTypeDef[];
   sharedBlocks: { documentId: string; name: string; type: string }[];
@@ -453,59 +509,122 @@ function SortableBlock({
     ? [...type.fields].sort((a, b) => Number(a.name === "name") - Number(b.name === "name"))
     : (type?.fields ?? []);
 
+  // What the row SAYS. A row reading only "Hero" makes you open it to find out
+  // which hero it is; the block's own most-identifying value is more use than
+  // its type name repeated down the list.
+  const summary = isTeaser
+    ? `teaser: ${sharedName ?? "page"}`
+    : isShared
+      ? `shared: ${sharedName ?? "block"}`
+      : blockSummary(block, type);
+
+  // A shared block's fields live on its own document, and a page dropped in an
+  // area renders as a teaser — neither has anything to open here.
+  const canOpen = Boolean(onToggle) && !isShared && Boolean(type);
+  const isOpen = open && canOpen;
+
   return (
-    <li id={`pb-block-${index}`} ref={setNodeRef} style={style} className={`rounded border border-line bg-panel shadow-xs ${isDragging ? "opacity-60 ring-2 ring-accent" : ""}`}>
-      {/* flex-wrap + grouped controls: in a narrow form column (side-by-side view)
-          the controls drop to their own row instead of painting outside the card. */}
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-line bg-canvas px-2 py-1.5">
-        <button {...attributes} {...listeners} className="cursor-grab text-muted active:cursor-grabbing" aria-label="Drag to reorder">
+    <li
+      id={`pb-block-${index}`}
+      ref={setNodeRef}
+      style={style}
+      className={`rounded-(--radius-field) border bg-panel ${
+        isOpen ? "border-accent/40" : "border-line"
+      } ${isDragging ? "opacity-60 ring-2 ring-accent" : ""}`}
+    >
+      <div className="flex items-center gap-1.5 px-1.5">
+        <button {...attributes} {...listeners} className="cursor-grab p-1 text-muted active:cursor-grabbing" aria-label="Drag to reorder">
           <Icon.Grip width={16} height={16} />
         </button>
-        <span className="text-[13px] font-semibold text-fg">{type?.displayName ?? block.blockType}</span>
-        {isTeaser ? (
-          <span className="rounded bg-published/15 px-1.5 py-0.5 text-[11px] font-medium text-fg" title="Shown as a teaser linking to this page">teaser{sharedName ? `: ${sharedName}` : ""}</span>
-        ) : isShared ? (
-          <span className="rounded bg-accent/15 px-1.5 py-0.5 text-[11px] font-medium text-fg">shared{sharedName ? `: ${sharedName}` : ""}</span>
-        ) : (
-          <span className="rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">inline</span>
-        )}
-        <div className="ml-auto flex flex-wrap items-center justify-end gap-1">
-          <select
-            className="rounded border border-line bg-panel px-1 py-0.5 text-xs text-fg"
-            value={block.display}
-            aria-label="Display option"
-            disabled={disabled}
-            onChange={(e) => onUpdate({ display: e.target.value as BlockDisplayOption })}
+
+        {/* The row IS the affordance: one click opens the block's fields right
+            here, so the rest of the area stays where it was. The overflow menu
+            carries Edit too, because that is where an editor arriving from
+            another CMS will look for it. */}
+        {canOpen ? (
+          <button
+            type="button"
+            onClick={onToggle}
+            aria-expanded={isOpen}
+            className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
           >
-            {DISPLAY_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
-          </select>
-          <div className="flex items-center gap-0.5">
-            <button className="rounded p-1 text-muted hover:bg-line disabled:opacity-40" aria-label="Move up" disabled={disabled} onClick={() => onMove(-1)}><Icon.Up width={14} height={14} /></button>
-            <button className="rounded p-1 text-muted hover:bg-line disabled:opacity-40" aria-label="Move down" disabled={disabled} onClick={() => onMove(1)}><Icon.Down width={14} height={14} /></button>
-            <button className="rounded p-1 text-danger hover:bg-danger/10 disabled:opacity-40" aria-label="Remove block" disabled={disabled} onClick={onRemove}><Icon.Trash width={14} height={14} /></button>
-          </div>
-        </div>
+            <Icon.Chevron
+              width={14}
+              height={14}
+              className={`shrink-0 text-muted transition-transform ${isOpen ? "rotate-90" : ""}`}
+            />
+<TypeIcon name={type?.icon} fallback={isTeaser ? "file" : "blocks"} width={15} height={15} className="shrink-0 text-muted" />
+            <span className="shrink-0 text-[13px] font-medium text-fg">{type?.displayName ?? block.blockType}</span>
+            {!isOpen && summary && <span className="min-w-0 flex-1 truncate text-xs text-muted">{summary}</span>}
+          </button>
+        ) : (
+          <span className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-[18px]">
+            <TypeIcon name={type?.icon} fallback={isTeaser ? "file" : "blocks"} width={15} height={15} className="shrink-0 text-muted" />
+            <span className="shrink-0 text-[13px] font-medium text-fg">{type?.displayName ?? block.blockType}</span>
+            {summary && <span className="min-w-0 flex-1 truncate text-xs text-muted">{summary}</span>}
+          </span>
+        )}
+
+        {/* A duplicate form-field key used to be explained inside the block's
+            body. On the row it is better: you can see WHICH rows clash without
+            opening either of them. */}
+        {clashingKey && (
+          <span
+            className="shrink-0 rounded bg-draft/15 px-1.5 py-0.5 text-[11px] font-medium text-draft"
+            title={`Another field already uses the key "${clashingKey}", so only the first one reaches the form. Give this field a key of its own.`}
+          >
+            duplicate key
+          </span>
+        )}
+
+        {block.display !== "automatic" && (
+          <span className="shrink-0 rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">{block.display}</span>
+        )}
+
+        <Menu>
+          <MenuTrigger asChild>
+            <button
+              type="button"
+              className="shrink-0 rounded p-1 text-muted hover:bg-line"
+              aria-label={`Actions for ${type?.displayName ?? block.blockType}`}
+            >
+              <Icon.Dots width={16} height={16} />
+            </button>
+          </MenuTrigger>
+          <MenuContent>
+            {canOpen && <MenuItem onSelect={onToggle}>{isOpen ? "Close" : "Edit"}</MenuItem>}
+            <MenuItem onSelect={() => onMove(-1)} disabled={disabled}>Move up</MenuItem>
+            <MenuItem onSelect={() => onMove(1)} disabled={disabled}>Move down</MenuItem>
+            <MenuSeparator />
+            <MenuLabel>Display</MenuLabel>
+            {DISPLAY_OPTIONS.map((d) => (
+              <MenuItem key={d} onSelect={() => onUpdate({ display: d })} disabled={disabled}>
+                {block.display === d ? `\u2713 ${d}` : d}
+              </MenuItem>
+            ))}
+            <MenuSeparator />
+            <MenuItem onSelect={onRemove} destructive disabled={disabled}>Remove block</MenuItem>
+          </MenuContent>
+        </Menu>
       </div>
-      {clashingKey && (
-        <p className="border-b border-draft/40 bg-draft/10 px-2.5 py-1.5 text-xs text-draft">
-          Another field already uses the key <code className="font-mono">{clashingKey}</code>, so only the first one
-          reaches the form. Give this field a key of its own.
-        </p>
-      )}
-      {!isShared && type && (
-        <div className="space-y-2 p-2.5">
+
+      {/* The fields, in place. Only ONE row is open per level (the open path has
+          one step per depth), so however many blocks an area holds there is only
+          ever one form on screen and the field rhythm survives. */}
+      {isOpen && type && (
+        <div className="space-y-5 border-t border-line px-2.5 pb-3 pt-2.5">
           {fields.map((f) => (
             // data-pb-prop(-block): focusing a field here highlights the SAME
             // field inside this block in the preview (paperboy:focus w/ block
             // scope). Top-level blocks only — the frontend indexes per area.
-            // Same width discipline as a page's own fields — a block's date field
-            // was still stretching to the column.
             <div key={f.name} className={fieldWidthClass(f)} {...(depth === 0 ? { "data-pb-prop": f.name, "data-pb-prop-block": index } : {})}>
               <BlockField field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
                 disabled={disabled}
                 types={types}
                 sharedBlocks={sharedBlocks}
                 depth={depth}
+                openPath={openPath}
+                onOpenPath={onOpenPath}
                 onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })}
                 // Only the one field that can derive something gets a commit
                 // handler — otherwise tabbing through any text field would fire
@@ -517,17 +636,18 @@ function SortableBlock({
           ))}
         </div>
       )}
+
       {isTeaser && (
-        <p className="px-2.5 py-2 text-xs text-muted">Rendered as a teaser — a compact card linking to the page. Edit the page itself from the tree.</p>
+        <p className="px-2.5 pb-2 text-xs text-muted">Rendered as a teaser — a compact card linking to the page. Edit the page itself from the tree.</p>
       )}
       {isShared && !isTeaser && (
-        <p className="px-2.5 py-2 text-xs text-muted">Edit this shared block from its own page in the tree. Changes apply everywhere it is used.</p>
+        <p className="px-2.5 pb-2 text-xs text-muted">Edit this shared block from its own page in the tree. Changes apply everywhere it is used.</p>
       )}
     </li>
   );
 }
 
-function BlockField({ field, fieldId, value, onChange, onCommit, disabled = false, types, sharedBlocks, depth }: {
+function BlockField({ field, fieldId, value, onChange, onCommit, disabled = false, types, sharedBlocks, depth, openPath, onOpenPath }: {
   field: FieldDef;
   fieldId: string;
   value: unknown;
@@ -539,6 +659,8 @@ function BlockField({ field, fieldId, value, onChange, onCommit, disabled = fals
   types: ContentTypeDef[];
   sharedBlocks: { documentId: string; name: string; type: string }[];
   depth: number;
+  openPath?: BlockPath;
+  onOpenPath?: (next: BlockPath) => void;
 }) {
   const id = fieldId;
   // A contentArea INSIDE an inline block: recurse into a full nested area
@@ -549,7 +671,7 @@ function BlockField({ field, fieldId, value, onChange, onCommit, disabled = fals
   if (field.type === "contentArea") {
     return (
       <div>
-        <div className="field-label text-[12px]">{field.displayName}</div>
+        <div className="field-label">{field.displayName}</div>
         {field.helpText && <p className="mb-1 text-xs text-muted">{field.helpText}</p>}
         {depth + 1 >= MAX_AREA_DEPTH ? (
           <p className="rounded border border-dashed border-line px-2 py-1.5 text-xs text-muted">
@@ -564,6 +686,8 @@ function BlockField({ field, fieldId, value, onChange, onCommit, disabled = fals
             sharedBlocks={sharedBlocks}
             disabled={disabled}
             depth={depth + 1}
+            openPath={openPath}
+            onOpenPath={onOpenPath}
           />
         )}
       </div>
@@ -571,9 +695,9 @@ function BlockField({ field, fieldId, value, onChange, onCommit, disabled = fals
   }
   return (
     <div>
-      <label className="field-label text-[12px]" htmlFor={id}>{field.displayName}</label>
+      <label className="field-label" htmlFor={id}>{field.displayName}</label>
       {field.type === "text" && (
-        <input disabled={disabled} id={id} aria-label={field.displayName} className="field-input py-1" value={(value as string) ?? ""}
+        <input disabled={disabled} id={id} aria-label={field.displayName} className="field-input" value={(value as string) ?? ""}
           onChange={(e) => onChange(e.target.value)}
           onBlur={onCommit ? (e) => onCommit(e.target.value) : undefined} />
       )}
@@ -585,13 +709,13 @@ function BlockField({ field, fieldId, value, onChange, onCommit, disabled = fals
         <input disabled={disabled} id={id} aria-label={field.displayName} type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
       )}
       {field.type === "number" && (
-        <input disabled={disabled} id={id} aria-label={field.displayName} type="number" className="field-input py-1" value={(value as number) ?? ""} onChange={(e) => onChange(Number(e.target.value))} />
+        <input disabled={disabled} id={id} aria-label={field.displayName} type="number" className="field-input" value={(value as number) ?? ""} onChange={(e) => onChange(Number(e.target.value))} />
       )}
       {field.type === "datetime" && (
-        <input disabled={disabled} id={id} aria-label={field.displayName} type="datetime-local" className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)} />
+        <input disabled={disabled} id={id} aria-label={field.displayName} type="datetime-local" className="field-input" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)} />
       )}
       {field.type === "select" && (
-        <select disabled={disabled} id={id} className="field-input py-1" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)}>
+        <select disabled={disabled} id={id} className="field-input" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)}>
           <option value="">— choose —</option>
           {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
         </select>

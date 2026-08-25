@@ -295,7 +295,7 @@ function SaveTemplateDialog({ type, onClose }: { type: ContentTypeDef; onClose: 
         <div className="space-y-3">
           <div>
             <label className="field-label" htmlFor="tpl-name">Template name</label>
-            <input id="tpl-name" aria-label="Template name" className="field-input font-mono text-xs" value={name} onChange={(e) => { setName(e.target.value); setConfirmOverwrite(false); setError(null); }} />
+            <input id="tpl-name" aria-label="Template name" className="field-input font-mono" value={name} onChange={(e) => { setName(e.target.value); setConfirmOverwrite(false); setError(null); }} />
           </div>
           {error && <p className="rounded border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger" role="alert">{error}</p>}
           {confirmOverwrite && (
@@ -662,7 +662,7 @@ function InstantiateDialog({ template, allTypes, onClose }: { template: ContentT
         <div className="space-y-3">
           <div>
             <label className="field-label" htmlFor="inst-name">Type name</label>
-            <input id="inst-name" aria-label="Type name" className="field-input font-mono text-xs" value={asName}
+            <input id="inst-name" aria-label="Type name" className="field-input font-mono" value={asName}
               onChange={(e) => { setAsName(e.target.value); setOverwrite(false); }} />
             <p className="mt-1 text-[11px] text-muted">Defaults to the template’s own name. Use a different name to create a variant.</p>
           </div>
@@ -741,9 +741,9 @@ export function LanguagesPanel() {
             className="flex items-center gap-1.5"
             onSubmit={(e) => { e.preventDefault(); if (code.trim() && displayName.trim()) create.mutate(); }}
           >
-            <input className="field-input py-1 text-xs" style={{ width: 64 }} placeholder="code" value={code} onChange={(e) => setCode(e.target.value)} aria-label="Language code" />
-            <input className="field-input py-1 text-xs" placeholder="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} aria-label="Display name" />
-            <select className="field-input py-1 text-xs" value={fallback} onChange={(e) => setFallback(e.target.value)} aria-label="Fallback language">
+            <input className="field-input" style={{ width: 64 }} placeholder="code" value={code} onChange={(e) => setCode(e.target.value)} aria-label="Language code" />
+            <input className="field-input" placeholder="Display name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} aria-label="Display name" />
+            <select className="field-input" value={fallback} onChange={(e) => setFallback(e.target.value)} aria-label="Fallback language">
               <option value="">no fallback</option>
               {list.map((l) => <option key={l.code} value={l.code}>↳ {l.code}</option>)}
             </select>
@@ -760,8 +760,8 @@ export function LanguagesPanel() {
               onSubmit={(e) => { e.preventDefault(); if (editing.displayName.trim()) update.mutate({ code: l.code, patch: { displayName: editing.displayName.trim(), fallbackLocaleCode: editing.fallback || null } }); }}
             >
               <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{l.code}</code>
-              <input ref={editNameRef} className="field-input py-0.5 text-xs" value={editing.displayName} aria-label="Display name" onChange={(e) => setEditing({ ...editing, displayName: e.target.value })} />
-              <select className="field-input py-0.5 text-xs" value={editing.fallback} aria-label="Fallback language" onChange={(e) => setEditing({ ...editing, fallback: e.target.value })}>
+              <input ref={editNameRef} className="field-input" value={editing.displayName} aria-label="Display name" onChange={(e) => setEditing({ ...editing, displayName: e.target.value })} />
+              <select className="field-input" value={editing.fallback} aria-label="Fallback language" onChange={(e) => setEditing({ ...editing, fallback: e.target.value })}>
                 <option value="">no fallback</option>
                 {list.filter((o) => o.code !== l.code).map((o) => <option key={o.code} value={o.code}>↳ {o.code}</option>)}
               </select>
@@ -1052,17 +1052,17 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
           </p>
           <label className="text-sm">
             <span className="field-label">robots.txt extras</span>
-            <textarea aria-label="robots.txt extras" className="field-input font-mono text-xs" rows={3} placeholder={"User-agent: GPTBot\nAllow: /"} value={files.robotsExtra} onChange={(e) => setFile("robotsExtra", e.target.value)} />
+            <textarea aria-label="robots.txt extras" className="field-textarea font-mono text-xs" rows={3} placeholder={"User-agent: GPTBot\nAllow: /"} value={files.robotsExtra} onChange={(e) => setFile("robotsExtra", e.target.value)} />
             <span className="mt-1 block text-xs text-muted">Appended verbatim after the default allow-all (e.g. AI-crawler rules). The sitemap pointer is added automatically.</span>
           </label>
           <label className="text-sm">
             <span className="field-label">llms.txt summary</span>
-            <textarea aria-label="llms.txt summary" className="field-input text-xs" rows={2} placeholder="One-paragraph description of the site for AI assistants." value={files.llmsSummary} onChange={(e) => setFile("llmsSummary", e.target.value)} />
+            <textarea aria-label="llms.txt summary" className="field-textarea text-xs" rows={2} placeholder="One-paragraph description of the site for AI assistants." value={files.llmsSummary} onChange={(e) => setFile("llmsSummary", e.target.value)} />
             <span className="mt-1 block text-xs text-muted">The blockquote under the H1; the page list is generated from published pages (teaser/meta description as each page’s blurb).</span>
           </label>
           <label className="text-sm">
             <span className="field-label">llms.txt override <span className="text-muted">(optional)</span></span>
-            <textarea aria-label="llms.txt override" className="field-input font-mono text-xs" rows={3} placeholder="# Site name…  (full markdown — replaces generation entirely)" value={files.llmsOverride} onChange={(e) => setFile("llmsOverride", e.target.value)} />
+            <textarea aria-label="llms.txt override" className="field-textarea font-mono text-xs" rows={3} placeholder="# Site name…  (full markdown — replaces generation entirely)" value={files.llmsOverride} onChange={(e) => setFile("llmsOverride", e.target.value)} />
           </label>
           <div className="flex flex-wrap items-end gap-3">
             <label className="grow text-sm" style={{ minWidth: 220 }}>
@@ -1629,8 +1629,8 @@ export function DeliveryKeysPanel() {
       hint="Public keys read published content; preview keys read drafts. The secret is shown once at creation."
       action={
         <div className="flex items-center gap-1.5">
-          <input className="field-input py-1 text-xs" placeholder="Key name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Key name" />
-          <select className="field-input py-1 text-xs" value={type} onChange={(e) => setType(e.target.value as "public" | "preview")} aria-label="Key type">
+          <input className="field-input" placeholder="Key name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Key name" />
+          <select className="field-input" value={type} onChange={(e) => setType(e.target.value as "public" | "preview")} aria-label="Key type">
             <option value="public">public</option>
             <option value="preview">preview</option>
           </select>
@@ -1653,7 +1653,7 @@ export function DeliveryKeysPanel() {
               className="flex items-center gap-1.5"
               onSubmit={(e) => { e.preventDefault(); if (editing.name.trim()) rename.mutate({ id: k.id, name: editing.name.trim() }); }}
             >
-              <input ref={editKeyRef} className="field-input py-0.5 text-xs" value={editing.name} aria-label="Key name"
+              <input ref={editKeyRef} className="field-input" value={editing.name} aria-label="Key name"
                 onChange={(e) => setEditing({ id: k.id, name: e.target.value })} />
               <button className="btn-primary px-2 py-0.5 text-xs" disabled={rename.isPending}>Save</button>
               <button type="button" className="btn-ghost px-2 py-0.5 text-xs" onClick={() => setEditing(null)}>Cancel</button>
@@ -1718,8 +1718,8 @@ export function McpTokensPanel() {
       hint="Tokens the MCP server presents instead of a password. A token acts AS the chosen user (inherits its roles). Run the MCP with MCP_TOKEN=… — the secret is shown once."
       action={
         <div className="flex items-center gap-1.5">
-          <input className="field-input py-1 text-xs" placeholder="Token name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Token name" />
-          <select className="field-input py-1 text-xs" value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="Acts as user">
+          <input className="field-input" placeholder="Token name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Token name" />
+          <select className="field-input" value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="Acts as user">
             {(users.data ?? []).map((u) => <option key={u.id} value={u.id}>{u.email}</option>)}
           </select>
           <button className="btn-subtle px-2 py-1 text-xs" disabled={create.isPending || !(users.data?.length)} onClick={() => create.mutate()}>
@@ -1810,8 +1810,8 @@ export function WebhooksPanel() {
       hint="POSTed (HMAC-SHA256 signed) on publish/unpublish — wire up ISR revalidation or a CDN purge. Can also forward form submissions, which is how a submission reaches email or a CRM."
       action={
         <div className="flex items-center gap-1.5">
-          <input className="field-input py-1 text-xs" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Webhook name" />
-          <input className="field-input py-1 text-xs" placeholder="https://…/hook" value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Webhook URL" />
+          <input className="field-input" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Webhook name" />
+          <input className="field-input" placeholder="https://…/hook" value={url} onChange={(e) => setUrl(e.target.value)} aria-label="Webhook URL" />
           <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-muted">
             <input type="checkbox" checked={sendSubmissions} onChange={(e) => setSendSubmissions(e.target.checked)} />
             Send form submissions
@@ -1999,14 +1999,14 @@ export function AuditPanel() {
   return (
     <PanelShell title="Audit log" hint="Append-only record of every privileged action.">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
-        <select className="field-input w-auto py-1 text-xs" value={action} onChange={(e) => setAction(e.target.value)} aria-label="Filter by action">
+        <select className="field-input w-auto py-1" value={action} onChange={(e) => setAction(e.target.value)} aria-label="Filter by action">
           <option value="">All actions</option>
           {AUDIT_ACTIONS.map((a) => <option key={a} value={a}>{a.slice(0, -1)}</option>)}
         </select>
-        <input className="field-input w-44 py-1 font-mono text-xs" placeholder="Document ID…" value={documentId} onChange={(e) => setDocumentId(e.target.value)} aria-label="Filter by document ID" />
-        <input className="field-input w-auto py-1 text-xs" type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From date" />
+        <input className="field-input w-44 py-1 font-mono" placeholder="Document ID…" value={documentId} onChange={(e) => setDocumentId(e.target.value)} aria-label="Filter by document ID" />
+        <input className="field-input w-auto py-1" type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From date" />
         <span className="text-xs text-muted">–</span>
-        <input className="field-input w-auto py-1 text-xs" type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To date" />
+        <input className="field-input w-auto py-1" type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="To date" />
         {(action || documentId || from || to) && (
           <button className="btn-subtle px-2 py-1 text-xs" onClick={() => { setAction(""); setDocumentId(""); setFrom(""); setTo(""); }}>Clear</button>
         )}

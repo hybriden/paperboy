@@ -194,7 +194,7 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
         <div className="relative">
           <Icon.Search width={14} height={14} className="pointer-events-none absolute left-2.5 top-2 text-muted" />
           <input
-            className="field-input py-1 pl-8 text-[13px]"
+            className="field-input pl-8 text-[13px]"
             placeholder="Filter…"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
