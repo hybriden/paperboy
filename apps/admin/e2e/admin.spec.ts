@@ -823,7 +823,10 @@ test("focusing a block field in the form highlights that block's field in the pr
   await page.getByRole("button", { name: "Side by side" }).click();
   const frame = await waitPreviewFrame(page);
   await frame.locator("body.pb-editing").waitFor({ state: "attached", timeout: 20_000 });
-  // Focus the HERO block's Title editor in the form (block card, area index 0).
+  // Focus the HERO block's Title editor in the form (block row, area index 0).
+  // The field lives inside the row, so open it first — which is also what a
+  // preview click does on the way in.
+  await openBlock(page);
   await page.locator("#bf-h1-title").click();
   // paperboy:focus carries the block index, so the flash lands on THAT block's
   // field in the page — not on the first same-named field or the whole area.
