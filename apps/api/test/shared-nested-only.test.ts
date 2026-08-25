@@ -73,9 +73,10 @@ describe("the built-in form field blocks are parts", () => {
   });
 
   it("keeps every other built-in block generally available", () => {
-    // A regression here would quietly empty the palette of a real page block.
+    // A regression here would quietly empty the palette of a real page block,
+    // so the full set of parts is pinned by name rather than by a rule.
     const parts = BUILTIN_TYPE_TEMPLATES.filter((t) => t.nestedOnly).map((t) => t.name);
-    expect(parts.sort()).toEqual(fieldTemplates.map((t) => t.name).sort());
+    expect(parts.sort()).toEqual([...fieldTemplates.map((t) => t.name), ...COMPOSITION_PARTS].sort());
   });
 
   it("is still reachable: the Form's fields area names each part explicitly", () => {
@@ -85,5 +86,44 @@ describe("the built-in form field blocks are parts", () => {
     const area = form?.fields.find((f) => f.name === "fields");
     expect(area?.type).toBe("contentArea");
     expect([...(area?.allowedBlocks ?? [])].sort()).toEqual(fieldTemplates.map((t) => t.name).sort());
+  });
+});
+
+/**
+ * The parts that are not form fields.
+ *
+ * Each is a piece of ANOTHER block and renders as nothing on its own: an
+ * accordion item outside its list, a question outside its topic, a link item
+ * outside a link list or a menu. Each container already names them in its
+ * `allowedBlocks` — that is the rule stated from the container's side, and
+ * `nestedOnly` is the other half. Without it, a content area with no allow-list
+ * offered all three beside real page blocks (spotted in the block palette,
+ * fixed by migration 0025 for instances that already installed them).
+ */
+const COMPOSITION_PARTS = ["AccordionItemBlock", "QuestionBlock", "LinkItemBlock"];
+
+describe("the built-in composition parts", () => {
+  it.each(COMPOSITION_PARTS)("%s is a part", (name) => {
+    expect(BUILTIN_TYPE_TEMPLATES.find((t) => t.name === name)?.nestedOnly).toBe(true);
+  });
+
+  it("is still reachable: some container names each one in allowedBlocks", () => {
+    // Being a part means "never offered where ANY block goes", so a part nobody
+    // opts into is a type an editor can no longer place at all.
+    for (const part of COMPOSITION_PARTS) {
+      const containers = BUILTIN_TYPE_TEMPLATES.filter((t) =>
+        t.fields.some((f) => f.type === "contentArea" && (f.allowedBlocks ?? []).includes(part)),
+      );
+      expect(containers.map((c) => c.name), `${part} must be allowed somewhere`).not.toHaveLength(0);
+    }
+  });
+
+  it("leaves their containers generally available", () => {
+    // The list is page composition even though its items are not.
+    for (const container of ["AccordionBlock", "FaqTopicBlock", "LinkListBlock"]) {
+      const t = BUILTIN_TYPE_TEMPLATES.find((x) => x.name === container);
+      if (!t) continue;
+      expect(t.nestedOnly ?? false, `${container} must stay a normal block`).toBe(false);
+    }
   });
 });
