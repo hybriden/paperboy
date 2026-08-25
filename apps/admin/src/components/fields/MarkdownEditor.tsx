@@ -28,8 +28,13 @@ export function MarkdownEditor({
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const [tab, setTab] = useState<Tab>("write");
+  // Assigned in an effect, not during render: a render-phase ref write is
+  // invisible to React, and every read below happens later anyway (inside a
+  // requestAnimationFrame, after the commit), so the effect is sufficient.
   const valueRef = useRef(value);
-  valueRef.current = value;
+  useEffect(() => {
+    valueRef.current = value;
+  }, [value]);
 
   // Click-to-caret (on-page editing): the preview reported the clicked text;
   // best-effort find it in the RAW markdown (rendered text nodes are usually

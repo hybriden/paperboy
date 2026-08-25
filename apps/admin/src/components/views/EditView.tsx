@@ -39,8 +39,12 @@ export function EditView() {
   // when the site query resolves — redirecting synchronously stomped it ("create
   // bounces back to Home"). The cleanup cancels the pending redirect as soon as
   // a real navigation lands.
+  // Assigned in an effect rather than during render (a render-phase ref write
+  // is invisible to React); the read happens 50ms later, well after the commit.
   const docIdRef = useRef(documentId);
-  docIdRef.current = documentId;
+  useEffect(() => {
+    docIdRef.current = documentId;
+  }, [documentId]);
   useEffect(() => {
     if (documentId || isMobile) return;
     const startId = site.data?.startPageId;

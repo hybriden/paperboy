@@ -71,11 +71,16 @@ services:
       # same value the `web` service verifies with. Unset ⇒ in-editor preview is
       # unavailable (the mint route 503s and says so).
       PREVIEW_SECRET: ${PREVIEW_SECRET:-}
-      # How much of the X-Forwarded-For chain to trust for req.ip (rate-limit keys
-      # and audit IPs). "true" trusts ALL hops, so a client that can reach this
-      # container directly can spoof its IP and defeat every per-IP limit. Set the
-      # real boundary: "1" = exactly one trusted proxy in front.
-      TRUST_PROXY: ${TRUST_PROXY:-1}
+      # Which peers may set X-Forwarded-For for req.ip (rate-limit keys and audit
+      # IPs) and request.host/protocol. "true" trusts ALL hops, so a client that
+      # can reach this container directly can spoof them and defeat every per-IP
+      # limit. The value must VALIDATE THE PEER: a CSV of IPs/CIDRs, or a preset.
+      # A hop count ("1", which this used to default to) is REFUSED at boot — it
+      # ignores the connecting address, so it was spoofable (GHSA-3m5p-2c4r-xxw2).
+      # "uniquelocal" is the private ranges, i.e. this compose network. It does
+      # NOT distinguish a LAN client arriving through the published port (docker
+      # NATs it, so it also looks private) — for that, stop publishing the port.
+      TRUST_PROXY: ${TRUST_PROXY:-uniquelocal}
       # AI assistant: Anthropic OR any OpenAI-compatible endpoint. Each key is
       # bound to its own provider; AI_PROVIDER picks one when both are set. A
       # config stored in the CMS (Settings → AI) overrides all of these. No key

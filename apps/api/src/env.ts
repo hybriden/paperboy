@@ -80,17 +80,39 @@ const EnvSchema = z.object({
   // Defaults to "false" (trust NO hops) so an unconfigured deploy fails safe: with
   // "true", anyone who can reach the API directly sets their own X-Forwarded-For and
   // every per-IP rate limit and audit IP becomes attacker-chosen. The shipped compose
-  // and .env.example set "1" (exactly one trusted proxy) — that is the opt-in.
+  // and .env.example opt in with "uniquelocal" — an ADDRESS-VALIDATING value. They
+  // used to say "1"; see parseTrustProxy for why a hop count is now refused.
   TRUST_PROXY: z.string().default("false"),
 });
 
-/** Parse TRUST_PROXY into the shape Fastify's `trustProxy` accepts:
- *  boolean | hop-count number | list of trusted proxy IPs/CIDRs. */
-export function parseTrustProxy(value: string): boolean | number | string[] {
+/**
+ * Parse TRUST_PROXY into the shape Fastify's `trustProxy` accepts:
+ * boolean | list of trusted proxy IPs / CIDRs / proxy-addr presets.
+ *
+ * A HOP COUNT is refused. It reads like the tightest option ("exactly one proxy
+ * in front") and is the opposite: the hop-count form compiles to a predicate
+ * that structurally ignores the connecting address, so fastify's
+ * X-Forwarded-* guard reduces to `0 < n` — true for every n >= 1. Anyone with a
+ * direct network path to this origin could spoof req.ip, request.host and
+ * request.protocol exactly as if nothing were configured
+ * (GHSA-3m5p-2c4r-xxw2). fastify 5.12.1 disabled the form at runtime and removed
+ * it from the type, so silently passing it on would leave an operator believing
+ * a boundary is enforced while it is not — a refusal is the only honest answer.
+ */
+export function parseTrustProxy(value: string): boolean | string[] {
   const v = value.trim();
   if (v === "true") return true;
   if (v === "false") return false;
-  if (/^\d+$/.test(v)) return Number(v);
+  if (/^\d+$/.test(v)) {
+    throw new Error(
+      `TRUST_PROXY="${v}" is a hop count, which no longer does what it looks like: that form ` +
+        `ignores the connecting address, so X-Forwarded-* stays spoofable by anyone who can reach ` +
+        `this origin directly (GHSA-3m5p-2c4r-xxw2 — fastify 5.12.1 disabled it at runtime). Use a ` +
+        `value that validates the peer instead: a CIDR or CSV of the proxies in front ` +
+        `(TRUST_PROXY=172.18.0.0/16), a proxy-addr preset (loopback, linklocal, uniquelocal), ` +
+        `"true" to trust every hop, or "false" to trust none.`,
+    );
+  }
   return v.split(",").map((s) => s.trim()).filter(Boolean);
 }
 

@@ -35,9 +35,11 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   const { env } = opts;
   const app = Fastify({
     logger: env.NODE_ENV === "test" ? false : { level: "info" },
-    // Configurable trusted-proxy boundary (M9): default "true" preserves behaviour,
-    // but operators can pin a hop count / CIDR list so req.ip can't be spoofed via
-    // X-Forwarded-For. (req.ip backs the IP rate-limits and audit-log IPs.)
+    // Configurable trusted-proxy boundary (M9). Defaults to trusting NOTHING;
+    // operators pin the CIDRs or presets of the proxies actually in front, so
+    // req.ip can't be spoofed via X-Forwarded-For. A HOP COUNT is refused —
+    // parseTrustProxy explains why. (req.ip backs the IP rate-limits and audit
+    // IPs, and request.host/protocol back generated URLs and cookie decisions.)
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
   }).withTypeProvider<ZodTypeProvider>();
 
