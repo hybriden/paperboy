@@ -367,6 +367,10 @@ test("media: upload an image in the asset pane and pick it in an image field", a
   await expect(assets.locator("img")).toHaveCount(1, { timeout: 10_000 });
 
   // The Hero block's "Background image" image field → pick the uploaded asset.
+  // The block's fields are behind its row, so open it first: this page's block
+  // comes from the seed rather than from a palette click, which is why it needs
+  // opening here and not just after an add.
+  await openBlock(page);
   await page.getByRole("button", { name: "Choose image" }).first().click();
   const picker = page.getByRole("dialog", { name: "Choose image" });
   await expect(picker).toBeVisible();
@@ -731,7 +735,10 @@ async function addBlock(page: Page, name: string, scope?: Locator) {
  */
 async function openBlock(scope: Page | Locator, index = 0) {
   const row = scope.locator(`li#pb-block-${index}`);
-  const toggle = row.locator("> div > button[aria-expanded]");
+  // :not([aria-haspopup]) — the row's overflow menu is a Radix trigger, which
+  // carries aria-expanded as well. The disclosure is the one that expands
+  // without opening a popup.
+  const toggle = row.locator("> div > button[aria-expanded]:not([aria-haspopup])");
   if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
   return row;
 }
