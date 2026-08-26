@@ -272,6 +272,21 @@ export function coerceSubmissionValues(spec: FormSpec, raw: Record<string, unkno
       default:
         out[f.name] = typeof v === "string" ? v.trim() : v;
     }
+    // A blank answer to an OPTIONAL field means "not answered", so the key is
+    // dropped rather than run through that field's type check.
+    //
+    // Every real browser form submits each control it renders — apps/web sends
+    // `data.get(name) ?? ""` for every non-checkbox field, and a select's
+    // placeholder option is value="" — so "" is the shape a SKIPPED field
+    // actually arrives in. The compiled validator's optional branch accepts
+    // undefined and null but not "", so an optional email, number, select or
+    // pattern field answered 422 to every visitor who left it blank, with a
+    // message that never said the field was optional.
+    //
+    // Required fields KEEP their blank: the presence refine is what speaks the
+    // editor's own "is required" copy. And only DECLARED fields are dropped —
+    // an unknown key stays, blank or not, for the strict schema to reject.
+    if (!f.required && out[f.name] === "") delete out[f.name];
   }
   return out;
 }
