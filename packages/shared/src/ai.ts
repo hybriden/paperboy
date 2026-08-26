@@ -456,23 +456,25 @@ async function callModelTranslate(texts: string[], targetLocale: string, cfg: Ai
 
 /**
  * Translate many strings in ONE provider call (so a whole page is one request,
- * not one per field — which would trip the per-route rate limit). Offline or on
- * any error it returns the source strings unchanged (provider "fallback"), so the
- * caller still gets a complete, safe result to seed a draft from.
+ * not one per field — which would trip the per-route rate limit).
+ *
+ * translate is a model-requiring task, so with no key it REFUSES
+ * (AiUnavailableError) rather than returning the source dressed as a result —
+ * the garbage-in-success-out this module was built to stop (rule #1). A provider
+ * or shape failure THROWS too, so the caller sees a real error and can leave a
+ * trail (rule #6: the API route's handler logs it, the agent surfaces it as a
+ * tool failure) instead of silently seeding a draft with untranslated copy.
  */
 export async function aiTranslateBatch(
   texts: string[],
   targetLocale: string,
   cfg: AiConfig,
 ): Promise<{ results: string[]; provider: AiResult["provider"] }> {
-  if (!texts.length) return { results: [], provider: "fallback" };
-  if (cfg.apiKey) {
-    try {
-      const results = await callModelTranslate(texts, targetLocale, cfg);
-      if (results.length === texts.length) return { results, provider: providerOf(cfg) };
-    } catch {
-      // fall through to copy-source fallback
-    }
+  if (!texts.length) return { results: [], provider: providerOf(cfg) };
+  if (!cfg.apiKey) throw new AiUnavailableError(); // the default self-teaching message
+  const results = await callModelTranslate(texts, targetLocale, cfg);
+  if (results.length !== texts.length) {
+    throw new Error(`Translation returned ${results.length} strings for ${texts.length} inputs — the batch is unusable`);
   }
-  return { results: [...texts], provider: "fallback" };
+  return { results, provider: providerOf(cfg) };
 }
