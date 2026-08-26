@@ -1210,7 +1210,10 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
 export type BlockTypeResolver = (name: string) => ContentTypeDef | undefined;
 
 /** Guards against a block type that (transitively) allows itself. */
-const MAX_INLINE_DEPTH = 10;
+/** How deep a content area may nest inline blocks. Coercion, schema validation
+ *  and the db layer's placement guard all read THIS constant, so the three
+ *  cannot disagree about what a legal document looks like. */
+export const MAX_INLINE_DEPTH = 10;
 
 /**
  * Coerce one inline block's data with its OWN type definition. Only `inline` is
