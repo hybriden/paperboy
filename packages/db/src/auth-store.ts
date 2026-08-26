@@ -19,6 +19,7 @@ import {
   generateBackupCodes,
   generateSecret,
   hashBackupCode,
+  verifyBackupCode,
   matchTotpStep,
   totpUri,
   verifyTotp,
@@ -371,7 +372,7 @@ export async function beginTotpSetup(db: Database, userId: string): Promise<{ se
   if (!user) throw Errors.unauthorized();
   if (user.totpEnabled) throw Errors.conflict("Two-factor is already enabled");
   const secret = generateSecret();
-  await db.update(users).set({ totpSecret: encryptSecret(secret), totpEnabled: false }).where(eq(users.id, userId));
+  await db.update(users).set({ totpSecret: encryptSecret(secret, "totp"), totpEnabled: false }).where(eq(users.id, userId));
   return { secret, uri: totpUri(secret, user.email) };
 }
 
@@ -400,9 +401,10 @@ export async function enableTotp(db: Database, userId: string, code: string, pas
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const user = rows[0];
   if (!user?.totpSecret) throw Errors.badRequest("Start 2FA setup first");
-  if (!verifyTotp(decryptSecret(user.totpSecret), code)) throw Errors.unauthorized("Invalid code");
+  if (!verifyTotp(decryptSecret(user.totpSecret, "totp"), code)) throw Errors.unauthorized("Invalid code");
   const codes = generateBackupCodes();
-  await db.update(users).set({ totpEnabled: true, backupCodes: codes.map(hashBackupCode) }).where(eq(users.id, userId));
+  const hashed = await Promise.all(codes.map(hashBackupCode));
+  await db.update(users).set({ totpEnabled: true, backupCodes: hashed }).where(eq(users.id, userId));
   // Turning 2FA on is a posture change — evict the user's other sessions (S2-L1).
   await evictOtherSessions(db, userId, keepSessionToken);
   return { backupCodes: codes };
@@ -429,7 +431,7 @@ export async function verifySecondFactor(db: Database, userId: string, code: str
   if (user.lockedUntil && user.lockedUntil > new Date()) return false;
 
   const clearLock = { failedAttempts: 0, lockedUntil: null as Date | null };
-  const step = matchTotpStep(decryptSecret(user.totpSecret), code);
+  const step = matchTotpStep(decryptSecret(user.totpSecret, "totp"), code);
   if (step !== null) {
     // Replay of an already-consumed (or older) step — reject without counting it
     // as a brute-force guess (a legitimate double-submit shouldn't lock the user).
@@ -439,8 +441,8 @@ export async function verifySecondFactor(db: Database, userId: string, code: str
   }
   // Fall back to a backup code (one-time): match its hash, then remove it.
   const hashes = Array.isArray(user.backupCodes) ? (user.backupCodes as string[]) : [];
-  const used = hashBackupCode(code);
-  if (hashes.includes(used)) {
+  const used = await verifyBackupCode(code, hashes);
+  if (used) {
     await db.update(users).set({ ...clearLock, backupCodes: hashes.filter((h) => h !== used) }).where(eq(users.id, userId));
     return true;
   }

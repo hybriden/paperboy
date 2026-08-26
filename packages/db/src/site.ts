@@ -159,7 +159,7 @@ export async function getStoredAiConfig(db: Database): Promise<StoredAiConfig> {
   let apiKey: string | null = null;
   if (keyRow?.cipher) {
     try {
-      apiKey = decryptSecret(keyRow.cipher);
+      apiKey = decryptSecret(keyRow.cipher, "ai.key");
     } catch {
       apiKey = null;
     }
@@ -195,7 +195,7 @@ export async function setAiConfig(
   }
   if (input.apiKey !== undefined) {
     const key = input.apiKey?.trim();
-    if (key) await putSetting(db, AI_API_KEY, { cipher: encryptSecret(key), provider });
+    if (key) await putSetting(db, AI_API_KEY, { cipher: encryptSecret(key, "ai.key"), provider });
     else await db.delete(siteSetting).where(eq(siteSetting.key, AI_API_KEY));
   }
   if (input.model !== undefined) {
