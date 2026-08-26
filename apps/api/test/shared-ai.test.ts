@@ -13,9 +13,9 @@ import { AiUnavailableError, aiAssist, aiImageAltText, aiTranslateBatch, listAiM
  *
  * Deterministic truncation stays for the SEO-ish tasks (meta_title/
  * meta_description/summarize) — genuinely useful offline, and labeled
- * provider:"fallback" so the UI can say "basic". aiTranslateBatch keeps its
- * copy-source fallback by design: callers use it to SEED drafts and label the
- * result ("Draft seeded from source"), which is honest at the workflow level.
+ * provider:"fallback" so the UI can say "basic". aiTranslateBatch, by contrast,
+ * now REFUSES without a key (AiUnavailableError): echoing the source as a
+ * "translation" was the rule #1 violation, not honest workflow seeding.
  */
 
 const NO_KEY = { model: "claude-test" };
@@ -81,10 +81,11 @@ describe("aiAssist — write (draft prose about a topic)", () => {
   });
 });
 
-describe("aiTranslateBatch — seed semantics preserved", () => {
-  it("no key → returns the source strings unchanged, labeled fallback", async () => {
-    const r = await aiTranslateBatch(["a", "b"], "nb", NO_KEY);
-    expect(r).toEqual({ results: ["a", "b"], provider: "fallback" });
+describe("aiTranslateBatch — refuses without a key", () => {
+  it("no key → throws AiUnavailableError (never echoes the source as a result)", async () => {
+    // translate is model-requiring; returning the source dressed as output is the
+    // rule #1 violation this file's header says was removed for aiAssist.
+    await expect(aiTranslateBatch(["a", "b"], "nb", NO_KEY)).rejects.toBeInstanceOf(AiUnavailableError);
   });
 });
 
