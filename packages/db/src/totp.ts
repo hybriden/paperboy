@@ -1,11 +1,18 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
+import argon2 from "argon2";
 import { Secret, TOTP } from "otpauth";
 
 /**
- * TOTP two-factor auth (RFC 6238). Uses the `otpauth`
- * library for codes, the secret AES-256-GCM encrypted at rest, and one-time
- * backup codes stored as sha-256 hashes.
+ * TOTP two-factor auth (RFC 6238). Uses the `otpauth` library for codes, the
+ * secret AES-256-GCM encrypted at rest and BOUND TO ITS PURPOSE (see
+ * encryptSecret), and one-time backup codes hashed with argon2id — never the
+ * old unsalted single-round SHA-256, which a read of `users` could crack
+ * offline in minutes for what is a full passwordless login.
  */
+
+/** A ciphertext's purpose, mixed in as AES-GCM additional authenticated data so
+ *  a value encrypted for one slot cannot be decrypted in another. */
+export type SecretPurpose = "totp" | "ai.key" | "stock.key";
 
 const ISSUER = "Paperboy";
 
@@ -53,15 +60,42 @@ export function verifyTotp(secret: string, code: string): boolean {
   return matchTotpStep(secret, code) !== null;
 }
 
-/** AES-256-GCM encrypt → "ivHex:tagHex:cipherHex". */
-export function encryptSecret(plain: string): string {
+/**
+ * AES-256-GCM encrypt, BOUND to `purpose` → "v2:purpose:ivHex:tagHex:cipherHex".
+ *
+ * The purpose is the GCM additional authenticated data, so a ciphertext written
+ * for one slot fails the tag check if presented to another — the swap attack
+ * that let one leaked/moved ciphertext become a decryption oracle across
+ * users.totp_secret, the AI key and the stock key. randomBytes → randomInt is
+ * unrelated; the IV is still a fresh 12 random bytes.
+ */
+export function encryptSecret(plain: string, purpose: SecretPurpose): string {
   const iv = randomBytes(12);
   const cipher = createCipheriv("aes-256-gcm", encKey(), iv);
+  cipher.setAAD(Buffer.from(purpose, "utf8"));
   const ct = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()]);
-  return `${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${ct.toString("hex")}`;
+  return `v2:${purpose}:${iv.toString("hex")}:${cipher.getAuthTag().toString("hex")}:${ct.toString("hex")}`;
 }
 
-export function decryptSecret(encrypted: string): string {
+export function decryptSecret(encrypted: string, purpose: SecretPurpose): string {
+  if (encrypted.startsWith("v2:")) {
+    const [, storedPurpose, ivHex, tagHex, ctHex] = encrypted.split(":");
+    // A v2 value carries its own purpose; refuse it in the wrong slot BEFORE the
+    // tag check, so the error names the mismatch rather than being a generic
+    // auth failure.
+    if (storedPurpose !== purpose) {
+      throw new Error(`Encrypted secret is bound to "${storedPurpose}", refused for "${purpose}"`);
+    }
+    if (!ivHex || !tagHex || !ctHex) throw new Error("Invalid encrypted secret");
+    const decipher = createDecipheriv("aes-256-gcm", encKey(), Buffer.from(ivHex, "hex"));
+    decipher.setAAD(Buffer.from(purpose, "utf8"));
+    decipher.setAuthTag(Buffer.from(tagHex, "hex"));
+    return Buffer.concat([decipher.update(Buffer.from(ctHex, "hex")), decipher.final()]).toString("utf8");
+  }
+  // Legacy (pre-AAD) value: iv:tag:ct, no purpose binding. Still readable so an
+  // existing 2FA user isn't locked out and stored keys keep working; re-saving
+  // any secret rewrites it as v2. These few legacy values are the only ones a
+  // swap could still target — an ops re-encrypt clears the last of them.
   const [ivHex, tagHex, ctHex] = encrypted.split(":");
   if (!ivHex || !tagHex || !ctHex) throw new Error("Invalid encrypted secret");
   const decipher = createDecipheriv("aes-256-gcm", encKey(), Buffer.from(ivHex, "hex"));
@@ -69,19 +103,45 @@ export function decryptSecret(encrypted: string): string {
   return Buffer.concat([decipher.update(Buffer.from(ctHex, "hex")), decipher.final()]).toString("utf8");
 }
 
-/** 10 readable one-time codes (no ambiguous characters). */
+const BACKUP_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no ambiguous chars
+const BACKUP_LEN = 10; // 10 chars over 31 symbols ~= 49.5 bits
+
+/** `count` readable one-time codes. randomInt is unbiased — the old `% 31` over
+ *  a byte over-weighted the first few symbols. */
 export function generateBackupCodes(count = 10): string[] {
-  const chars = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
   const codes: string[] = [];
   for (let i = 0; i < count; i++) {
-    const bytes = randomBytes(8);
     let code = "";
-    for (let j = 0; j < 8; j++) code += chars[bytes[j]! % chars.length];
+    for (let j = 0; j < BACKUP_LEN; j++) code += BACKUP_ALPHABET[randomInt(BACKUP_ALPHABET.length)];
     codes.push(code);
   }
   return codes;
 }
 
-export function hashBackupCode(code: string): string {
-  return createHash("sha256").update(code.toUpperCase().replace(/\s/g, "")).digest("hex");
+const normalizeBackup = (code: string): string => code.toUpperCase().replace(/\s/g, "");
+
+/** Hash a backup code for storage. argon2id, not SHA-256: a backup code is a
+ *  full passwordless login, and a slow salted KDF is what makes a `users` dump
+ *  useless offline even at the codes' modest entropy. */
+export function hashBackupCode(code: string): Promise<string> {
+  return argon2.hash(normalizeBackup(code));
+}
+
+/**
+ * Find which stored hash a presented code matches, or null. Sequential so only
+ * one argon2 verify is in flight at a time. Accepts a LEGACY sha-256 hex hash
+ * too (constant-time compared), so a user enrolled before this change keeps
+ * their existing codes until they regenerate.
+ */
+export async function verifyBackupCode(code: string, storedHashes: string[]): Promise<string | null> {
+  const normalized = normalizeBackup(code);
+  const legacyHex = createHash("sha256").update(normalized).digest("hex");
+  for (const hash of storedHashes) {
+    if (hash.startsWith("$argon2")) {
+      if (await argon2.verify(hash, normalized).catch(() => false)) return hash;
+    } else if (hash.length === legacyHex.length && timingSafeEqual(Buffer.from(hash), Buffer.from(legacyHex))) {
+      return hash;
+    }
+  }
+  return null;
 }

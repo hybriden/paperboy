@@ -121,7 +121,7 @@ export async function findReferencingDocuments(
     .where(and(eq(contentReference.toDocumentId, documentId), eq(contentItem.siteId, ctx.siteId), isNull(contentItem.deletedAt)));
 
   // Section scope: authors only see referrers inside their sections (mirrors getTree).
-  const visible = rows.filter((r) => ctx.siteWide || ctx.sections.includes(r.sectionId ?? r.fromDocumentId));
+  const visible = rows.filter((r) => ctx.readSiteWide || ctx.sections.includes(r.sectionId ?? r.fromDocumentId));
   if (!visible.length) return [];
 
   // Display names from the current version — prefer the draft, else the published.
@@ -439,7 +439,7 @@ export async function getTree(
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
 
   const visible = items.filter(
-    (i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId),
+    (i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId),
   );
 
   // The parent's declared child ordering. 'manual' keeps the sortIndex order the
@@ -501,7 +501,7 @@ export async function listBlocks(db: Database, ctx: AccessContext): Promise<Bloc
     .from(contentItem)
     .where(and(eq(contentItem.kind, "block"), isNull(contentItem.deletedAt), eq(contentItem.siteId, ctx.siteId)))
     .orderBy(asc(contentItem.id));
-  const visible = items.filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
+  const visible = items.filter((i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
   const out: BlockSummary[] = [];
   for (const item of visible) {
     const states = await variantStates(db, item.documentId);
@@ -898,7 +898,7 @@ export async function getContent(
   loc: string,
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.read");
-  const item = await loadAuthorized(db, ctx, documentId);
+  const item = await loadAuthorized(db, ctx, documentId, "read");
 
   const rows = await db
     .select()
@@ -2346,7 +2346,7 @@ export async function listPages(
     .from(contentItem)
     .where(and(eq(contentItem.kind, "page"), isNull(contentItem.deletedAt), eq(contentItem.siteId, ctx.siteId)))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
-  const visible = items.filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
+  const visible = items.filter((i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
   const out: { documentId: string; name: string; parentId: string | null; type: string }[] = [];
   for (const item of visible) {
     const states = await variantStates(db, item.documentId);
@@ -2413,7 +2413,7 @@ export async function searchContent(
   const hits: SearchHit[] = [];
   for (const r of rows) {
     if (seen.has(r.documentId)) continue;
-    if (!(ctx.siteWide || ctx.sections.includes(r.sectionId ?? r.documentId))) continue;
+    if (!(ctx.readSiteWide || ctx.sections.includes(r.sectionId ?? r.documentId))) continue;
     seen.add(r.documentId);
     hits.push({
       documentId: r.documentId,
@@ -2441,7 +2441,7 @@ export async function listVersions(
   loc: string,
 ) {
   requirePermission(ctx, "content.read");
-  await loadAuthorized(db, ctx, documentId);
+  await loadAuthorized(db, ctx, documentId, "read");
   return db
     .select({
       id: contentVersion.id,
@@ -2504,7 +2504,7 @@ export async function getVersion(
   versionId: number,
 ) {
   requirePermission(ctx, "content.read");
-  await loadAuthorized(db, ctx, documentId);
+  await loadAuthorized(db, ctx, documentId, "read");
   const rows = await db
     .select()
     .from(contentVersion)
@@ -2803,7 +2803,7 @@ export async function listTrash(
     .from(contentItem)
     .where(and(sql`${contentItem.deletedAt} is not null`, eq(contentItem.siteId, ctx.siteId)))
     .orderBy(desc(contentItem.deletedAt));
-  const visible = rows.filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
+  const visible = rows.filter((i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
   const out: { documentId: string; type: string; kind: string; name: string; deletedAt: string }[] = [];
   for (const item of visible) {
     const states = await variantStates(db, item.documentId);

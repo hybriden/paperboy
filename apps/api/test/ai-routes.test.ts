@@ -73,14 +73,14 @@ describe("AI routes — no provider key", () => {
     expect(r.json().message).toContain("Settings → AI");
   });
 
-  it("/ai/translate keeps copy-source seed semantics (workflow-level honesty)", async () => {
+  it("/ai/translate refuses with ai_unavailable when no key is set (no copy-source echo)", async () => {
     const r = await s.app.inject({
       method: "POST",
       url: "/api/v1/ai/translate",
       headers: authHeaders(ed),
       payload: { texts: ["Hello", "World"], targetLocale: "nb" },
     });
-    expect(r.statusCode, r.body).toBe(200);
-    expect(r.json()).toEqual({ results: ["Hello", "World"], provider: "fallback" });
+    expect(r.statusCode, r.body).toBe(409);
+    expect(r.json().error).toBe("ai_unavailable");
   });
 });

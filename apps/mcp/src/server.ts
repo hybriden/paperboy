@@ -190,7 +190,7 @@ const persp = (preview?: boolean): "preview" | "published" => (preview ? "previe
  */
 function needDelivery(preview?: boolean): void {
   need("content.read");
-  if (preview && !ctx.siteWide) {
+  if (preview && !ctx.readSiteWide) {
     throw new Error(
       "The preview perspective (unpublished drafts) requires site-wide read access, and your account is limited to specific sections. Use list_content / get_content instead — they enforce your section scope. Omit `preview` (or set it to false) to read published content through delivery_*.",
     );

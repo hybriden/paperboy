@@ -162,11 +162,13 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
       const spam = checkSpamHeuristics({ honeypot: body.honeypot, elapsedMs: body.elapsedMs });
       if (!spam.ok) {
         // Looks like a success from outside. The trail is in the audit log.
+        // No IP here: the form isn't loaded yet (heuristics run before any DB
+        // touch), so there is no captureMetadata opt-in to honour — and a
+        // dropped bot's address is not ours to store. The reason is enough.
         await audit(app.db, {
           action: "form.submission_rejected",
           documentId,
           detail: { reason: spam.reason },
-          ip: req.ip,
         });
         return reply.code(202).send({
           ok: true,
@@ -239,7 +241,10 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
           action: "form.submitted",
           documentId,
           detail: { submissionId: result.submissionId, locale: form.locale },
-          ip: req.ip,
+          // Only when the form opted in — same gate as form_submission.meta. An
+          // IP is personal data; a form with "store IP" off must leave none,
+          // including in the audit trail a data-subject erasure cannot reach.
+          ip: form.settings.captureMetadata ? req.ip : undefined,
         });
         // Notification is an integration concern: Paperboy has no mail
         // transport, so this rides the existing signed webhook pipe.

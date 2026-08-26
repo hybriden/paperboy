@@ -44,7 +44,7 @@ export async function getStoredStockConfig(db: Database): Promise<{ provider: St
   let apiKey: string | null = null;
   if (v.apiKey?.cipher) {
     try {
-      apiKey = decryptSecret(v.apiKey.cipher);
+      apiKey = decryptSecret(v.apiKey.cipher, "stock.key");
     } catch {
       apiKey = null;
     }
@@ -71,7 +71,7 @@ export async function setStockConfig(
   }
   if (input.apiKey !== undefined) {
     const key = input.apiKey?.trim();
-    if (key) current.apiKey = { cipher: encryptSecret(key) };
+    if (key) current.apiKey = { cipher: encryptSecret(key, "stock.key") };
     else delete current.apiKey;
   }
   if (!current.apiKey) {

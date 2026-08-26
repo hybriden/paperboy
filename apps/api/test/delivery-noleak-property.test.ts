@@ -124,6 +124,8 @@ describe("delivery no-leak (generative + exhaustive)", () => {
   it("GENERATIVE: random field configs with private sentinels never leak through delivery", async () => {
     const TYPES = ["text", "markdown", "number", "datetime", "select"] as const;
     let n = 0;
+    let probedRuns = 0;
+    let probedBodies = 0;
     await fc.assert(
       fc.asyncProperty(
         fc.array(
@@ -163,24 +165,47 @@ describe("delivery no-leak (generative + exhaustive)", () => {
           if (ct.statusCode !== 200) return true; // invalid combo (e.g. dup role) — skip, not a leak
           const id = (await createContent({ type: typeName, locale: "en", name: `${typeName} item` })).json().documentId as string;
           const data: Record<string, unknown> = { title: "Public Title" };
+          // Every private field gets a TYPE-APPROPRIATE, searchable sentinel — not
+          // just text: number and datetime were seeded with 0 / a plain date, so
+          // those two types were generated but never actually probed for a leak.
+          const sentinels: string[] = [];
           for (const f of fields.slice(1)) {
             if (f.delivery === "private") {
-              data[f.name] = f.type === "number" ? 0 : f.type === "datetime" ? "2026-01-01T00:00:00.000Z" : `LEAK_${typeName}_${f.name}`;
+              const v =
+                f.type === "number" ? 918273645123
+                : f.type === "datetime" ? "2029-12-31T23:59:59.000Z"
+                : f.type === "select" ? "x" // constrained to its options; not a distinguishable secret
+                : `LEAK_${typeName}_${f.name}`;
+              data[f.name] = v;
+              if (f.type !== "select") sentinels.push(String(v));
             } else if (f.type === "text" || f.type === "markdown") {
               data[f.name] = "public-ok";
             }
           }
-          await put(id, "en", { data });
-          await publish(id);
+          const putRes = await put(id, "en", { data });
+          if (putRes.statusCode !== 200) return true; // a combo the coercer rejects — not a leak, but not a probe
+          const pubRes = await publish(id);
+          if (pubRes.statusCode !== 200) return true;
+          probedRuns += 1;
 
           const bodies = await allDeliveries(id, null, typeName, `LEAK_${typeName}`);
+          // A published item MUST come back through at least one endpoint, or the
+          // loop below is vacuous — the original bug: an empty `bodies` passed.
+          expect(bodies.length, "a published item delivered through no endpoint — the probe was vacuous").toBeGreaterThan(0);
+          probedBodies += bodies.length;
           for (const body of bodies) {
-            if (body.includes(`LEAK_${typeName}_`)) return false; // a private sentinel leaked
+            for (const sentinel of sentinels) {
+              if (body.includes(sentinel)) return false; // a private sentinel leaked
+            }
           }
           return true;
         },
       ),
       { numRuns: 12 }, // each run hits the DB + many endpoints; keep modest but real
     );
+    // The property is only meaningful if it actually ran: assert we seeded and
+    // probed real runs, and saw multiple delivery surfaces per run.
+    expect(probedRuns, "the generative property seeded/probed nothing — every run was skipped").toBeGreaterThan(0);
+    expect(probedBodies).toBeGreaterThan(probedRuns);
   });
 });

@@ -19,6 +19,7 @@ import {
   generateBackupCodes,
   generateSecret,
   hashBackupCode,
+  verifyBackupCode,
   matchTotpStep,
   totpUri,
   verifyTotp,
@@ -26,6 +27,27 @@ import {
 
 const MAX_FAILED = 5;
 const LOCK_MINUTES = 15;
+
+/**
+ * Count one failed authentication attempt and lock the account if it crosses the
+ * threshold — ATOMICALLY. `failed_attempts = failed_attempts + 1` is evaluated
+ * by Postgres under the row lock, so N concurrent wrong guesses advance the
+ * counter by N. The previous read-modify-write (`set(user.failedAttempts + 1)`)
+ * advanced a concurrent burst by 1, letting it slip the lockout (a botnet, or a
+ * single host once X-Forwarded-For was spoofable). The running counter is NOT
+ * reset on lock, so each attempt past the threshold renews the 15-minute window
+ * rather than handing back a fresh set of tries.
+ */
+async function recordFailedAuth(db: Database, userId: string): Promise<void> {
+  await db
+    .update(users)
+    .set({
+      failedAttempts: sql`${users.failedAttempts} + 1`,
+      lockedUntil: sql`case when ${users.failedAttempts} + 1 >= ${MAX_FAILED}
+        then now() + (${LOCK_MINUTES} * interval '1 minute') else ${users.lockedUntil} end`,
+    })
+    .where(eq(users.id, userId));
+}
 // Absolute session lifetime: a login is valid for this long regardless of
 // activity. Exported so the api can pin the session COOKIE's Max-Age to the
 // same value (a persistent cookie that outlived the server session, or vice
@@ -111,14 +133,7 @@ export async function verifyLogin(db: Database, email: string, password: string)
 
   const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
   if (!ok) {
-    const failed = user.failedAttempts + 1;
-    const locked = failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null;
-    // Keep the running counter (do NOT reset to 0 on lock) so a relocked account
-    // does not regain a fresh attempt window after the lock expires.
-    await db
-      .update(users)
-      .set({ failedAttempts: failed, lockedUntil: locked })
-      .where(eq(users.id, user.id));
+    await recordFailedAuth(db, user.id);
     throw generic;
   }
 
@@ -257,9 +272,7 @@ async function verifyReauth(db: Database, userId: string, password: string): Pro
   }
   const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
   if (!ok) {
-    const failed = user.failedAttempts + 1;
-    const locked = failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null;
-    await db.update(users).set({ failedAttempts: failed, lockedUntil: locked }).where(eq(users.id, user.id));
+    await recordFailedAuth(db, user.id);
     throw generic;
   }
   if (user.failedAttempts > 0 || user.lockedUntil) {
@@ -294,9 +307,11 @@ export async function getAccessContext(
   const roles = await getRoles(db, userId);
   const permissions = new Set<Permission>();
   for (const role of roles) for (const p of ROLE_PERMISSIONS[role] ?? []) permissions.add(p);
-  // Admin/Editor/Viewer operate site-wide (within the active site); Author is
-  // restricted to its sections.
-  const siteWide = roles.some((r) => r === "Admin" || r === "Editor" || r === "Viewer");
+  // Site-wide WRITE is Admin/Editor only; a Viewer's site-wide reach is READ.
+  // Splitting these is what stops `[Author, Viewer]` from becoming a site-wide
+  // writer — see AccessContext.siteWide. Author alone is section-scoped for both.
+  const siteWide = roles.some((r) => r === "Admin" || r === "Editor");
+  const readSiteWide = siteWide || roles.includes("Viewer");
   // The active site: an explicit choice (admin site switcher, Phase 3) or the
   // Default site. Section scopes are per-site, so only this site's scopes apply.
   const siteId = activeSiteId ?? (await getDefaultSite(db)).id;
@@ -309,6 +324,7 @@ export async function getAccessContext(
     permissions: [...permissions],
     siteId,
     siteWide,
+    readSiteWide,
     sections: scopeRows.map((s) => s.sectionId),
   };
 }
@@ -356,7 +372,7 @@ export async function beginTotpSetup(db: Database, userId: string): Promise<{ se
   if (!user) throw Errors.unauthorized();
   if (user.totpEnabled) throw Errors.conflict("Two-factor is already enabled");
   const secret = generateSecret();
-  await db.update(users).set({ totpSecret: encryptSecret(secret), totpEnabled: false }).where(eq(users.id, userId));
+  await db.update(users).set({ totpSecret: encryptSecret(secret, "totp"), totpEnabled: false }).where(eq(users.id, userId));
   return { secret, uri: totpUri(secret, user.email) };
 }
 
@@ -385,9 +401,10 @@ export async function enableTotp(db: Database, userId: string, code: string, pas
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const user = rows[0];
   if (!user?.totpSecret) throw Errors.badRequest("Start 2FA setup first");
-  if (!verifyTotp(decryptSecret(user.totpSecret), code)) throw Errors.unauthorized("Invalid code");
+  if (!verifyTotp(decryptSecret(user.totpSecret, "totp"), code)) throw Errors.unauthorized("Invalid code");
   const codes = generateBackupCodes();
-  await db.update(users).set({ totpEnabled: true, backupCodes: codes.map(hashBackupCode) }).where(eq(users.id, userId));
+  const hashed = await Promise.all(codes.map(hashBackupCode));
+  await db.update(users).set({ totpEnabled: true, backupCodes: hashed }).where(eq(users.id, userId));
   // Turning 2FA on is a posture change — evict the user's other sessions (S2-L1).
   await evictOtherSessions(db, userId, keepSessionToken);
   return { backupCodes: codes };
@@ -414,7 +431,7 @@ export async function verifySecondFactor(db: Database, userId: string, code: str
   if (user.lockedUntil && user.lockedUntil > new Date()) return false;
 
   const clearLock = { failedAttempts: 0, lockedUntil: null as Date | null };
-  const step = matchTotpStep(decryptSecret(user.totpSecret), code);
+  const step = matchTotpStep(decryptSecret(user.totpSecret, "totp"), code);
   if (step !== null) {
     // Replay of an already-consumed (or older) step — reject without counting it
     // as a brute-force guess (a legitimate double-submit shouldn't lock the user).
@@ -424,15 +441,13 @@ export async function verifySecondFactor(db: Database, userId: string, code: str
   }
   // Fall back to a backup code (one-time): match its hash, then remove it.
   const hashes = Array.isArray(user.backupCodes) ? (user.backupCodes as string[]) : [];
-  const used = hashBackupCode(code);
-  if (hashes.includes(used)) {
+  const used = await verifyBackupCode(code, hashes);
+  if (used) {
     await db.update(users).set({ ...clearLock, backupCodes: hashes.filter((h) => h !== used) }).where(eq(users.id, userId));
     return true;
   }
   // Wrong code → count toward the per-account lockout (same policy as passwords).
-  const failed = user.failedAttempts + 1;
-  const locked = failed >= MAX_FAILED ? new Date(Date.now() + LOCK_MINUTES * 60_000) : null;
-  await db.update(users).set({ failedAttempts: failed, lockedUntil: locked }).where(eq(users.id, userId));
+  await recordFailedAuth(db, userId);
   return false;
 }
 

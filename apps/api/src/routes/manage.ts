@@ -923,7 +923,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       },
     },
     async (req) => {
-      if (!req.accessCtx!.siteWide) {
+      if (!req.accessCtx!.readSiteWide) {
         throw new AppError(
           403,
           "forbidden",

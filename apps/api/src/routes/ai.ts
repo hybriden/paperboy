@@ -127,10 +127,20 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
             message: "Total text to translate exceeds 200000 characters — split into smaller batches",
             path: ["texts"],
           }),
-        response: { 200: z.object({ results: z.array(z.string()), provider: z.enum(AI_RESULT_PROVIDERS) }) },
+        response: {
+          200: z.object({ results: z.array(z.string()), provider: z.enum(AI_RESULT_PROVIDERS) }),
+          409: z.object({ error: z.string(), message: z.string() }),
+        },
       },
     },
-    async (req) => aiTranslateBatch(req.body.texts, req.body.targetLocale, await resolveAiConfig()),
+    async (req, reply) => {
+      try {
+        return await aiTranslateBatch(req.body.texts, req.body.targetLocale, await resolveAiConfig());
+      } catch (err) {
+        if (err instanceof AiUnavailableError) return reply.code(409).send({ error: "ai_unavailable", message: err.message });
+        throw err; // a provider failure: the global handler logs and sanitizes it (rule #6)
+      }
+    },
   );
 
   // The content agent ("Build from brief"): a server-side tool-use loop that

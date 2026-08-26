@@ -50,14 +50,12 @@ describe("concurrent createContent does not exhaust the connection pool", () => 
       }),
     );
 
-    // An unrelated read issued while the creates are in flight. Before the fix this
-    // never resolved, because every pooled connection was parked inside a
-    // transaction waiting for one more.
-    const unrelatedRead = new Promise<number>((resolve, reject) => {
-      setTimeout(() => {
-        listContentTypes(raw.db).then((t) => resolve(t.length)).catch(reject);
-      }, 300);
-    });
+    // An unrelated read issued IMMEDIATELY — same tick the creates start, so it
+    // genuinely competes with them for a pooled connection. Before the fix it
+    // never resolved (every connection parked in a transaction waiting for one
+    // more); a 300ms delay let the creates finish first on a fast machine,
+    // degenerating the test into "listContentTypes works".
+    const unrelatedRead = listContentTypes(raw.db).then((t) => t.length);
 
     // A hard deadline: the original bug hung forever, so "slow" and "deadlocked" must
     // be distinguishable. 25s is far above the ~150ms this takes when healthy.

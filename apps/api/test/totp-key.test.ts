@@ -17,10 +17,10 @@ describe("TOTP-secret encryption key (MFA_SECRET)", () => {
   it("treats an empty MFA_SECRET as unset and falls back to SESSION_SECRET (not sha256(''))", () => {
     process.env.SESSION_SECRET = "session-secret-used-for-totp-key-xyz";
     process.env.MFA_SECRET = ""; // the docker-compose default
-    const ct = encryptSecret("JBSWY3DPEHPK3PXP");
+    const ct = encryptSecret("JBSWY3DPEHPK3PXP", "totp");
     // The intended key is sha256(SESSION_SECRET). Set MFA_SECRET explicitly to the
     // same value and the ciphertext written under the empty default must decrypt.
     process.env.MFA_SECRET = "session-secret-used-for-totp-key-xyz";
-    expect(decryptSecret(ct)).toBe("JBSWY3DPEHPK3PXP");
+    expect(decryptSecret(ct, "totp")).toBe("JBSWY3DPEHPK3PXP");
   });
 });

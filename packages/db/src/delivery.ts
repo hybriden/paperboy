@@ -430,11 +430,29 @@ async function sanitize(
         }
       }
       out[f.name] = blocks;
-    } else {
+    } else if (isScalarOrScalarArray(v)) {
+      // Scalar field types (text/markdown/boolean/number/datetime/select, and
+      // legacy media documentIds) store their value verbatim.
       out[f.name] = v;
+    } else {
+      // A non-scalar here does NOT match this field's CURRENT declared type —
+      // most often a contentArea array left behind when the field was retyped to
+      // text. Emitting it would ship whatever it holds (e.g. a block's private
+      // inline fields) with NO visibility rules applied. Fail-closed, like the
+      // `delivery !== "public"` skip at the top of this loop.
+      out[f.name] = null;
     }
   }
   return out;
+}
+
+/** True for a value a scalar field legitimately stores: a primitive, null, or an
+ *  array of primitives (a multi-select). Objects and arrays-of-objects are not —
+ *  those only reach sanitize's final branch when a field was retyped, and must
+ *  never be emitted raw. */
+function isScalarOrScalarArray(v: unknown): boolean {
+  const scalar = (x: unknown) => x === null || ["string", "number", "boolean"].includes(typeof x);
+  return scalar(v) || (Array.isArray(v) && v.every(scalar));
 }
 
 /**
@@ -1039,7 +1057,11 @@ export async function deliveryPages(
         pub = new Set(def ? def.fields.filter((f) => f.delivery === "public").map((f) => f.name) : []);
         publicFieldsByType.set(it.type, pub);
       }
-      const data = variant.row.data as Record<string, unknown>;
+      // noIndex is localized:false but stored per locale-version; fill it (and any
+      // other shared field) from a sibling variant, exactly as resolveContent
+      // does, so a flag set on one locale is not lost on another — which would
+      // advertise, in sitemap.xml/llms.txt, a path the CMS marks noindex.
+      const data = await fillNonLocalizedFields(ctx, perspective, it.documentId, it.type, variant.row.data as Record<string, unknown>, variant.usedLocale, code);
       let description: string | undefined;
       for (const key of PAGE_DESCRIPTION_FIELDS) {
         const v = data[key];
