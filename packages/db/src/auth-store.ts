@@ -294,9 +294,11 @@ export async function getAccessContext(
   const roles = await getRoles(db, userId);
   const permissions = new Set<Permission>();
   for (const role of roles) for (const p of ROLE_PERMISSIONS[role] ?? []) permissions.add(p);
-  // Admin/Editor/Viewer operate site-wide (within the active site); Author is
-  // restricted to its sections.
-  const siteWide = roles.some((r) => r === "Admin" || r === "Editor" || r === "Viewer");
+  // Site-wide WRITE is Admin/Editor only; a Viewer's site-wide reach is READ.
+  // Splitting these is what stops `[Author, Viewer]` from becoming a site-wide
+  // writer — see AccessContext.siteWide. Author alone is section-scoped for both.
+  const siteWide = roles.some((r) => r === "Admin" || r === "Editor");
+  const readSiteWide = siteWide || roles.includes("Viewer");
   // The active site: an explicit choice (admin site switcher, Phase 3) or the
   // Default site. Section scopes are per-site, so only this site's scopes apply.
   const siteId = activeSiteId ?? (await getDefaultSite(db)).id;
@@ -309,6 +311,7 @@ export async function getAccessContext(
     permissions: [...permissions],
     siteId,
     siteWide,
+    readSiteWide,
     sections: scopeRows.map((s) => s.sectionId),
   };
 }

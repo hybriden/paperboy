@@ -19,7 +19,20 @@ export interface AccessContext {
    * site switcher overrides it); never client-trusted beyond membership checks.
    */
   siteId: string;
+  /**
+   * Site-wide WRITE authority: may create/update/publish/delete any document in
+   * the active site, ignoring section scope. Admin and Editor only.
+   *
+   * Deliberately NARROWER than readSiteWide. A read-only role (Viewer) grants
+   * site-wide reading but must never confer site-wide writing — otherwise
+   * `[Author, Viewer]`, whose permission set is the union (create/update from
+   * Author), would write anywhere, since every scope gate is
+   * `siteWide || sections.includes(...)`.
+   */
   siteWide: boolean;
+  /** Site-wide READ authority: Admin, Editor or Viewer. Gates list/tree/search
+   *  visibility and the read side of loadAuthorized. */
+  readSiteWide: boolean;
   sections: string[]; // allowed top-level section document_ids (within siteId)
   /**
    * Which surface this request came through — "mcp" for MCP agent writes,
@@ -48,6 +61,7 @@ export async function loadAuthorized(
   db: Database,
   ctx: AccessContext,
   documentId: string,
+  intent: "read" | "write" = "write",
 ): Promise<typeof contentItem.$inferSelect> {
   const rows = await db
     .select()
@@ -61,7 +75,11 @@ export async function loadAuthorized(
   // can't probe which documentIds exist in other sites. Cross-site access is a
   // separate (super-admin) concept layered on later, not a siteWide bypass.
   if (item.siteId !== ctx.siteId) throw Errors.notFound("Content");
-  if (!ctx.siteWide) {
+  // A read may use the wider read authority (Viewer sees the whole site); a
+  // write must clear the narrower write authority. Default "write" is fail-safe:
+  // a new caller that forgets the argument gets the stricter check.
+  const wide = intent === "read" ? ctx.readSiteWide : ctx.siteWide;
+  if (!wide) {
     const section = item.sectionId ?? item.documentId;
     if (!ctx.sections.includes(section)) {
       // Deny-by-default: caller is out of scope for this object.

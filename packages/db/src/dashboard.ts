@@ -69,7 +69,7 @@ export async function getDashboard(db: Database, ctx: AccessContext): Promise<Da
     .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, sectionId: contentItem.sectionId })
     .from(contentItem)
     .where(and(isNull(contentItem.deletedAt), eq(contentItem.siteId, ctx.siteId)));
-  const visible = items.filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
+  const visible = items.filter((i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
   const byId = new Map(visible.map((i) => [i.documentId, i]));
   const visibleIds = [...byId.keys()];
 
@@ -162,7 +162,7 @@ export async function getDashboard(db: Database, ctx: AccessContext): Promise<Da
     .select({ documentId: contentItem.documentId, sectionId: contentItem.sectionId })
     .from(contentItem)
     .where(and(isNotNull(contentItem.deletedAt), eq(contentItem.siteId, ctx.siteId)));
-  const trash = trashRows.filter((i) => ctx.siteWide || ctx.sections.includes(i.sectionId ?? i.documentId)).length;
+  const trash = trashRows.filter((i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId)).length;
 
   // A block is "used" when any CURRENT version (working draft or live published)
   // of an in-site doc mentions its documentId — contentArea refs, reference
