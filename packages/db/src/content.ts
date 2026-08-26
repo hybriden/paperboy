@@ -1,27 +1,6 @@
 import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import {
-  type BlockSummary,
-  ChildSort,
-  type ContentDetail,
-  type ContentTypeDef,
-  type CreateContentRequest,
-  type TreeNode,
-  type UpdateContentRequest,
-  type BlockTypeResolver,
-  coerceData,
-  dataSchemaFor,
-  detectContentLanguage,
-  duplicateFieldKeys,
-  expectedLanguageForLocale,
-  fieldFormatHint,
-  isFormType,
-  sortByRule,
-  stripSeoGroup,
-  tiptapToPlainText,
-  parseStoredContentTypeDef,
-  withSeoGroup,
-} from "@paperboy/shared";
+import { ChildSort, coerceData, dataSchemaFor, detectContentLanguage, duplicateFieldKeys, expectedLanguageForLocale, fieldFormatHint, isFormType, MAX_INLINE_DEPTH, parseStoredContentTypeDef, sortByRule, stripSeoGroup, tiptapToPlainText, type BlockSummary, type BlockTypeResolver, type ContentDetail, type ContentTypeDef, type CreateContentRequest, type TreeNode, type UpdateContentRequest, withSeoGroup } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import {
@@ -1078,95 +1057,161 @@ async function workingData(db: Database, documentId: string, loc: string): Promi
 }
 
 /**
- * Enforce per-field placement rules ("allowed types"): a contentArea
- * only accepts blocks whose type is in `allowedBlocks`; a reference only accepts
- * targets whose type is in `allowedTypes`. Empty list = unrestricted. This makes
- * the editor hint a real, write-enforced invariant (an API client cannot bypass
- * it). Throws Errors.validation on the first violation.
+ * Every content type installed, read ONCE so the walk below can visit every
+ * level of a document. The previous shape issued a query per block, which made
+ * the cost grow with the content instead of with the (tiny) type list.
  */
-/** The set of installed content-type names (for content-type-referencing fields). */
-async function installedTypeNames(db: Database): Promise<string[]> {
-  const rows = await db.select({ name: contentType.name }).from(contentType).orderBy(asc(contentType.name));
-  return rows.map((r) => r.name);
+interface TypeRegistry {
+  known: Map<string, { kind: string; nestedOnly: boolean; def: ContentTypeDef }>;
+  /** Names a content area can legally hold, for the self-teaching refusal. */
+  placeable: string[];
+  /** Every installed name, for `optionsFromContentTypes` fields. */
+  installed: string[];
 }
 
-async function assertAllowedTypes(db: Database, type: ContentTypeDef, data: Record<string, unknown>): Promise<void> {
-  // Fields whose value names a content type (e.g. a ListPage's listedType) must
-  // reference an INSTALLED type — never a hardcoded "fantasy" option. A list
-  // page pointing at a non-existent type lists nothing and traps agents the
-  // placement guard sends to create it (2026-06-07 incident).
-  const installed = type.fields.some((f) => f.optionsFromContentTypes) ? await installedTypeNames(db) : [];
-  for (const f of type.fields) {
-    if (!f.optionsFromContentTypes) continue;
-    const raw = data[f.name];
-    if (raw == null) continue;
-    const vals = (Array.isArray(raw) ? raw : [raw]).filter((x) => typeof x === "string");
-    for (const val of vals) {
-      if (!installed.includes(val)) {
-        throw Errors.validation(
-          `Field "${f.name}" must be an installed content type, but "${val}" does not exist. ` +
-            `Available: ${installed.join(", ")}. (Create that content type first, or pick one of these.)`,
-        );
-      }
-    }
+async function loadTypeRegistry(db: Database): Promise<TypeRegistry> {
+  const rows = await db
+    .select({ name: contentType.name, kind: contentType.kind, definition: contentType.definition })
+    .from(contentType)
+    .orderBy(asc(contentType.name));
+  const known = new Map<string, { kind: string; nestedOnly: boolean; def: ContentTypeDef }>();
+  for (const r of rows) {
+    const def = r.definition as ContentTypeDef;
+    known.set(r.name, { kind: r.kind, nestedOnly: def?.nestedOnly === true, def });
   }
+  return {
+    known,
+    placeable: rows.filter((r) => r.kind === "block" || r.kind === "page").map((r) => r.name),
+    installed: rows.map((r) => r.name),
+  };
+}
+
+/**
+ * Placement rules, applied at EVERY level of the document.
+ *
+ * This used to walk `type.fields` and stop there, while the schema layer in
+ * packages/shared deliberately returned on an unknown block type because "the db
+ * layer already refuses it". Both statements were true at the top level and
+ * false below it — two guards each deferring to the other — so a mistyped type
+ * nested inside another block (`FormTextFeild` among a Form's fields, a typo'd
+ * accordion item) saved 200, PUBLISHED 200, and delivered
+ * `{blockType:"FormTextFeild", data:{}, fieldTypes:{}}`. The question vanished
+ * from the form and the caller collected two successes: the HerooBlock incident
+ * one level deeper.
+ *
+ * `where` accumulates the path, because a refusal that cannot say WHERE turns a
+ * one-step fix into a guess (rule #2).
+ */
+function assertPlacement(
+  type: ContentTypeDef,
+  data: Record<string, unknown>,
+  reg: TypeRegistry,
+  where: string,
+  depth: number,
+): void {
   for (const f of type.fields) {
     const v = data[f.name];
     if (v == null) continue;
+
+    // Fields whose value names a content type (e.g. a ListPage's listedType) must
+    // reference an INSTALLED type — never a hardcoded "fantasy" option. A list
+    // page pointing at a non-existent type lists nothing and traps agents the
+    // placement guard sends to create it (2026-06-07 incident).
+    if (f.optionsFromContentTypes) {
+      for (const val of (Array.isArray(v) ? v : [v]).filter((x) => typeof x === "string")) {
+        if (!reg.installed.includes(val as string)) {
+          throw Errors.validation(
+            `Field "${f.name}" must be an installed content type, but "${String(val)}" does not exist. ` +
+              `Available: ${reg.installed.join(", ")}. (Create that content type first, or pick one of these.)`,
+          );
+        }
+      }
+    }
+
     if (f.type === "reference" && f.allowedTypes.length && typeof v === "object") {
       const rt = (v as { type?: string }).type;
       if (rt && !f.allowedTypes.includes(rt)) {
         throw Errors.validation(`Field "${f.name}" does not allow references to "${rt}"`);
       }
     }
+
     if (f.type === "contentArea" && Array.isArray(v)) {
-      for (const b of v as Array<{ blockType?: string }>) {
+      const blocks = v as Array<{ blockType?: string; inline?: unknown }>;
+      for (const [i, b] of blocks.entries()) {
         const bt = b?.blockType;
         if (!bt) continue;
+        // Where this block sits. Empty at the top level, so the message an agent
+        // has been reading since the HerooBlock fix stays byte-identical there.
+        const at = depth === 0 ? "" : `In ${where}: `;
+        const here = `${where} -> "${f.name}"[${i}] (${bt})`;
+
         // An UNKNOWN blockType is rejected regardless of allowedBlocks. The default
         // `allowedBlocks: []` documents "any block", which used to mean "no check at
         // all": {blockType:"HerooBlock", inline:{titel:"Hi"}} saved 200, PUBLISHED
         // 200, and delivered `data:{}, fieldTypes:{}` — the inline payload silently
         // vanished. Three successes and a blank page is the retry loop rule #1 exists
         // to prevent, so the type must at least exist. Self-teaching (rule #2).
-        const known = await db
-          .select({
-            name: contentType.name,
-            kind: contentType.kind,
-            nestedOnly: sql<boolean>`coalesce((${contentType.definition} ->> 'nestedOnly')::boolean, false)`,
-          })
-          .from(contentType)
-          .where(eq(contentType.name, bt))
-          .limit(1);
-        if (!known[0]) {
-          const installed = (await db.select({ name: contentType.name }).from(contentType).where(inArray(contentType.kind, ["block", "page"])).orderBy(asc(contentType.name))).map((r) => r.name);
+        const entry = reg.known.get(bt);
+        if (!entry) {
           throw Errors.validation(
-            `Content area "${f.name}" got blockType "${bt}", which is not an installed content type — its inline data would be silently dropped at delivery. Available: ${installed.join(", ")}. (Create that block type first, or use one of these.)`,
+            `${at}Content area "${f.name}" got blockType "${bt}", which is not an installed content type — ` +
+              `its inline data would be silently dropped at delivery. Available: ${reg.placeable.join(", ")}. ` +
+              `(Create that block type first, or use one of these.)`,
           );
         }
-        if (f.allowedBlocks.length && !f.allowedBlocks.includes(bt)) {
-          // `allowedBlocks` constrains BLOCK types only. A page dropped into a
-          // content area is rendered as a teaser (Optimizely-style) and is
-          // always placeable — its type name is never in allowedBlocks.
-          if (known[0].kind === "page") continue;
-          throw Errors.validation(`Content area "${f.name}" does not allow block "${bt}"`);
+
+        // `allowedBlocks` constrains BLOCK types only. A page dropped into a
+        // content area is rendered as a teaser (Optimizely-style) and is always
+        // placeable — its type name is never in allowedBlocks.
+        if (f.allowedBlocks.length && !f.allowedBlocks.includes(bt) && entry.kind !== "page") {
+          throw Errors.validation(`${at}Content area "${f.name}" does not allow block "${bt}"`);
         }
+
         // "Any block" means any GENERAL block. A nested-only type is a PART of
         // one specific parent (a Form's field blocks), so an area that never
         // named it has not opted in — and a part placed loose in a page body
         // delivers a block no frontend can render, the same success-then-blank
         // failure the unknown-blockType branch above exists to stop.
-        if (!f.allowedBlocks.length && known[0].nestedOnly) {
+        if (!f.allowedBlocks.length && entry.nestedOnly) {
           throw Errors.validation(
-            `Content area "${f.name}" does not accept "${bt}": it is a PART, only used inside another type ` +
+            `${at}Content area "${f.name}" does not accept "${bt}": it is a PART, only used inside another type ` +
               `(its own parent lists it in that area's allowed blocks). This area allows any GENERAL block. ` +
               `Place it inside the type it belongs to, or — if you really mean it here — add "${bt}" to ` +
               `this area's allowedBlocks on content type "${type.name}".`,
           );
         }
+
+        // Down into the block's own payload. A shared reference carries none.
+        const inline = b?.inline;
+        if (!inline || typeof inline !== "object" || Array.isArray(inline)) continue;
+        if (depth + 1 >= MAX_INLINE_DEPTH) {
+          // REFUSED, not waved through. Coercion and schema validation stop at
+          // this same depth, so anything below it would reach storage unchecked
+          // — and an unchecked level is precisely the hole this guard closes,
+          // with nesting the cheapest way to reach it.
+          throw Errors.validation(
+            `Content areas nest at most ${MAX_INLINE_DEPTH} levels deep, and ${here} is deeper than that, so the ` +
+              `block types below it cannot be checked. Flatten the structure — nothing renders content nested this far.`,
+          );
+        }
+        assertPlacement(entry.def, inline as Record<string, unknown>, reg, here, depth + 1);
       }
     }
   }
+}
+
+/**
+ * Enforce per-field placement rules ("allowed types"): a contentArea only accepts
+ * blocks whose type is in `allowedBlocks`; a reference only accepts targets whose
+ * type is in `allowedTypes`. Empty list = unrestricted. This makes the editor hint
+ * a real, write-enforced invariant (an API client cannot bypass it), at every
+ * level of the document. Throws Errors.validation on the first violation.
+ *
+ * Called from `updateContent` and from `assertDraftPublishable`, so save and
+ * publish are held to the same rules by construction.
+ */
+async function assertAllowedTypes(db: Database, type: ContentTypeDef, data: Record<string, unknown>): Promise<void> {
+  assertPlacement(type, data, await loadTypeRegistry(db), `content type "${type.name}"`, 0);
 }
 
 /** Reads, validates and persists references for a (document, locale) data blob. */

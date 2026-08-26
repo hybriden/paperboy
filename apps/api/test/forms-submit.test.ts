@@ -648,3 +648,57 @@ describe("the enforced definition cannot be chosen by the caller", () => {
     expect(form?.settings.retentionDays).toBe(5);
   });
 });
+
+/**
+ * The payload a browser actually sends.
+ *
+ * The reference renderer submits every control it renders — `data.get(name) ?? ""`
+ * — so a visitor who skips an optional field posts "" for it, not `undefined`.
+ * That is the shape this endpoint has to accept, and it did not: the optional
+ * branch of the compiled validator took undefined and null but not "", so a form
+ * carrying an optional select, email or number field answered 422 to every
+ * visitor who left it blank.
+ */
+describe("blank optional answers", () => {
+  const browserShaped = {
+    fullName: "Hans",
+    email: "hans@example.com",
+    message: "",
+    topic: "",
+    consent: true,
+  };
+
+  it("accepts a submission whose optional fields are blank", async () => {
+    const res = await submit(good(browserShaped));
+    expect(res.statusCode, res.body).toBe(202);
+    expect(res.json().ok).toBe(true);
+  });
+
+  it("does not store the blank answers as empty strings", async () => {
+    const res = await submit(good({ ...browserShaped, fullName: "Blank Optionals" }));
+    expect(res.statusCode, res.body).toBe(202);
+    const list = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/manage/forms/submissions?formId=${formId}`,
+      headers: { cookie: admin.cookie },
+    });
+    const items = (list.json() as { items: { values: Record<string, unknown> }[] }).items;
+    const stored = items.find((i) => i.values.fullName === "Blank Optionals")?.values;
+    expect(stored, "the submission should have been stored").toBeTruthy();
+    // A skipped optional field is unanswered, not answered with "": an empty
+    // string in a number or select slot is a type lie in the stored record.
+    expect("topic" in stored!).toBe(false);
+    expect("message" in stored!).toBe(false);
+  });
+
+  it("still refuses a blank REQUIRED answer, keyed to the field", async () => {
+    const res = await submit(good({ ...browserShaped, fullName: "" }));
+    expect(res.statusCode).toBe(422);
+    expect(Object.keys(res.json().fields as Record<string, string>)).toContain("fullName");
+  });
+
+  it("still refuses an unknown key that happens to be blank", async () => {
+    const res = await submit(good({ ...browserShaped, surpriseKey: "" }));
+    expect(res.statusCode).toBe(422);
+  });
+});

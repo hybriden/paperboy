@@ -160,6 +160,35 @@ describe("submissionSchemaFor", () => {
     expect(res.success).toBe(false);
   });
 
+  it("treats an empty string as UNANSWERED for an optional field", () => {
+    // The other half of the case above, and the half that shipped broken. A
+    // browser submits every control it renders, so an optional field the visitor
+    // skipped arrives as "": apps/web sends `data.get(name) ?? ""` for every
+    // non-checkbox field and its select's placeholder option is value="".
+    // `.optional().nullable()` accepts undefined and null but NOT "", so an
+    // optional email, number, select or pattern field made the whole form
+    // unsubmittable — 422 on every attempt, with a message that never said the
+    // field was optional.
+    const res = parse({ ...valid, age: "", topic: "", phone: "" });
+    expect(res.success, JSON.stringify(res.error?.issues)).toBe(true);
+  });
+
+  it("records a skipped optional field as absent, not as an empty string", () => {
+    // A blank answer is "not answered". Persisting "" in a number slot would be
+    // a type lie in the record that field_snapshot freezes as evidence.
+    const res = parse({ ...valid, age: "", topic: "" });
+    expect(res.success).toBe(true);
+    expect("age" in (res.data as Record<string, unknown>)).toBe(false);
+    expect("topic" in (res.data as Record<string, unknown>)).toBe(false);
+  });
+
+  it("still rejects an unknown key when its value is blank", () => {
+    // Blank-means-unanswered must not become a hole in the strict rule: an
+    // unknown key is stale or hostile whatever it carries.
+    const res = parse({ ...valid, surprise: "" });
+    expect(res.success).toBe(false);
+  });
+
   it("enforces the editor's length rules", () => {
     expect(parse({ ...valid, name: "A" }).success).toBe(false);
     expect(parse({ ...valid, name: "A".repeat(11) }).success).toBe(false);
