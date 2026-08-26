@@ -79,10 +79,11 @@ describe("multisite phase 3 — site routes + active-site header", () => {
 
     // …and the Default-site tree never shows it (the admin's default request).
     const treeDefault = await s.app.inject({ method: "GET", url: "/api/v1/manage/content/tree", headers: authHeaders(admin) });
-    if (treeDefault.statusCode === 200) {
-      const ids = JSON.stringify(treeDefault.json());
-      expect(ids).not.toContain(docId);
-    }
+    // Assert the tree loaded AND excluded the other site's doc. Guarding this
+    // behind `if (statusCode === 200)` let a regression to 401/500 skip the
+    // security check silently.
+    expect(treeDefault.statusCode, treeDefault.body).toBe(200);
+    expect(JSON.stringify(treeDefault.json())).not.toContain(docId);
   });
 
   it("PATCH /manage/sites/:id renames a site (admin only); slug stays unique", async () => {

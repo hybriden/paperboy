@@ -139,18 +139,32 @@ describe("coerceData recurses into content-area inline block data", () => {
     expect(isRichTextDoc(inner.body)).toBe(true);
   });
 
-  it("terminates on a deeply self-nesting area instead of recursing forever", () => {
-    // Build a chain deeper than any sane depth guard.
-    let node: Record<string, unknown> = block("SelfBlock", { body: "# deep" });
-    for (let i = 0; i < 30; i++) node = block("SelfBlock", { body: "# d", inner: [node] });
-    expect(() =>
-      coerceData(
-        { name: "P", displayName: "P", kind: "page", fields: [f("area", "contentArea")] } as ContentTypeDef,
-        { area: [node] },
-        "en",
-        resolve,
-      ),
-    ).not.toThrow();
+  it("coerces inline blocks up to the depth cap and leaves deeper ones raw", () => {
+    // Build a chain deeper than the cap. `not.toThrow()` alone was a test that
+    // could not fail — a finite input never recurses forever, so it passed even
+    // with the depth guard deleted. Assert the cap's ACTUAL effect instead:
+    // shallow blocks get their markdown coerced to a doc, blocks past the cap
+    // keep the raw string. Delete the guard → deep also coerces → this fails;
+    // set the cap to 0 → shallow stays raw → this fails. Either way it can fail.
+    let node: Record<string, unknown> = block("SelfBlock", { body: "# deepest" });
+    for (let i = 0; i < 30; i++) node = block("SelfBlock", { body: "# level", inner: [node] });
+    const out = coerceData(
+      { name: "P", displayName: "P", kind: "page", fields: [f("area", "contentArea")] } as ContentTypeDef,
+      { area: [node] },
+      "en",
+      resolve,
+    );
+    // Follow inner[0] down, checking the shallow block coerced and the deepest didn't.
+    let cur = (out.area as Array<{ inline: Record<string, unknown> }>)[0]!.inline;
+    expect(isRichTextDoc(cur.body)).toBe(true); // depth 0: coerced
+    let depth = 0;
+    while (Array.isArray(cur.inner) && (cur.inner as unknown[]).length) {
+      cur = (cur.inner as Array<{ inline: Record<string, unknown> }>)[0]!.inline;
+      depth += 1;
+    }
+    expect(depth).toBe(30); // walked the whole chain
+    expect(typeof cur.body).toBe("string"); // past the cap: left as raw markdown
+    expect(isRichTextDoc(cur.body)).toBe(false);
   });
 
   it("without a resolver, behaves exactly as before (back-compat)", () => {
