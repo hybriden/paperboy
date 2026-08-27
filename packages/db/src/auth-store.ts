@@ -574,6 +574,18 @@ export async function verifyDeliveryKey(
 
 /* --------------------------------- audit ---------------------------------- */
 
+/**
+ * Prune audit rows older than `days`. days<=0 keeps everything (the default —
+ * audit_log is a compliance trail, pruned only on an explicit opt-in). Swept on
+ * the same hourly timer as submission retention.
+ */
+export async function runAuditRetention(db: Database, days: number, now: Date = new Date()): Promise<{ deleted: number }> {
+  if (!days || days <= 0) return { deleted: 0 };
+  const cutoff = new Date(now.getTime() - days * 86_400_000);
+  const res = await db.delete(auditLog).where(lte(auditLog.ts, cutoff)).returning({ id: auditLog.id });
+  return { deleted: res.length };
+}
+
 export async function audit(
   db: Database,
   entry: {

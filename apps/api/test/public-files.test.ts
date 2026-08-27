@@ -177,4 +177,14 @@ describe("public files (robots/sitemap/llms/security) + /delivery/pages", () => 
     expect(def.seoFiles.securityContact).toBe("security@example.com");
     expect(def.seoFiles.llmsSummary).toBe("A demo newsroom running on Paperboy.");
   });
+
+  it("sitemap.xml carries an ETag and answers 304 to a matching If-None-Match (P5)", async () => {
+    const first = await s.app.inject({ method: "GET", url: "/api/v1/delivery/sitemap.xml", headers: pub });
+    expect(first.statusCode).toBe(200);
+    const etag = first.headers.etag as string;
+    expect(etag).toMatch(/^W\/"cv-\d+"$/); // was absent — the two heaviest generated files had no conditional GET
+    const again = await s.app.inject({ method: "GET", url: "/api/v1/delivery/sitemap.xml", headers: { ...pub, "if-none-match": etag } });
+    expect(again.statusCode).toBe(304);
+  });
+
 });

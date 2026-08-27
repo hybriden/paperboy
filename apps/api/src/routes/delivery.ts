@@ -315,9 +315,10 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     const s = await getSiteById(app.db, req.deliverySiteId!);
     return { site: s, cfg: parseSeoFilesConfig(s?.seoFiles), base: s?.canonicalBaseUrl ?? null };
   }
-  function textFileHeaders(reply: FastifyReply, perspective: Perspective, contentType: string): void {
+  function textFileHeaders(reply: FastifyReply, perspective: Perspective, contentType: string, cv?: number): void {
     reply.type(contentType);
     reply.header("Cache-Control", perspective === "preview" ? "private, no-store" : "public, max-age=300, stale-while-revalidate=600");
+    if (perspective === "published" && cv !== undefined) reply.header("ETag", `W/"cv-${cv}"`);
     reply.header("Vary", "Authorization, X-Api-Key");
   }
   const needsBase = (file: string) =>
@@ -342,8 +343,9 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     async (req, reply) => {
       const { base } = await siteFiles(req);
       if (!base) throw needsBase("sitemap.xml");
-      const { pages } = await deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
-      textFileHeaders(reply, req.perspective!, "application/xml; charset=utf-8");
+      const { pages, cv } = await deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
+      if (notModified(req, req.perspective!, cv)) return reply.code(304).send();
+      textFileHeaders(reply, req.perspective!, "application/xml; charset=utf-8", cv);
       return buildSitemapXml(pages, base);
     },
   );
@@ -356,7 +358,9 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       // A full editor override needs no base URL (it embeds its own links).
       if (cfg.llmsOverride?.trim()) return buildLlmsTxt({ siteName: "", canonicalBaseUrl: "", defaultLocale: "", pages: [], override: cfg.llmsOverride });
       if (!base) throw needsBase("llms.txt");
-      const { pages } = await deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
+      const { pages, cv } = await deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
+      if (notModified(req, req.perspective!, cv)) return reply.code(304).send();
+      reply.header("ETag", `W/"cv-${cv}"`);
       return buildLlmsTxt({
         siteName: site?.name ?? "",
         canonicalBaseUrl: base,
