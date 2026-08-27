@@ -165,6 +165,13 @@ export function parsePreviewMessage(data: unknown): PaperboyMessage | null {
   if (!data || typeof data !== "object") return null;
   const type = (data as { type?: unknown }).type;
   if (typeof type !== "string" || !KNOWN_TYPES.has(type)) return null;
+  // blockIndex is `number | null` by contract, and the bridge interpolates it
+  // into a `querySelector` (unlike `field`, which is cssEscape'd). A non-integer
+  // from a version-skewed or hostile sender could build a malformed selector
+  // that throws inside the message listener — reject it here, at the one
+  // protocol chokepoint, rather than trusting every reader to re-check.
+  const bi = (data as { blockIndex?: unknown }).blockIndex;
+  if (bi !== undefined && bi !== null && !Number.isInteger(bi)) return null;
   return data as PaperboyMessage;
 }
 

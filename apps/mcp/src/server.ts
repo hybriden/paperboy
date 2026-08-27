@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { makeMcpHttpHandler } from "./http-handler.js";
+import { makeMcpHttpHandler, sweepIdleSessions } from "./http-handler.js";
 import {
   type AccessContext,
   adminCreateUser,
@@ -709,6 +709,16 @@ async function main(): Promise<void> {
     // `initialize` and replays it via the `mcp-session-id` header; that's what
     // carries the protocol's init state across separate requests.
     const sessions = new Map<string, StreamableHTTPServerTransport>();
+    // Idle/over-cap session reaper. onclose only fires on an explicit client
+    // DELETE, so a crashed client would otherwise leak its transport forever.
+    const lastSeen = new Map<string, number>();
+    const SESSION_IDLE_MS = 30 * 60_000;
+    const MAX_SESSIONS = 256;
+    const reaper = setInterval(() => {
+      const closed = sweepIdleSessions(sessions, lastSeen, Date.now(), SESSION_IDLE_MS, MAX_SESSIONS);
+      if (closed) console.error(`[paperboy-mcp] reaped ${closed} idle/over-cap session(s)`);
+    }, 5 * 60_000);
+    if (typeof reaper.unref === "function") reaper.unref();
     const handle = makeMcpHttpHandler({
       httpPath: MCP_HTTP_PATH,
       bearerOk: async (req) => {
@@ -724,6 +734,7 @@ async function main(): Promise<void> {
       },
       buildServer,
       sessions,
+      lastSeen,
     });
     const http = createHttpServer((req, res) => {
       // The handler contains its own try/catch; this .catch is a last-resort

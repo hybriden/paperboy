@@ -18,6 +18,17 @@ describe("parsePreviewMessage", () => {
     expect(parsePreviewMessage({ type: 42 })).toBeNull();
     expect(parsePreviewMessage({ foo: 1 })).toBeNull();
   });
+
+  it("rejects a non-integer blockIndex — it is interpolated into a querySelector by the bridge", () => {
+    // A number always yields a valid selector; only a string with `"`/`\` could
+    // throw inside the message listener. blockIndex is number|null by contract,
+    // so anything else is a version-skewed or hostile sender — refuse it.
+    expect(parsePreviewMessage({ type: "paperboy:patch", field: "b", blockIndex: '"] , [x' })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:focus", field: "b", blockIndex: 1.5 })).toBeNull();
+    // null and integer stay valid.
+    expect(parsePreviewMessage({ type: "paperboy:focus", field: "b", blockIndex: null })?.type).toBe("paperboy:focus");
+    expect(parsePreviewMessage({ type: "paperboy:patch", field: "b", html: "x", blockIndex: 3 })?.type).toBe("paperboy:patch");
+  });
 });
 
 describe("message builders", () => {

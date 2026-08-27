@@ -9,6 +9,8 @@ export interface McpHttpDeps {
   bearerOk: (req: IncomingMessage) => Promise<boolean>;
   buildServer: () => McpServer;
   sessions: Map<string, StreamableHTTPServerTransport>;
+  /** Last-touched timestamp per session id, for the idle sweep. */
+  lastSeen: Map<string, number>;
 }
 
 const json = (res: ServerResponse, code: number, body: unknown, extra: Record<string, string> = {}): void => {
@@ -43,6 +45,7 @@ export function makeMcpHttpHandler(deps: McpHttpDeps) {
       const sid = req.headers["mcp-session-id"];
       const existing = typeof sid === "string" ? deps.sessions.get(sid) : undefined;
       if (existing) {
+        deps.lastSeen.set(sid as string, Date.now());
         await existing.handleRequest(req, res);
         return;
       }
@@ -53,10 +56,14 @@ export function makeMcpHttpHandler(deps: McpHttpDeps) {
         enableJsonResponse: true,
         onsessioninitialized: (id) => {
           deps.sessions.set(id, transport);
+          deps.lastSeen.set(id, Date.now());
         },
       });
       transport.onclose = () => {
-        if (transport.sessionId) deps.sessions.delete(transport.sessionId);
+        if (transport.sessionId) {
+          deps.sessions.delete(transport.sessionId);
+          deps.lastSeen.delete(transport.sessionId);
+        }
       };
       const reqServer = deps.buildServer();
       await reqServer.connect(transport);
@@ -66,4 +73,42 @@ export function makeMcpHttpHandler(deps: McpHttpDeps) {
       if (!res.headersSent) json(res, 500, { error: "internal error" });
     }
   };
+}
+
+/**
+ * Close sessions idle beyond `idleMs`, then evict oldest-seen down to
+ * `maxSessions`. The Map is only pruned on a client's explicit DELETE
+ * (transport.onclose), so a client that crashes without one would otherwise
+ * leak a transport + McpServer forever on this long-lived process. Pure and
+ * time-injected so it is unit-testable; the process runs it on an interval.
+ */
+export function sweepIdleSessions<T extends { close?: () => unknown }>(
+  sessions: Map<string, T>,
+  lastSeen: Map<string, number>,
+  now: number,
+  idleMs: number,
+  maxSessions: number,
+): number {
+  let closed = 0;
+  const drop = (id: string): void => {
+    const t = sessions.get(id);
+    try {
+      void t?.close?.();
+    } catch {
+      /* closing a dead transport must not throw the sweep */
+    }
+    sessions.delete(id);
+    lastSeen.delete(id);
+    closed++;
+  };
+  // Deleting a Map entry during keys() iteration is spec-safe: the current key
+  // is not revisited and an unvisited deleted key is skipped — no snapshot needed.
+  for (const id of sessions.keys()) {
+    if (now - (lastSeen.get(id) ?? 0) > idleMs) drop(id);
+  }
+  if (sessions.size > maxSessions) {
+    const oldestFirst = [...sessions.keys()].sort((a, b) => (lastSeen.get(a) ?? 0) - (lastSeen.get(b) ?? 0));
+    for (const id of oldestFirst.slice(0, sessions.size - maxSessions)) drop(id);
+  }
+  return closed;
 }

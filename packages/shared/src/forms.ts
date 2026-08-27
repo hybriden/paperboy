@@ -1,4 +1,5 @@
 import { z } from "zod";
+import safe from "safe-regex";
 import type { BlockTypeResolver } from "./content-types.js";
 
 /**
@@ -354,7 +355,13 @@ export function submissionSchemaFor(spec: FormSpec): z.ZodType<Record<string, un
       default: {
         let t = z.string({ message: missing }).max(f.maxLength ?? MAX_ANSWER_LENGTH, message ?? `"${f.label || f.name}" is too long (max ${f.maxLength ?? MAX_ANSWER_LENGTH} characters).`);
         if (f.minLength != null) t = t.min(f.minLength, message ?? `"${f.label || f.name}" must be at least ${f.minLength} characters.`);
-        if (f.pattern) {
+        // Compile the pattern ONLY if it is ReDoS-safe. A catastrophic-backtracking
+        // pattern (accidental or hostile) would block the event loop for the whole
+        // instance on one anonymous submit — the answer-length cap does not bound
+        // that (backtracking is exponential; Zod runs .regex() even after .max()
+        // fails). An unsafe OR invalid pattern is simply not enforced, the same
+        // fail-open-for-the-visitor choice the invalid case already made.
+        if (f.pattern && safe(f.pattern)) {
           try {
             t = t.regex(new RegExp(f.pattern), message ?? `"${f.label || f.name}" is not in the expected format.`);
           } catch {

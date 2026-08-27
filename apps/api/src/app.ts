@@ -1,4 +1,5 @@
 import { mkdirSync } from "node:fs";
+import { safeErrSerializer } from "./logging.js";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
@@ -7,7 +8,7 @@ import fastifyStatic from "@fastify/static";
 import swagger from "@fastify/swagger";
 import swaggerUI from "@fastify/swagger-ui";
 import { AppError, audit, createDb, getAccessContext, getSessionUser, getSiteById, readSession, runAuditRetention, runScheduledPublish, runSubmissionRetention, runWebhookDeliveryRetention } from "@paperboy/db";
-import Fastify, { type FastifyInstance } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import {
   type ZodTypeProvider,
   jsonSchemaTransform,
@@ -33,15 +34,18 @@ export interface BuildOptions {
 
 export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   const { env } = opts;
-  const app = Fastify({
-    logger: env.NODE_ENV === "test" ? false : { level: "info" },
+  const serverOpts: FastifyServerOptions = {
+    // A custom `err` serializer so a DrizzleQueryError can't log bound params
+    // (which include the session token) — see ./logging.ts.
+    logger: (env.NODE_ENV === "test" ? false : { level: "info", serializers: { err: safeErrSerializer } }) as FastifyServerOptions["logger"],
     // Configurable trusted-proxy boundary (M9). Defaults to trusting NOTHING;
     // operators pin the CIDRs or presets of the proxies actually in front, so
     // req.ip can't be spoofed via X-Forwarded-For. A HOP COUNT is refused —
     // parseTrustProxy explains why. (req.ip backs the IP rate-limits and audit
     // IPs, and request.host/protocol back generated URLs and cookie decisions.)
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
-  }).withTypeProvider<ZodTypeProvider>();
+  };
+  const app = Fastify(serverOpts).withTypeProvider<ZodTypeProvider>();
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);

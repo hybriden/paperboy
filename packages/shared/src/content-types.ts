@@ -1,4 +1,5 @@
 import { z } from "zod";
+import safe from "safe-regex";
 
 /**
  * The content model is *data-driven*: content types are defined as data in a
@@ -1293,7 +1294,10 @@ function applyStringValidation(base: z.ZodString, f: FieldDef, strict: boolean):
   let s = base;
   if (f.validation.minLength != null) s = s.min(f.validation.minLength);
   if (f.validation.maxLength != null) s = s.max(f.validation.maxLength);
-  if (f.validation.pattern) {
+  // Only a ReDoS-safe pattern is compiled — a catastrophic one would block the
+  // event loop when validated against input (same class as the form-field
+  // pattern). Unsafe or invalid → not enforced, never crashes validation.
+  if (f.validation.pattern && safe(f.validation.pattern)) {
     try {
       s = s.regex(new RegExp(f.validation.pattern));
     } catch {
