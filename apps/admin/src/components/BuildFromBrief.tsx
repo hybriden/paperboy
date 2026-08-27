@@ -48,7 +48,8 @@ export function BuildFromBriefDialog({
   const listRef = useRef<HTMLDivElement>(null);
 
   const pushRow = (kind: ActivityRow["kind"], text: string, state: ActivityRow["state"]) => {
-    setRows((prev) => [...prev, { id: ++rowId.current, kind, text, state }]);
+    const id = ++rowId.current; // allocate outside the updater — it may run twice
+    setRows((prev) => [...prev, { id, kind, text, state }]);
     // Keep the newest activity visible.
     requestAnimationFrame(() => listRef.current?.scrollTo({ top: listRef.current.scrollHeight }));
   };

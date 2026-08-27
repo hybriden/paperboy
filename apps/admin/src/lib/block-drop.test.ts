@@ -45,4 +45,28 @@ describe("blockInstanceFromDrop", () => {
   it("rejects a non-content-area target field", () => {
     expect(blockInstanceFromDrop({ kind: "block", documentId: "doc1", blockType: "CardBlock" }, textField, "k")).toEqual({ ok: false, reason: "not-area" });
   });
+
+  it("refuses a nested-only PART dropped into an area that allows any block", () => {
+    // Same rule the in-form ContentArea handler enforces: an area with no
+    // allow-list means "any GENERAL block", so a part (a Form's field block)
+    // must not land there. Without this the drop succeeded and the SERVER then
+    // 422'd on save — a landed block that vanishes.
+    const r = blockInstanceFromDrop(
+      { kind: "block", documentId: "doc1", blockType: "FormDateField" },
+      area(),
+      "k",
+      new Set(["FormDateField"]),
+    );
+    expect(r).toEqual({ ok: false, reason: "not-allowed" });
+  });
+
+  it("still accepts a part where the area names it explicitly", () => {
+    const r = blockInstanceFromDrop(
+      { kind: "block", documentId: "doc1", blockType: "FormDateField" },
+      area(["FormDateField"]),
+      "k",
+      new Set(["FormDateField"]),
+    );
+    expect(r.ok).toBe(true);
+  });
 });

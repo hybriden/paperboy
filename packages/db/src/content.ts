@@ -383,16 +383,28 @@ interface VariantState {
 }
 
 /** Per-locale publication state for one document (drives tree badges + editor). */
-async function variantStates(
+/**
+ * Per-locale published/draft state for MANY documents in ONE query. The broad
+ * management scans (getTree/listBlocks/listPages/listTrash) used to call the
+ * single-document version once per row — 1 query per visible node, unbounded.
+ * This is the same grouping, keyed by documentId, over one `inArray` read.
+ */
+async function variantStatesBatch(
   db: Database,
-  documentId: string,
-): Promise<Record<string, VariantState>> {
+  documentIds: string[],
+): Promise<Map<string, Record<string, VariantState>>> {
+  const out = new Map<string, Record<string, VariantState>>();
+  if (!documentIds.length) return out;
   const rows = await db
     .select()
     .from(contentVersion)
-    .where(eq(contentVersion.documentId, documentId));
-  const byLocale: Record<string, VariantState> = {};
+    .where(inArray(contentVersion.documentId, documentIds));
   for (const r of rows) {
+    let byLocale = out.get(r.documentId);
+    if (!byLocale) {
+      byLocale = {};
+      out.set(r.documentId, byLocale);
+    }
     const cur = byLocale[r.locale] ?? {
       status: "draft" as const,
       hasUnpublishedChanges: false,
@@ -412,8 +424,9 @@ async function variantStates(
     }
     byLocale[r.locale] = cur;
   }
-  return byLocale;
+  return out;
 }
+
 
 /* --------------------------------- tree ----------------------------------- */
 
@@ -453,13 +466,22 @@ export async function getTree(
   // default locale — the same variant whose name the tree displays.
   const defaultLocale = dataField ? await resolveDefaultLocale(db, ctx.siteId) : null;
 
+  // Two batched reads instead of 2 per node: all variant states in one query,
+  // and one grouped count of which of these nodes have page children.
+  const visibleIds = visible.map((i) => i.documentId);
+  const statesById = await variantStatesBatch(db, visibleIds);
+  const childCounts = visibleIds.length
+    ? await db
+        .select({ parentId: contentItem.parentId, c: sql<number>`count(*)::int` })
+        .from(contentItem)
+        .where(and(inArray(contentItem.parentId, visibleIds), eq(contentItem.kind, "page"), isNull(contentItem.deletedAt)))
+        .groupBy(contentItem.parentId)
+    : [];
+  const childCountBy = new Map(childCounts.map((r) => [r.parentId, r.c]));
+
   const rows: { node: TreeNode; createdAt: string; dataValue: unknown }[] = [];
   for (const item of visible) {
-    const states = await variantStates(db, item.documentId);
-    const childCount = await db
-      .select({ c: sql<number>`count(*)::int` })
-      .from(contentItem)
-      .where(and(eq(contentItem.parentId, item.documentId), eq(contentItem.kind, "page"), isNull(contentItem.deletedAt)));
+    const states = statesById.get(item.documentId) ?? {};
     const localesSummary: TreeNode["locales"] = {};
     for (const [code, s] of Object.entries(states)) {
       localesSummary[code] = { status: s.status, hasUnpublishedChanges: s.hasUnpublishedChanges };
@@ -476,7 +498,7 @@ export async function getTree(
         childSort: item.childSort,
         name: anyName,
         locales: localesSummary,
-        hasChildren: (childCount[0]?.c ?? 0) > 0,
+        hasChildren: (childCountBy.get(item.documentId) ?? 0) > 0,
       },
       createdAt: item.createdAt.toISOString(),
       dataValue: dataField ? dataState?.data?.[dataField] : undefined,
@@ -502,9 +524,10 @@ export async function listBlocks(db: Database, ctx: AccessContext): Promise<Bloc
     .where(and(eq(contentItem.kind, "block"), isNull(contentItem.deletedAt), eq(contentItem.siteId, ctx.siteId)))
     .orderBy(asc(contentItem.id));
   const visible = items.filter((i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
+  const blockStates = await variantStatesBatch(db, visible.map((i) => i.documentId));
   const out: BlockSummary[] = [];
   for (const item of visible) {
-    const states = await variantStates(db, item.documentId);
+    const states = blockStates.get(item.documentId) ?? {};
     const locales: BlockSummary["locales"] = {};
     for (const [code, s] of Object.entries(states)) {
       locales[code] = { status: s.status, hasUnpublishedChanges: s.hasUnpublishedChanges };
@@ -1226,14 +1249,10 @@ async function rebuildReferences(
   data: Record<string, unknown>,
   blockTypes: BlockTypeResolver,
 ): Promise<void> {
-  await db
-    .delete(contentReference)
-    .where(
-      and(
-        eq(contentReference.fromDocumentId, documentId),
-        eq(contentReference.fromLocale, loc),
-      ),
-    );
+  // Collected first, THEN delete+insert atomically: a crash between the delete
+  // and the insert would otherwise leave the document with zero outgoing
+  // references and nothing to rebuild them — and findReferencingDocuments (what
+  // an editor consults before deleting a page) reads exactly this table.
   const refs: (typeof contentReference.$inferInsert)[] = [];
   const add = (toDocumentId: string, toType: string, fieldName: string) => {
     refs.push({ fromDocumentId: documentId, fromLocale: loc, toDocumentId, toType, fieldName });
@@ -1274,7 +1293,12 @@ async function rebuildReferences(
     }
   };
   collect(type.fields, data, "", MAX_REFERENCE_DEPTH);
-  if (refs.length) await db.insert(contentReference).values(refs);
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(contentReference)
+      .where(and(eq(contentReference.fromDocumentId, documentId), eq(contentReference.fromLocale, loc)));
+    if (refs.length) await tx.insert(contentReference).values(refs);
+  });
 }
 
 export async function updateContent(
@@ -2347,9 +2371,10 @@ export async function listPages(
     .where(and(eq(contentItem.kind, "page"), isNull(contentItem.deletedAt), eq(contentItem.siteId, ctx.siteId)))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
   const visible = items.filter((i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
+  const pageStates = await variantStatesBatch(db, visible.map((i) => i.documentId));
   const out: { documentId: string; name: string; parentId: string | null; type: string }[] = [];
   for (const item of visible) {
-    const states = await variantStates(db, item.documentId);
+    const states = pageStates.get(item.documentId) ?? {};
     out.push({ documentId: item.documentId, name: Object.values(states)[0]?.name ?? item.documentId, parentId: item.parentId, type: item.type });
   }
   return out;
@@ -2673,7 +2698,7 @@ export async function cloneContent(
       data,
       createdBy: ctx.userId,
     });
-    await rebuildReferences(db, newId, code, type, data, await blockTypeResolver(db));
+    await rebuildReferences(db, newId, code, type, data, blockTypes);
     count++;
   }
   // If the source had no version at all, seed an empty draft so the doc is editable.
@@ -2804,9 +2829,10 @@ export async function listTrash(
     .where(and(sql`${contentItem.deletedAt} is not null`, eq(contentItem.siteId, ctx.siteId)))
     .orderBy(desc(contentItem.deletedAt));
   const visible = rows.filter((i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
+  const trashStates = await variantStatesBatch(db, visible.map((i) => i.documentId));
   const out: { documentId: string; type: string; kind: string; name: string; deletedAt: string }[] = [];
   for (const item of visible) {
-    const states = await variantStates(db, item.documentId);
+    const states = trashStates.get(item.documentId) ?? {};
     out.push({
       documentId: item.documentId,
       type: item.type,

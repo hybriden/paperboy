@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, lte } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
@@ -253,4 +253,16 @@ export async function dispatchWebhooks(
       return { id: h.id, status, ok: status != null && status >= 200 && status < 300 };
     }),
   );
+}
+
+/**
+ * Prune webhook_delivery rows older than `days` (default 90 via env). This table
+ * grows O(publishes x active hooks) and holds only recent-delivery debugging
+ * value, so a rolling window is safe. days<=0 keeps everything.
+ */
+export async function runWebhookDeliveryRetention(db: Database, days: number, now: Date = new Date()): Promise<{ deleted: number }> {
+  if (!days || days <= 0) return { deleted: 0 };
+  const cutoff = new Date(now.getTime() - days * 86_400_000);
+  const res = await db.delete(webhookDelivery).where(lte(webhookDelivery.ts, cutoff)).returning({ id: webhookDelivery.id });
+  return { deleted: res.length };
 }

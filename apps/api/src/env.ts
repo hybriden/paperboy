@@ -72,6 +72,12 @@ const EnvSchema = z.object({
   // How long submissions live when a form declares no retention of its own.
   // Storage limitation is a GDPR requirement, so the default is finite: one year.
   SUBMISSION_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
+  // Prune the two append-only log tables so they can't grow without bound.
+  // webhook_delivery is pure delivery noise with no compliance value → a safe
+  // 90-day default. audit_log IS the compliance/forensics trail, so it defaults
+  // to 0 (keep everything) and is pruned only when an operator opts in.
+  WEBHOOK_DELIVERY_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(90),
+  AUDIT_RETENTION_DAYS: z.coerce.number().int().nonnegative().default(0),
   // How much of the X-Forwarded-For chain to trust for req.ip (rate-limit keys +
   // audit IPs). "true" trusts ALL hops (a client can then spoof its IP) — fine only
   // when the API is unreachable except through a trusted proxy that overwrites XFF.

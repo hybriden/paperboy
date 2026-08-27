@@ -472,9 +472,19 @@ function dataSchemaAtDepth(
       case "number":
         s = applyNumberValidation(z.number(), f, strict);
         break;
-      case "datetime":
-        s = z.string(); // ISO 8601 (datetime-local or full offset)
+      case "datetime": {
+        // ISO 8601: a date, optionally T time (seconds/ms/offset all optional) —
+        // covers both a datetime-local input and a full-offset instant. Empty is
+        // allowed (an unset field). "next tuesday" and other free text are not:
+        // an invalid datetime silently poisons JSON-LD datePublished and string
+        // sorting. Applies in draft AND publish — a datetime is never validly
+        // half-written the way a required text field can be.
+        const ISO_8601 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})?)?$/;
+        s = z.string().refine((v) => v === "" || ISO_8601.test(v), {
+          message: 'must be an ISO 8601 date/time (e.g. "2026-05-31T09:00" or "2026-05-31T09:00:00.000Z")',
+        });
         break;
+      }
       case "select": {
         const values = f.options.map((o) => o.value);
         // optionsFromContentTypes: the valid values are the INSTALLED content
@@ -607,16 +617,19 @@ export function scalarToString(v: unknown): string {
   return "";
 }
 
-/** Order two field values: numbers numerically, everything else as strings
- *  (via scalarToString); missing (null/undefined) values sort last. */
+/** Locale-aware, case-insensitive, digit-numeric string ordering. Raw `<`/`>`
+ *  compared by UTF-16 code point — "Banana" before "apple", æøå after z — on a
+ *  project that handles æøå deliberately elsewhere. One collator, reused. */
+const KEY_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+/** Order two field values: numbers numerically, everything else as collated
+ *  strings; missing (null/undefined) values sort last. */
 export function compareKeys(a: unknown, b: unknown): number {
   if (a == null && b == null) return 0;
   if (a == null) return 1; // missing values sort last
   if (b == null) return -1;
   if (typeof a === "number" && typeof b === "number") return a - b;
-  const as = scalarToString(a);
-  const bs = scalarToString(b);
-  return as < bs ? -1 : as > bs ? 1 : 0;
+  return KEY_COLLATOR.compare(scalarToString(a), scalarToString(b));
 }
 
 /**

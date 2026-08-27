@@ -113,14 +113,19 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
     localStorage.setItem(ONLY_LOCALE_KEY, v ? "1" : "0");
   };
 
-  const toggle = (id: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+  const toggle = (id: string) => {
+    // Derive from current state and persist here, not inside the updater (which
+    // React may run more than once); toggle is only ever called from a click.
+    const next = new Set(expanded);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    try {
       localStorage.setItem(EXPAND_KEY, JSON.stringify([...next]));
-      return next;
-    });
+    } catch {
+      /* ignore */
+    }
+    setExpanded(next);
+  };
 
   function onKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
     const items = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[role="treeitem"]'));

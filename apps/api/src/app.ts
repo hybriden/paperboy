@@ -6,7 +6,7 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import swagger from "@fastify/swagger";
 import swaggerUI from "@fastify/swagger-ui";
-import { AppError, audit, createDb, getAccessContext, getSessionUser, getSiteById, readSession, runScheduledPublish, runSubmissionRetention } from "@paperboy/db";
+import { AppError, audit, createDb, getAccessContext, getSessionUser, getSiteById, readSession, runAuditRetention, runScheduledPublish, runSubmissionRetention, runWebhookDeliveryRetention } from "@paperboy/db";
 import Fastify, { type FastifyInstance } from "fastify";
 import {
   type ZodTypeProvider,
@@ -227,6 +227,13 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
         app.log.info({ deleted }, "form submissions deleted by retention policy");
         await audit(db, { action: "form.retention_sweep", detail: { deleted } });
       }
+      // Same timer prunes the two append-only log tables so neither grows
+      // without bound. webhook_delivery has a 90-day default; audit_log prunes
+      // only when AUDIT_RETENTION_DAYS is set (compliance trail — kept by default).
+      const wh = await runWebhookDeliveryRetention(db, env.WEBHOOK_DELIVERY_RETENTION_DAYS);
+      if (wh.deleted > 0) app.log.info({ deleted: wh.deleted }, "webhook deliveries pruned by retention policy");
+      const au = await runAuditRetention(db, env.AUDIT_RETENTION_DAYS);
+      if (au.deleted > 0) app.log.info({ deleted: au.deleted }, "audit rows pruned by retention policy");
     };
     void sweep().catch((err) => app.log.error({ err }, "submission retention (boot) failed"));
     const retentionTimer = setInterval(() => {

@@ -20,12 +20,14 @@ import { z } from "zod";
  * reviewer must be able to see every rule that applies to public writes in one
  * file. The rules, and what each is for:
  *
- *  - **No cookies, ever.** This route never reads the session cookie, so
- *    cross-site request forgery has no ambient credential to ride: an anti-CSRF
- *    token here would protect nothing. That reasoning only holds while the path
- *    genuinely cannot be authenticated by a cookie, so a test asserts that a
- *    cookie-bearing request is treated exactly like an anonymous one, and this
- *    handler must never be refactored to share code with a session route.
+ *  - **This handler ignores the session, so CSRF has nothing to ride.** The
+ *    global onRequest hook DOES resolve a session cookie into `req.user` for
+ *    every route (app.ts) — this handler simply never consults it; its only
+ *    credential is the delivery key. So an anti-CSRF token here would protect
+ *    nothing. The guarantee is the OUTCOME, not the absence of the hook:
+ *    forms-submit.test.ts asserts a cookie-bearing request is treated exactly
+ *    like an anonymous one, and this handler must never be refactored to read
+ *    `req.user`/`req.accessCtx` or to share code with a session route.
  *  - **The delivery key pins the site.** A key for site A cannot submit to a
  *    form in site B; a cross-site form id reads as not-found.
  *  - **Heuristics before the database.** The honeypot and timing checks run
