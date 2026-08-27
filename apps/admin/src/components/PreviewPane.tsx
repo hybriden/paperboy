@@ -383,6 +383,14 @@ export function PreviewPane({
               ref={iframeRef}
               title="Content preview"
               src={src}
+              // The preview frames the site's OWN (cross-origin) frontend. Sandbox
+              // it so a compromised preview target can't navigate the admin's top
+              // frame (editor phishing). allow-same-origin is required for the
+              // frontend's own cookies/hydration; the cross-origin barrier means
+              // this can't be used to self-unsandbox. allow-popups + -to-escape +
+              // allow-forms keep preview links and Form-block test-submits working;
+              // allow-top-navigation is deliberately withheld — that is the point.
+              sandbox="allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-forms"
               className="border border-line bg-white shadow-panel"
               style={{ width: "100%", height: "100%", border: 0 }}
             />
