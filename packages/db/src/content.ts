@@ -427,9 +427,6 @@ async function variantStatesBatch(
   return out;
 }
 
-async function variantStates(db: Database, documentId: string): Promise<Record<string, VariantState>> {
-  return (await variantStatesBatch(db, [documentId])).get(documentId) ?? {};
-}
 
 /* --------------------------------- tree ----------------------------------- */
 

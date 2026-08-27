@@ -11,13 +11,17 @@ export function usePinned(key: string, fallback = true): [boolean, () => void] {
       return fallback;
     }
   });
-  const toggle = useCallback(() => {
-    setPinned((p) => {
-      const next = !p;
-      try { localStorage.setItem(key, next ? "1" : "0"); } catch { /* ignore */ }
-      return next;
-    });
-  }, [key]);
+  // Persist as a side effect of the value changing, not inside the updater
+  // (which React may run more than once). Writes the current value on mount too,
+  // which is idempotent.
+  useEffect(() => {
+    try {
+      localStorage.setItem(key, pinned ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [key, pinned]);
+  const toggle = useCallback(() => setPinned((p) => !p), []);
   return [pinned, toggle];
 }
 

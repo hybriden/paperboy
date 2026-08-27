@@ -418,12 +418,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Debounced autosave. Uses functional state + a ref so rapid sequential edits
   // never clobber each other (the saved payload is always the merged latest).
   function patch(updater: (prev: ContentDetail) => ContentDetail) {
-    setForm((prev) => {
-      const next = updater(prev!);
-      formRef.current = next;
-      pendingRef.current = next; // unsaved until a save is initiated
-      return next;
-    });
+    // formRef mirrors the committed form (synced in an effect) and is written
+    // synchronously here, so it is the current base to merge onto — and the
+    // writes stay OUT of the state updater, which React may run more than once.
+    const next = updater(formRef.current!);
+    formRef.current = next;
+    pendingRef.current = next; // unsaved until a save is initiated
+    setForm(next);
     setSaveState("dirty");
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
@@ -817,19 +818,33 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         const land = () => {
           const el = document.getElementById(id);
           if (!el) {
-            if (tries++ < 25) setTimeout(land, 40); // ~1s budget
+            if (tries++ < 25) later(land, 40); // ~1s budget
             return;
           }
           el.scrollIntoView({ behavior: "smooth", block: "center" });
           el.classList.add("pb-flash");
-          setTimeout(() => el.classList.remove("pb-flash"), 1400);
+          later(() => el.classList.remove("pb-flash"), 1400);
           if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) el.focus();
         };
-        setTimeout(land, 40);
+        later(land, 40);
       }
     }
+    // Timers spawned by onMessage (the scroll-into-view poll + the flash reset)
+    // are tracked so unmount clears them — otherwise a late timer touches DOM the
+    // remounted panel replaced (react effect-needs-cleanup).
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    const later = (fn: () => void, ms: number) => {
+      const t = setTimeout(() => {
+        timers.delete(t);
+        fn();
+      }, ms);
+      timers.add(t);
+    };
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      for (const t of timers) clearTimeout(t);
+    };
     // previewBaseUrl is in the deps so the origin check can't keep trusting a
     // stale origin after Settings → Site changes the preview host; `types` so
     // block-field resolution never runs against a stale type list.
@@ -845,7 +860,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       setPreviewRefresh((n) => n + 1);
     }
   }
-  closeOpeRef.current = closeOpe;
+  useEffect(() => {
+    closeOpeRef.current = closeOpe;
+  });
 
   // Compact page context for AI tasks launched from the overlay — name + the
   // page's short string fields, so suggestions match the page's subject/tone.
