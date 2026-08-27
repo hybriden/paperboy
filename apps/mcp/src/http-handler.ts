@@ -101,7 +101,9 @@ export function sweepIdleSessions<T extends { close?: () => unknown }>(
     lastSeen.delete(id);
     closed++;
   };
-  for (const id of [...sessions.keys()]) {
+  // Deleting a Map entry during keys() iteration is spec-safe: the current key
+  // is not revisited and an unvisited deleted key is skipped — no snapshot needed.
+  for (const id of sessions.keys()) {
     if (now - (lastSeen.get(id) ?? 0) > idleMs) drop(id);
   }
   if (sessions.size > maxSessions) {
