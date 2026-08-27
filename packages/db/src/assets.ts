@@ -156,6 +156,11 @@ export async function updateAssetAlt(
  * Best-effort: the row is the source of truth, so a leftover file is a leak, not a
  * correctness bug — but a leftover file after a delete IS the bug.
  */
+/** Swallow only "already gone"; re-throw a real delete failure. */
+function ignoreMissing(err: unknown): void {
+  if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err;
+}
+
 export async function removeAssetFiles(uploadsDir: string, relativePath: string): Promise<void> {
   // FAIL LOUDLY if the uploads directory isn't there. It used to swallow ENOENT, so
   // the documented stdio MCP invocation (which sets no UPLOADS_DIR and mounts no
@@ -172,10 +177,14 @@ export async function removeAssetFiles(uploadsDir: string, relativePath: string)
   const fileName = relativePath.replace(`${MEDIA_PREFIX}/`, "");
   // Server-generated nanoid names only; reject anything path-shaped regardless.
   if (!fileName || fileName.includes("/") || fileName.includes("..")) return;
-  await unlink(join(uploadsDir, fileName)).catch(() => undefined);
+  // ENOENT is fine (already gone — the erasure's goal). Any OTHER errno (EACCES,
+  // EPERM, EISDIR) means the bytes are STILL there and still downloadable, so it
+  // must surface, not be swallowed — the whole point of the FAIL-LOUDLY guard
+  // above, which the swallow underneath used to quietly undo.
+  await unlink(join(uploadsDir, fileName)).catch(ignoreMissing);
   const variantsDir = join(uploadsDir, "_variants");
   for (const v of await readdir(variantsDir).catch(() => [] as string[])) {
-    if (v.startsWith(`${fileName}.`)) await unlink(join(variantsDir, v)).catch(() => undefined);
+    if (v.startsWith(`${fileName}.`)) await unlink(join(variantsDir, v)).catch(ignoreMissing);
   }
 }
 

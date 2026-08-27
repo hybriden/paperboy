@@ -2673,7 +2673,7 @@ export async function cloneContent(
       data,
       createdBy: ctx.userId,
     });
-    await rebuildReferences(db, newId, code, type, data, await blockTypeResolver(db));
+    await rebuildReferences(db, newId, code, type, data, blockTypes);
     count++;
   }
   // If the source had no version at all, seed an empty draft so the doc is editable.

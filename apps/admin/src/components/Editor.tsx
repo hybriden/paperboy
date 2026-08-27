@@ -89,6 +89,7 @@ interface EditorProps {
 }
 
 export function Editor({ documentId, locale, setLocale, locales, types, user, onName, widePreview = false, mobile = false }: EditorProps) {
+  const nestedOnlyTypeNames = useMemo(() => new Set(types.filter((t) => t.nestedOnly).map((t) => t.name)), [types]);
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -702,7 +703,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           return;
         }
         const payload = (msg.payload ?? {}) as DropPayload;
-        const res = blockInstanceFromDrop(payload, def, newBlockKey());
+        const res = blockInstanceFromDrop(payload, def, newBlockKey(), nestedOnlyTypeNames);
         if (!res.ok) {
           if (res.reason === "not-allowed") {
             toast.error("Block not allowed here", `This area doesn’t accept ${payload.blockType ?? "that"} blocks.`);
