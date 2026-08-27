@@ -1226,14 +1226,10 @@ async function rebuildReferences(
   data: Record<string, unknown>,
   blockTypes: BlockTypeResolver,
 ): Promise<void> {
-  await db
-    .delete(contentReference)
-    .where(
-      and(
-        eq(contentReference.fromDocumentId, documentId),
-        eq(contentReference.fromLocale, loc),
-      ),
-    );
+  // Collected first, THEN delete+insert atomically: a crash between the delete
+  // and the insert would otherwise leave the document with zero outgoing
+  // references and nothing to rebuild them — and findReferencingDocuments (what
+  // an editor consults before deleting a page) reads exactly this table.
   const refs: (typeof contentReference.$inferInsert)[] = [];
   const add = (toDocumentId: string, toType: string, fieldName: string) => {
     refs.push({ fromDocumentId: documentId, fromLocale: loc, toDocumentId, toType, fieldName });
@@ -1274,7 +1270,12 @@ async function rebuildReferences(
     }
   };
   collect(type.fields, data, "", MAX_REFERENCE_DEPTH);
-  if (refs.length) await db.insert(contentReference).values(refs);
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(contentReference)
+      .where(and(eq(contentReference.fromDocumentId, documentId), eq(contentReference.fromLocale, loc)));
+    if (refs.length) await tx.insert(contentReference).values(refs);
+  });
 }
 
 export async function updateContent(
