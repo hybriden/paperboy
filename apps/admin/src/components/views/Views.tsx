@@ -373,16 +373,21 @@ export function SettingsView() {
   // #model:BlogPost from the dashboard opens that type's editor (the panel
   // itself consumes the suffix).
   const hashTab = typeof window !== "undefined" ? window.location.hash.slice(1).split(":")[0]! : "";
-  const [active, setActive] = useState(tabs.some((t) => t.key === hashTab) ? hashTab : (tabs[0]?.key ?? "model"));
+  // One home for "does the hash name a tab this user can see" — active and the
+  // mobile drill below must agree on it or a deep-link opens the wrong screen.
+  const hashIsTab = tabs.some((t) => t.key === hashTab);
+  const [active, setActive] = useState(hashIsTab ? hashTab : (tabs[0]?.key ?? "model"));
   const current = tabs.find((t) => t.key === active) ?? tabs[0];
   const groups: SettingsTab["group"][] = ["Content", "Administration", "Account"];
 
   // Phones drill instead of splitting: the w-56 rail beside a panel left ~165px
   // of content on a 390px screen. List ⇄ panel, one at a time. A hash deep-link
-  // (how the dashboard and the site switcher arrive — always a fresh mount)
-  // lands on the panel directly, with Back available.
+  // lands on the panel directly, with Back available — deep-links arrive as
+  // fresh mounts (dashboard navigate(), the site switcher's full page load),
+  // except #site clicked while ALREADY on /settings, a same-document fragment
+  // change that has never re-targeted `active` either (pre-existing gap).
   const isMobile = useIsMobile();
-  const [mobilePanel, setMobilePanel] = useState(() => tabs.some((t) => t.key === hashTab));
+  const [mobilePanel, setMobilePanel] = useState(hashIsTab);
 
   return (
     <div className="h-full overflow-hidden">
@@ -431,7 +436,9 @@ export function SettingsView() {
                   type="button"
                   aria-label="Back to settings"
                   onClick={() => setMobilePanel(false)}
-                  className="mb-3 flex items-center gap-1.5 text-sm font-medium text-accent-700"
+                  // py-2: the most-tapped control on the phone screen must not
+                  // be its smallest target (bare text-sm is ~20px).
+                  className="-ml-1 mb-2 flex items-center gap-1.5 rounded-(--radius) px-1 py-2 text-sm font-medium text-accent-700"
                 >
                   <Icon.Chevron width={14} height={14} className="rotate-180" />
                   Settings

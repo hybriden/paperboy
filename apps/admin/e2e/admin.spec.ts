@@ -439,6 +439,9 @@ test("Settings is tabbed and exposes the admin sections for an Admin", async ({ 
     await page.getByRole("button", { name: tab, exact: true }).click();
     await expect(page.getByRole("heading", { name: tab }).first()).toBeVisible();
   }
+  // Desktop keeps the side-by-side layout — the phone drill's Back control
+  // must not exist here at all.
+  await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toHaveCount(0);
   await page.screenshot({ path: `${SHOT}/08-admin-panels.png` });
 });
 
