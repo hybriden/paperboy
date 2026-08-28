@@ -1557,18 +1557,47 @@ test.describe("mobile (390×844)", () => {
     await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toBeVisible();
   });
 
-  test("dashboard fits the phone: no horizontal overflow in the scroll pane", async ({ page }) => {
+  test("mobile settings (list and panel) and dashboard pass axe", async ({ page }) => {
+    // The entering pane runs animate-slide-up (opacity 0→1); axe mid-animation
+    // sees blended (failing) colors — same class of flake the editor-dark scan
+    // documents. Wait for the pane's animations to actually finish.
+    const paneSettled = (p: Page) =>
+      p.locator(".animate-slide-up").first().evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+
+    await login(page);
+    await page.goto("/settings");
+    await expect(page.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
+    await axeClean(page, "settings-mobile-list");
+    await page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "Trash" }).click();
+    await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toBeVisible();
+    await paneSettled(page);
+    await axeClean(page, "settings-mobile-panel");
+    await page.goto("/dashboard");
+    await expect(page.getByRole("heading", { name: "Newsroom dashboard" })).toBeVisible();
+    await paneSettled(page);
+    await axeClean(page, "dashboard-mobile");
+  });
+
+  test("dashboard and settings fit the phone: no horizontal overflow", async ({ page }) => {
     await login(page);
     await page.goto("/dashboard");
     const h1 = page.getByRole("heading", { name: "Newsroom dashboard" });
     await expect(h1).toBeVisible();
     // Measure the dashboard's own scroll container (inner truncation/scroll
     // regions are legitimate; the PAGE must not pan sideways).
-    const overflow = await h1.evaluate((h) => {
+    const paneOverflow = await h1.evaluate((h) => {
       let n = h.parentElement;
       while (n && getComputedStyle(n).overflowY !== "auto") n = n.parentElement;
       return n ? n.scrollWidth - n.clientWidth : -1;
     });
-    expect(overflow).toBe(0);
+    expect(paneOverflow).toBe(0);
+    // And the DOCUMENT itself must not scroll sideways on either target route —
+    // caught live: the top bar (brand + search + site select + menus) could not
+    // shrink and pushed the whole page 8px wide at 390px.
+    const docOverflow = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(await docOverflow()).toBe(0);
+    await page.goto("/settings");
+    await expect(page.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
+    expect(await docOverflow()).toBe(0);
   });
 });
