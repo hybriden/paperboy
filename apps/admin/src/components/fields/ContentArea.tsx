@@ -706,26 +706,30 @@ function SortableBlock({
           editor (essentials first, rules behind a disclosure, visitor-eye
           preview) — presentation only, same BlockInstance underneath. */}
       {isOpen && type && (() => {
-        const leafField = (f: FieldDef) => (
+        const leafField = (f: FieldDef, custom?: React.ReactNode) => (
           <div key={f.name} className={fieldWidthClass(f)} {...(depth === 0 ? { "data-pb-prop": f.name, "data-pb-prop-block": index } : {})}>
-            <BlockField field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
-              disabled={disabled}
-              types={types}
-              sharedBlocks={sharedBlocks}
-              depth={depth}
-              openPath={openPath}
-              onOpenPath={onOpenPath}
-              onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })}
-              onCommit={isFormField && f.name === "label"
-                ? (v) => onUpdate({ inline: { ...withDerivedKey(block, f.name, v), [f.name]: v } })
-                : undefined} />
+            {custom ?? (
+              <BlockField field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
+                disabled={disabled}
+                types={types}
+                sharedBlocks={sharedBlocks}
+                depth={depth}
+                openPath={openPath}
+                onOpenPath={onOpenPath}
+                onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })}
+                onCommit={isFormField && f.name === "label"
+                  ? (v) => onUpdate({ inline: { ...withDerivedKey(block, f.name, v), [f.name]: v } })
+                  : undefined} />
+            )}
           </div>
         );
         return (
           <div className="space-y-5 px-2.5 pb-3 pt-2.5">
             {isFormField
               ? <FormQuestionEditor type={type} block={block} disabled={disabled} onUpdate={onUpdate} renderField={leafField} />
-              : fields.map(leafField)}
+              // (f) => …, not point-free: map's second argument would land in
+              // leafField's `custom` slot and render the index.
+              : fields.map((f) => leafField(f))}
           </div>
         );
       })()}

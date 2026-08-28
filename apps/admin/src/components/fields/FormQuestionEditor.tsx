@@ -30,8 +30,10 @@ interface Props {
   disabled: boolean;
   onUpdate: (patch: Partial<BlockInstance>) => void;
   /** ContentArea's generic leaf editor (keeps the label→key commit wiring and
-   *  on-page-editing attributes in their one home). */
-  renderField: (f: FieldDef) => React.ReactNode;
+   *  on-page-editing attributes in their one home). `custom` swaps the inner
+   *  control while keeping that wrapper — how the choices editor stays wired
+   *  for on-page-editing focus like every other field. */
+  renderField: (f: FieldDef, custom?: React.ReactNode) => React.ReactNode;
 }
 
 export function FormQuestionEditor({ type, block, disabled, onUpdate, renderField }: Props) {
@@ -62,17 +64,17 @@ export function FormQuestionEditor({ type, block, disabled, onUpdate, renderFiel
       {spec && <QuestionPreview spec={spec} />}
 
       {essentials.map((f) =>
-        f.name === "choices" ? (
-          <ChoicesEditor
-            key={f.name}
-            field={f}
-            value={inline.choices}
-            disabled={disabled}
-            onChange={(v) => onUpdate({ inline: { ...block.inline, choices: v } })}
-          />
-        ) : (
-          renderField(f)
-        ),
+        f.name === "choices"
+          ? renderField(
+              f,
+              <ChoicesEditor
+                field={f}
+                value={inline.choices}
+                disabled={disabled}
+                onChange={(v) => onUpdate({ inline: { ...block.inline, choices: v } })}
+              />,
+            )
+          : renderField(f),
       )}
 
       {byName.has("name") && keyPreview && (
@@ -204,6 +206,9 @@ function ChoicesEditor({
   const choices = parseChoices(raw);
   const values = choices.map((c) => c.value);
   const dupes = [...new Set(values.filter((v, i) => values.indexOf(v) !== i))];
+  // A line like "|Label" or "value|" parses to an option missing its stored
+  // value or its shown label — delivered as a broken input, so say it here.
+  const incomplete = choices.filter((c) => !c.value || !c.label).length;
 
   return (
     <div>
@@ -238,6 +243,12 @@ function ChoicesEditor({
       {dupes.length > 0 && (
         <p className="mt-1 text-xs text-danger">
           Duplicate stored value{dupes.length > 1 ? "s" : ""}: {dupes.join(", ")} — each option must store a unique value.
+        </p>
+      )}
+      {incomplete > 0 && (
+        <p className="mt-1 text-xs text-danger">
+          {incomplete} option{incomplete > 1 ? "s are" : " is"} missing a value or label — write “value|Label”, or a bare
+          line to use the same text for both.
         </p>
       )}
     </div>

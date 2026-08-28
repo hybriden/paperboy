@@ -771,7 +771,8 @@ test("block card header controls stay inside the card in a narrow form column", 
  * looked up on the page even when the trigger is scoped to one area.
  */
 async function addBlock(page: Page, name: string, scope?: Locator) {
-  await (scope ?? page).getByRole("button", { name: "Add block" }).first().click();
+  // A questions area (all form parts) labels the same affordance "Add question".
+  await (scope ?? page).getByRole("button", { name: /^Add (block|question)$/ }).first().click();
   await page.getByRole("menuitem", { name, exact: true }).click();
 }
 
@@ -1008,6 +1009,10 @@ test("building a form: the key fills itself in from the label, and a clash is ca
   const first = await openBlock(area, 0);
   await expect(first.getByRole("textbox").first()).toHaveAttribute("aria-label", "Label");
 
+  // The key lives behind the "Answer rules & key" disclosure now (builder UI:
+  // essentials first, the technical half folded) — open it to reach the input.
+  await first.getByRole("button", { name: /Answer rules/ }).click();
+
   // Type the label, leave the field: the key appears by itself.
   const firstKey = first.getByRole("textbox", { name: "Field key" });
   await expect(firstKey).toHaveValue("");
@@ -1025,6 +1030,7 @@ test("building a form: the key fills itself in from the label, and a clash is ca
   // Second field, same key: both ROWS say so, because either could be the
   // mistake — and on the row you can see which two clash without opening either.
   const second = await openBlock(area, 1);
+  await second.getByRole("button", { name: /Answer rules/ }).click();
   const clash = area.getByText("duplicate key");
   await expect(clash).toHaveCount(0);
   await second.getByRole("textbox", { name: "Field key" }).fill("firm");
@@ -1075,8 +1081,9 @@ test("the existing-block picker searches, and never offers a block the area forb
   await page.reload();
   await expect(page.getByTestId("content-area-fields")).toBeVisible({ timeout: 20_000 });
 
-  // Reuse lives in the Add block menu now, beside the types you can create.
-  await page.getByRole("button", { name: "Add block" }).first().click();
+  // Reuse lives in the add menu now, beside the types you can create — scoped
+  // to the questions area, whose affordance reads "Add question".
+  await page.getByTestId("content-area-fields").getByRole("button", { name: "Add question" }).click();
   await page.getByRole("menuitem", { name: /^Existing block/ }).click();
   const picker = page.getByRole("dialog", { name: "Insert an existing block" });
   await expect(picker).toBeVisible();
