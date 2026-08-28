@@ -1,4 +1,4 @@
-<!-- auto-map generated: 2026-08-28 19:40 | git-sha: ff57604 | file-count: 68 (apps/admin/src) | task-context: "mobile usability of admin dashboard + settings" -->
+<!-- auto-map generated: 2026-08-28 22:05 | git-sha: 93ef222 | file-count: 69 (apps/admin/src) | task-context: "forms builder in the admin" -->
 # Architecture Map — Paperboy admin (apps/admin)
 
 ## Tech Stack
@@ -46,7 +46,24 @@ Contract-test gap relevant here: no viewport-sized e2e — the CI suite runs des
 | Editor.tsx | 2400 ln | out of scope (already mobile-handled) |
 | Views.tsx SettingsView | hash deep-links from dashboard + SiteSwitcher | mobile nav must keep `#tab` and `#tab:suffix` working |
 
-## Task Lens — mobile usability: dashboard + settings
+## Task Lens — forms builder in the admin
+
+**Domain (single sources of truth — storage/API must NOT change):**
+- `packages/shared/src/forms.ts`: `formSpecFrom()` (delivery), `submissionSchemaFor()` (validation), `isFormFieldType()`, `FORM_FIELD_KIND` map (FormXField → input kind), duplicate-key detection. The contract authority.
+- `packages/shared/src/type-templates.ts:476-660`: Form block (11 fields, NO `group` set → one flat editor tab) + 10 `nestedOnly` field parts sharing `FIELD_BASE` (name/label/helpText/required) + per-type extras; `CHOICES` = a **markdown** field, "one line per option, value|Label". `FIELD_KEY_PATTERN` exported.
+- `packages/db/src/forms.ts` + `apps/api/src/routes/submit.ts`: the anonymous write chokepoint. Untouched by this task.
+- FORMS_PLAN.md §9 excluded "a bespoke drag-drop designer (content areas already order fields)" — the REASONING (no parallel ordering/storage machinery) still governs: the builder is a specialized RENDERING of the fields content area, not a new model.
+
+**Admin surfaces:**
+- `ContentArea.tsx`: already form-aware — label-first field sort, `withDerivedKey` (label → key on blur, only when key empty), duplicate-key row chips, envelope/sticky/end-cap (this week). `BlockField` renders each field generically — markdown choices get a full MarkdownEditor (B/I/H2 toolbar for option lines!), validation fields sit at equal weight with Label.
+- `Editor.tsx:177-198`: tabs derive from `field.group` (first group is the default tab) — giving the Form template groups yields native tabs with zero new UI. Form docs already get a Submissions tab (`SUBMISSIONS_TAB`, FormSubmissions.tsx).
+- Creating a form = Assets pane → + Block → "Form" (works; not this task's focus).
+
+**Verified clunk (the task):** (1) question editing is 8-9 equal-weight editors, technical fields (key/pattern) beside Label; (2) options in a MarkdownEditor; (3) no visitor-eye feedback inside the builder; (4) Form's 11 settings in one flat tab.
+
+**Fix shape:** T1 template groups + migration for installed types (precedent: 0024 updated built-ins in place); T2 purpose-built question editor in the ContentArea open-block path when `isFormFieldType` (essentials first: Label→key chip, Required, type extras; "Answer rules" disclosure for key/validation/error copy); T3 options = plain per-line editor + parsed preview (inside T2); T4 "Add question" copy in form areas; T5 visitor-eye question preview (tokens-only mock). e2e: new form-builder spec block; suites that PIN this area: `shared-builtin-templates.test.ts` (template invariants — update deliberately), mcp-parity/update-ergonomics (untouched coercion), `forms-submit.test.ts` (untouched chokepoint).
+
+## Task Lens (previous) — mobile usability: dashboard + settings
 **Broken on ≤639px:**
 1. `SettingsView` (Views.tsx:379-421): fixed `w-56` left nav + content in horizontal flex, no mobile branch → content pane ~165px wide on a 390px phone; with `p-8` (32px) padding the panel is unusable. THE core defect.
 2. Density: both views use `p-8` page padding + `gap-8`/`mb-8/9` — on phones this wastes ~64px of ~390px.
