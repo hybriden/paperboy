@@ -65,6 +65,17 @@ const DISPLAY_OPTIONS: BlockDisplayOption[] = ["automatic", "full", "wide", "nar
 /** Deepest inline nesting the editor renders (page → block → … ). */
 const MAX_AREA_DEPTH = 4;
 
+/** Pinned-header height. The one px value drives BOTH the sticky offset and the
+ *  header's height (rem-based h-9 would grow with the root font size while the
+ *  offset didn't, underlapping stacked headers). */
+const OPEN_HEADER_PX = 36;
+
+/** A placed REFERENCE renders as a teaser when it points at a page; any other
+ *  ref is a shared block. One home — the rows and the per-area notes must agree. */
+function isTeaserRef(block: BlockInstance, types: ContentTypeDef[]): boolean {
+  return block.ref !== null && types.find((t) => t.name === block.blockType)?.kind === "page";
+}
+
 export function ContentArea({ field, value, onChange, types, sharedBlocks, disabled = false, depth = 0, openPath, onOpenPath }: Props) {
   // The shared-block picker positions itself from a rect; the menu item that
   // opens it has unmounted by then, so the anchor is the row it sat in.
@@ -98,8 +109,8 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   // Reference rows carry no editable fields here, so their explanation is said
   // ONCE per area instead of repeating under every row (three identical notes
   // under three teasers drowned out the structure they annotated).
-  const hasTeaserRefs = blocks.some((b) => b.ref !== null && types.find((t) => t.name === b.blockType)?.kind === "page");
-  const hasSharedRefs = blocks.some((b) => b.ref !== null && types.find((t) => t.name === b.blockType)?.kind !== "page");
+  const hasTeaserRefs = blocks.some((b) => isTeaserRef(b, types));
+  const hasSharedRefs = blocks.some((b) => b.ref !== null && !isTeaserRef(b, types));
 
   function addInline(blockType: string) {
     onChange([...blocks, { key: newKey(), blockType, display: "automatic", inline: {}, ref: null }]);
@@ -513,10 +524,11 @@ function SortableBlock({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.key, disabled });
   // Own ref alongside dnd-kit's, so opening a row can bring it into view.
   const rowRef = useRef<HTMLLIElement | null>(null);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
   const style = { transform: CSS.Transform.toString(transform), transition };
   const isShared = block.ref !== null;
   // A referenced PAGE renders as a teaser on the site (not as a block).
-  const isTeaser = isShared && type?.kind === "page";
+  const isTeaser = isTeaserRef(block, types);
   const isFormField = !isShared && isFormFieldType(block.blockType);
   const storedKey = (block.inline ?? {}).name;
   const ownKey = isFormField && typeof storedKey === "string" ? storedKey.trim() : "";
@@ -583,12 +595,12 @@ function SortableBlock({
     >
       {/* While the block's fields are on screen its header stays pinned to the
           pane, so mid-scroll you always know whose fields you are editing.
-          Nested open blocks pin below their ancestors (fixed h-9 per level), so
-          the stack reads as a breadcrumb of open scopes. Sticky survives
-          dnd-kit because the row is only transformed WHILE dragging. */}
+          Nested open blocks pin below their ancestors (OPEN_HEADER_PX per
+          level), so the stack reads as a breadcrumb of open scopes. Sticky
+          survives dnd-kit because the row is only transformed WHILE dragging. */}
       <div
-        className={`flex items-center gap-1.5 px-1.5 ${isOpen ? "sticky z-10 h-9 rounded-t-[5px] border-b border-accent/20 bg-accent-50" : ""}`}
-        style={isOpen ? { top: depth * 36 } : undefined}
+        className={`flex items-center gap-1.5 px-1.5 ${isOpen ? "sticky z-10 rounded-t-[calc(var(--radius-field)-1px)] border-b border-accent/20 bg-accent-50" : ""}`}
+        style={isOpen ? { top: depth * OPEN_HEADER_PX, height: OPEN_HEADER_PX } : undefined}
       >
         <button {...attributes} {...listeners} className="cursor-grab p-1 text-muted active:cursor-grabbing" aria-label="Drag to reorder">
           <Icon.Grip width={16} height={16} />
@@ -600,6 +612,7 @@ function SortableBlock({
             another CMS will look for it. */}
         {canOpen ? (
           <button
+            ref={toggleRef}
             type="button"
             onClick={onToggle}
             aria-expanded={isOpen}
@@ -702,8 +715,13 @@ function SortableBlock({
       {isOpen && type && (
         <button
           type="button"
-          onClick={onToggle}
-          className="flex w-full items-center gap-1.5 rounded-b-[5px] border-t border-accent/20 bg-accent-50 px-2.5 py-1.5 text-xs font-medium text-accent-700"
+          // Collapsing unmounts this very button, which would drop keyboard
+          // focus to <body>; hand it to the row's header toggle instead.
+          onClick={() => {
+            onToggle?.();
+            toggleRef.current?.focus();
+          }}
+          className="flex w-full items-center gap-1.5 rounded-b-[calc(var(--radius-field)-1px)] border-t border-accent/20 bg-accent-50 px-2.5 py-1.5 text-xs font-medium text-accent-700"
         >
           <Icon.Chevron width={13} height={13} className="-rotate-90" />
           Collapse {type.displayName}

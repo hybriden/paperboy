@@ -502,6 +502,35 @@ test("drag a shared block from the Assets pane into a content area", async ({ pa
   await page.getByRole("menuitem", { name: "Move to trash" }).click();
 });
 
+test("an open block's end cap collapses it and hands focus back; area notes appear once", async ({ page }) => {
+  await login(page);
+  await page.getByRole("treeitem", { name: /Home/ }).click();
+  await expect(editorName(page)).toHaveValue("Home");
+
+  const area = page.getByTestId("content-area-mainArea");
+  // Home's area holds the seeded shared "Featured Card"; the explanatory note
+  // is said ONCE per area, not repeated under every reference row. The fixture
+  // has a single reference row, so count-1 alone can't catch a regression back
+  // to per-row notes — the ul-scoped zero-count can: per-row notes rendered
+  // INSIDE the block list, the area note renders after it.
+  await expect(area.getByText(/Shared blocks are edited from their own page/)).toHaveCount(1);
+  await expect(area.locator("ul").getByText(/Shared blocks are edited/)).toHaveCount(0);
+
+  // Open the first block (Hero): the envelope's end cap names the block.
+  const row = await openBlock(area, 0);
+  const toggle = blockToggle(row);
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
+  const endCap = row.getByRole("button", { name: /^Collapse / });
+  await expect(endCap).toBeVisible();
+
+  await endCap.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "false");
+  await expect(endCap).toHaveCount(0);
+  // Collapsing unmounts the clicked button — focus must land on the row's
+  // header toggle, not fall to <body>.
+  await expect(toggle).toBeFocused();
+});
+
 test("drag an IMAGE into a content area → a block carrying it is auto-created", async ({ page }) => {
   await login(page);
   const unique = `ImgDrop-${Date.now().toString(36)}`;
@@ -743,6 +772,11 @@ async function addBlock(page: Page, name: string, scope?: Locator) {
   await page.getByRole("menuitem", { name, exact: true }).click();
 }
 
+/** The row's disclosure toggle. :not([aria-haspopup]) — the overflow menu is a
+ *  Radix trigger, which carries aria-expanded as well; the disclosure is the
+ *  one that expands without opening a popup. */
+const blockToggle = (row: Locator) => row.locator("> div > button[aria-expanded]:not([aria-haspopup])");
+
 /**
  * Open a block row so its fields are on screen.
  *
@@ -752,10 +786,7 @@ async function addBlock(page: Page, name: string, scope?: Locator) {
  */
 async function openBlock(scope: Page | Locator, index = 0) {
   const row = scope.locator(`li#pb-block-${index}`);
-  // :not([aria-haspopup]) — the row's overflow menu is a Radix trigger, which
-  // carries aria-expanded as well. The disclosure is the one that expands
-  // without opening a popup.
-  const toggle = row.locator("> div > button[aria-expanded]:not([aria-haspopup])");
+  const toggle = blockToggle(row);
   if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
   return row;
 }
