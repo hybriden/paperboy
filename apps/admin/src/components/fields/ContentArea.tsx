@@ -95,6 +95,12 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   const toast = useToast();
   const qc = useQueryClient();
 
+  // Reference rows carry no editable fields here, so their explanation is said
+  // ONCE per area instead of repeating under every row (three identical notes
+  // under three teasers drowned out the structure they annotated).
+  const hasTeaserRefs = blocks.some((b) => b.ref !== null && types.find((t) => t.name === b.blockType)?.kind === "page");
+  const hasSharedRefs = blocks.some((b) => b.ref !== null && types.find((t) => t.name === b.blockType)?.kind !== "page");
+
   function addInline(blockType: string) {
     onChange([...blocks, { key: newKey(), blockType, display: "automatic", inline: {}, ref: null }]);
   }
@@ -310,6 +316,17 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
           </SortableContext>
         )}
 
+        {hasTeaserRefs && (
+          <p className="px-1 pt-2 text-xs text-muted">
+            Pages here render as teasers — compact cards linking to the page. Edit the page itself from the tree.
+          </p>
+        )}
+        {hasSharedRefs && (
+          <p className="px-1 pt-2 text-xs text-muted">
+            Shared blocks are edited from their own page in the tree — changes apply everywhere they are used.
+          </p>
+        )}
+
         {/* ADDING happens after the list, not before it.
          *
          * This used to be a row of one accent-tinted chip per allowed type —
@@ -513,12 +530,13 @@ function SortableBlock({
 
   // What the row SAYS. A row reading only "Hero" makes you open it to find out
   // which hero it is; the block's own most-identifying value is more use than
-  // its type name repeated down the list.
-  const summary = isTeaser
-    ? `teaser: ${sharedName ?? "page"}`
-    : isShared
-      ? `shared: ${sharedName ?? "block"}`
-      : blockSummary(block, type);
+  // its type name repeated down the list. For a reference row that value is the
+  // TARGET's name, so it leads and the type demotes to the summary — otherwise
+  // three teasers all read "Section page" and the list carries no information.
+  const rowName = isShared ? (sharedName ?? type?.displayName ?? block.blockType) : (type?.displayName ?? block.blockType);
+  const summary = isShared
+    ? `${type?.displayName ?? (isTeaser ? "page" : "block")} · ${isTeaser ? "teaser" : "shared"}`
+    : blockSummary(block, type);
 
   // A shared block's fields live on its own document, and a page dropped in an
   // area renders as a teaser — neither has anything to open here.
@@ -556,11 +574,22 @@ function SortableBlock({
         rowRef.current = node;
       }}
       style={style}
-      className={`rounded-(--radius-field) border bg-panel ${
-        isOpen ? "border-accent/40" : "border-line"
+      className={`rounded-(--radius-field) border ${
+        // Open = one recessed surface: canvas-toned body under panel-white
+        // inputs, tinted header and end cap bracketing it. The old cue was this
+        // border alone at /40, which nobody could see.
+        isOpen ? "border-accent/45 bg-canvas shadow-panel" : "border-line bg-panel"
       } ${isDragging ? "opacity-60 ring-2 ring-accent" : ""}`}
     >
-      <div className="flex items-center gap-1.5 px-1.5">
+      {/* While the block's fields are on screen its header stays pinned to the
+          pane, so mid-scroll you always know whose fields you are editing.
+          Nested open blocks pin below their ancestors (fixed h-9 per level), so
+          the stack reads as a breadcrumb of open scopes. Sticky survives
+          dnd-kit because the row is only transformed WHILE dragging. */}
+      <div
+        className={`flex items-center gap-1.5 px-1.5 ${isOpen ? "sticky z-10 h-9 rounded-t-[5px] border-b border-accent/20 bg-accent-50" : ""}`}
+        style={isOpen ? { top: depth * 36 } : undefined}
+      >
         <button {...attributes} {...listeners} className="cursor-grab p-1 text-muted active:cursor-grabbing" aria-label="Drag to reorder">
           <Icon.Grip width={16} height={16} />
         </button>
@@ -579,16 +608,18 @@ function SortableBlock({
             <Icon.Chevron
               width={14}
               height={14}
-              className={`shrink-0 text-muted transition-transform ${isOpen ? "rotate-90" : ""}`}
+              className={`shrink-0 transition-transform ${isOpen ? "rotate-90 text-accent-700" : "text-muted"}`}
             />
 <TypeIcon name={type?.icon} fallback={isTeaser ? "file" : "blocks"} width={15} height={15} className="shrink-0 text-muted" />
-            <span className="shrink-0 text-[13px] font-medium text-fg">{type?.displayName ?? block.blockType}</span>
+            <span className="shrink-0 text-[13px] font-medium text-fg">{rowName}</span>
             {!isOpen && summary && <span className="min-w-0 flex-1 truncate text-xs text-muted">{summary}</span>}
           </button>
         ) : (
-          <span className="flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-[18px]">
+          // Reference rows are COMPACT (py-1): they hold nothing to edit here, so
+          // they must not impersonate the full rows an editor can open.
+          <span className="flex min-w-0 flex-1 items-center gap-2 py-1 pl-[18px]">
             <TypeIcon name={type?.icon} fallback={isTeaser ? "file" : "blocks"} width={15} height={15} className="shrink-0 text-muted" />
-            <span className="shrink-0 text-[13px] font-medium text-fg">{type?.displayName ?? block.blockType}</span>
+            <span className="shrink-0 text-[13px] font-medium text-fg">{rowName}</span>
             {summary && <span className="min-w-0 flex-1 truncate text-xs text-muted">{summary}</span>}
           </span>
         )}
@@ -640,7 +671,7 @@ function SortableBlock({
           one step per depth), so however many blocks an area holds there is only
           ever one form on screen and the field rhythm survives. */}
       {isOpen && type && (
-        <div className="space-y-5 border-t border-line px-2.5 pb-3 pt-2.5">
+        <div className="space-y-5 px-2.5 pb-3 pt-2.5">
           {fields.map((f) => (
             // data-pb-prop(-block): focusing a field here highlights the SAME
             // field inside this block in the preview (paperboy:focus w/ block
@@ -665,11 +696,18 @@ function SortableBlock({
         </div>
       )}
 
-      {isTeaser && (
-        <p className="px-2.5 pb-2 text-xs text-muted">Rendered as a teaser — a compact card linking to the page. Edit the page itself from the tree.</p>
-      )}
-      {isShared && !isTeaser && (
-        <p className="px-2.5 pb-2 text-xs text-muted">Edit this shared block from its own page in the tree. Changes apply everywhere it is used.</p>
+      {/* The end cap closes the envelope: after a long block you are at its
+          BOTTOM, and the only collapse control used to be the header you had
+          scrolled away from. */}
+      {isOpen && type && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex w-full items-center gap-1.5 rounded-b-[5px] border-t border-accent/20 bg-accent-50 px-2.5 py-1.5 text-xs font-medium text-accent-700"
+        >
+          <Icon.Chevron width={13} height={13} className="-rotate-90" />
+          Collapse {type.displayName}
+        </button>
       )}
     </li>
   );

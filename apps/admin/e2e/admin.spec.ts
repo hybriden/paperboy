@@ -492,8 +492,10 @@ test("drag a shared block from the Assets pane into a content area", async ({ pa
     fire(target, "drop");
     fire(srcEl, "dragend");
   }, "content-area-mainArea");
-  // A shared block instance now lives in the area.
-  await expect(area.getByText(/shared: Featured Card/i)).toBeVisible({ timeout: 10000 });
+  // A shared block instance now lives in the area (name-first row, type + role
+  // demoted to the summary).
+  await expect(area.getByText("Featured Card")).toBeVisible({ timeout: 10000 });
+  await expect(area.getByText(/· shared/)).toBeVisible();
 
   // Cleanup: trash the throwaway page.
   await page.getByRole("treeitem", { name: new RegExp(unique) }).click({ button: "right" });
