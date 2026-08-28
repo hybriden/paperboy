@@ -504,15 +504,18 @@ const RAW_TEMPLATES = [
         helpText: "One block per question, in the order visitors see them.",
       },
       { name: "submitLabel", displayName: "Submit button label", type: "text", localized: true, delivery: "public", helpText: 'What the button says, e.g. "Send message".' },
+      // Groups become editor tabs (native group→tab machinery): the form's
+      // CONTENT stays on the first tab, what-happens-next and the compliance
+      // dials get their own — eleven flat fields buried the questions area.
       {
-        name: "confirmation", displayName: "After submitting", type: "select", delivery: "public",
+        name: "confirmation", displayName: "After submitting", type: "select", delivery: "public", group: "After submitting",
         options: [{ value: "message", label: "Show a message" }, { value: "redirect", label: "Go to a page" }],
         helpText: "What the visitor sees once the form is sent.",
       },
-      { name: "confirmationText", displayName: "Confirmation message", type: "richtext", localized: true, delivery: "public", helpText: "Shown in place of the form after a successful submission." },
-      { name: "redirectTo", displayName: "Redirect to", type: "link", localized: true, delivery: "public", helpText: "Where to send the visitor instead of showing a message." },
+      { name: "confirmationText", displayName: "Confirmation message", type: "richtext", localized: true, delivery: "public", group: "After submitting", helpText: "Shown in place of the form after a successful submission." },
+      { name: "redirectTo", displayName: "Redirect to", type: "link", localized: true, delivery: "public", group: "After submitting", helpText: "Where to send the visitor instead of showing a message." },
       {
-        name: "spamProtection", displayName: "Spam protection", type: "select", delivery: "public",
+        name: "spamProtection", displayName: "Spam protection", type: "select", delivery: "public", group: "Protection & privacy",
         options: [
           { value: "heuristics", label: "Hidden field + timing (invisible)" },
           { value: "heuristics+turnstile", label: "Hidden field + timing + Turnstile challenge" },
@@ -520,19 +523,19 @@ const RAW_TEMPLATES = [
         helpText: "Timing and hidden-field checks are always on and invisible. Turnstile adds a visible challenge for forms that attract bots.",
       },
       {
-        name: "notifyWebhooks", displayName: "Send to integrations", type: "boolean", delivery: "private",
+        name: "notifyWebhooks", displayName: "Send to integrations", type: "boolean", delivery: "private", group: "Protection & privacy",
         helpText: "Fire the form.submitted webhook so integrations (email, Slack, CRM) can pick the submission up.",
       },
       {
-        name: "retentionDays", displayName: "Delete submissions after (days)", type: "number", delivery: "private",
+        name: "retentionDays", displayName: "Delete submissions after (days)", type: "number", delivery: "private", group: "Protection & privacy",
         validation: { min: 1, max: 3650 },
         helpText: "Submissions are deleted automatically once this many days old. Empty uses the instance default. Keeping personal data no longer than necessary is a GDPR requirement.",
       },
       {
-        name: "captureMetadata", displayName: "Store IP address and browser", type: "boolean", delivery: "private",
+        name: "captureMetadata", displayName: "Store IP address and browser", type: "boolean", delivery: "private", group: "Protection & privacy",
         helpText: "Off by default. An IP address is personal data — only turn this on if you need it to investigate abuse.",
       },
-      { name: "notifyEmail", displayName: "Notification recipients", type: "text", delivery: "private", helpText: "Comma-separated addresses for integrations to notify. Paperboy does not send mail itself; the webhook carries this through." },
+      { name: "notifyEmail", displayName: "Notification recipients", type: "text", delivery: "private", group: "Protection & privacy", helpText: "Comma-separated addresses for integrations to notify. Paperboy does not send mail itself; the webhook carries this through." },
     ],
   },
   {
