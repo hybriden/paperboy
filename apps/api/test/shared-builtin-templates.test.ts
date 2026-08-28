@@ -92,6 +92,23 @@ describe("Built-in type-template library", () => {
     }
   });
 
+  it("the Form's settings are grouped into editor tabs — and every field deliberately", () => {
+    // Groups become tabs in the editor (native group→tab machinery). The form's
+    // CONTENT stays on the default tab so the questions area leads; the
+    // what-happens-next and compliance settings get their own tabs. A field
+    // added to Form without a deliberate group lands on the content tab and
+    // re-buries the builder — this map is the whole surface, so extending the
+    // type means extending this expectation.
+    const form = BUILTIN_TYPE_TEMPLATES.find((t) => t.name === "Form")!;
+    const byGroup = (g: string) => form.fields.filter((f) => (f.group ?? "Content") === g).map((f) => f.name).sort();
+    expect(byGroup("Content")).toEqual(["fields", "intro", "submitLabel", "title"]);
+    expect(byGroup("After submitting")).toEqual(["confirmation", "confirmationText", "redirectTo"]);
+    expect(byGroup("Protection & privacy")).toEqual(
+      ["captureMetadata", "notifyEmail", "notifyWebhooks", "retentionDays", "spamProtection"],
+    );
+    expect(form.fields).toHaveLength(12);
+  });
+
   it("the teaser/promote pattern is consistent across listed page types", () => {
     const teaserPages = BUILTIN_TYPE_TEMPLATES.filter((t) => t.fields.some((f) => f.group === "Teaser"));
     expect(teaserPages.map((t) => t.name).sort()).toEqual(["ArticleListPage", "ArticlePage", "FaqPage", "SectionPage"]);
