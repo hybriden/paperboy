@@ -1518,3 +1518,57 @@ test("drag a page to the RIGHT onto another page nests it (drag-to-nest)", async
   // wiring end-to-end. (Backend reparent correctness is covered by API tests.)
   expect(nested()).toBe(true);
 });
+
+// ---------------------------------------------------------------------------
+// Mobile (≤639px): the shell already swaps to a bottom nav; these pin that the
+// two remaining desktop-shaped screens actually WORK on a phone. Settings uses
+// drill navigation (list ⇄ panel) instead of the fixed side rail.
+test.describe("mobile (390×844)", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("settings drills list → panel → back, and hash deep-links open the panel", async ({ page }) => {
+    await login(page);
+    await page.goto("/settings");
+    const nav = page.getByRole("navigation", { name: "Settings sections" });
+    await expect(nav).toBeVisible();
+    // List FIRST: no section is rendered beside it (the desktop layout put the
+    // panel in a ~165px sliver here, which is the bug this suite pins).
+    await expect(page.getByRole("heading", { name: "Content types" })).toHaveCount(0);
+
+    await nav.getByRole("button", { name: "Trash" }).click();
+    // .first(): the section title AND the panel's own heading both say "Trash".
+    await expect(page.getByRole("heading", { name: "Trash" }).first()).toBeVisible();
+    await expect(nav).toHaveCount(0);
+
+    // The panel is headed by a back control that returns to the list.
+    const back = page.getByRole("button", { name: "Back to settings", exact: true });
+    await expect(back).toBeVisible();
+    await back.click();
+    await expect(nav).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Trash" })).toHaveCount(0);
+
+    // A hash deep-link (how the dashboard and site switcher arrive) lands on
+    // the panel directly — with the back control available. Hop through
+    // another route first: settings → settings#trash alone is a same-document
+    // fragment change that never remounts, which is not how deep-links arrive.
+    await page.goto("/dashboard");
+    await page.goto("/settings#trash");
+    await expect(page.getByRole("heading", { name: "Trash" }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toBeVisible();
+  });
+
+  test("dashboard fits the phone: no horizontal overflow in the scroll pane", async ({ page }) => {
+    await login(page);
+    await page.goto("/dashboard");
+    const h1 = page.getByRole("heading", { name: "Newsroom dashboard" });
+    await expect(h1).toBeVisible();
+    // Measure the dashboard's own scroll container (inner truncation/scroll
+    // regions are legitimate; the PAGE must not pan sideways).
+    const overflow = await h1.evaluate((h) => {
+      let n = h.parentElement;
+      while (n && getComputedStyle(n).overflowY !== "auto") n = n.parentElement;
+      return n ? n.scrollWidth - n.clientWidth : -1;
+    });
+    expect(overflow).toBe(0);
+  });
+});
