@@ -308,4 +308,22 @@ describe("initPreviewBridge — only the embedding parent may drive the bridge",
     expect(ready?.[1]).toBe("*");
     teardown();
   });
+
+  it("the badge never conflicts with the content beneath it: click-transparent and self-dismissing", () => {
+    // The badge is fixed top-center over the page, so it inevitably sits on top
+    // of SOME editable content. It must therefore (a) never intercept a click
+    // meant for the element under it and (b) get out of the way on its own —
+    // edit mode stays visible through the outlines on every editable element.
+    const target = makeTarget();
+    const teardown = initPreviewBridge({ target });
+    expect(document.querySelector(".pb-edit-badge")).not.toBeNull();
+    const css = document.querySelector("style[data-pb-bridge]")!.textContent!;
+    const badgeRule = /\.pb-edit-badge\{[^}]*\}/.exec(css)?.[0] ?? "";
+    expect(badgeRule).toContain("pointer-events:none");
+    expect(badgeRule).toMatch(/animation:pb-badge-out/);
+    // The fade must END invisible to hit-testing too, not just transparent.
+    expect(css).toMatch(/@keyframes pb-badge-out\{to\{opacity:0;visibility:hidden\}\}/);
+    teardown();
+    expect(document.querySelector(".pb-edit-badge")).toBeNull();
+  });
 });

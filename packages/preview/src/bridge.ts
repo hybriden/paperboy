@@ -26,7 +26,12 @@ export interface PreviewBridgeOptions {
   doc?: Document;
   /** Outline/highlight color. Default: Paperboy blue. */
   accent?: string;
-  /** Show the "Preview — click to edit" badge. Default: true. */
+  /**
+   * Show the "Preview — click to edit" badge. Default: true. It is an entry
+   * hint, not chrome: fixed top-center it inevitably covers page content, so it
+   * is click-transparent and fades itself out after a few seconds — the dashed
+   * outlines on editable elements carry the mode from there.
+   */
   badge?: boolean;
   /**
    * Origin of the embedding admin, e.g. "https://cms.example.com". Optional and
@@ -76,7 +81,8 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     body.pb-editing [${ATTR.field}]:hover,body.pb-editing [${ATTR.blockIndex}]:hover{outline:2px solid ${accent};outline-offset:3px}
     body.pb-editing [${ATTR.field}].pb-focus{outline:3px solid ${accent};outline-offset:3px;box-shadow:0 0 0 6px ${accent}2e}
     body.pb-editing [${ATTR.area}].pb-drop-active{outline:3px solid ${accent};outline-offset:4px;background:${accent}14}
-    .pb-edit-badge{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;background:${accent};color:#fff;font:600 12px/1 ui-sans-serif,system-ui,sans-serif;padding:7px 14px;border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.25)}
+    .pb-edit-badge{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:99999;pointer-events:none;background:${accent};color:#fff;font:600 12px/1 ui-sans-serif,system-ui,sans-serif;padding:7px 14px;border-radius:999px;box-shadow:0 2px 8px rgba(0,0,0,.25);animation:pb-badge-out .4s ease 4s forwards}
+    @keyframes pb-badge-out{to{opacity:0;visibility:hidden}}
   `;
   doc.head.appendChild(style);
   doc.body.classList.add("pb-editing");
