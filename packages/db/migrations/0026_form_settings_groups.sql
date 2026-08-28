@@ -33,4 +33,8 @@ SET definition = jsonb_set(
   )
 )
 WHERE name = 'Form'
-  AND jsonb_typeof(definition->'fields') = 'array';
+  AND jsonb_typeof(definition->'fields') = 'array'
+  -- jsonb_agg over zero rows is NULL and jsonb_set is strict, so an empty
+  -- fields array would null the whole definition and violate NOT NULL on a
+  -- migration that runs at api boot. Nothing to group there anyway.
+  AND definition->'fields' <> '[]'::jsonb;

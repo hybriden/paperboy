@@ -544,12 +544,9 @@ function SortableBlock({
   const storedKey = (block.inline ?? {}).name;
   const ownKey = isFormField && typeof storedKey === "string" ? storedKey.trim() : "";
   const clashingKey = ownKey && duplicateKeys.has(ownKey) ? ownKey : "";
-  // A form field asks its question with the Label, so that comes first; the key
-  // is derived from it and goes last. Presentation only — the schema is
-  // unchanged, so this also fixes types created before the key was derivable.
-  const fields = isFormField && type
-    ? [...type.fields].sort((a, b) => Number(a.name === "name") - Number(b.name === "name"))
-    : (type?.fields ?? []);
+  // Field ORDER for a form field block lives in FormQuestionEditor's
+  // essentials/rules partition now — the generic path renders declared order.
+  const fields = type?.fields ?? [];
 
   // What the row SAYS. A row reading only "Hero" makes you open it to find out
   // which hero it is; the block's own most-identifying value is more use than

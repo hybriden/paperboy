@@ -49,7 +49,7 @@ export function FormQuestionEditor({ type, block, disabled, onUpdate, renderFiel
   // with no key (it can't store an answer). A question mid-authoring has no
   // key until the label commits — substitute the derived one so the preview
   // shows the work in progress; nothing is written.
-  const spec = fieldSpecFromBlock(block.blockType, { ...inline, name: storedKey || keyPreview || "draft" });
+  const spec = fieldSpecFromBlock(block.blockType, { ...inline, name: keyPreview || "draft" });
 
   const byName = new Map(type.fields.map((f) => [f.name, f]));
   const ruleSet = new Set(RULES);
@@ -150,7 +150,7 @@ function PreviewControl({ spec }: { spec: FormFieldSpec }) {
   const ghost = <span className="text-muted/70">{spec.placeholder ?? ""}</span>;
   if (spec.kind === "textarea") {
     return (
-      <div className="field-textarea mt-1.5 bg-panel" style={{ minHeight: `${Math.min(spec.rows ?? 3, 6) * 1.4}rem` }}>
+      <div className="field-textarea mt-1.5 bg-panel" style={{ minHeight: `${Math.min(spec.rows ?? 5, 6) * 1.4}rem` }}>
         {ghost}
       </div>
     );
@@ -168,8 +168,8 @@ function PreviewControl({ spec }: { spec: FormFieldSpec }) {
     return (
       <div className="mt-1.5 space-y-1">
         {shown.length === 0 && <p className="text-xs italic text-muted">Add options below.</p>}
-        {shown.map((c) => (
-          <span key={c.value} className="flex items-center gap-2 text-sm text-fg">
+        {shown.map((c, i) => (
+          <span key={`${c.value}-${i}`} className="flex items-center gap-2 text-sm text-fg">
             <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-line bg-panel" />
             {c.label}
           </span>
@@ -206,9 +206,14 @@ function ChoicesEditor({
   const choices = parseChoices(raw);
   const values = choices.map((c) => c.value);
   const dupes = [...new Set(values.filter((v, i) => values.indexOf(v) !== i))];
-  // A line like "|Label" or "value|" parses to an option missing its stored
-  // value or its shown label — delivered as a broken input, so say it here.
-  const incomplete = choices.filter((c) => !c.value || !c.label).length;
+  // A line starting or ending with "|" is a half-typed split: parseChoices
+  // coalesces it (one side becomes BOTH value and label), which is absorbing
+  // but rarely what the bar meant — detectable only on the raw lines, since
+  // the parsed choice looks like any bare-line option.
+  const halfBar = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "" && !l.startsWith("#") && (l.startsWith("|") || l.endsWith("|"))).length;
 
   return (
     <div>
@@ -241,14 +246,14 @@ function ChoicesEditor({
         </div>
       )}
       {dupes.length > 0 && (
-        <p className="mt-1 text-xs text-danger">
+        <p role="alert" className="mt-1 text-xs text-danger">
           Duplicate stored value{dupes.length > 1 ? "s" : ""}: {dupes.join(", ")} — each option must store a unique value.
         </p>
       )}
-      {incomplete > 0 && (
-        <p className="mt-1 text-xs text-danger">
-          {incomplete} option{incomplete > 1 ? "s are" : " is"} missing a value or label — write “value|Label”, or a bare
-          line to use the same text for both.
+      {halfBar > 0 && (
+        <p role="alert" className="mt-1 text-xs text-danger">
+          {halfBar} line{halfBar > 1 ? "s start" : " starts"} or end{halfBar > 1 ? "" : "s"} with “|” — the other side is
+          used as both value and label. Write “value|Label”, or a bare line for the same text as both.
         </p>
       )}
     </div>
