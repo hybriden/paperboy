@@ -1523,6 +1523,103 @@ test("drag a page to the RIGHT onto another page nests it (drag-to-nest)", async
 });
 
 // ---------------------------------------------------------------------------
+// Forms builder: a Form's questions area renders as a purpose-built builder
+// (essentials first, technical half behind a disclosure, visitor-eye preview,
+// plain-line options with parsed feedback) — same storage, same ordering, no
+// parallel model (FORMS_PLAN.md §9's reasoning still governs).
+test.describe("forms builder", () => {
+  /** A throwaway shared Form document, created API-side for speed. The Form
+   *  built-ins are templates, not seed types — instantiate them first
+   *  (withBlocks pulls in the field parts; updateExisting keeps it idempotent
+   *  across runs on a lived-in local DB). */
+  async function createForm(page: Page): Promise<{ documentId: string; headers: Record<string, string> }> {
+    const me = await page.request.get("/api/v1/auth/me");
+    const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+    const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
+    const inst = await page.request.post("/api/v1/manage/type-templates/Form/instantiate", {
+      headers,
+      data: { withBlocks: true, updateExisting: true },
+    });
+    expect(inst.ok(), `instantiate Form template: ${inst.status()} ${await inst.text()}`).toBe(true);
+    const created = await page.request.post("/api/v1/manage/content", {
+      headers,
+      data: { type: "Form", parentId: null, locale: "en", name: `Builder-${Date.now().toString(36)}` },
+    });
+    expect(created.ok(), `create form: ${created.status()} ${await created.text()}`).toBe(true);
+    const { documentId } = (await created.json()) as { documentId: string };
+    return { documentId, headers };
+  }
+
+  test("questions are built, not block-plumbed: essentials first, rules behind a disclosure", async ({ page }) => {
+    await login(page);
+    const { documentId, headers } = await createForm(page);
+    await page.goto(`/edit/${documentId}`);
+    const area = page.getByTestId("content-area-fields");
+    await expect(area).toBeVisible({ timeout: 20_000 });
+
+    // The area speaks forms — the add affordance says "Add question".
+    await area.getByRole("button", { name: "Add question" }).click();
+    await page.getByRole("menuitem", { name: "Text field" }).click();
+
+    const q = area.locator("li#pb-block-0");
+    // Essentials: Label first, Required beside it; the visitor-eye preview
+    // mirrors the label live.
+    const label = q.getByLabel("Label", { exact: true });
+    await label.fill("Your name");
+    await expect(q.getByTestId("question-preview").getByText("Your name")).toBeVisible();
+    await expect(q.getByLabel("Required")).toBeVisible();
+
+    // Leaving the label derives the submission key (existing behavior, now
+    // surfaced where the editor can see it).
+    await label.press("Tab");
+    await expect(q.getByTestId("question-key")).toContainText("yourName");
+
+    // The technical half is folded until asked for.
+    const rules = q.getByRole("button", { name: /Answer rules/ });
+    await expect(rules).toHaveAttribute("aria-expanded", "false");
+    await expect(q.getByLabel("Field key")).toHaveCount(0);
+    await rules.click();
+    await expect(q.getByLabel("Field key")).toHaveValue("yourName");
+    await expect(q.getByLabel("Pattern")).toBeVisible();
+
+    await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+  });
+
+  test("choice questions edit options as plain lines with parsed, warning-bearing feedback", async ({ page }) => {
+    await login(page);
+    const { documentId, headers } = await createForm(page);
+    await page.goto(`/edit/${documentId}`);
+    const area = page.getByTestId("content-area-fields");
+    await expect(area).toBeVisible({ timeout: 20_000 });
+
+    await area.getByRole("button", { name: "Add question" }).click();
+    await page.getByRole("menuitem", { name: "Dropdown" }).click();
+
+    const q = area.locator("li#pb-block-0");
+    const opts = q.getByLabel("Options", { exact: true });
+    await opts.fill("support|I need help\nsales");
+    // Parsed options render as chips — what the visitor will see, not markup.
+    await expect(q.getByTestId("option-chip")).toHaveCount(2);
+    await expect(q.getByTestId("option-chip").filter({ hasText: "I need help" })).toBeVisible();
+
+    // A duplicate stored value is flagged as you type, not on submit-day.
+    await opts.fill("support|I need help\nsupport|Something else");
+    await expect(q.getByText(/duplicate/i)).toBeVisible();
+
+    await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+  });
+
+  test("form settings are grouped into native tabs", async ({ page }) => {
+    await login(page);
+    const { documentId, headers } = await createForm(page);
+    await page.goto(`/edit/${documentId}`);
+    await expect(page.getByRole("tab", { name: "After submitting" })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByRole("tab", { name: "Protection & privacy" })).toBeVisible();
+    await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Mobile (≤639px): the shell already swaps to a bottom nav; these pin that the
 // two remaining desktop-shaped screens actually WORK on a phone. Settings uses
 // drill navigation (list ⇄ panel) instead of the fixed side rail.

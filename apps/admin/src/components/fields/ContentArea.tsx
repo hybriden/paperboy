@@ -26,6 +26,7 @@ import { fieldWidthClass } from "../../lib/field-width.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { ImageField } from "../MediaLibrary.js";
+import { FormQuestionEditor } from "./FormQuestionEditor.js";
 import { LinkField } from "./LinkField.js";
 import { useToast } from "../ui/toast.js";
 import { MarkdownEditor } from "./MarkdownEditor.js";
@@ -95,6 +96,10 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
     // No allow-list means "any block" — which must NOT include the parts that
     // only make sense inside a specific parent (a Form's ten field blocks).
     : generalBlockTypes(types);
+  // An area whose whole palette is form-field parts IS a form's questions —
+  // speak forms there ("Add question", no drag-in-a-page hint), because that
+  // is what the editor is building.
+  const isQuestionArea = allowed.length > 0 && allowed.every((t) => isFormFieldType(t.name));
   // Page names for teaser entries (same key/cache as ReferenceField).
   const pages = useQuery({ queryKey: ["pages"], queryFn: ({ signal }) => api.pages(signal) });
 
@@ -113,7 +118,11 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   const hasSharedRefs = blocks.some((b) => b.ref !== null && !isTeaserRef(b, types));
 
   function addInline(blockType: string) {
-    onChange([...blocks, { key: newKey(), blockType, display: "automatic", inline: {}, ref: null }]);
+    const key = newKey();
+    onChange([...blocks, { key, blockType, display: "automatic", inline: {}, ref: null }]);
+    // Open the new block: the editor's next act is always filling it in, and
+    // a freshly added row that stays collapsed reads as "nothing happened".
+    if (onOpenPath && openPath) onOpenPath([...openPath.slice(0, depth), { field: field.name, key }]);
   }
   function addShared(documentId: string, blockType: string) {
     onChange([...blocks, { key: newKey(), blockType, display: "automatic", inline: null, ref: documentId }]);
@@ -284,7 +293,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
                 ? "You don\u2019t have permission to edit this area."
                 // The palette used to sit above this text; adding is now the
                 // button below it, so "above" would point at nothing.
-                : "Nothing here yet."}
+                : isQuestionArea ? "No questions yet." : "Nothing here yet."}
           </p>
         ) : (
           <SortableContext items={blocks.map((b) => b.key)} strategy={verticalListSortingStrategy}>
@@ -354,7 +363,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
               <MenuTrigger asChild>
                 <button type="button" className="btn-subtle px-2 py-1 text-xs">
                   <Icon.Plus width={14} height={14} />
-                  Add block
+                  {isQuestionArea ? "Add question" : "Add block"}
                 </button>
               </MenuTrigger>
               <MenuContent align="start" label="Block palette">
@@ -383,7 +392,9 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
             </Menu>
 
             <span ref={addRef} className="text-xs text-muted">
-              or drag in a shared block, a page, or an image
+              {/* A questions area takes questions, not pages/images — don't
+                  advertise drops the write path would reject or mangle. */}
+              {isQuestionArea ? "in the order visitors answer them" : "or drag in a shared block, a page, or an image"}
             </span>
 
             {pickerOpen && (
@@ -682,32 +693,42 @@ function SortableBlock({
 
       {/* The fields, in place. Only ONE row is open per level (the open path has
           one step per depth), so however many blocks an area holds there is only
-          ever one form on screen and the field rhythm survives. */}
-      {isOpen && type && (
-        <div className="space-y-5 px-2.5 pb-3 pt-2.5">
-          {fields.map((f) => (
-            // data-pb-prop(-block): focusing a field here highlights the SAME
-            // field inside this block in the preview (paperboy:focus w/ block
-            // scope). Top-level blocks only — the frontend indexes per area.
-            <div key={f.name} className={fieldWidthClass(f)} {...(depth === 0 ? { "data-pb-prop": f.name, "data-pb-prop-block": index } : {})}>
-              <BlockField field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
-                disabled={disabled}
-                types={types}
-                sharedBlocks={sharedBlocks}
-                depth={depth}
-                openPath={openPath}
-                onOpenPath={onOpenPath}
-                onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })}
-                // Only the one field that can derive something gets a commit
-                // handler — otherwise tabbing through any text field would fire
-                // an identical update and mark the document dirty.
-                onCommit={isFormField && f.name === "label"
-                  ? (v) => onUpdate({ inline: { ...withDerivedKey(block, f.name, v), [f.name]: v } })
-                  : undefined} />
-            </div>
-          ))}
-        </div>
-      )}
+          ever one form on screen and the field rhythm survives.
+
+          leafField is the ONE home for a block field's editor wiring:
+          - data-pb-prop(-block): focusing a field here highlights the SAME
+            field inside this block in the preview (paperboy:focus w/ block
+            scope). Top-level blocks only — the frontend indexes per area.
+          - onCommit: only the one field that can derive something gets a commit
+            handler — otherwise tabbing through any text field would fire an
+            identical update and mark the document dirty.
+          A form field block renders the same leaves ARRANGED by the question
+          editor (essentials first, rules behind a disclosure, visitor-eye
+          preview) — presentation only, same BlockInstance underneath. */}
+      {isOpen && type && (() => {
+        const leafField = (f: FieldDef) => (
+          <div key={f.name} className={fieldWidthClass(f)} {...(depth === 0 ? { "data-pb-prop": f.name, "data-pb-prop-block": index } : {})}>
+            <BlockField field={f} fieldId={`bf-${block.key}-${f.name}`} value={(block.inline ?? {})[f.name]}
+              disabled={disabled}
+              types={types}
+              sharedBlocks={sharedBlocks}
+              depth={depth}
+              openPath={openPath}
+              onOpenPath={onOpenPath}
+              onChange={(v) => onUpdate({ inline: { ...block.inline, [f.name]: v } })}
+              onCommit={isFormField && f.name === "label"
+                ? (v) => onUpdate({ inline: { ...withDerivedKey(block, f.name, v), [f.name]: v } })
+                : undefined} />
+          </div>
+        );
+        return (
+          <div className="space-y-5 px-2.5 pb-3 pt-2.5">
+            {isFormField
+              ? <FormQuestionEditor type={type} block={block} disabled={disabled} onUpdate={onUpdate} renderField={leafField} />
+              : fields.map(leafField)}
+          </div>
+        );
+      })()}
 
       {/* The end cap closes the envelope: after a long block you are at its
           BOTTOM, and the only collapse control used to be the header you had
