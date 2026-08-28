@@ -439,6 +439,9 @@ test("Settings is tabbed and exposes the admin sections for an Admin", async ({ 
     await page.getByRole("button", { name: tab, exact: true }).click();
     await expect(page.getByRole("heading", { name: tab }).first()).toBeVisible();
   }
+  // Desktop keeps the side-by-side layout — the phone drill's Back control
+  // must not exist here at all.
+  await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toHaveCount(0);
   await page.screenshot({ path: `${SHOT}/08-admin-panels.png` });
 });
 
@@ -1517,4 +1520,87 @@ test("drag a page to the RIGHT onto another page nests it (drag-to-nest)", async
   // The drag-to-nest gesture issued a re-parent (parentId set), proving the UI
   // wiring end-to-end. (Backend reparent correctness is covered by API tests.)
   expect(nested()).toBe(true);
+});
+
+// ---------------------------------------------------------------------------
+// Mobile (≤639px): the shell already swaps to a bottom nav; these pin that the
+// two remaining desktop-shaped screens actually WORK on a phone. Settings uses
+// drill navigation (list ⇄ panel) instead of the fixed side rail.
+test.describe("mobile (390×844)", () => {
+  test.use({ viewport: { width: 390, height: 844 } });
+
+  test("settings drills list → panel → back, and hash deep-links open the panel", async ({ page }) => {
+    await login(page);
+    await page.goto("/settings");
+    const nav = page.getByRole("navigation", { name: "Settings sections" });
+    await expect(nav).toBeVisible();
+    // List FIRST: no section is rendered beside it (the desktop layout put the
+    // panel in a ~165px sliver here, which is the bug this suite pins).
+    await expect(page.getByRole("heading", { name: "Content types" })).toHaveCount(0);
+
+    await nav.getByRole("button", { name: "Trash" }).click();
+    // .first(): the section title AND the panel's own heading both say "Trash".
+    await expect(page.getByRole("heading", { name: "Trash" }).first()).toBeVisible();
+    await expect(nav).toHaveCount(0);
+
+    // The panel is headed by a back control that returns to the list.
+    const back = page.getByRole("button", { name: "Back to settings", exact: true });
+    await expect(back).toBeVisible();
+    await back.click();
+    await expect(nav).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Trash" })).toHaveCount(0);
+
+    // A hash deep-link (how the dashboard and site switcher arrive) lands on
+    // the panel directly — with the back control available. Hop through
+    // another route first: settings → settings#trash alone is a same-document
+    // fragment change that never remounts, which is not how deep-links arrive.
+    await page.goto("/dashboard");
+    await page.goto("/settings#trash");
+    await expect(page.getByRole("heading", { name: "Trash" }).first()).toBeVisible();
+    await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toBeVisible();
+  });
+
+  test("mobile settings (list and panel) and dashboard pass axe", async ({ page }) => {
+    // The entering pane runs animate-slide-up (opacity 0→1); axe mid-animation
+    // sees blended (failing) colors — same class of flake the editor-dark scan
+    // documents. Wait for the pane's animations to actually finish.
+    const paneSettled = (p: Page) =>
+      p.locator(".animate-slide-up").first().evaluate((el) => Promise.all(el.getAnimations().map((a) => a.finished)));
+
+    await login(page);
+    await page.goto("/settings");
+    await expect(page.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
+    await axeClean(page, "settings-mobile-list");
+    await page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "Trash" }).click();
+    await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toBeVisible();
+    await paneSettled(page);
+    await axeClean(page, "settings-mobile-panel");
+    await page.goto("/dashboard");
+    await expect(page.getByRole("heading", { name: "Newsroom dashboard" })).toBeVisible();
+    await paneSettled(page);
+    await axeClean(page, "dashboard-mobile");
+  });
+
+  test("dashboard and settings fit the phone: no horizontal overflow", async ({ page }) => {
+    await login(page);
+    await page.goto("/dashboard");
+    const h1 = page.getByRole("heading", { name: "Newsroom dashboard" });
+    await expect(h1).toBeVisible();
+    // Measure the dashboard's own scroll container (inner truncation/scroll
+    // regions are legitimate; the PAGE must not pan sideways).
+    const paneOverflow = await h1.evaluate((h) => {
+      let n = h.parentElement;
+      while (n && getComputedStyle(n).overflowY !== "auto") n = n.parentElement;
+      return n ? n.scrollWidth - n.clientWidth : -1;
+    });
+    expect(paneOverflow).toBe(0);
+    // And the DOCUMENT itself must not scroll sideways on either target route —
+    // caught live: the top bar (brand + search + site select + menus) could not
+    // shrink and pushed the whole page 8px wide at 390px.
+    const docOverflow = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+    expect(await docOverflow()).toBe(0);
+    await page.goto("/settings");
+    await expect(page.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
+    expect(await docOverflow()).toBe(0);
+  });
 });

@@ -30,8 +30,10 @@ export function SiteSwitcher() {
   }
 
   return (
-    <label className="flex items-center gap-1.5" title="Active site">
+    <label className="flex min-w-0 items-center gap-1.5" title="Active site">
       <span className="sr-only">Active site</span>
+      {/* min-w-0: on a phone this select is the ONE header item allowed to give
+          way (see TopBar) — clipped text beats a sideways-scrolling page. */}
       <select
         value={active}
         onChange={(e) => {
@@ -39,7 +41,7 @@ export function SiteSwitcher() {
           if (e.target.value === NEW_SITE) window.location.href = "/settings#site";
           else if (e.target.value !== active) switchTo(e.target.value);
         }}
-        className="max-w-[160px] truncate rounded-(--radius) border border-line bg-canvas px-2 py-1.5 text-sm text-fg hover:bg-line/60 focus:outline-hidden"
+        className="min-w-0 max-w-[160px] truncate rounded-(--radius) border border-line bg-canvas px-2 py-1.5 text-sm text-fg hover:bg-line/60 focus:outline-hidden"
         aria-label="Active site"
       >
         {sites.map((s) => (

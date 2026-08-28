@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { type DashboardData, api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
+import { useIsMobile } from "../../lib/useMediaQuery.js";
 import { AI_OFF_HINT, useAiEnabled } from "../../lib/useAiStatus.js";
 import { useUser } from "../../lib/user.js";
 import type { ShellOutlet } from "../Shell.js";
@@ -168,7 +169,7 @@ export function DashboardView() {
 
   return (
     <div className="h-full overflow-auto">
-      <div className="mx-auto max-w-5xl animate-slide-up p-8">
+      <div className="mx-auto max-w-5xl animate-slide-up p-4 sm:p-8">
         <header className="mb-8 border-b border-line pb-6">
           <div className="eyebrow flex flex-wrap items-center gap-x-2 gap-y-1">
             <span>{today}</span>
@@ -372,49 +373,85 @@ export function SettingsView() {
   // #model:BlogPost from the dashboard opens that type's editor (the panel
   // itself consumes the suffix).
   const hashTab = typeof window !== "undefined" ? window.location.hash.slice(1).split(":")[0]! : "";
-  const [active, setActive] = useState(tabs.some((t) => t.key === hashTab) ? hashTab : (tabs[0]?.key ?? "model"));
+  // One home for "does the hash name a tab this user can see" — active and the
+  // mobile drill below must agree on it or a deep-link opens the wrong screen.
+  const hashIsTab = tabs.some((t) => t.key === hashTab);
+  const [active, setActive] = useState(hashIsTab ? hashTab : (tabs[0]?.key ?? "model"));
   const current = tabs.find((t) => t.key === active) ?? tabs[0];
   const groups: SettingsTab["group"][] = ["Content", "Administration", "Account"];
+
+  // Phones drill instead of splitting: the w-56 rail beside a panel left ~165px
+  // of content on a 390px screen. List ⇄ panel, one at a time. A hash deep-link
+  // lands on the panel directly, with Back available — deep-links arrive as
+  // fresh mounts (dashboard navigate(), the site switcher's full page load),
+  // except #site clicked while ALREADY on /settings, a same-document fragment
+  // change that has never re-targeted `active` either (pre-existing gap).
+  const isMobile = useIsMobile();
+  const [mobilePanel, setMobilePanel] = useState(hashIsTab);
 
   return (
     <div className="h-full overflow-hidden">
       <div className="flex h-full">
-        {/* Left section nav */}
-        <nav aria-label="Settings sections" className="w-56 shrink-0 overflow-auto border-r border-line bg-panel p-3">
-          <h1 className="masthead mb-3 px-2 text-xl text-fg">Settings</h1>
-          {groups.map((g) => {
-            const items = tabs.filter((t) => t.group === g);
-            if (!items.length) return null;
-            return (
-              <div key={g} className="mb-3">
-                <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-muted">{g}</div>
-                {items.map((t) => (
-                  <button
-                    key={t.key}
-                    onClick={() => setActive(t.key)}
-                    aria-current={active === t.key}
-                    className={`mb-0.5 flex w-full items-center rounded-(--radius) px-2 py-1.5 text-left text-sm transition-colors ${
-                      active === t.key ? "bg-accent/15 font-medium text-accent-700" : "text-fg hover:bg-line/50"
-                    }`}
-                  >
-                    {t.label}
-                  </button>
-                ))}
-              </div>
-            );
-          })}
-        </nav>
+        {/* Left section nav — on phones it IS the screen until a section is picked. */}
+        {(!isMobile || !mobilePanel) && (
+          <nav
+            aria-label="Settings sections"
+            className={`shrink-0 overflow-auto border-line bg-panel p-3 ${isMobile ? "w-full" : "w-56 border-r"}`}
+          >
+            <h1 className="masthead mb-3 px-2 text-xl text-fg">Settings</h1>
+            {groups.map((g) => {
+              const items = tabs.filter((t) => t.group === g);
+              if (!items.length) return null;
+              return (
+                <div key={g} className="mb-3">
+                  <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-muted">{g}</div>
+                  {items.map((t) => (
+                    <button
+                      key={t.key}
+                      onClick={() => {
+                        setActive(t.key);
+                        setMobilePanel(true);
+                      }}
+                      aria-current={active === t.key}
+                      className={`mb-0.5 flex w-full items-center rounded-(--radius) px-2 text-left text-sm transition-colors ${
+                        isMobile ? "py-2.5" : "py-1.5"
+                      } ${active === t.key ? "bg-accent/15 font-medium text-accent-700" : "text-fg hover:bg-line/50"}`}
+                    >
+                      {t.label}
+                      {isMobile && <Icon.Chevron width={14} height={14} className="ml-auto shrink-0 text-muted" />}
+                    </button>
+                  ))}
+                </div>
+              );
+            })}
+          </nav>
+        )}
 
         {/* Active section */}
-        <section className="min-w-0 flex-1 overflow-auto">
-          <div className="mx-auto max-w-4xl animate-slide-up p-8">
-            <header className="mb-6 border-b border-line pb-4">
-              <div className="eyebrow">Settings</div>
-              <h2 className="section-title mt-1.5">{current?.label}</h2>
-            </header>
-            {current?.render()}
-          </div>
-        </section>
+        {(!isMobile || mobilePanel) && (
+          <section className="min-w-0 flex-1 overflow-auto">
+            <div className="mx-auto max-w-4xl animate-slide-up p-4 sm:p-8">
+              {isMobile && (
+                <button
+                  type="button"
+                  aria-label="Back to settings"
+                  onClick={() => setMobilePanel(false)}
+                  // py-2: the most-tapped control on the phone screen must not
+                  // be its smallest target (bare text-sm is ~20px).
+                  className="-ml-1 mb-2 flex items-center gap-1.5 rounded-(--radius) px-1 py-2 text-sm font-medium text-accent-700"
+                >
+                  <Icon.Chevron width={14} height={14} className="rotate-180" />
+                  Settings
+                </button>
+              )}
+              <header className="mb-6 border-b border-line pb-4">
+                <div className="eyebrow">Settings</div>
+                <h2 className="section-title mt-1.5">{current?.label}</h2>
+              </header>
+              {current?.render()}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

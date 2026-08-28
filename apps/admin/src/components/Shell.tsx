@@ -70,7 +70,7 @@ function TopBar({
 }) {
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-panel px-3 text-fg">
-      <div className="flex items-baseline gap-2 pr-2">
+      <div className="flex shrink-0 items-baseline gap-2 pr-2">
         <span className="masthead text-[22px] leading-none text-fg">Paperboy</span>
         <span className="hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-muted sm:inline">CMS</span>
       </div>
@@ -90,10 +90,14 @@ function TopBar({
         </nav>
       )}
 
-      <div className="ml-auto flex items-center gap-1.5">
+      {/* min-w-0 so the cluster can give way on a phone — everything in it is
+          shrink-0 except the site select, which is the one thing that can
+          truncate without losing its function. Without this the header held
+          its width and pushed the whole page 8px past a 390px viewport. */}
+      <div className="ml-auto flex min-w-0 items-center gap-1.5">
         <button
           onClick={onOpenPalette}
-          className="flex h-9 items-center gap-2 rounded-(--radius) px-2.5 text-sm text-muted transition-colors hover:bg-line/60 hover:text-fg"
+          className="flex h-9 shrink-0 items-center gap-2 rounded-(--radius) px-2.5 text-sm text-muted transition-colors hover:bg-line/60 hover:text-fg"
           aria-label="Open command palette"
         >
           <Icon.Search width={15} height={15} className="shrink-0" />
@@ -128,7 +132,7 @@ function ThemeToggle() {
   return (
     <Menu>
       <Tooltip label="Theme">
-        <MenuTrigger className="grid h-9 w-9 place-items-center rounded-(--radius) text-muted hover:bg-line/60 hover:text-fg" aria-label="Theme">
+        <MenuTrigger className="grid h-9 w-9 shrink-0 place-items-center rounded-(--radius) text-muted hover:bg-line/60 hover:text-fg" aria-label="Theme">
           <Cur width={17} height={17} />
         </MenuTrigger>
       </Tooltip>
@@ -154,7 +158,7 @@ function UserMenu() {
   const initials = user.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   return (
     <Menu>
-      <MenuTrigger className="ml-1 flex items-center gap-2 rounded-(--radius) py-1 pl-1 pr-2 hover:bg-line/60" aria-label="Account menu">
+      <MenuTrigger className="ml-1 flex shrink-0 items-center gap-2 rounded-(--radius) py-1 pl-1 pr-2 hover:bg-line/60" aria-label="Account menu">
         <span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-xs font-bold text-accent-fg">{initials}</span>
         <Icon.ChevronDown width={14} height={14} className="text-muted" />
       </MenuTrigger>
