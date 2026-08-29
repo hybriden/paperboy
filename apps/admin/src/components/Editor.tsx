@@ -5,6 +5,7 @@ import {
   type ContentDetail,
   type ContentTypeDef,
   type FieldDef,
+  isFormFieldType,
   isFormType,
   type Locale,
   SEO_CONVENTION,
@@ -23,6 +24,7 @@ import { applyRichTextStrings, collectRichTextStrings } from "../lib/richtext-st
 import { pickTranslateSource } from "../lib/translate-offer.js";
 import { reviewBadge } from "../lib/review-badge.js";
 import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
+import { allowedBlockTypesFor } from "../lib/area-add.js";
 import { blockInstanceFromDrop, type DropPayload } from "../lib/block-drop.js";
 import { isPreviewOrigin } from "../lib/preview-origin.js";
 import { parsePreviewMessage } from "@paperboycms/preview/protocol";
@@ -33,6 +35,7 @@ import { TypeIcon } from "../lib/typeIcons.js";
 import { BuildFromBriefDialog } from "./BuildFromBrief.js";
 import { FormSubmissions } from "./FormSubmissions.js";
 import { ContentArea } from "./fields/ContentArea.js";
+import { SharedBlockPicker } from "./fields/SharedBlockPicker.js";
 import { MarkdownEditor } from "./fields/MarkdownEditor.js";
 import { LinkField } from "./fields/LinkField.js";
 import { ReferenceField } from "./fields/ReferenceField.js";
@@ -283,7 +286,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // would otherwise anchor the card at its far-away bottom edge.
   // `block` scopes the overlay to a field INSIDE a content-area block instance
   // (absent → a page-level field, the classic case).
-  const [ope, setOpe] = useState<{ field: string; rect: PbRect; ox: number; oy: number; n: number; block?: { area: string; index: number } } | null>(null);
+  const [ope, setOpe] = useState<{ field: string; rect: PbRect; ox: number; oy: number; n: number; block?: { area: string; index: number }; add?: true } | null>(null);
   const opeRef = useRef<typeof ope>(null);
   useEffect(() => { opeRef.current = ope; }, [ope]);
   const opeModeRef = useRef(opeMode);
@@ -736,7 +739,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       // reports the FRAMED render's fields/indexes — routing its edit/drop
       // messages into this document would write to the wrong fields.
       // Read-only, deliberately.
-      if (externalPreviewRef.current && (msg.type === "paperboy:edit" || msg.type === "paperboy:drop")) return;
+      if (externalPreviewRef.current && (msg.type === "paperboy:edit" || msg.type === "paperboy:drop" || msg.type === "paperboy:add-block")) return;
       if (msg.type === "paperboy:rect") {
         // Anchor update for the open overlay (same field — and same block, when
         // the overlay is scoped to a field inside a block).
@@ -770,6 +773,22 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         const current = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
         setField(fieldName, [...current, res.block]);
         toast.success("Block added", payload.name ? `Added “${payload.name}”.` : "Added to the content area.");
+        return;
+      }
+      if (msg.type === "paperboy:add-block") {
+        // The editor clicked an area's "＋ Add block" chip (bridge chrome).
+        // Same page-level rule as paperboy:drop: the field must be a
+        // contentArea of THIS type — a nested block-inner area falls through
+        // to the same self-teaching toast the drop path uses.
+        const fieldName = typeof msg.field === "string" ? msg.field : null;
+        const def = fieldName ? type?.fields.find((f) => f.name === fieldName && f.type === "contentArea") : undefined;
+        if (!fieldName || !def) {
+          toast.error("Couldn’t add here", `The preview marks this area as “${fieldName ?? "?"}”, which isn’t a contentArea field of ${type?.name ?? "this type"}. data-pb-area must name the contentArea field.`);
+          return;
+        }
+        if (!msg.rect) return;
+        // Anchor the palette card at the chip (bottom-center of the area rect).
+        setOpe({ field: fieldName, add: true, rect: msg.rect, ox: msg.rect.w / 2, oy: msg.rect.h, n: ++propCounter.current });
         return;
       }
       if (msg.type !== "paperboy:edit") return;
@@ -1609,6 +1628,38 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             }
             overlay={(() => {
               if (!ope || !type) return null;
+              // "＋ Add block" from the preview's area chip: an anchored palette
+              // instead of a field editor. Appends EXACTLY as the sidebar
+              // ContentArea does (same instance shapes, same allow-list home).
+              if (ope.add) {
+                const areaDef = type.fields.find((f) => f.name === ope.field && f.type === "contentArea");
+                if (!areaDef || !canEdit) return null;
+                const append = (block: BlockInstance, label: string | undefined) => {
+                  const cur = (formRef.current ?? form).data[ope.field];
+                  const arr = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
+                  setField(ope.field, [...arr, block]);
+                  closeOpe();
+                  toast.success("Block added", label ? `Added “${label}”.` : "Added to the content area.");
+                };
+                return {
+                  rect: ope.rect,
+                  ox: ope.ox,
+                  oy: ope.oy,
+                  onClose: closeOpe,
+                  content: (
+                    <AddBlockCard
+                      def={areaDef}
+                      types={types}
+                      sharedBlocks={sharedBlocks.data ?? []}
+                      onAddInline={(blockType, label) =>
+                        append({ key: newBlockKey(), blockType, display: "automatic", inline: {}, ref: null }, label)}
+                      onAddShared={(documentId, blockType, label) =>
+                        append({ key: newBlockKey(), blockType, display: "automatic", inline: null, ref: documentId }, label)}
+                      onClose={closeOpe}
+                    />
+                  ),
+                };
+              }
               // "name" means the PAGE TITLE only when the overlay isn't scoped to
               // a block. A block may legitimately have its own field called
               // `name` — a hero rendering a person's name, say — and treating
@@ -2549,3 +2600,78 @@ function SelectField({ id, field, types, value, disabled, onChange }: { id: stri
   );
 }
 
+
+/**
+ * The "＋ Add block" palette the preview's area chip opens (paperboy:add-block),
+ * anchored where the chip was clicked. Same offering as the sidebar ContentArea
+ * palette — one allow-list home (lib/area-add) and the same reuse picker — so
+ * the on-page path can never offer a block the write chokepoint rejects.
+ */
+function AddBlockCard({
+  def,
+  types,
+  sharedBlocks,
+  onAddInline,
+  onAddShared,
+  onClose,
+}: {
+  def: FieldDef;
+  types: ContentTypeDef[];
+  sharedBlocks: { documentId: string; name: string; type: string }[];
+  onAddInline: (blockType: string, label: string) => void;
+  onAddShared: (documentId: string, blockType: string, label?: string) => void;
+  onClose: () => void;
+}) {
+  const allowed = allowedBlockTypesFor(def, types);
+  const nestedOnlyTypes = useMemo(() => new Set(types.filter((t) => t.nestedOnly).map((t) => t.name)), [types]);
+  // Pages placeable as teasers — same source the sidebar picker uses.
+  const pages = useQuery({ queryKey: ["pages"], queryFn: ({ signal }) => api.pages(signal) });
+  const [picker, setPicker] = useState<{ x: number; y: number } | null>(null);
+  const isQuestionArea = allowed.length > 0 && allowed.every((t) => isFormFieldType(t.name));
+  return (
+    <div>
+      <div className="flex items-center gap-2 border-b border-line px-3 py-1.5">
+        <span className="text-xs font-semibold text-fg">{isQuestionArea ? "Add question" : "Add block"}</span>
+        <span className="truncate text-xs text-muted">to {def.displayName || def.name}</span>
+        <button className="ml-auto rounded p-1 text-muted hover:bg-line hover:text-fg" aria-label="Close" onClick={onClose}>✕</button>
+      </div>
+      <div className="max-h-[45vh] overflow-y-auto p-1.5">
+        {allowed.map((t) => (
+          <button
+            key={t.name}
+            type="button"
+            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-fg hover:bg-canvas"
+            onClick={() => onAddInline(t.name, t.displayName)}
+          >
+            <TypeIcon name={t.icon} fallback="blocks" width={15} height={15} className="shrink-0 text-muted" />
+            {t.displayName}
+          </button>
+        ))}
+        {allowed.length === 0 && (
+          <p className="px-2 py-2 text-xs text-muted">This area only takes existing shared blocks.</p>
+        )}
+        <button
+          type="button"
+          className="mt-1 flex w-full items-center gap-2 rounded border-t border-line px-2 pb-1.5 pt-2 text-left text-xs font-medium text-accent-700 hover:bg-canvas"
+          onClick={(e) => setPicker({ x: e.clientX, y: e.clientY })}
+        >
+          Existing block…
+        </button>
+      </div>
+      {picker && (
+        <SharedBlockPicker
+          at={picker}
+          allowedBlocks={def.allowedBlocks}
+          nestedOnlyTypes={nestedOnlyTypes}
+          sharedBlocks={sharedBlocks}
+          pages={pages.data ?? []}
+          onPick={(documentId, blockType) => {
+            setPicker(null);
+            onAddShared(documentId, blockType, sharedBlocks.find((b) => b.documentId === documentId)?.name);
+          }}
+          onClose={() => setPicker(null)}
+        />
+      )}
+    </div>
+  );
+}
