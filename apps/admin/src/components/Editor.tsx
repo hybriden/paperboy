@@ -38,7 +38,7 @@ import { LinkField } from "./fields/LinkField.js";
 import { ReferenceField } from "./fields/ReferenceField.js";
 import { RichText } from "./fields/RichText.js";
 import { ImageField, StockQueryContext } from "./MediaLibrary.js";
-import { PREVIEW_USEFUL_MAX, PreviewPane, previewOrigin, publicSiteUrl, type PbRect, type PreviewMode } from "./PreviewPane.js";
+import { PREVIEW_USEFUL_MAX, PreviewPane, blockPreviewPath, previewOrigin, publicSiteUrl, type PbRect, type PreviewMode } from "./PreviewPane.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
@@ -1579,7 +1579,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               externalPreview
                 ? previewPage
                   ? (previewPageDetail.data?.urlPath ?? null)
-                  : `/preview/block/${documentId}`
+                  : blockPreviewPath(documentId)
                 : form.urlPath
             }
             documentId={externalPreview && previewPage ? previewPage.documentId : documentId}

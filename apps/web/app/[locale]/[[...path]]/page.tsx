@@ -14,9 +14,6 @@ function publicOrigin(): string {
   return (process.env.SITE_ORIGIN ?? "http://localhost:8092").replace(/\/+$/, "");
 }
 
-// Preview gating (draft cookie / ?pbt token / ?pb secret) lives in lib/preview
-// — one home, shared with the standalone block preview route.
-const isPreview = isPreviewRequest;
 
 /** Empty path ("/{locale}") → the configured START PAGE; otherwise resolve the
  *  hierarchical URL path through the page tree. */
@@ -35,7 +32,7 @@ export async function generateMetadata({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }): Promise<Metadata> {
   const { locale, path } = await params;
-  const preview = await isPreview((await draftMode()).isEnabled, await searchParams);
+  const preview = await isPreviewRequest((await draftMode()).isEnabled, await searchParams);
   const content = await resolve(locale, path, preview);
   if (!content) return { title: "Not found" };
 
@@ -119,7 +116,7 @@ export default async function ContentPage({
   const { locale, path } = await params;
   const isRoot = (path ?? []).length === 0;
   const urlPath = isRoot ? "" : `/${(path ?? []).join("/")}`;
-  const preview = await isPreview((await draftMode()).isEnabled, await searchParams);
+  const preview = await isPreviewRequest((await draftMode()).isEnabled, await searchParams);
   const content = await resolve(locale, path, preview);
 
   // A ListPage lists its children of the configured type (newest first) —

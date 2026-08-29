@@ -20,6 +20,7 @@ vi.mock("./delivery", () => ({
 
 import BlockPreviewPage from "../[locale]/preview/block/[documentId]/page";
 import { fetchById } from "./delivery";
+import { standaloneAreaBlock } from "./standalone-block";
 
 describe("standalone block preview route — auth gate", () => {
   it("404s without preview credentials, before any delivery fetch", async () => {
@@ -40,5 +41,49 @@ describe("standalone block preview route — auth gate", () => {
       }),
     ).rejects.toThrow("NEXT_NOT_FOUND");
     expect(fetchById).not.toHaveBeenCalled();
+  });
+
+  it("with valid credentials it fetches through the PREVIEW client (drafts perspective)", async () => {
+    // The dev default secret verifies outside production — the same path a
+    // local editor uses.
+    vi.mocked(fetchById).mockResolvedValueOnce({
+      documentId: "blk1",
+      type: "HeroBlock",
+      kind: "block",
+      locale: "en",
+      name: "A hero",
+      slug: null,
+      urlPath: null,
+      cv: 1,
+      data: {},
+      fieldTypes: {},
+      seo: null,
+    } as never);
+    await BlockPreviewPage({
+      params: Promise.resolve({ locale: "en", documentId: "blk1" }),
+      searchParams: Promise.resolve({ pb: "dev-preview-secret-change-me" }),
+    });
+    expect(fetchById).toHaveBeenCalledWith("blk1", "en", true);
+  });
+
+  it("the wrapper supplies every field the AreaBlock content contract declares", () => {
+    const b = standaloneAreaBlock({
+      documentId: "blk1",
+      type: "HeroBlock",
+      kind: "block",
+      locale: "en",
+      name: "A hero",
+      slug: null,
+      urlPath: null,
+      cv: 1,
+      data: {},
+      fieldTypes: {},
+      seo: null,
+    } as never);
+    // Key-completeness: a field the renderer starts reading off resolved
+    // shared entries must be mapped here too, or standalone drifts from inline.
+    expect(Object.keys(b.content ?? {}).sort()).toEqual(
+      ["data", "documentId", "fieldTypes", "form", "kind", "name", "type", "urlPath"].sort(),
+    );
   });
 });
