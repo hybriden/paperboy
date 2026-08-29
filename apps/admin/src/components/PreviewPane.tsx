@@ -422,6 +422,16 @@ export function PreviewPane({
                   <code className="font-mono">@paperboycms/preview</code>, which powers on-page editing and live
                   updates. Add the bridge to enable those (and this hint goes away), or dismiss this with the ×.
                 </span>
+                {/* A standalone block frame needs a route the frontend may simply
+                    not have yet — that is the likely cause here, so say it first. */}
+                {urlPath?.startsWith("/preview/block/") && (
+                  <span className="mt-1 block">
+                    <strong className="text-fg">This is a standalone block preview</strong> — it needs the frontend
+                    contract route <code className="font-mono">/{"{locale}"}/preview/block/{"{documentId}"}</code>{" "}
+                    (see <code className="font-mono">apps/web</code> for the reference implementation). Until the
+                    frontend adds it, pick a page that uses this block from the toolbar’s preview target instead.
+                  </span>
+                )}
                 <span className="mt-1 block">
                   <strong className="text-fg">If the preview is empty</strong>, the frontend is probably refusing to be
                   framed. It must allow this admin as a frame ancestor — scoped to the framed request, so the public

@@ -1308,7 +1308,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 // binds to the page.
                 const enabled = previewable || v === "props" || (v === "split" && blockPreview);
                 const disabledTitle = blockPreview
-                  ? "On-page editing works from the page itself — open it from “Used on”."
+                  ? "On-page editing works from a page that uses this block — open one from “Used on”."
                   : "A global renders across the site. Editing happens right here.";
                 const enabledTitle =
                   v === "split" && !previewable ? "Preview this block on its own, or on a page that uses it" : title;
