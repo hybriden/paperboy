@@ -56,6 +56,12 @@ The bridge then:
 - posts `paperboy:edit` when an editable region is clicked (with rect/click/caret),
 - posts `paperboy:drop` when a shared block/page is dragged from the Assets pane onto a `data-pb-area`,
 - streams `paperboy:rect` on scroll/resize, applies `paperboy:patch` (live swap) and `paperboy:focus`,
+- outlines every `data-pb-area` with a dotted border (v0.4+) so editors see where
+  each content area starts and ends; hovering an area shows its name and a
+  "＋ Add block" chip that posts `paperboy:add-block {field, rect}` — the admin
+  opens its block palette for that area, anchored at the chip. The chrome is
+  injected `position:fixed` chrome in `<body>`, never DOM inside your area
+  elements, so grid/flex layouts are untouched. Older admins ignore the message,
 - injects its own styles and persists scroll across reloads.
 
 ## Admin (parent window) — types only, no DOM
@@ -75,4 +81,4 @@ import { parsePreviewMessage, patchMessage, focusMessage } from "@paperboycms/pr
 | `data-pb-block-index` / `data-pb-block-type` | A rendered block inside an area |
 | `data-pb-field` inside a block root | That block's own field (v0.3+): `paperboy:edit` carries field + blockIndex, and `paperboy:patch` / `paperboy:focus` accept an optional `blockIndex` scoping the live swap / highlight to that block (focus falls back to flashing the block root when the field isn't tagged) |
 
-⚠️ `data-pb-area`'s value must be the contentArea **field name** — the bridge posts it back to the editor as `paperboy:drop {field}`, which looks the field up on the content type. A boolean-ish marker (`data-pb-area="true"`) makes every drop fail; the bridge warns about it in the console. Prefer spreading `pbAreaAttrs(field, preview)` from `@paperboycms/client` instead of writing the attribute by hand (it also keeps public pages marker-free).
+⚠️ `data-pb-area`'s value must be the contentArea **field name** — the bridge posts it back to the editor as `paperboy:drop {field}` (and `paperboy:add-block {field}`), which looks the field up on the content type. A boolean-ish marker (`data-pb-area="true"`) makes every drop fail; the bridge warns about it in the console. Prefer spreading `pbAreaAttrs(field, preview)` from `@paperboycms/client` instead of writing the attribute by hand (it also keeps public pages marker-free).
