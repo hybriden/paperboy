@@ -76,14 +76,18 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   // ---- injected chrome (styles + optional badge); consumers ship no CSS ----
   const style = doc.createElement("style");
   style.dataset.pbBridge = "";
+  // RULE ORDER IS THE CASCADE TIEBREAK (equal specificity throughout): area
+  // outlines first so an element carrying BOTH markers (apps/web's empty-area
+  // placeholder has data-pb-field + data-pb-area) keeps its field affordance,
+  // and .pb-drop-active last so the drop highlight beats the area :hover.
   style.textContent = `
+    body.pb-editing [${ATTR.area}]{outline:1px dotted ${accent}59;outline-offset:6px}
+    body.pb-editing [${ATTR.area}]:hover{outline:2px dotted ${accent}a6;outline-offset:6px}
+    body.pb-editing [${ATTR.area}]:empty{min-height:3rem}
     body.pb-editing [${ATTR.field}],body.pb-editing [${ATTR.blockIndex}]{cursor:pointer;outline:1px dashed ${accent}73;outline-offset:3px}
     body.pb-editing [${ATTR.field}]:hover,body.pb-editing [${ATTR.blockIndex}]:hover{outline:2px solid ${accent};outline-offset:3px}
     body.pb-editing [${ATTR.field}].pb-focus{outline:3px solid ${accent};outline-offset:3px;box-shadow:0 0 0 6px ${accent}2e}
     body.pb-editing [${ATTR.area}].pb-drop-active{outline:3px solid ${accent};outline-offset:4px;background:${accent}14}
-    body.pb-editing [${ATTR.area}]{outline:1px dotted ${accent}59;outline-offset:6px}
-    body.pb-editing [${ATTR.area}]:hover{outline:2px dotted ${accent}a6;outline-offset:6px}
-    body.pb-editing [${ATTR.area}]:empty{min-height:3rem}
     .pb-area-tag{position:fixed;z-index:99998;pointer-events:none;background:${accent};color:#fff;font:600 10px/1 ui-sans-serif,system-ui,sans-serif;padding:3px 7px;border-radius:4px;opacity:.92;transform:translateY(-50%)}
     .pb-area-add{position:fixed;z-index:99998;background:#fff;color:${accent};border:1px solid ${accent};font:600 12px/1 ui-sans-serif,system-ui,sans-serif;padding:6px 12px;border-radius:999px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.18);transform:translate(-50%,-50%)}
     .pb-area-add:hover{background:${accent};color:#fff}
@@ -191,6 +195,10 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     // Opt in when the drag carries our MIME (same-origin) OR the admin told us a
     // drag is in progress (cross-origin, where types/data are hidden here).
     if (!e.dataTransfer?.types.includes(DRAG_MIME) && dragPayload == null) return;
+    // The add chip must never sit between a drag and its area: a visible chip
+    // at the area's bottom edge would swallow the drop (it lives in <body>, so
+    // closest([data-pb-area]) misses) and the block silently vanished.
+    hideAreaChrome();
     const zone = (e.target as HTMLElement | null)?.closest?.(`[${ATTR.area}]`) as HTMLElement | null;
     if (!zone) { setDropZone(null); return; }
     e.preventDefault();
@@ -224,6 +232,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   // every area's extent; hovering names it and offers the add affordance.
   const areaTag = doc.createElement("div");
   areaTag.className = "pb-area-tag";
+  areaTag.setAttribute("aria-hidden", "true"); // decorative — the chip's aria-label names the area for AT
   areaTag.style.display = "none";
   const areaAdd = doc.createElement("button");
   areaAdd.type = "button";
@@ -251,18 +260,25 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   };
   const onPointerOver = (e: PointerEvent) => {
     const t = e.target as HTMLElement | null;
-    // The chip/tag sit OUTSIDE the area element — hovering them must not count
-    // as leaving the area, or the chip vanishes under the pointer.
-    if (t === areaAdd || t === areaTag) return;
+    // The chip sits OUTSIDE the area element — hovering it must not count as
+    // leaving the area, or it vanishes under the pointer. (The tag can't be a
+    // pointer target: it is pointer-events:none.)
+    if (t === areaAdd) return;
     const area = (t?.closest?.(`[${ATTR.area}]`) as HTMLElement | null) ?? null;
     if (area === hoveredArea) return;
     if (!area) { hideAreaChrome(); return; }
     hoveredArea = area;
-    areaTag.textContent = area.getAttribute(ATTR.area) ?? "";
+    const areaName = area.getAttribute(ATTR.area) ?? "";
+    areaTag.textContent = areaName;
+    areaAdd.setAttribute("aria-label", areaName ? `Add block to ${areaName}` : "Add block");
     areaTag.style.display = "";
     areaAdd.style.display = "";
     positionAreaChrome();
   };
+  // Leaving the DOCUMENT fires no pointerover anywhere, so without this the
+  // chip lingers after the pointer moves into the admin chrome — and a later
+  // drop near the area's bottom edge would land on the chip, not the area.
+  const onPointerLeaveDoc = () => hideAreaChrome();
   const onAddClick = (e: MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -333,8 +349,11 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     } else if (msg.type === "paperboy:dragsource") {
       // The admin started dragging an Assets-pane item — remember the payload so
       // a same-origin drop on a content area works (dataTransfer is hidden
-      // cross-origin; the cross-origin path uses drop-at below).
+      // cross-origin; the cross-origin path uses drop-at below). Clear the area
+      // chip too: no pointer event fires here to do it, and a visible chip would
+      // swallow the drop (elementFromPoint in drop-at hits the chip, zone null).
       dragPayload = msg.payload;
+      hideAreaChrome();
     } else if (msg.type === "paperboy:dragend") {
       dragPayload = null;
       setDropZone(null);
@@ -353,6 +372,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
 
   doc.addEventListener("click", onClick, true); // capture so links don't navigate first
   doc.addEventListener("pointerover", onPointerOver);
+  doc.documentElement.addEventListener("pointerleave", onPointerLeaveDoc);
   doc.addEventListener("dragover", onDragOver);
   doc.addEventListener("dragleave", onDragLeave);
   doc.addEventListener("drop", onDrop);
@@ -372,6 +392,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   return function teardown() {
     doc.removeEventListener("click", onClick, true);
     doc.removeEventListener("pointerover", onPointerOver);
+    doc.documentElement.removeEventListener("pointerleave", onPointerLeaveDoc);
     doc.removeEventListener("dragover", onDragOver);
     doc.removeEventListener("dragleave", onDragLeave);
     doc.removeEventListener("drop", onDrop);

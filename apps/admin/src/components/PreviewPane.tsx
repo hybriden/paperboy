@@ -123,7 +123,7 @@ export function PreviewPane({
   /** Anchored on-page editor: rect + click offset from the bridge, content from
    *  Editor. The card opens at the CLICK point (ox/oy within the element) — a
    *  very tall element would otherwise push it out of sight. */
-  overlay?: { rect: PbRect; ox: number; oy: number; content: React.ReactNode; onClose: () => void } | null;
+  overlay?: { rect: PbRect; ox: number; oy: number; content: React.ReactNode; onClose: () => void; label?: string } | null;
   /** Live DOM patch for the page (text/html swap, no reload) — keyed by n. */
   livePatch?: { field: string; text?: string; html?: string; blockIndex?: number; n: number } | null;
   /** Extra toolbar content (e.g. the borrowed-page picker when a block
@@ -532,7 +532,7 @@ export function PreviewPane({
               className="absolute z-20"
               style={{ ...anchor.card, width: CARD_W }}
               role="dialog"
-              aria-label="Edit property"
+              aria-label={overlay.label ?? "Edit property"}
             >
               {overlay.content}
             </Surface>

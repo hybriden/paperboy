@@ -885,7 +885,7 @@ test("visual editing: an add-block message from the preview opens the area palet
   );
   // The anchored palette opens over the preview and appends with ONE click —
   // same offering as the sidebar palette (one allow-list home).
-  const dialog = page.getByRole("dialog", { name: "Edit property" });
+  const dialog = page.getByRole("dialog", { name: "Add block" });
   await expect(dialog.getByRole("button", { name: "Existing block…" })).toBeVisible({ timeout: 5000 });
   await dialog.getByRole("button", { name: "Hero", exact: true }).click();
   await expect(page.getByText("Block added").first()).toBeVisible({ timeout: 5000 });
@@ -1775,7 +1775,7 @@ test.describe("forms builder", () => {
       ),
     );
     await page.waitForTimeout(600);
-    await expect(page.getByRole("dialog", { name: "Edit property" })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: /Add block|Edit property/ })).toHaveCount(0);
     await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
   });
 

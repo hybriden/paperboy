@@ -35,7 +35,7 @@ import { TypeIcon } from "../lib/typeIcons.js";
 import { BuildFromBriefDialog } from "./BuildFromBrief.js";
 import { FormSubmissions } from "./FormSubmissions.js";
 import { ContentArea } from "./fields/ContentArea.js";
-import { SharedBlockPicker } from "./fields/SharedBlockPicker.js";
+import { SharedBlockPicker, type PickerBlock } from "./fields/SharedBlockPicker.js";
 import { MarkdownEditor } from "./fields/MarkdownEditor.js";
 import { LinkField } from "./fields/LinkField.js";
 import { ReferenceField } from "./fields/ReferenceField.js";
@@ -270,6 +270,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   useEffect(() => {
     externalPreviewRef.current = externalPreview;
   }, [externalPreview]);
+  // Read in the preview-message handler (whose effect doesn't re-run on user
+  // changes) — permissions are session-stable, the ref just keeps it honest.
+  const canEditRef = useRef(false);
   const [previewRefresh, setPreviewRefresh] = useState(0);
   // Editor → preview sync: focusing/clicking a property highlights its region in
   // the preview. The counter re-triggers even when the same field is re-focused.
@@ -376,6 +379,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   }, [form, onName]);
 
   const canEdit = user.permissions.includes("content.update");
+  useEffect(() => {
+    canEditRef.current = canEdit;
+  }, [canEdit]);
 
   const canPublish = user.permissions.includes("content.publish");
 
@@ -740,6 +746,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       // messages into this document would write to the wrong fields.
       // Read-only, deliberately.
       if (externalPreviewRef.current && (msg.type === "paperboy:edit" || msg.type === "paperboy:drop" || msg.type === "paperboy:add-block")) return;
+      // Write-intent messages from a read-only session: say so instead of a
+      // silent no-op (the preview shows the affordances either way — the bridge
+      // can't know this user's permissions).
+      if ((msg.type === "paperboy:drop" || msg.type === "paperboy:add-block") && !canEditRef.current) {
+        toast.toast({ title: "View only", description: "You don’t have permission to change this content.", variant: "info" });
+        return;
+      }
       if (msg.type === "paperboy:rect") {
         // Anchor update for the open overlay (same field — and same block, when
         // the overlay is scoped to a field inside a block).
@@ -783,7 +796,15 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         const fieldName = typeof msg.field === "string" ? msg.field : null;
         const def = fieldName ? type?.fields.find((f) => f.name === fieldName && f.type === "contentArea") : undefined;
         if (!fieldName || !def) {
-          toast.error("Couldn’t add here", `The preview marks this area as “${fieldName ?? "?"}”, which isn’t a contentArea field of ${type?.name ?? "this type"}. data-pb-area must name the contentArea field.`);
+          // A BLOCK's own nested area is correctly annotated but out of scope
+          // here (same page-level rule as drop) — that gets an honest pointer,
+          // not a toast blaming the frontend's markup.
+          const isBlockArea = !!fieldName && types.some((t) => t.kind === "block" && t.fields.some((f) => f.name === fieldName && f.type === "contentArea"));
+          if (isBlockArea) {
+            toast.toast({ title: "This area belongs to a block", description: "Nested areas are edited in the form — open the block in Side by side or All properties to add here.", variant: "info" });
+          } else {
+            toast.error("Couldn’t add here", `The preview marks this area as “${fieldName ?? "?"}”, which isn’t a contentArea field of ${type?.name ?? "this type"}. data-pb-area must name the contentArea field.`);
+          }
           return;
         }
         if (!msg.rect) return;
@@ -1646,6 +1667,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                   ox: ope.ox,
                   oy: ope.oy,
                   onClose: closeOpe,
+                  label: "Add block",
                   content: (
                     <AddBlockCard
                       def={areaDef}
@@ -2617,7 +2639,7 @@ function AddBlockCard({
 }: {
   def: FieldDef;
   types: ContentTypeDef[];
-  sharedBlocks: { documentId: string; name: string; type: string }[];
+  sharedBlocks: PickerBlock[];
   onAddInline: (blockType: string, label: string) => void;
   onAddShared: (documentId: string, blockType: string, label?: string) => void;
   onClose: () => void;

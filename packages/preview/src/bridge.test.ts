@@ -137,6 +137,40 @@ describe("initPreviewBridge", () => {
     teardown();
   });
 
+  it("hovering the chip itself keeps the chrome (it sits outside the area element)", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    const add = document.querySelector<HTMLElement>(".pb-area-add")!;
+    // Moving the pointer onto the chip fires pointerover with the chip as
+    // target — that must not read as "left the area" or it vanishes mid-click.
+    add.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(add.style.display).not.toBe("none");
+    teardown();
+  });
+
+  it("a drag hides the add chip — a visible chip would swallow the drop", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    const add = document.querySelector<HTMLElement>(".pb-area-add")!;
+    expect(add.style.display).not.toBe("none");
+    // Cross-origin path: the admin broadcasts the drag start.
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:dragsource", payload: { kind: "block" } }, source: target }));
+    expect(add.style.display).toBe("none");
+    // Same-origin path: a dragover carrying our MIME hides it too.
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(add.style.display).not.toBe("none");
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => "" };
+    const over = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(over, "dataTransfer", { value: dt });
+    document.getElementById("inner")!.dispatchEvent(over);
+    expect(add.style.display).toBe("none");
+    teardown();
+  });
+
   it("clicking the add chip posts paperboy:add-block with the area's field", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-area="mainArea"><p id="inner">block</p></div>`;

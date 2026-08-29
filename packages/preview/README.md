@@ -58,10 +58,11 @@ The bridge then:
 - streams `paperboy:rect` on scroll/resize, applies `paperboy:patch` (live swap) and `paperboy:focus`,
 - outlines every `data-pb-area` with a dotted border (v0.4+) so editors see where
   each content area starts and ends; hovering an area shows its name and a
-  "＋ Add block" chip that posts `paperboy:add-block {field, rect}` — the admin
-  opens its block palette for that area, anchored at the chip. The chrome is
-  injected `position:fixed` chrome in `<body>`, never DOM inside your area
-  elements, so grid/flex layouts are untouched. Older admins ignore the message,
+  "＋ Add block" chip that posts `paperboy:add-block {field, rect}`, which the admin
+  answers by opening its block palette for that area, anchored at the chip. The
+  chrome is `position:fixed` elements injected into `<body>` — never DOM inside
+  your area elements, so grid/flex layouts are untouched. Older admins ignore the
+  message; the chip hides while a block drag is in progress,
 - injects its own styles and persists scroll across reloads.
 
 ## Admin (parent window) — types only, no DOM
