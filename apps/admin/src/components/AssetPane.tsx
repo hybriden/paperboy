@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { isFormType } from "@paperboy/shared";
 import type { ContentTypeDef } from "@paperboy/shared";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
@@ -32,6 +33,9 @@ export function AssetPane({
   const [tab, setTab] = useState<"blocks" | "media">("blocks");
   const [creating, setCreating] = useState(false);
   const [folderId, setFolderId] = useState<string | null>(null);
+  // Forms are shared blocks technically, but editors look for "my form", not
+  // "my block" — a kind filter appears once the library holds at least one.
+  const [blockKind, setBlockKind] = useState<"all" | "forms" | "blocks">("all");
   const qc = useQueryClient();
   const toast = useToast();
   const blocks = useQuery({ queryKey: ["blocks"], queryFn: ({ signal }) => api.blocks(signal) });
@@ -53,8 +57,14 @@ export function AssetPane({
     onError: (e) => toast.error("Couldn’t delete block", (e as Error).message),
   });
 
-  // Only the shared blocks in the current folder (null = root/unfiled).
-  const visibleBlocks = blocks.data?.filter((b) => (b.folderId ?? null) === folderId);
+  // Only the shared blocks in the current folder (null = root/unfiled),
+  // then the kind filter on top.
+  const hasForms = blocks.data?.some((b) => isFormType(b.type)) ?? false;
+  const visibleBlocks = blocks.data?.filter(
+    (b) =>
+      (b.folderId ?? null) === folderId &&
+      (blockKind === "all" || (blockKind === "forms") === isFormType(b.type)),
+  );
 
   return (
     <aside className="flex h-full w-full flex-col border-l border-line bg-panel">
@@ -82,9 +92,40 @@ export function AssetPane({
       <div className="min-h-0 flex-1 overflow-auto p-1.5">
         {tab === "blocks" && (
           <>
+            {hasForms && (
+              <div role="group" aria-label="Block kind" className="mb-1.5 flex gap-1 px-1 pt-1">
+                {(
+                  [
+                    ["all", "All"],
+                    ["forms", "Forms"],
+                    ["blocks", "Blocks"],
+                  ] as const
+                ).map(([k, label]) => (
+                  <button
+                    key={k}
+                    type="button"
+                    aria-pressed={blockKind === k}
+                    className={`rounded-full px-2 py-0.5 text-xs ${
+                      blockKind === k ? "bg-accent/15 font-semibold text-accent-700" : "text-muted hover:bg-canvas"
+                    }`}
+                    onClick={() => setBlockKind(k)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             <FolderNav kind="block" currentFolderId={folderId} onNavigate={setFolderId} onMoveItem={(id, target) => move.mutate({ id, folderId: target })} />
             {blocks.isLoading && [0, 1].map((i) => <Skeleton key={i} className="mb-1 h-9" />)}
-            {visibleBlocks?.length === 0 && <EmptyState className="py-6">{folderId ? "This folder is empty. Drag blocks here." : "No shared blocks yet."}</EmptyState>}
+            {visibleBlocks?.length === 0 && (
+              <EmptyState className="py-6">
+                {blockKind === "forms"
+                  ? "No forms here yet."
+                  : folderId
+                    ? "This folder is empty. Drag blocks here."
+                    : "No shared blocks yet."}
+              </EmptyState>
+            )}
             {visibleBlocks?.map((b) => {
               const loc = Object.values(b.locales)[0];
               const selected = selectedId === b.documentId;

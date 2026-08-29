@@ -1653,6 +1653,75 @@ test.describe("forms builder", () => {
     await expect(page.getByRole("tab", { name: "Protection & privacy" })).toBeVisible();
     await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
   });
+
+  test("a used form shows where it lives, and Side by side previews the page that embeds it", async ({ page }) => {
+    await login(page);
+    const { documentId, headers } = await createForm(page);
+
+    // Unused: the header says so, plainly.
+    await page.goto(`/edit/${documentId}`);
+    await expect(page.getByText("not placed on any page yet")).toBeVisible({ timeout: 20_000 });
+
+    // Place it on a SectionPage (its mainArea has no allow-list, so any
+    // general block — a Form included — is legal at the write chokepoint).
+    const instSection = await page.request.post("/api/v1/manage/type-templates/SectionPage/instantiate", {
+      headers,
+      data: { withBlocks: true, updateExisting: true },
+    });
+    expect(instSection.ok(), `instantiate SectionPage: ${instSection.status()} ${await instSection.text()}`).toBe(true);
+    const pageName = `Form host ${Date.now().toString(36)}`;
+    const createdPage = await page.request.post("/api/v1/manage/content", {
+      headers,
+      data: { type: "SectionPage", parentId: null, locale: "en", name: pageName },
+    });
+    expect(createdPage.ok(), `create host: ${createdPage.status()} ${await createdPage.text()}`).toBe(true);
+    const host = (await createdPage.json()) as { documentId: string };
+    const put = await page.request.put(`/api/v1/manage/content/${host.documentId}?locale=en`, {
+      headers,
+      data: {
+        data: {
+          heading: pageName,
+          mainArea: [{ key: "b_e2e_usage", blockType: "Form", display: "automatic", inline: null, ref: documentId }],
+        },
+      },
+    });
+    expect(put.ok(), `place form: ${put.status()} ${await put.text()}`).toBe(true);
+
+    // Reload the form: the header names the host page (click = open it), and
+    // Side by side comes alive — framing the HOST page. On-page stays page-only.
+    await page.goto(`/edit/${documentId}`);
+    await expect(page.getByRole("button", { name: pageName })).toBeVisible({ timeout: 20_000 });
+    const split = page.getByRole("button", { name: "Side by side" });
+    await expect(split).toBeEnabled();
+    await expect(page.getByRole("button", { name: "On-page" })).toBeDisabled();
+    await split.click();
+    await expect(page.getByText(/Previewing on/)).toBeVisible();
+    // The iframe carries the host page's path, not the form's (a form has none).
+    await expect
+      .poll(async () => (await page.locator("iframe").first().getAttribute("src")) ?? "", { timeout: 15_000 })
+      .toContain("/form-host");
+
+    await page.request.delete(`/api/v1/manage/content/${host.documentId}`, { headers });
+    await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+  });
+
+  test("the asset pane can filter shared blocks down to forms", async ({ page }) => {
+    await login(page);
+    const { documentId, headers } = await createForm(page);
+    await page.goto("/edit");
+    const kindFilter = page.getByRole("group", { name: "Block kind" });
+    await expect(kindFilter).toBeVisible({ timeout: 20_000 });
+
+    await kindFilter.getByRole("button", { name: "Forms" }).click();
+    // The seeded non-form shared block disappears; the form stays.
+    await expect(page.getByRole("button", { name: /Featured Card/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^Builder-/ }).first()).toBeVisible();
+
+    await kindFilter.getByRole("button", { name: "All" }).click();
+    await expect(page.getByRole("button", { name: /Featured Card/ }).first()).toBeVisible();
+
+    await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+  });
 });
 
 // ---------------------------------------------------------------------------

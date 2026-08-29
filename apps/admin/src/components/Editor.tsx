@@ -165,6 +165,28 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Same query key as the settings panel, so the request is shared.
   const reviewGate = useQuery({ queryKey: ["agent-review"], queryFn: ({ signal }) => api.agentReview(signal) });
 
+  // "Used on": the documents referencing this one. Blocks only — pages are
+  // reached from the tree, and a global renders everywhere by definition. Same
+  // query key as the Used-on dialog, so the two share one fetch. This is what
+  // lets a block BORROW a page for its preview (see previewable below).
+  const usage = useQuery({
+    queryKey: ["references", documentId],
+    queryFn: ({ signal }) => api.references(documentId, signal),
+    enabled: detail.data?.kind === "block",
+  });
+  const usingPages = useMemo(() => (usage.data ?? []).filter((r) => r.kind === "page"), [usage.data]);
+  // Which using page the preview borrows; null = the first one. State resets
+  // per document because the editor remounts keyed by documentId.
+  const [previewPageId, setPreviewPageId] = useState<string | null>(null);
+  const previewPage = usingPages.find((p) => p.documentId === previewPageId) ?? usingPages[0];
+  // The borrowed page's locale variant carries its urlPath — same cache key as
+  // opening that page in the editor, so navigating there afterwards is warm.
+  const previewPageDetail = useQuery({
+    queryKey: ["content", previewPage?.documentId ?? "", locale],
+    queryFn: ({ signal }) => api.get(previewPage!.documentId, locale, signal),
+    enabled: !!previewPage && detail.data?.kind === "block",
+  });
+
   const type = useMemo(
     () => types.find((t) => t.name === detail.data?.type),
     [types, detail.data?.type],
@@ -222,8 +244,21 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // opened from the asset pane in remembered On-page mode showed no editor at
   // all, under a wall of bridge diagnostics meant for frontend developers).
   // The stored preference is left alone; the next PAGE restores it.
+  //
+  // A USED block borrows a page instead: Side by side frames a page that
+  // embeds it, read-only (no drop, no live patch, no field focus — the bridge
+  // messages describe THAT page's fields, not this document's). On-page stays
+  // page-only: its click-to-edit binds to the open document.
   const previewable = type?.kind === "page";
-  const effectiveView: EditorView = previewable ? view : "props";
+  const canBorrowPreview = type?.kind === "block" && usingPages.length > 0;
+  const effectiveView: EditorView = previewable
+    ? view
+    : canBorrowPreview && view !== "props"
+      ? "split"
+      : "props";
+  const borrowedPreview = !previewable && effectiveView === "split";
+  const borrowedPreviewRef = useRef(false);
+  borrowedPreviewRef.current = borrowedPreview;
   const [previewRefresh, setPreviewRefresh] = useState(0);
   // Editor → preview sync: focusing/clicking a property highlights its region in
   // the preview. The counter re-triggers even when the same field is re-focused.
@@ -689,6 +724,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       if (!isPreviewOrigin(e.origin, previewOrigin(site.data))) return;
       const msg = parsePreviewMessage(e.data);
       if (!msg) return; // unknown/garbage (and forward-compat: future message types)
+      // Borrowed preview (a block framed on a page that uses it): the bridge
+      // reports THAT page's fields — routing its edit/drop messages into this
+      // document would write to the wrong fields. Read-only, deliberately.
+      if (borrowedPreviewRef.current && (msg.type === "paperboy:edit" || msg.type === "paperboy:drop")) return;
       if (msg.type === "paperboy:rect") {
         // Anchor update for the open overlay (same field — and same block, when
         // the overlay is scoped to a field inside a block).
@@ -1252,26 +1291,31 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                   ["split", "Side by side", "Form + live preview"],
                   ["onpage", "On-page", "Edit directly on the page"],
                 ] as const
-              ).map(([v, label, title]) => (
-                <button
-                  key={v}
-                  className={`rounded px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
-                    effectiveView === v ? "bg-accent/15 font-semibold text-accent-700" : "text-muted hover:bg-canvas"
-                  }`}
-                  aria-pressed={effectiveView === v}
-                  // Disabled rather than hidden: the trio explains the system,
-                  // and the title says WHY this document only edits here.
-                  disabled={v !== "props" && !previewable}
-                  title={
-                    v !== "props" && !previewable
-                      ? `${type?.kind === "global" ? "A global renders across the site" : "A shared block has no page of its own — it renders where pages use it"}. Editing happens right here.`
-                      : title
-                  }
-                  onClick={() => setView(v)}
-                >
-                  {label}
-                </button>
-              ))}
+              ).map(([v, label, title]) => {
+                // Disabled rather than hidden: the trio explains the system,
+                // and the title says WHY a view doesn't apply here. A USED
+                // block gets Side by side (borrowing a page that embeds it);
+                // On-page stays page-only — click-to-edit binds to the page.
+                const enabled = previewable || v === "props" || (v === "split" && canBorrowPreview);
+                const disabledTitle = !canBorrowPreview
+                  ? `${type?.kind === "global" ? "A global renders across the site" : "A shared block has no page of its own — it renders where pages use it"}. Editing happens right here.`
+                  : "On-page editing works from the page itself — open it from “Used on”.";
+                const enabledTitle = v === "split" && !previewable ? "Preview this block on a page that uses it" : title;
+                return (
+                  <button
+                    key={v}
+                    className={`rounded px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                      effectiveView === v ? "bg-accent/15 font-semibold text-accent-700" : "text-muted hover:bg-canvas"
+                    }`}
+                    aria-pressed={effectiveView === v}
+                    disabled={!enabled}
+                    title={enabled ? enabledTitle : disabledTitle}
+                    onClick={() => setView(v)}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           )}
           {/* The state and the button that changes it are ONE decision, so they sit
@@ -1476,6 +1520,35 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         ) : (
           <span className="rounded bg-accent/15 px-2 py-1 text-xs font-medium text-fg">Shared block · lives in the asset pane</span>
         )}
+        {/* Orientation for a shared block: where does it actually appear? The
+            full list (with fields) stays in the Used on… dialog; this line
+            answers the question without a click — and names go to the page. */}
+        {form.kind === "block" && usage.data && (
+          usage.data.length === 0 ? (
+            <span className="shrink-0 text-xs text-muted">not placed on any page yet</span>
+          ) : (
+            <span className="flex min-w-0 shrink items-center gap-1 text-xs text-muted">
+              <span className="shrink-0">Used on</span>
+              {usage.data.slice(0, 2).map((r, i) => (
+                <button
+                  key={r.documentId}
+                  type="button"
+                  className="max-w-[140px] truncate font-medium text-accent-700 hover:underline"
+                  title={`Open ${r.name}`}
+                  onClick={() => navigate(`/edit/${r.documentId}`)}
+                >
+                  {i > 0 && <span aria-hidden className="mr-1 text-muted">·</span>}
+                  {r.name}
+                </button>
+              ))}
+              {usage.data.length > 2 && (
+                <button type="button" className="shrink-0 text-accent-700 hover:underline" onClick={() => setShowReferences(true)}>
+                  +{usage.data.length - 2} more
+                </button>
+              )}
+            </span>
+          )
+        )}
         <div className="ml-auto flex min-w-0 items-center gap-2 text-sm">
           <TypeIcon name={type?.icon} fallback={form.kind === "block" ? "blocks" : "file"} width={15} height={15} className="shrink-0 text-muted" />
           <span className="truncate font-medium">{type?.displayName ?? form.type}</span>
@@ -1491,13 +1564,34 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         const previewPaneEl = previewOpen ? (
           <PreviewPane
             locale={locale}
-            urlPath={form.urlPath}
-            documentId={documentId}
-            kind={form.kind}
+            urlPath={borrowedPreview ? (previewPageDetail.data?.urlPath ?? null) : form.urlPath}
+            documentId={borrowedPreview ? previewPage?.documentId : documentId}
+            kind={borrowedPreview ? "page" : form.kind}
             refreshSignal={previewRefresh}
-            focusField={propFocus}
-            mode={opeMode}
-            livePatch={livePatch}
+            focusField={borrowedPreview ? null : propFocus}
+            mode={borrowedPreview ? "inspect" : opeMode}
+            livePatch={borrowedPreview ? null : livePatch}
+            toolbarExtra={
+              borrowedPreview && previewPage ? (
+                <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
+                  Previewing on
+                  {usingPages.length > 1 ? (
+                    <select
+                      className="field-input-dense max-w-[180px]"
+                      aria-label="Previewing on page"
+                      value={previewPage.documentId}
+                      onChange={(e) => setPreviewPageId(e.target.value)}
+                    >
+                      {usingPages.map((p) => (
+                        <option key={p.documentId} value={p.documentId}>{p.name}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="max-w-[180px] truncate font-medium text-fg">{previewPage.name}</span>
+                  )}
+                </span>
+              ) : undefined
+            }
             overlay={(() => {
               if (!ope || !type) return null;
               // "name" means the PAGE TITLE only when the overlay isn't scoped to
