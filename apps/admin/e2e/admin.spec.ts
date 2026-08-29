@@ -853,6 +853,54 @@ test("visual editing: a field INSIDE a block opens the on-page overlay scoped to
   await expect(page.locator("#pb-block-0")).toHaveCount(0);
 });
 
+test("visual editing: an add-block message from the preview opens the area palette and appends", async ({ page }) => {
+  await login(page);
+  const me = await page.request.get("/api/v1/auth/me");
+  const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+  const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
+  // A throwaway host page, so the append never pollutes seeded content.
+  const inst = await page.request.post("/api/v1/manage/type-templates/SectionPage/instantiate", {
+    headers,
+    data: { withBlocks: true, updateExisting: true },
+  });
+  expect(inst.ok(), `instantiate SectionPage: ${inst.status()} ${await inst.text()}`).toBe(true);
+  const created = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: "SectionPage", parentId: null, locale: "en", name: `AreaAdd ${Date.now().toString(36)}` },
+  });
+  expect(created.ok(), `create host: ${created.status()} ${await created.text()}`).toBe(true);
+  const { documentId } = (await created.json()) as { documentId: string };
+
+  await page.goto(`/edit/${documentId}`);
+  await page.getByRole("button", { name: "Side by side" }).click();
+  const frame = await waitPreviewFrame(page);
+  // What the bridge's "＋ Add block" area chip posts (see @paperboycms/preview
+  // ≥0.4). Posted from INSIDE the iframe for the same origin-check reason as
+  // the paperboy:edit test above.
+  await frame.evaluate(() =>
+    window.parent.postMessage(
+      { type: "paperboy:add-block", field: "mainArea", rect: { x: 40, y: 120, w: 600, h: 300 } },
+      "*",
+    ),
+  );
+  // The anchored palette opens over the preview and appends with ONE click —
+  // same offering as the sidebar palette (one allow-list home).
+  const dialog = page.getByRole("dialog", { name: "Edit property" });
+  await expect(dialog.getByRole("button", { name: "Existing block…" })).toBeVisible({ timeout: 5000 });
+  await dialog.getByRole("button", { name: "Hero", exact: true }).click();
+  await expect(page.getByText("Block added").first()).toBeVisible({ timeout: 5000 });
+  await expect(page.getByRole("button", { name: /^Actions for Hero/ })).toBeVisible();
+  // An unknown area name gets the self-teaching toast, and no palette.
+  await frame.evaluate(() =>
+    window.parent.postMessage(
+      { type: "paperboy:add-block", field: "notAField", rect: { x: 10, y: 10, w: 100, h: 100 } },
+      "*",
+    ),
+  );
+  await expect(page.getByText("Couldn’t add here").first()).toBeVisible({ timeout: 5000 });
+  await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+});
+
 test("focusing a block field in the form highlights that block's field in the preview", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
@@ -1707,6 +1755,27 @@ test.describe("forms builder", () => {
     await expect.poll(src, { timeout: 15_000 }).toContain("/form-host");
 
     await page.request.delete(`/api/v1/manage/content/${host.documentId}`, { headers });
+    await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+  });
+
+  test("standalone block preview stays read-only: an add-block message is dropped", async ({ page }) => {
+    await login(page);
+    const { documentId, headers } = await createForm(page);
+    await page.goto(`/edit/${documentId}`);
+    await page.getByRole("button", { name: "Side by side" }).click();
+    const src = async () => (await page.locator("iframe").first().getAttribute("src")) ?? "";
+    await expect.poll(src, { timeout: 15_000 }).toContain(`/preview/block/${documentId}`);
+    const frame = await waitPreviewFrame(page);
+    // The standalone frame's coordinates describe THAT render, not this
+    // document — the externalPreview guard must drop add-block like edit/drop.
+    await frame.evaluate(() =>
+      window.parent.postMessage(
+        { type: "paperboy:add-block", field: "fields", rect: { x: 10, y: 10, w: 100, h: 100 } },
+        "*",
+      ),
+    );
+    await page.waitForTimeout(600);
+    await expect(page.getByRole("dialog", { name: "Edit property" })).toHaveCount(0);
     await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
   });
 
