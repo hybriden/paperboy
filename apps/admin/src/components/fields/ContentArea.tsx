@@ -17,7 +17,8 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { duplicateFieldKeys, fieldKeyFromLabel, generalBlockTypes, isFormFieldType } from "@paperboy/shared";
+import { duplicateFieldKeys, fieldKeyFromLabel, isFormFieldType } from "@paperboy/shared";
+import { allowedBlockTypesFor } from "../../lib/area-add.js";
 import { blockSummary, type BlockPath } from "../../lib/block-path.js";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "../ui/menu.js";
 import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
@@ -88,14 +89,9 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   // authoring-side version of garbage-in-success-out. Empty elsewhere.
   const duplicateKeys = duplicateFieldKeys(blocks);
   const nestedOnlyTypes = useMemo(() => new Set(types.filter((t) => t.nestedOnly).map((t) => t.name)), [types]);
-  // Follow the order the type author DECLARED — they list the everyday fields
-  // first, while `types` arrives sorted by internal name (which put "Text
-  // field" ninth in the Form palette, behind "Checkbox" and "Choose one").
-  const allowed = field.allowedBlocks.length
-    ? field.allowedBlocks.flatMap((name) => types.find((t) => t.name === name) ?? [])
-    // No allow-list means "any block" — which must NOT include the parts that
-    // only make sense inside a specific parent (a Form's ten field blocks).
-    : generalBlockTypes(types);
+  // One home with the on-page add-block overlay (lib/area-add): declared
+  // allow-list order, else any general block (parts excluded).
+  const allowed = allowedBlockTypesFor(field, types);
   // An area whose whole palette is form-field parts IS a form's questions —
   // speak forms there ("Add question", no drag-in-a-page hint), because that
   // is what the editor is building.
