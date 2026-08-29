@@ -1616,6 +1616,35 @@ test.describe("forms builder", () => {
     await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
   });
 
+  test("a form never hides its editor: remembered On-page falls back to the builder", async ({ page }) => {
+    await login(page);
+    // Remember On-page the way a real session does: pick it on a PAGE.
+    await page.getByRole("treeitem", { name: /Home/ }).click();
+    await expect(editorName(page)).toHaveValue("Home");
+    await page.getByRole("button", { name: "On-page" }).click();
+    await expect(page.getByRole("button", { name: "On-page" })).toHaveAttribute("aria-pressed", "true");
+
+    // Opening a form (a shared block — no page of its own) must show the
+    // BUILDER, not a dead full-screen preview iframe (found live: the editor
+    // was invisible until the mode was switched by hand).
+    const { documentId, headers } = await createForm(page);
+    await page.goto(`/edit/${documentId}`);
+    await expect(page.getByTestId("content-area-fields")).toBeVisible({ timeout: 20_000 });
+    // The page-only views are disabled, with the reason on them; Properties is
+    // the active view.
+    await expect(page.getByRole("button", { name: "On-page" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Side by side" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Properties" })).toHaveAttribute("aria-pressed", "true");
+
+    // The preference was NOT clobbered: the next page restores On-page.
+    await page.getByRole("treeitem", { name: /Home/ }).click();
+    await expect(editorName(page)).toHaveValue("Home");
+    await expect(page.getByRole("button", { name: "On-page" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "On-page" })).toHaveAttribute("aria-pressed", "true");
+
+    await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+  });
+
   test("form settings are grouped into native tabs", async ({ page }) => {
     await login(page);
     const { documentId, headers } = await createForm(page);

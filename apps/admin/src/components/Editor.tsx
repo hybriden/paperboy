@@ -217,6 +217,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     if (next !== "onpage") closeOpeRef.current?.();
     try { localStorage.setItem("pb-editor-view", next); } catch { /* ignore */ }
   };
+  // A block or global has no page of its own — nothing to frame — so the two
+  // page views would bury the editor behind a dead iframe (found live: a Form
+  // opened from the asset pane in remembered On-page mode showed no editor at
+  // all, under a wall of bridge diagnostics meant for frontend developers).
+  // The stored preference is left alone; the next PAGE restores it.
+  const previewable = type?.kind === "page";
+  const effectiveView: EditorView = previewable ? view : "props";
   const [previewRefresh, setPreviewRefresh] = useState(0);
   // Editor → preview sync: focusing/clicking a property highlights its region in
   // the preview. The counter re-triggers even when the same field is re-focused.
@@ -226,7 +233,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // ---- On-page edit (Optimizely-style OPE) ----------------------------------
   // Derived from the view: in "onpage" the preview clicks open anchored overlay
   // editors; in "split" they focus the sidebar field (classic side-by-side).
-  const opeMode: PreviewMode = view === "onpage" ? "edit" : "inspect";
+  const opeMode: PreviewMode = effectiveView === "onpage" ? "edit" : "inspect";
   // The open overlay: which field, anchored where. `rect` is the element's
   // bridge-reported rect; `ox`/`oy` is the CLICK offset within the element, so
   // the card opens where the editor clicked — a 2000px-tall richtext body
@@ -977,7 +984,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // 409s otherwise ("Nothing to publish (no draft changes)").
   const nothingToPublish = form.status === "published" && !form.hasUnpublishedChanges;
   // Live preview is a desktop-only split pane; never open it on phones.
-  const previewOpen = view !== "props" && !mobile;
+  const previewOpen = effectiveView !== "props" && !mobile;
   // Hoisted on purpose: the preview message handler (registered while the
   // editor may still be loading) closes over this — a `const` here would stay
   // un-initialized in that closure (TDZ) and crash the first drop.
@@ -1248,9 +1255,18 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               ).map(([v, label, title]) => (
                 <button
                   key={v}
-                  className={`rounded px-2 py-0.5 text-xs ${view === v ? "bg-accent/15 font-semibold text-accent-700" : "text-muted hover:bg-canvas"}`}
-                  aria-pressed={view === v}
-                  title={title}
+                  className={`rounded px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                    effectiveView === v ? "bg-accent/15 font-semibold text-accent-700" : "text-muted hover:bg-canvas"
+                  }`}
+                  aria-pressed={effectiveView === v}
+                  // Disabled rather than hidden: the trio explains the system,
+                  // and the title says WHY this document only edits here.
+                  disabled={v !== "props" && !previewable}
+                  title={
+                    v !== "props" && !previewable
+                      ? `${type?.kind === "global" ? "A global renders across the site" : "A shared block has no page of its own — it renders where pages use it"}. Editing happens right here.`
+                      : title
+                  }
                   onClick={() => setView(v)}
                 >
                   {label}
@@ -1591,7 +1607,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         ) : null;
 
         if (mobile) return <div className="min-h-0 flex-1">{formSection}</div>;
-        if (view === "onpage" && previewPaneEl) {
+        if (effectiveView === "onpage" && previewPaneEl) {
           return <div className="min-h-0 flex-1 border-l border-line bg-panel">{previewPaneEl}</div>;
         }
         return (
