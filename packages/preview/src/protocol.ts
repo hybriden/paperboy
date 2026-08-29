@@ -76,6 +76,17 @@ export interface DropMessage {
   payload: unknown;
 }
 
+/** The editor clicked an area's "＋ Add block" chip (bridge chrome). The admin
+ *  answers by opening its block palette for that contentArea field, anchored at
+ *  the area's rect. Additive since 0.4.0 — an older admin ignores it. */
+export interface AddBlockMessage {
+  type: "paperboy:add-block";
+  /** The content-area field the chip belongs to. */
+  field: string | null;
+  /** The area's rect (iframe viewport coords), for anchoring the palette. */
+  rect: Rect;
+}
+
 /* ----------------------------- admin → iframe ----------------------------- */
 
 export interface PatchMessage {
@@ -138,7 +149,7 @@ export interface DropAtMessage {
   payload: unknown;
 }
 
-export type FromPreview = ReadyMessage | EditMessage | RectMessage | DropMessage;
+export type FromPreview = ReadyMessage | EditMessage | RectMessage | DropMessage | AddBlockMessage;
 export type ToPreview = PatchMessage | FocusMessage | DragSourceMessage | DragEndMessage | DragAtMessage | DropAtMessage | PingMessage;
 export type PaperboyMessage = FromPreview | ToPreview;
 
@@ -147,6 +158,7 @@ const KNOWN_TYPES = new Set<string>([
   "paperboy:edit",
   "paperboy:rect",
   "paperboy:drop",
+  "paperboy:add-block",
   "paperboy:patch",
   "paperboy:focus",
   "paperboy:dragsource",
