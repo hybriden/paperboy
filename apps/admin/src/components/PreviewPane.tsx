@@ -99,6 +99,7 @@ export function PreviewPane({
   mode = "inspect",
   overlay,
   livePatch,
+  toolbarExtra,
 }: {
   locale: string;
   urlPath: string | null;
@@ -115,6 +116,9 @@ export function PreviewPane({
   overlay?: { rect: PbRect; ox: number; oy: number; content: React.ReactNode; onClose: () => void } | null;
   /** Live DOM patch for the page (text/html swap, no reload) — keyed by n. */
   livePatch?: { field: string; text?: string; html?: string; blockIndex?: number; n: number } | null;
+  /** Extra toolbar content (e.g. the borrowed-page picker when a block
+   *  previews on a page that uses it). */
+  toolbarExtra?: React.ReactNode;
 }) {
   const [device, setDevice] = useState<Device>("desktop");
   const [nonce, setNonce] = useState(0);
@@ -351,6 +355,7 @@ export function PreviewPane({
           ))}
         </div>
         <button className="btn-subtle px-2 py-0.5 text-xs" onClick={() => setNonce((n) => n + 1)}>Refresh</button>
+        {toolbarExtra}
         <span className="text-[11px] tabular-nums text-muted">{target}px · {Math.round(scale * 100)}%</span>
         <span className="ml-auto truncate text-xs text-muted">/{locale}{path}</span>
       </div>
