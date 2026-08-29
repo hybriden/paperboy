@@ -185,6 +185,41 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
   return <div className="block card" data-block={b.blockType} {...edit}>Unknown block: {b.blockType}</div>;
 }
 
+/* ------------------------- standalone block preview ------------------------ */
+
+/**
+ * One delivered document, wrapped as the AreaBlock shape `Block` renders. The
+ * standalone preview route (/{locale}/preview/block/{documentId}) shows a
+ * shared block through the SAME component it renders through inline — so what
+ * an editor sees standalone is exactly what a page embedding it will show.
+ */
+export function standaloneAreaBlock(content: DeliveryContent): AreaBlock {
+  return {
+    blockType: content.type,
+    display: "automatic",
+    shared: true,
+    content: {
+      documentId: content.documentId,
+      type: content.type,
+      kind: content.kind,
+      name: content.name,
+      urlPath: content.urlPath ?? null,
+      data: content.data as Record<string, unknown>,
+      fieldTypes: content.fieldTypes,
+      form: content.form,
+    },
+  };
+}
+
+/** The standalone route's body: the block alone, on a bare shell. */
+export function StandaloneBlock({ content, locale, preview }: { content: DeliveryContent; locale: string; preview: boolean }) {
+  return (
+    <main className="wrap" data-document-id={content.documentId}>
+      <Block b={standaloneAreaBlock(content)} index={0} locale={locale} preview={preview} />
+    </main>
+  );
+}
+
 /* ----------------------------- blog ----------------------------- */
 function fmtDate(v: unknown): string | null {
   const s = typeof v === "string" ? v : "";

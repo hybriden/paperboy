@@ -28,6 +28,11 @@ export async function fetchStart(locale: string, preview: boolean): Promise<Deli
   return cms(preview).startPage({ locale, populate: 2 });
 }
 
+/** One document by id — the standalone block preview route's fetch. */
+export async function fetchById(documentId: string, locale: string, preview: boolean): Promise<DeliveryContent | null> {
+  return cms(preview).getById(documentId, { locale, populate: 2 });
+}
+
 /** List delivered content of a type and/or the children of a page (ListPage, teaser blocks). */
 export async function fetchList(type: string | null, locale: string, preview: boolean, parentId?: string): Promise<DeliveryContent[]> {
   try {

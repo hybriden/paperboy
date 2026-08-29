@@ -53,6 +53,23 @@ export async function matchesPreviewToken(provided: string | null | undefined): 
 }
 
 /**
+ * Is this request allowed to see DRAFTS? Preview can be entered three ways: the
+ * Next draft-mode cookie, a short-lived `?pbt=` token (what the in-editor
+ * iframe sends), or `?pb=<secret>` for server-side callers. The query paths
+ * avoid Secure cookies/redirects, so they work over plain HTTP and any host.
+ * One home for the composition — both the page route and the standalone block
+ * preview gate on it.
+ */
+export async function isPreviewRequest(
+  draftModeEnabled: boolean,
+  sp: Record<string, string | string[] | undefined>,
+): Promise<boolean> {
+  if (draftModeEnabled) return true;
+  if (await matchesPreviewToken(typeof sp.pbt === "string" ? sp.pbt : undefined)) return true;
+  return matchesPreviewSecret(typeof sp.pb === "string" ? sp.pb : undefined);
+}
+
+/**
  * Make an internal redirect target safe to emit as a RELATIVE Location (S2-M12):
  * collapse leading slashes so a crafted segment (e.g. an attacker-controlled
  * locale) can't turn it into a protocol-relative `//evil.com` redirect. The
