@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { DeliveryContent } from "@paperboy/shared";
-import { StandaloneBlock, standaloneAreaBlock } from "./Renderer";
+import { standaloneAreaBlock } from "../lib/standalone-block";
+import { StandaloneBlock } from "./Renderer";
 
 // The standalone block preview route (/{locale}/preview/block/{documentId}) —
 // part of the documented preview contract — renders one delivered document

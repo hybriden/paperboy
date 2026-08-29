@@ -261,8 +261,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       ? "split"
       : "props";
   const externalPreview = blockPreview && effectiveView === "split";
+  // Assigned in an effect, not during render: React may replay or discard a
+  // render, and the handler that reads this fires post-commit anyway.
   const externalPreviewRef = useRef(false);
-  externalPreviewRef.current = externalPreview;
+  useEffect(() => {
+    externalPreviewRef.current = externalPreview;
+  }, [externalPreview]);
   const [previewRefresh, setPreviewRefresh] = useState(0);
   // Editor → preview sync: focusing/clicking a property highlights its region in
   // the preview. The counter re-triggers even when the same field is re-focused.

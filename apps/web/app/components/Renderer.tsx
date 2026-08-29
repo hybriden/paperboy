@@ -1,5 +1,6 @@
 import type { DeliveryContent } from "@paperboy/shared";
 import { blockData, contentAreas, pbAreaAttrs, renderRichText, type AreaBlock } from "@paperboycms/client";
+import { standaloneAreaBlock } from "../lib/standalone-block";
 import { submitFormAction } from "../actions/submit-form";
 import { Form } from "./Form";
 import DOMPurify from "isomorphic-dompurify";
@@ -187,31 +188,8 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
 
 /* ------------------------- standalone block preview ------------------------ */
 
-/**
- * One delivered document, wrapped as the AreaBlock shape `Block` renders. The
- * standalone preview route (/{locale}/preview/block/{documentId}) shows a
- * shared block through the SAME component it renders through inline — so what
- * an editor sees standalone is exactly what a page embedding it will show.
- */
-export function standaloneAreaBlock(content: DeliveryContent): AreaBlock {
-  return {
-    blockType: content.type,
-    display: "automatic",
-    shared: true,
-    content: {
-      documentId: content.documentId,
-      type: content.type,
-      kind: content.kind,
-      name: content.name,
-      urlPath: content.urlPath ?? null,
-      data: content.data as Record<string, unknown>,
-      fieldTypes: content.fieldTypes,
-      form: content.form,
-    },
-  };
-}
-
-/** The standalone route's body: the block alone, on a bare shell. */
+/** The standalone route's body: the block alone, on a bare shell, rendered by
+ *  the same Block component pages use inline (wrapping: lib/standalone-block). */
 export function StandaloneBlock({ content, locale, preview }: { content: DeliveryContent; locale: string; preview: boolean }) {
   return (
     <main className="wrap" data-document-id={content.documentId}>

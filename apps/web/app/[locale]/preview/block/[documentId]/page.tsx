@@ -29,8 +29,8 @@ export default async function BlockPreviewPage({
   params: Promise<{ locale: string; documentId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { locale, documentId } = await params;
-  const preview = await isPreviewRequest((await draftMode()).isEnabled, await searchParams);
+  const [{ locale, documentId }, dm, sp] = await Promise.all([params, draftMode(), searchParams]);
+  const preview = await isPreviewRequest(dm.isEnabled, sp);
   if (!preview) notFound();
 
   const content = await fetchById(documentId, locale, true);
