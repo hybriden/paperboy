@@ -57,6 +57,16 @@ export function publicSiteUrl(
   return `${base}/${encodeURIComponent(locale)}${path}`;
 }
 
+/**
+ * The frontend's STANDALONE BLOCK PREVIEW contract route (CLAUDE.md, apps/web
+ * reference: [locale]/preview/block/[documentId]). One home for the admin's
+ * builder (Editor) and detector (the hint below) — drifting apart would
+ * silently kill the standalone diagnosis.
+ */
+export const blockPreviewPath = (documentId: string): string => `/preview/block/${documentId}`;
+export const isStandaloneUrl = (urlPath: string | null | undefined): boolean =>
+  !!urlPath?.startsWith("/preview/block/");
+
 type Device = "desktop" | "tablet" | "mobile";
 // Real viewport widths the page is rendered at; the stage scales them to fit the
 // pane (scaled) so "desktop" shows the true desktop layout, not a
@@ -399,6 +409,18 @@ export function PreviewPane({
               className="border border-line bg-white shadow-panel"
               style={{ width: "100%", height: "100%", border: 0 }}
             />
+            {/* The standalone paragraph escapes the dismissal: dismissing was a
+                verdict on "my frontend has no bridge, fine" — a missing contract
+                ROUTE is a different failure, and hiding its diagnosis leaves an
+                unexplained empty frame. */}
+            {quiet && !bridgeSeen && targetOrigin && hintDismissed && isStandaloneUrl(urlPath) && (
+              <div className="pointer-events-auto absolute inset-x-0 bottom-0 border-t border-line bg-panel/95 p-3 text-xs text-muted">
+                <strong className="text-fg">This is a standalone block preview</strong> — it needs the frontend contract
+                route <code className="font-mono">/{"{locale}"}/preview/block/{"{documentId}"}</code> (see{" "}
+                <code className="font-mono">apps/web</code> for the reference implementation). Until the frontend adds
+                it, pick a page that uses this block from the toolbar’s preview target instead.
+              </div>
+            )}
             {quiet && !bridgeSeen && targetOrigin && !hintDismissed && (
               // Advice, not a verdict: the admin CANNOT read a cross-origin frame, so
               // its only proof of life is a paperboy:* postMessage from the
@@ -422,6 +444,16 @@ export function PreviewPane({
                   <code className="font-mono">@paperboycms/preview</code>, which powers on-page editing and live
                   updates. Add the bridge to enable those (and this hint goes away), or dismiss this with the ×.
                 </span>
+                {/* A standalone block frame needs a route the frontend may simply
+                    not have yet — that is the likely cause here, so say it first. */}
+                {isStandaloneUrl(urlPath) && (
+                  <span className="mt-1 block">
+                    <strong className="text-fg">This is a standalone block preview</strong> — it needs the frontend
+                    contract route <code className="font-mono">/{"{locale}"}/preview/block/{"{documentId}"}</code>{" "}
+                    (see <code className="font-mono">apps/web</code> for the reference implementation). Until the
+                    frontend adds it, pick a page that uses this block from the toolbar’s preview target instead.
+                  </span>
+                )}
                 <span className="mt-1 block">
                   <strong className="text-fg">If the preview is empty</strong>, the frontend is probably refusing to be
                   framed. It must allow this admin as a frame ancestor — scoped to the framed request, so the public

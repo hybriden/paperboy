@@ -88,11 +88,19 @@ on: it renders every built-in content type, and its `docker-compose.demo.yml`
 pulls the images below to bring up **CMS + admin + site + demo content** from one
 clone. Its `scripts/demo-content.mjs` builds a whole demo site through the
 Management API — a useful worked example, and the thing to update when a built-in
-type's shape changes. Two contracts it depends on: the admin frames previews as
-`{previewBaseUrl}/{locale}{urlPath}` (so a frontend must accept a locale prefix),
-and the CMS's generated `sitemap.xml`/`llms.txt` use that same
+type's shape changes. Three contracts it depends on: the admin frames previews as
+`{previewBaseUrl}/{locale}{urlPath}` (so a frontend must accept a locale prefix);
+the CMS's generated `sitemap.xml`/`llms.txt` use that same
 `/{locale}{urlPath}` scheme — a frontend that serves unprefixed paths must build
-those two itself from `GET /delivery/pages` rather than proxying them.
+those two itself from `GET /delivery/pages` rather than proxying them; and the
+admin previews a SHARED BLOCK standalone at
+`{previewBaseUrl}/{locale}/preview/block/{documentId}` — a preview-authenticated
+route (`?pbt` token; hard 404 without it, or drafts leak by id enumeration) that
+fetches `GET /delivery/content/:documentId` and renders the block with the same
+component used inline (apps/web's `[locale]/preview/block/[documentId]` is the
+reference). Optional but expected: without it, a block's Side-by-side default
+shows the bridge hint until the editor picks a host page from the preview-target
+picker.
 
 ## Published container images
 `ghcr.io/hybriden/paperboy-app` (api · init · web · mcp) and

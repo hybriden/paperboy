@@ -1626,15 +1626,19 @@ test.describe("forms builder", () => {
 
     // Opening a form (a shared block — no page of its own) must show the
     // BUILDER, not a dead full-screen preview iframe (found live: the editor
-    // was invisible until the mode was switched by hand).
+    // was invisible until the mode was switched by hand). A remembered On-page
+    // coerces to Side by side: the STANDALONE block preview route frames the
+    // form on its own, so even an unplaced form previews while it is built.
     const { documentId, headers } = await createForm(page);
     await page.goto(`/edit/${documentId}`);
     await expect(page.getByTestId("content-area-fields")).toBeVisible({ timeout: 20_000 });
-    // The page-only views are disabled, with the reason on them; Properties is
-    // the active view.
+    // On-page stays page-only; Side by side is live and STANDALONE by default.
     await expect(page.getByRole("button", { name: "On-page" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Side by side" })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "Properties" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByRole("button", { name: "Side by side" })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.getByText("Standalone", { exact: true })).toBeVisible();
+    await expect
+      .poll(async () => (await page.locator("iframe").first().getAttribute("src")) ?? "", { timeout: 15_000 })
+      .toContain(`/preview/block/${documentId}`);
 
     // The preference was NOT clobbered: the next page restores On-page.
     await page.getByRole("treeitem", { name: /Home/ }).click();
@@ -1688,18 +1692,19 @@ test.describe("forms builder", () => {
     expect(put.ok(), `place form: ${put.status()} ${await put.text()}`).toBe(true);
 
     // Reload the form: the header names the host page (click = open it), and
-    // Side by side comes alive — framing the HOST page. On-page stays page-only.
+    // Side by side defaults to the STANDALONE preview — picking the host page
+    // in the preview-target picker borrows it. On-page stays page-only.
     await page.goto(`/edit/${documentId}`);
     await expect(page.getByRole("button", { name: pageName })).toBeVisible({ timeout: 20_000 });
     const split = page.getByRole("button", { name: "Side by side" });
     await expect(split).toBeEnabled();
     await expect(page.getByRole("button", { name: "On-page" })).toBeDisabled();
     await split.click();
-    await expect(page.getByText(/Previewing on/)).toBeVisible();
-    // The iframe carries the host page's path, not the form's (a form has none).
-    await expect
-      .poll(async () => (await page.locator("iframe").first().getAttribute("src")) ?? "", { timeout: 15_000 })
-      .toContain("/form-host");
+    const src = async () => (await page.locator("iframe").first().getAttribute("src")) ?? "";
+    await expect.poll(src, { timeout: 15_000 }).toContain(`/preview/block/${documentId}`);
+    await page.getByRole("combobox", { name: "Preview target" }).selectOption({ label: `on ${pageName}` });
+    // Now the iframe carries the host page's path.
+    await expect.poll(src, { timeout: 15_000 }).toContain("/form-host");
 
     await page.request.delete(`/api/v1/manage/content/${host.documentId}`, { headers });
     await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });

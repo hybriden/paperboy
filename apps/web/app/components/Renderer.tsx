@@ -1,5 +1,6 @@
 import type { DeliveryContent } from "@paperboy/shared";
 import { blockData, contentAreas, pbAreaAttrs, renderRichText, type AreaBlock } from "@paperboycms/client";
+import { standaloneAreaBlock } from "../lib/standalone-block";
 import { submitFormAction } from "../actions/submit-form";
 import { Form } from "./Form";
 import DOMPurify from "isomorphic-dompurify";
@@ -183,6 +184,18 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
     );
   }
   return <div className="block card" data-block={b.blockType} {...edit}>Unknown block: {b.blockType}</div>;
+}
+
+/* ------------------------- standalone block preview ------------------------ */
+
+/** The standalone route's body: the block alone, on a bare shell, rendered by
+ *  the same Block component pages use inline (wrapping: lib/standalone-block). */
+export function StandaloneBlock({ content, locale, preview }: { content: DeliveryContent; locale: string; preview: boolean }) {
+  return (
+    <main className="wrap" data-document-id={content.documentId}>
+      <Block b={standaloneAreaBlock(content)} index={0} locale={locale} preview={preview} />
+    </main>
+  );
 }
 
 /* ----------------------------- blog ----------------------------- */
