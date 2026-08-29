@@ -8,6 +8,12 @@ describe("parsePreviewMessage", () => {
     expect(parsePreviewMessage({ type: "paperboy:patch", field: "b", html: "x" })?.type).toBe("paperboy:patch");
   });
 
+  it("accepts paperboy:add-block (the area add chip → admin palette)", () => {
+    const msg = parsePreviewMessage({ type: "paperboy:add-block", field: "mainArea", rect: { x: 0, y: 0, w: 10, h: 10 } });
+    expect(msg?.type).toBe("paperboy:add-block");
+    expect((msg as { field?: string }).field).toBe("mainArea");
+  });
+
   it("ignores unknown paperboy:* types (forward-compat / version skew)", () => {
     expect(parsePreviewMessage({ type: "paperboy:future-thing", field: "x" })).toBeNull();
   });

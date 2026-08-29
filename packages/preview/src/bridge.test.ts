@@ -108,6 +108,93 @@ describe("initPreviewBridge", () => {
     teardown();
   });
 
+  it("outlines content areas in editing mode (region visibility)", () => {
+    const target = makeTarget();
+    const teardown = initPreviewBridge({ target, badge: false });
+    // The injected stylesheet must draw the area's extent — a dotted outline,
+    // distinct from the dashed field outline — so editors see start/end.
+    const css = document.querySelector("style[data-pb-bridge]")!.textContent!;
+    expect(css).toMatch(/\[data-pb-area\][^{]*\{[^}]*dotted/);
+    teardown();
+  });
+
+  it("hovering a content area shows its name tag + an add chip; leaving hides them", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="mainArea"><p id="inner">block</p></div><p id="outside">not an area</p>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    const tag = document.querySelector<HTMLElement>(".pb-area-tag")!;
+    const add = document.querySelector<HTMLElement>(".pb-area-add")!;
+    expect(tag).not.toBeNull();
+    expect(add).not.toBeNull();
+    expect(tag.style.display).toBe("none");
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(tag.style.display).not.toBe("none");
+    expect(tag.textContent).toBe("mainArea");
+    expect(add.style.display).not.toBe("none");
+    document.getElementById("outside")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(tag.style.display).toBe("none");
+    expect(add.style.display).toBe("none");
+    teardown();
+  });
+
+  it("hovering the chip itself keeps the chrome (it sits outside the area element)", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    const add = document.querySelector<HTMLElement>(".pb-area-add")!;
+    // Moving the pointer onto the chip fires pointerover with the chip as
+    // target — that must not read as "left the area" or it vanishes mid-click.
+    add.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(add.style.display).not.toBe("none");
+    teardown();
+  });
+
+  it("a drag hides the add chip — a visible chip would swallow the drop", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    const add = document.querySelector<HTMLElement>(".pb-area-add")!;
+    expect(add.style.display).not.toBe("none");
+    // Cross-origin path: the admin broadcasts the drag start.
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:dragsource", payload: { kind: "block" } }, source: target }));
+    expect(add.style.display).toBe("none");
+    // Same-origin path: a dragover carrying our MIME hides it too.
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    expect(add.style.display).not.toBe("none");
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => "" };
+    const over = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(over, "dataTransfer", { value: dt });
+    document.getElementById("inner")!.dispatchEvent(over);
+    expect(add.style.display).toBe("none");
+    teardown();
+  });
+
+  it("clicking the add chip posts paperboy:add-block with the area's field", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    target.postMessage.mockClear();
+    document.querySelector<HTMLElement>(".pb-area-add")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(target.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "paperboy:add-block", field: "mainArea", rect: expect.anything() }),
+      "*",
+    );
+    teardown();
+  });
+
+  it("teardown removes the area chrome", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-area="mainArea"></div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    expect(document.querySelector(".pb-area-add")).not.toBeNull();
+    teardown();
+    expect(document.querySelector(".pb-area-add")).toBeNull();
+    expect(document.querySelector(".pb-area-tag")).toBeNull();
+  });
+
   it("posts paperboy:drop with the area's field + parsed payload on drop", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-area="contentarea"><p>empty</p></div>`;
