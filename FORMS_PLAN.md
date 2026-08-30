@@ -192,7 +192,8 @@ Recommended defaults in **bold**. These fork the architecture.
 - **(rec) As content**: a `Form` block type whose `fields` content area holds
   field blocks (`FormTextField`, `FormEmailField`, …). Inherits versioning,
   draft/publish, scheduling, i18n, RBAC, preview + on-page editing, MCP, the AI
-  copy desk, and drag-drop ordering. Zero new admin UI. Shipped as built-in type
+  writing assistant (called "Copy desk" at the time this was written), and
+  drag-drop ordering. Zero new admin UI. Shipped as built-in type
   templates. This is Optimizely's model and Storyblok's documented pattern.
 - A first-class `form` + `form_field` table pair (Umbraco/Payload). Full control,
   but re-implements versioning, i18n, permissions and admin UI — the ladder's

@@ -608,7 +608,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const hasField = (name: string) => Boolean(type?.fields.some((f) => f.name === name));
   // The page text is harvested SCHEMA-AWARE — seoRole-tagged fields first,
   // then delivery's name conventions, then every remaining text-bearing field —
-  // so the copy desk reads the page the same way the delivered seo block does,
+  // so the writing assistant reads the page the same way the delivered seo block does,
   // whatever the type's fields are called. (It used to read only 'heading' +
   // 'intro', which starved every other type down to just the page name.)
   function pageText(): string {
@@ -639,13 +639,14 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       if (r.provider === "fallback") toast.success("Draft suggestion added", "Basic mode — add an AI key in Settings → AI for real suggestions.");
       else toast.success("Suggestion applied");
     },
-    onError: (e) => toast.error("Copy desk failed", (e as Error).message),
+    onError: (e) => toast.error("Writing assistant failed", (e as Error).message),
   });
   async function aiSeoBoth() {
     if (hasField("metaTitle")) await ai.mutateAsync({ task: "meta_title", field: "metaTitle" });
     if (hasField("metaDescription")) await ai.mutateAsync({ task: "meta_description", field: "metaDescription" });
   }
   const showAi = canEdit && (hasField("metaTitle") || hasField("metaDescription"));
+  const aiEnabled = useAiEnabled();
 
   // Seed this locale from the default-locale version, AI-translating the text
   // fields (text/markdown) + name; other fields (richtext, blocks, references…)
@@ -715,7 +716,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       toast.success(
         res.usedFallback ? "Draft seeded from source" : "Translated draft created",
         res.usedFallback
-          ? "The copy desk is offline — text was copied for manual translation. Review and publish."
+          ? "The writing assistant is offline — text was copied for manual translation. Review and publish."
           : "Review the AI translation, then publish.",
       );
     },
@@ -1284,10 +1285,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         <div className="ml-auto flex items-center gap-2">
           {(showAi || canCreate) && !mobile && (
             <Menu>
-              {/* The newsroom name for what this does: the copy desk polishes
-                  copy, writes headlines and standfirsts, and drafts on a brief. */}
-              <MenuTrigger className="btn-subtle" aria-label="Copy desk" disabled={ai.isPending}>
-                <Icon.Edit width={14} height={14} aria-hidden /> {ai.isPending ? "Working…" : "Copy desk"}
+              {/* The writing assistant polishes copy, writes headlines and
+                  standfirsts, and drafts on a brief. */}
+              <MenuTrigger className="btn-subtle" aria-label="Writing assistant" disabled={ai.isPending}>
+                <Icon.Edit width={14} height={14} aria-hidden /> {ai.isPending ? "Working…" : "Writing assistant"}
               </MenuTrigger>
               <MenuContent>
                 {canCreate && (
@@ -1299,6 +1300,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 )}
                 {hasField("metaTitle") && <MenuItem onSelect={() => ai.mutate({ task: "meta_title", field: "metaTitle" })}>Generate SEO title</MenuItem>}
                 {hasField("metaDescription") && <MenuItem onSelect={() => ai.mutate({ task: "meta_description", field: "metaDescription" })}>Generate SEO description</MenuItem>}
+                {(showAi || canCreate) && !aiEnabled && <MenuItem disabled>{AI_OFF_HINT}</MenuItem>}
               </MenuContent>
             </Menu>
           )}
@@ -1765,6 +1767,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                         <OverlayAi
                           current={asText(current)}
                           context={pageAiContext()}
+                          locale={locale}
                           onApply={(v) => {
                             if (isName) {
                               patchName(v);
@@ -2367,19 +2370,24 @@ function SaveIndicator({ state }: { state: SaveState }) {
 }
 
 /**
- * The copy desk inside the on-page overlay (text/markdown fields): quick
+ * The writing assistant inside the on-page overlay (text/markdown fields): quick
  * improve, a free-form instruction ("shorten to 8 words"), and TRY-ON VARIANTS
  * — hovering a suggestion live-patches it into the real page so you see it in
- * the actual design before committing; click applies it. Module-level (see Btn).
+ * the actual design before committing; click applies it. Every apply keeps the
+ * prior value one click away (Undo) — plain fields have no editor history.
+ * Module-level (see Btn).
  */
 function OverlayAi({
   current,
   context,
+  locale,
   onApply,
   onPreview,
 }: {
   current: string;
   context: string;
+  /** The locale being edited — the assistant responds in it. */
+  locale: string;
   onApply: (v: string) => void;
   /** Live try-on: patch the page with v; null restores the current value. */
   onPreview: (v: string | null) => void;
@@ -2388,15 +2396,31 @@ function OverlayAi({
   const [instruction, setInstruction] = useState("");
   const [variants, setVariants] = useState<string[] | null>(null);
   const [busy, setBusy] = useState<AiTask | null>(null);
+  // The value the field held before the last AI apply — one-click Undo, since
+  // plain text/markdown fields (unlike TipTap) have no editor history.
+  const [prev, setPrev] = useState<string | null>(null);
   // Improve/variants/rewrite all need a real model — with no key the whole
   // strip is replaced by an honest hint instead of buttons that 409.
   const aiEnabled = useAiEnabled();
+
+  function apply(v: string) {
+    setVariants(null);
+    if (v === current) return;
+    setPrev(current);
+    onApply(v);
+  }
+  function revert() {
+    if (prev === null) return;
+    setVariants(null);
+    onApply(prev);
+    setPrev(null);
+  }
 
   async function run(task: AiTask, opts?: { instruction?: string }) {
     if (!current.trim() || busy) return;
     setBusy(task);
     try {
-      const r = await api.aiAssist(task, current, { ...opts, context });
+      const r = await api.aiAssist(task, current, { ...opts, context, targetLocale: locale });
       if (task === "variants") {
         // The server normalizes to a JSON array; the cleanup here is defensive.
         const cleaned = r.result.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
@@ -2414,12 +2438,12 @@ function OverlayAi({
         setVariants(list.length ? list : [cleaned]);
         if (r.provider === "fallback") toast.success("Basic mode", "Set an AI key in Settings → Site for real suggestions.");
       } else {
-        onApply(r.result);
+        apply(r.result);
         setInstruction("");
         if (r.provider === "fallback") toast.success("Basic mode", "Set an AI key in Settings → Site for full AI.");
       }
     } catch (e) {
-      toast.error("Copy desk failed", (e as Error).message);
+      toast.error("Writing assistant failed", (e as Error).message);
     } finally {
       setBusy(null);
     }
@@ -2436,13 +2460,18 @@ function OverlayAi({
   return (
     <div className="mt-3 border-t border-line pt-2.5">
       <div className="flex items-center gap-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">Copy desk</span>
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">Writing assistant</span>
         <button type="button" className="btn-subtle px-2 py-0.5 text-xs" disabled={!!busy || !current.trim()} onClick={() => void run("improve")}>
           {busy === "improve" ? "Improving…" : "Improve"}
         </button>
         <button type="button" className="btn-subtle px-2 py-0.5 text-xs" disabled={!!busy || !current.trim()} onClick={() => void run("variants")}>
           {busy === "variants" ? "Thinking…" : "Suggest variants"}
         </button>
+        {prev !== null && (
+          <button type="button" className="btn-subtle px-2 py-0.5 text-xs" disabled={!!busy} onClick={revert}>
+            Undo
+          </button>
+        )}
       </div>
       <form
         className="mt-1.5 flex gap-1.5"
@@ -2453,10 +2482,10 @@ function OverlayAi({
       >
         <input
           className="field-input min-w-0 flex-1 py-1"
-          placeholder="Ask the desk… e.g. shorten to 8 words"
+          placeholder="Ask the assistant… e.g. shorten to 8 words"
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
-          aria-label="Copy desk instruction"
+          aria-label="Writing assistant instruction"
         />
         <button type="submit" className="btn-subtle px-2 py-0.5 text-xs" disabled={!!busy || !instruction.trim() || !current.trim()}>
           {busy === "rewrite" ? "…" : "Go"}
@@ -2474,10 +2503,7 @@ function OverlayAi({
                 onMouseLeave={() => onPreview(null)}
                 onFocus={() => onPreview(v)}
                 onBlur={() => onPreview(null)}
-                onClick={() => {
-                  onApply(v);
-                  setVariants(null);
-                }}
+                onClick={() => apply(v)}
               >
                 {v}
               </button>

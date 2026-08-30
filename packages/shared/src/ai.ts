@@ -71,6 +71,23 @@ export interface AiConfig {
 
 const providerOf = (cfg: AiConfig): AiProvider => cfg.provider ?? "anthropic";
 
+/**
+ * Human-readable language name for prompts ("nb" → "Norwegian Bokmål"). Models
+ * translate into a NAME far more reliably than into a bare code (a raw "nb" is
+ * sometimes read as "Norwegian", sometimes ignored). Falls back to the raw
+ * code when the runtime can't resolve it.
+ */
+export function localeDisplayName(locale: string): string {
+  try {
+    // Resolved in English: a stable, unambiguous name regardless of the server's
+    // own locale (resolving in the locale's language returns endonyms — "Deutsch" —
+    // which is fine for humans but varies by host ICU data).
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(locale) ?? locale;
+  } catch {
+    return locale;
+  }
+}
+
 /* --------------------------- provider chat seam --------------------------- */
 // ONE single-turn chat function, two dialects. Every model call in the product
 // (assist tasks, vision alt text, batch translate — and the content agent's
@@ -264,16 +281,27 @@ function instruction(req: AiRequest): string {
       return `Write an SEO meta description (max 155 characters, active voice, no clickbait) summarising the following page content.\n\n${req.input}${ctx}`;
     case "summarize":
       return `Summarise the following content in one or two clear sentences.\n\n${req.input}${ctx}`;
-    case "improve":
-      return `Improve the clarity, grammar and flow of the following text. Preserve its meaning, its formatting/markup, and keep a similar length.\n\n${req.input}${ctx}`;
+    case "improve": {
+      // Same locale clause as rewrite/variants: the overlay passes the locale
+      // being edited, and a seed copied from another locale must not pull the
+      // answer back to the input's language.
+      const lang = req.targetLocale ? `Respond in ${localeDisplayName(req.targetLocale)}.` : "Keep the same language as the input.";
+      return `Improve the clarity, grammar and flow of the following text. Preserve its meaning, its formatting/markup, and keep a similar length. ${lang}\n\n${req.input}${ctx}`;
+    }
     case "alt_text":
       return `Write concise, descriptive alt text (max 120 characters) for an image. The image's filename/description is:\n\n${req.input}${ctx}`;
     case "translate":
-      return `Translate the following text into ${req.targetLocale ?? "the target language"}. Preserve meaning and tone.\n\n${req.input}${ctx}`;
-    case "rewrite":
-      return `Rewrite the following text according to this instruction: "${req.instruction ?? "improve it"}". Keep the same language as the input. Return ONLY the rewritten text.\n\n${req.input}${ctx}`;
-    case "variants":
-      return `Write exactly 3 alternative versions of the following text — same language, same intent, meaningfully different angles (e.g. punchier, warmer, more concrete). Keep each roughly the same length as the original. Return ONLY a JSON array of 3 strings — no preamble, no code fences.\n\n${req.input}${ctx}`;
+      return `Translate the following text into ${req.targetLocale ? localeDisplayName(req.targetLocale) : "the target language"}. Preserve meaning and tone.\n\n${req.input}${ctx}`;
+    case "rewrite": {
+      // targetLocale (the locale being edited) overrides "same language as the
+      // input" — the input may be a seed copied from another locale.
+      const lang = req.targetLocale ? `Respond in ${localeDisplayName(req.targetLocale)}.` : "Keep the same language as the input.";
+      return `Rewrite the following text according to this instruction: "${req.instruction ?? "improve it"}". ${lang} Return ONLY the rewritten text.\n\n${req.input}${ctx}`;
+    }
+    case "variants": {
+      const lang = req.targetLocale ? `Respond in ${localeDisplayName(req.targetLocale)}.` : "Same language as the input.";
+      return `Write exactly 3 alternative versions of the following text — same intent, meaningfully different angles (e.g. punchier, warmer, more concrete). ${lang} Keep each roughly the same length as the original. Return ONLY a JSON array of 3 strings — no preamble, no code fences.\n\n${req.input}${ctx}`;
+    }
     case "write":
       // The richtext "Write about this" item: the selection is a TOPIC (often a
       // heading or fragment); the result is inserted AFTER it as paragraphs, so
@@ -416,6 +444,17 @@ export interface AiAltTextRequest {
   filename?: string;
 }
 
+/** Cut at a word boundary — alt text ending mid-word is worse than slightly
+ *  shorter. (A hard slice produced "a red bicycle leaning against a bri…".)
+ *  Space-less input (CJK, URLs) keeps the hard-slice floor: no boundary to
+ *  prefer, and it never exceeds the caller's cap. */
+function trimAtWord(s: string, n: number): string {
+  if (s.length <= n) return s;
+  const cut = s.slice(0, n);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > n * 0.6 ? cut.slice(0, sp) : cut).trim();
+}
+
 /**
  * Alt text from the ACTUAL IMAGE via a vision content block. There is no
  * fallback: alt text derived from a filename is exactly the kind of fake
@@ -431,7 +470,7 @@ export async function aiImageAltText(req: AiAltTextRequest, cfg: AiConfig): Prom
       maxTokens: 256,
       timeoutMs: 30_000,
     });
-    return { result: text.slice(0, 200), provider: providerOf(cfg) };
+    return { result: trimAtWord(text, 200), provider: providerOf(cfg) };
   } catch (err) {
     if (err instanceof AiUnavailableError) throw err;
     throw new AiUnavailableError(
@@ -446,7 +485,7 @@ const TRANSLATE_SYSTEM =
   "You are a professional translator inside a headless CMS. Translate each input string into the requested language, preserving meaning, tone, and any Markdown/HTML formatting. Return ONLY a JSON array of the translated strings, in the same order and with the same length as the input — no preamble, no code fences.";
 
 async function callModelTranslate(texts: string[], targetLocale: string, cfg: AiConfig): Promise<string[]> {
-  const prompt = `Translate each string in this JSON array into ${targetLocale}. Return ONLY a JSON array of translations, same order and length.\n\n${JSON.stringify(texts)}`;
+  const prompt = `Translate each string in this JSON array into ${localeDisplayName(targetLocale)}. Return ONLY a JSON array of translations, same order and length.\n\n${JSON.stringify(texts)}`;
   let text = await chat(cfg, { system: TRANSLATE_SYSTEM, user: prompt, maxTokens: 8192, timeoutMs: 30_000 });
   text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
   const arr = JSON.parse(text);

@@ -1265,10 +1265,10 @@ export function AiPanel() {
       ? `${PROVIDER_LABELS[status.provider]} key configured in the CMS (ending ••${status.last4}${endpointHost ? `, ${endpointHost}` : ""})`
       : status.source === "env"
         ? `Using the ${status.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} environment value (ending ••${status.last4}${endpointHost ? `, ${endpointHost}` : ""})`
-        : "No key configured — the copy desk is offline (only basic SEO truncation works).";
+        : "No key configured — the writing assistant is offline (only basic SEO truncation works).";
 
   return (
-    <PanelShell title="AI provider" hint="Connect Anthropic (Claude) or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, Mistral, a local Ollama/vLLM…) so the copy desk (SEO text, copy improvement, translation, image descriptions) uses a real model. The key is stored encrypted and never shown again; it overrides the server environment value.">
+    <PanelShell title="AI provider" hint="Connect Anthropic (Claude) or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, Mistral, a local Ollama/vLLM…) so the writing assistant (SEO text, copy improvement, translation, image descriptions) uses a real model. The key is stored encrypted and never shown again; it overrides the server environment value.">
       <div className="space-y-4 p-4">
         <div className="flex items-center gap-2 text-sm">
           <span className={`h-2 w-2 rounded-full ${status?.configured ? "bg-published" : "bg-draft"}`} />

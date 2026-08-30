@@ -1,4 +1,5 @@
 import type {
+  AiResult,
   Asset,
   BlockSummary,
   ContentDetail,
@@ -468,12 +469,12 @@ export const api = {
   // AI editorial assistant
   aiStatus: (signal?: AbortSignal) => request<{ enabled: boolean; tasks: string[] }>("GET", "/ai/status", undefined, signal),
   aiAssist: (task: AiTask, input: string, opts?: { targetLocale?: string; instruction?: string; context?: string }) =>
-    request<{ result: string; provider: "anthropic" | "fallback" }>("POST", "/ai/assist", { task, input, ...opts }),
+    request<AiResult>("POST", "/ai/assist", { task, input, ...opts }),
   // Vision: the server sends the actual image to the model (never the filename).
   aiAltText: (documentId: string) =>
-    request<{ result: string; provider: "anthropic" | "fallback" }>("POST", "/ai/alt-text", { documentId }),
+    request<AiResult>("POST", "/ai/alt-text", { documentId }),
   aiTranslate: (texts: string[], targetLocale: string) =>
-    request<{ results: string[]; provider: "anthropic" | "fallback" }>("POST", "/ai/translate", { texts, targetLocale }),
+    request<{ results: string[]; provider: AiResult["provider"] }>("POST", "/ai/translate", { texts, targetLocale }),
 
   /** The content agent ("Build from brief") — streams progress events (SSE). */
   aiAgent: async (

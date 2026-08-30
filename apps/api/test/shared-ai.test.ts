@@ -221,4 +221,78 @@ describe("aiImageAltText — vision alt text", () => {
     expect(image?.source?.data).toBe("aGk=");
     expect(image?.source?.media_type).toBe("image/jpeg");
   });
+
+  it("trims an over-long reply at a WORD boundary, never mid-word", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ content: [{ type: "text", text: `A ${"word ".repeat(60)}bicyclette` }] }),
+      }),
+    );
+    const r = await aiImageAltText({ imageBase64: "aGk=", mediaType: "image/jpeg" }, { apiKey: "k", model: "m" });
+    expect(r.result.length).toBeLessThanOrEqual(200);
+    expect(r.result.endsWith("bicyclette")).toBe(false); // the whole word would overflow
+    expect(r.result.endsWith("…")).toBe(false);
+    expect(r.result.endsWith("word")).toBe(true); // cut at the last full space
+  });
+});
+
+describe("prompt contract (pinned — weakening these phrasings is a regression)", () => {
+  async function run(req: Parameters<typeof aiAssist>[0], reply = "out"): Promise<{ system: string; user: string }> {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ content: [{ type: "text", text: reply }] }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await aiAssist(req, { apiKey: "k", model: "m" });
+    const body = JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body) as {
+      system: string;
+      messages: Array<{ content: string }>;
+    };
+    return { system: body.system, user: body.messages[0]!.content };
+  }
+
+  it("system prompt demands only-the-text and markup preservation", async () => {
+    const { system } = await run({ task: "improve", input: "x" });
+    expect(system).toMatch(/return ONLY the requested text/);
+    expect(system).toMatch(/Markdown in → Markdown out/);
+    expect(system).toMatch(/plain text in → plain text out/);
+  });
+
+  it("translate names the target language in full (a bare code is model-dependent)", async () => {
+    const { user } = await run({ task: "translate", input: "x", targetLocale: "nb" });
+    expect(user).toContain("Norwegian Bokmål"); // English name pinned — not the code, not an endonym
+    expect(user).not.toMatch(/into nb\b/);
+    const batch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '["a"]' } }] }),
+    });
+    vi.stubGlobal("fetch", batch);
+    await aiTranslateBatch(["x"], "nb", { provider: "openai", apiKey: "k", model: "m" });
+    const body = JSON.parse((batch.mock.calls[0]![1] as { body: string }).body) as { messages: Array<{ content: string }> };
+    expect(body.messages[1]!.content).toContain("Norwegian Bokmål");
+  });
+
+  it("improve/rewrite/variants respond in the requested locale when one is given", async () => {
+    const im = await run({ task: "improve", input: "x", targetLocale: "de" });
+    expect(im.user).toMatch(/Respond in German/);
+    const rw = await run({ task: "rewrite", input: "x", instruction: "shorter", targetLocale: "de" });
+    expect(rw.user).toMatch(/Respond in German/);
+    const va = await run({ task: "variants", input: "x", targetLocale: "de" });
+    expect(va.user).toMatch(/Respond in German/);
+  });
+
+  it("variants demand a bare JSON array of exactly 3", async () => {
+    const { user } = await run({ task: "variants", input: "x" });
+    expect(user).toMatch(/JSON array of 3 strings/);
+  });
+
+  it("schema_fields keeps the either/or seoRole/schemaProp rule", async () => {
+    const valid = JSON.stringify([
+      { prop: "name", required: true, field: { name: "name", displayName: "Name", type: "text", localized: true, seoRole: "title", helpText: "The event name" } },
+    ]);
+    const { user } = await run({ task: "schema_fields", input: "Event" }, valid);
+    expect(user).toMatch(/EITHER seoRole OR schemaProp/);
+  });
 });
