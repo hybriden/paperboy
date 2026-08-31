@@ -134,8 +134,12 @@ export function PreviewPane({
   // inside the preview is enough to make that a third party. Null = unknown
   // origin, in which case we post nothing rather than broadcasting.
   const targetOrigin = previewOrigin(site.data);
+  // Until the frame's load event, contentWindow is the initial about:blank
+  // (admin-origin), so posting would only throw target-origin console errors —
+  // on first mount AND on every autosave reload.
+  const [frameLoaded, setFrameLoaded] = useState(false);
   const postToPreview = (message: unknown): void => {
-    if (!targetOrigin) return;
+    if (!targetOrigin || !frameLoaded) return;
     frameRef.current?.contentWindow?.postMessage(message, targetOrigin);
   };
   // Reload the iframe whenever the editor saves (near-live preview).
@@ -202,7 +206,7 @@ export function PreviewPane({
     const id = setInterval(probe, 1000);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bridgeSeen, targetOrigin, nonce, device, urlPath, locale]);
+  }, [bridgeSeen, targetOrigin, frameLoaded, nonce, device, urlPath, locale]);
   useEffect(() => {
     const onStart = (e: Event) => {
       const payload = (e as CustomEvent).detail;
@@ -307,6 +311,8 @@ export function PreviewPane({
   const src = usableToken && targetOrigin
     ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(usableToken.token)}&n=${nonce}`
     : null;
+  // Every navigation restarts the not-yet-loaded window postToPreview guards.
+  useEffect(() => setFrameLoaded(false), [src]);
 
   // Fit the device viewport to the pane WIDTH (the dimension that matters for a
   // desktop layout), then make the iframe tall enough to FILL the pane height so
@@ -406,6 +412,7 @@ export function PreviewPane({
               ref={frameRef}
               title="Content preview"
               src={src}
+              onLoad={() => setFrameLoaded(true)}
               // The preview frames the site's OWN (cross-origin) frontend. Sandbox
               // it so a compromised preview target can't navigate the admin's top
               // frame (editor phishing). allow-same-origin is required for the

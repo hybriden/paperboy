@@ -236,8 +236,11 @@ Rules:
 - When finished, summarise what you created in one short paragraph.`;
 
 const MAX_TURNS = 16;
-const CALL_TIMEOUT_MS = 90_000;
-const DEADLINE_MS = 4 * 60_000;
+// A large site's transcript (16k-char tool results × several turns) can push a
+// single non-streaming completion past 90s; a timed-out CALL must not crash the
+// RUN (the loop reports the drafts created so far instead).
+const CALL_TIMEOUT_MS = 180_000;
+const DEADLINE_MS = 8 * 60_000;
 
 /* ------------------------- provider-neutral loop I/O ----------------------- */
 // The loop thinks in a NEUTRAL transcript; each model call converts it to the
@@ -400,6 +403,15 @@ export async function runContentAgent(
       resp = await callModel(deps.cfg, transcript, deps.signal);
     } catch (err) {
       if (cancelled()) return; // the abort interrupted the model call itself
+      if (err instanceof Error && err.name === "AbortError") {
+        // The per-call timeout fired (the client's own signal was checked above).
+        emit({
+          type: "error",
+          text: `The model didn't answer within ${CALL_TIMEOUT_MS / 1000}s and the run stopped. The drafts below were created — run the brief again to continue from them.`,
+          ...outcome(),
+        });
+        return;
+      }
       throw err;
     }
 

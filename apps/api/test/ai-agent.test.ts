@@ -92,6 +92,25 @@ describe("AI content agent (build from brief)", () => {
       return pages.some((p) => p.name === name);
     };
 
+    it("a per-call TIMEOUT ends the run with a self-teaching error that still lists the drafts", async () => {
+      // First call creates a draft; the second never answers (the internal
+      // timeout aborts it — the run's own signal is NOT aborted).
+      let calls = 0;
+      globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (!(url instanceof Request ? url.url : String(url)).includes("api.anthropic.com")) return realFetch(url as never, init as never);
+        calls++;
+        if (calls === 1) return new Response(JSON.stringify(createTurn("Survived the timeout")), { status: 200, headers: { "content-type": "application/json" } });
+        throw new DOMException("This operation was aborted", "AbortError");
+      }) as typeof fetch;
+      const events: AgentEvent[] = [];
+      await runContentAgent({ db: s.app.db, ctx: await editorCtx(), cfg, emit: (e) => events.push(e) }, "Create one article page called Survived the timeout.", { parentId: null, locale: "en" });
+      const last = events.at(-1)!;
+      expect(last.type).toBe("error");
+      expect(last.text).toMatch(/didn't answer within \d+s/);
+      expect(last.created?.map((c) => c.name)).toContain("Survived the timeout");
+      expect(await draftExists("Survived the timeout")).toBe(true);
+    });
+
     it("an already-aborted signal: the provider is never called and no draft is created", async () => {
       const calls = countingScript([createTurn("Aborted before start")]);
       const ac = new AbortController();
