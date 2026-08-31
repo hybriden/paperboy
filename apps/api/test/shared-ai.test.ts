@@ -115,6 +115,54 @@ describe("OpenAI-compatible provider (dialect mapping)", () => {
     expect(fetchMock.mock.calls[0]![0]).toBe("https://api.openai.com/v1/chat/completions");
   });
 
+  it("sends reasoning_effort when configured, and omits it when not", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(okText("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+    await aiAssist({ task: "improve", input: "x" }, { ...CFG, reasoningEffort: "low" });
+    expect((JSON.parse((fetchMock.mock.calls[0]![1] as { body: string }).body) as Record<string, unknown>).reasoning_effort).toBe("low");
+    await aiAssist({ task: "improve", input: "x" }, CFG);
+    expect("reasoning_effort" in (JSON.parse((fetchMock.mock.calls[1]![1] as { body: string }).body) as Record<string, unknown>)).toBe(false);
+  });
+
+  it("falls back to GLM-style thinking:{type} when the endpoint rejects reasoning_effort", async () => {
+    const reject = { ok: false, status: 400, text: async () => '{"error":{"message":"Unrecognized request argument supplied: reasoning_effort"}}' };
+    const fetchMock = vi.fn().mockResolvedValueOnce(reject).mockResolvedValueOnce(okText("ok")).mockResolvedValueOnce(reject).mockResolvedValueOnce(okText("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+    await aiAssist({ task: "improve", input: "x" }, { ...CFG, reasoningEffort: "low" });
+    const low = JSON.parse((fetchMock.mock.calls[1]![1] as { body: string }).body) as Record<string, unknown>;
+    expect(low.reasoning_effort).toBeUndefined();
+    expect(low.thinking).toEqual({ type: "disabled" }); // minimal/low = don't think
+    await aiAssist({ task: "improve", input: "x" }, { ...CFG, reasoningEffort: "high" });
+    const high = JSON.parse((fetchMock.mock.calls[3]![1] as { body: string }).body) as Record<string, unknown>;
+    expect(high.thinking).toEqual({ type: "enabled" }); // medium/high = think
+  });
+
+  it("drops the preference entirely when the endpoint rejects thinking too", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => "Unrecognized request argument supplied: reasoning_effort" })
+      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => "Unknown parameter: thinking" })
+      .mockResolvedValueOnce(okText("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+    const r = await aiAssist({ task: "improve", input: "x" }, { ...CFG, reasoningEffort: "medium" });
+    expect(r.result).toBe("ok");
+    const bare = JSON.parse((fetchMock.mock.calls[2]![1] as { body: string }).body) as Record<string, unknown>;
+    expect(bare.reasoning_effort).toBeUndefined();
+    expect(bare.thinking).toBeUndefined();
+  });
+
+  it("the max_tokens rename retry keeps the reasoning preference", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => "Unsupported parameter: max_tokens. Use max_completion_tokens instead." })
+      .mockResolvedValueOnce(okText("ok"));
+    vi.stubGlobal("fetch", fetchMock);
+    await aiAssist({ task: "improve", input: "x" }, { ...CFG, reasoningEffort: "medium" });
+    const second = JSON.parse((fetchMock.mock.calls[1]![1] as { body: string }).body) as Record<string, unknown>;
+    expect(second.max_completion_tokens).toBeDefined();
+    expect(second.reasoning_effort).toBe("medium");
+  });
+
   it("retries once with max_completion_tokens when the endpoint rejects max_tokens (newer OpenAI models)", async () => {
     const fetchMock = vi
       .fn()

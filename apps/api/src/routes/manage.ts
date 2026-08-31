@@ -102,6 +102,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   AI_PROVIDERS,
+  AI_REASONING_EFFORTS,
   Asset,
   BlockSummary,
   aiAssist,
@@ -1024,6 +1025,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     last4: z.string().nullable(),
     model: z.string().nullable(),
     baseUrl: z.string().nullable(),
+    reasoningEffort: z.enum(AI_REASONING_EFFORTS).nullable(),
   });
   async function aiStatus(): Promise<z.infer<typeof AiConfigStatus>> {
     const cfg = await resolveAiRuntimeConfig(app.db, app.aiEnv);
@@ -1034,6 +1036,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       last4: cfg.apiKey ? cfg.apiKey.slice(-4) : null,
       model: cfg.model || null,
       baseUrl: cfg.baseUrl ?? null,
+      reasoningEffort: cfg.reasoningEffort ?? null,
     };
   }
   app.get(
@@ -1052,6 +1055,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
           apiKey: z.string().max(400).nullable().optional(),
           model: z.string().max(120).nullable().optional(),
           baseUrl: z.string().max(400).nullable().optional(),
+          reasoningEffort: z.enum(AI_REASONING_EFFORTS).nullable().optional(),
         }),
         response: { 200: AiConfigStatus },
       },
@@ -1062,6 +1066,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         apiKey: req.body.apiKey,
         model: req.body.model,
         baseUrl: req.body.baseUrl,
+        reasoningEffort: req.body.reasoningEffort,
       });
       await audit(app.db, {
         actorUserId: req.user!.id,
@@ -1074,6 +1079,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
           keyCleared: req.body.apiKey === null || req.body.apiKey === "",
           model: req.body.model ?? undefined,
           baseUrl: req.body.baseUrl ?? undefined,
+          reasoningEffort: req.body.reasoningEffort ?? undefined,
         },
       });
       return aiStatus();

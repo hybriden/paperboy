@@ -94,13 +94,15 @@ export interface VersionDetail {
 }
 /** Write-only AI provider config status (the key itself is never returned). */
 export type AiProviderName = "anthropic" | "openai";
+export type AiReasoningEffortName = "minimal" | "low" | "medium" | "high";
 export interface AiConfigStatus {
   configured: boolean;
-  source: "db" | "env" | "none";
+  source: "db" | "env" | "none" | "undecryptable";
   provider: AiProviderName;
   last4: string | null;
   model: string | null;
   baseUrl: string | null;
+  reasoningEffort: AiReasoningEffortName | null;
 }
 /** Write-only stock image provider config status (the key itself is never returned). */
 export interface StockConfigStatus {
@@ -285,7 +287,7 @@ export const api = {
     request<{ ok: boolean }>("POST", "/manage/site/preview-url", { url }, undefined, siteOverride),
   aiConfig: (signal?: AbortSignal) =>
     request<AiConfigStatus>("GET", "/manage/site/ai", undefined, signal),
-  setAiConfig: (body: { provider?: AiProviderName; apiKey?: string | null; model?: string | null; baseUrl?: string | null }) =>
+  setAiConfig: (body: { provider?: AiProviderName; apiKey?: string | null; model?: string | null; baseUrl?: string | null; reasoningEffort?: AiReasoningEffortName | null }) =>
     request<AiConfigStatus>("POST", "/manage/site/ai", body),
   aiTest: () =>
     request<{ ok: boolean; provider: AiProviderName; model: string; message: string | null }>("POST", "/manage/site/ai/test", {}),

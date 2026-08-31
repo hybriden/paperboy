@@ -77,6 +77,18 @@ describe("AI provider key — in-CMS config (encrypted, write-only, Admin-only)"
     expect(post.statusCode).toBe(403);
   });
 
+  it("reasoning effort round-trips, clears, and rejects junk", async () => {
+    const set = await s.app.inject({ method: "POST", url: "/api/v1/manage/site/ai", headers: authHeaders(admin), payload: { reasoningEffort: "low" } });
+    expect(set.statusCode, set.body).toBe(200);
+    expect(set.json().reasoningEffort).toBe("low");
+    const get = await s.app.inject({ method: "GET", url: "/api/v1/manage/site/ai", headers: authHeaders(admin) });
+    expect(get.json().reasoningEffort).toBe("low");
+    const clear = await s.app.inject({ method: "POST", url: "/api/v1/manage/site/ai", headers: authHeaders(admin), payload: { reasoningEffort: null } });
+    expect(clear.json().reasoningEffort).toBeNull();
+    const junk = await s.app.inject({ method: "POST", url: "/api/v1/manage/site/ai", headers: authHeaders(admin), payload: { reasoningEffort: "xhigh" } });
+    expect(junk.statusCode).toBe(422);
+  });
+
   it("openai unit: provider + key + baseUrl + model round-trip; baseUrl is validated and normalized", async () => {
     const bad = await s.app.inject({
       method: "POST",

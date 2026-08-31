@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { type AiConfig, type AiProvider, DEFAULT_AI_MODELS, DEFAULT_OPENAI_BASE_URL, SeoFilesConfig, parseSeoFilesConfig } from "@paperboy/shared";
+import { type AiConfig, type AiProvider, type AiReasoningEffort, AI_REASONING_EFFORTS, DEFAULT_AI_MODELS, DEFAULT_OPENAI_BASE_URL, SeoFilesConfig, parseSeoFilesConfig } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, loadAuthorized, requirePermission } from "./scope.js";
@@ -17,6 +17,7 @@ const AI_API_KEY = "aiApiKey";
 const AI_MODEL_KEY = "aiModel";
 const AI_PROVIDER_KEY = "aiProvider";
 const AI_BASE_URL_KEY = "aiBaseUrl";
+const AI_REASONING_KEY = "aiReasoningEffort";
 
 async function getSetting<T>(db: Database, key: string): Promise<T | null> {
   const rows = await db.select().from(siteSetting).where(eq(siteSetting.key, key)).limit(1);
@@ -147,6 +148,7 @@ export interface StoredAiConfig {
   keyProvider: AiProvider | null;
   model: string | null;
   baseUrl: string | null;
+  reasoningEffort: AiReasoningEffort | null;
   /** A key IS stored but the current MFA_SECRET/SESSION_SECRET cannot open it (rotated). */
   undecryptable: boolean;
 }
@@ -170,8 +172,9 @@ export async function getStoredAiConfig(db: Database): Promise<StoredAiConfig> {
   const provider = (await getSetting<{ provider: AiProvider }>(db, AI_PROVIDER_KEY))?.provider ?? null;
   const model = (await getSetting<{ model: string }>(db, AI_MODEL_KEY))?.model ?? null;
   const baseUrl = (await getSetting<{ url: string }>(db, AI_BASE_URL_KEY))?.url ?? null;
+  const reasoningEffort = (await getSetting<{ effort: AiReasoningEffort }>(db, AI_REASONING_KEY))?.effort ?? null;
   // Keys stored before providers existed are Anthropic keys by definition.
-  return { provider, apiKey, keyProvider: apiKey ? (keyRow?.provider ?? "anthropic") : null, model, baseUrl, undecryptable };
+  return { provider, apiKey, keyProvider: apiKey ? (keyRow?.provider ?? "anthropic") : null, model, baseUrl, reasoningEffort, undecryptable };
 }
 
 /**
@@ -185,7 +188,7 @@ export async function getStoredAiConfig(db: Database): Promise<StoredAiConfig> {
 export async function setAiConfig(
   db: Database,
   ctx: AccessContext,
-  input: { provider?: AiProvider; apiKey?: string | null; model?: string | null; baseUrl?: string | null },
+  input: { provider?: AiProvider; apiKey?: string | null; model?: string | null; baseUrl?: string | null; reasoningEffort?: AiReasoningEffort | null },
 ): Promise<void> {
   requirePermission(ctx, "user.manage");
   const stored = await getStoredAiConfig(db);
@@ -213,6 +216,14 @@ export async function setAiConfig(
     }
     if (url) await putSetting(db, AI_BASE_URL_KEY, { url });
     else await db.delete(siteSetting).where(eq(siteSetting.key, AI_BASE_URL_KEY));
+  }
+  if (input.reasoningEffort !== undefined) {
+    const effort = input.reasoningEffort;
+    if (effort && !AI_REASONING_EFFORTS.includes(effort)) {
+      throw Errors.badRequest(`Reasoning effort must be one of: ${AI_REASONING_EFFORTS.join(", ")} (or null for the provider default)`);
+    }
+    if (effort) await putSetting(db, AI_REASONING_KEY, { effort });
+    else await db.delete(siteSetting).where(eq(siteSetting.key, AI_REASONING_KEY));
   }
 }
 
@@ -261,6 +272,7 @@ export async function resolveAiRuntimeConfig(db: Database, env: AiEnv): Promise<
       baseUrl: provider === "openai" ? (stored.baseUrl ?? DEFAULT_OPENAI_BASE_URL) : undefined,
       // "" counts as unset (compose passes AI_MODEL through even when empty).
       model: stored.model || env.AI_MODEL?.trim() || DEFAULT_AI_MODELS[provider],
+      reasoningEffort: stored.reasoningEffort ?? undefined,
       source: "db",
     };
   }
@@ -271,6 +283,7 @@ export async function resolveAiRuntimeConfig(db: Database, env: AiEnv): Promise<
     apiKey: envKey || undefined,
     baseUrl: provider === "openai" ? (env.OPENAI_BASE_URL?.trim().replace(/\/+$/, "") || DEFAULT_OPENAI_BASE_URL) : undefined,
     model: stored.model || env.AI_MODEL?.trim() || DEFAULT_AI_MODELS[provider],
+    reasoningEffort: stored.reasoningEffort ?? undefined,
     source: envKey ? "env" : stored.undecryptable ? "undecryptable" : "none",
   };
 }

@@ -45,6 +45,10 @@ export interface AiRequest {
 
 export const AI_PROVIDERS = ["anthropic", "openai"] as const;
 export type AiProvider = (typeof AI_PROVIDERS)[number];
+
+/** How hard a reasoning model may think. Unset = the provider's default. */
+export const AI_REASONING_EFFORTS = ["minimal", "low", "medium", "high"] as const;
+export type AiReasoningEffort = (typeof AI_REASONING_EFFORTS)[number];
 /** What AiResult.provider may carry (the wire enum: providers + offline fallback). */
 export const AI_RESULT_PROVIDERS = ["anthropic", "openai", "fallback"] as const;
 
@@ -67,6 +71,11 @@ export interface AiConfig {
   model: string;
   /** openai only: the endpoint base ("https://api.openai.com/v1", "http://localhost:11434/v1", …). */
   baseUrl?: string;
+  /** openai dialect only for now: sent as `reasoning_effort`, degrading to
+   *  GLM-style `thinking:{type}` where that name is rejected. The anthropic
+   *  dialect ignores it — extended thinking changes the response shape (thinking
+   *  blocks, tool-loop echo rules) and is not wired up. */
+  reasoningEffort?: AiReasoningEffort;
 }
 
 const providerOf = (cfg: AiConfig): AiProvider => cfg.provider ?? "anthropic";
@@ -173,15 +182,30 @@ export async function postOpenAiChat(
       clearTimeout(timer);
     }
   };
-  const first = await attempt(payload);
-  if (first.ok) return first.data;
-  if (first.status === 400 && /max_tokens/.test(first.text) && "max_tokens" in payload) {
-    const { max_tokens, ...rest } = payload;
-    const second = await attempt({ ...rest, max_completion_tokens: max_tokens });
-    if (second.ok) return second.data;
-    throw new Error(`OpenAI-compatible ${second.status}${errExcerpt(second.text)}`);
+  // The reasoning preference degrades per endpoint: OpenAI's `reasoning_effort`
+  // first, GLM-style `thinking:{type}` when that name is rejected, then none —
+  // a strict server may cost the preference, never the task (same contract as
+  // the max_tokens rename below).
+  const effort = cfg.reasoningEffort;
+  const shapes: Array<Record<string, unknown>> = effort
+    ? [
+        { ...payload, reasoning_effort: effort },
+        { ...payload, thinking: { type: effort === "minimal" || effort === "low" ? "disabled" : "enabled" } },
+        payload,
+      ]
+    : [payload];
+  let last: { status: number; text: string } | null = null;
+  for (const shape of shapes) {
+    let res = await attempt(shape);
+    if (!res.ok && res.status === 400 && /max_tokens/.test(res.text) && "max_tokens" in shape) {
+      const { max_tokens, ...rest } = shape;
+      res = await attempt({ ...rest, max_completion_tokens: max_tokens });
+    }
+    if (res.ok) return res.data;
+    last = res;
+    if (!(res.status === 400 && /reasoning_effort|thinking/i.test(res.text))) break;
   }
-  throw new Error(`OpenAI-compatible ${first.status}${errExcerpt(first.text)}`);
+  throw new Error(`OpenAI-compatible ${last!.status}${errExcerpt(last!.text)}`);
 }
 
 /** Extract the text of an OpenAI chat response (string or content-part array). */

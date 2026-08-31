@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName, slugifyValue } from "@paperboy/shared";
-import { ACTIVE_SITE_KEY, type AiProviderName, api, ApiError, type FormRow, type ManagedUser, type SeoFilesConfig, type SiteRow } from "../../lib/api.js";
+import { ACTIVE_SITE_KEY, type AiProviderName, type AiReasoningEffortName, api, ApiError, type FormRow, type ManagedUser, type SeoFilesConfig, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
@@ -1185,6 +1185,7 @@ export function AiPanel() {
   const [model, setModel] = useState<string | null>(null);
   const [provider, setProvider] = useState<AiProviderName | null>(null);
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
+  const [effort, setEffort] = useState<string | null>(null);
   const status = cfg.data;
   const activeProvider: AiProviderName = provider ?? status?.provider ?? "anthropic";
   const providerChanged = provider !== null && provider !== status?.provider;
@@ -1199,6 +1200,7 @@ export function AiPanel() {
         apiKey: keyInput.trim() ? keyInput.trim() : undefined, // blank = keep current
         model: model !== null ? model.trim() || null : undefined,
         baseUrl: baseUrl !== null ? baseUrl.trim() || null : undefined,
+        reasoningEffort: effort !== null ? ((effort || null) as AiReasoningEffortName | null) : undefined,
       }),
     onSuccess: (s) => {
       qc.setQueryData(["ai-config"], s);
@@ -1206,6 +1208,7 @@ export function AiPanel() {
       setModel(null);
       setProvider(null);
       setBaseUrl(null);
+      setEffort(null);
       toast.success("AI settings saved", s.configured ? "The assistant is enabled." : "No key set — AI runs in basic mode.");
     },
     onError: (e) => toast.error("Couldn’t save", (e as Error).message),
@@ -1285,6 +1288,23 @@ export function AiPanel() {
                 <option value="openai">OpenAI-compatible</option>
               </select>
             </label>
+            {activeProvider === "openai" && (
+              <label className="text-sm" style={{ minWidth: 150 }} title="How hard a reasoning model thinks. Sent as reasoning_effort, with a GLM-style thinking fallback; endpoints that support neither ignore it.">
+                <span className="field-label">Reasoning effort</span>
+                <select
+                  aria-label="Reasoning effort"
+                  className="field-input"
+                  value={effort ?? (status?.reasoningEffort ?? "")}
+                  onChange={(e) => setEffort(e.target.value)}
+                >
+                  <option value="">Provider default</option>
+                  <option value="minimal">Minimal</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </label>
+            )}
             {activeProvider === "openai" && (
               <label className="grow text-sm" style={{ minWidth: 260 }}>
                 <span className="field-label">Base URL</span>
