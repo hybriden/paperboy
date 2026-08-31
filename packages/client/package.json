@@ -1,8 +1,9 @@
 {
   "name": "@paperboycms/client",
-  "version": "0.4.0",
-  "description": "Typed client for the Paperboy headless CMS Delivery API â€” lists, search, media variants, render helpers, optional ETag cache. Zero dependencies, no codegen.",
+  "version": "0.4.1",
+  "description": "Typed client for the Paperboy headless CMS Delivery API — lists, search, media variants, render helpers, optional ETag cache. Zero dependencies, no codegen.",
   "license": "MIT",
+  "sideEffects": false,
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hybriden/paperboy.git",

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { contentTypeUsage } from "./content.js";
 import { type AccessContext, requirePermission } from "./scope.js";
@@ -184,13 +184,12 @@ export async function getDashboard(db: Database, ctx: AccessContext): Promise<Da
       }
     };
     const versions = await db
-      .select({ documentId: contentVersion.documentId, status: contentVersion.status, isPub: contentVersion.isCurrentPublished, name: contentVersion.name, data: contentVersion.data })
+      .select({ documentId: contentVersion.documentId, status: contentVersion.status, name: contentVersion.name, data: contentVersion.data })
       .from(contentVersion)
-      .where(inArray(contentVersion.documentId, visibleIds));
+      .where(and(inArray(contentVersion.documentId, visibleIds), or(eq(contentVersion.status, "draft"), eq(contentVersion.isCurrentPublished, true))));
     // A display name per block (draft wins over published) for the unused list.
     const blockNames = new Map<string, string>();
     for (const v of versions) {
-      if (v.status !== "draft" && !v.isPub) continue; // skip history
       if (blockIdSet.has(v.documentId)) {
         if (v.status === "draft" || !blockNames.has(v.documentId)) blockNames.set(v.documentId, v.name);
         continue; // a block embedding itself doesn't count

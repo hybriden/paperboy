@@ -15,7 +15,6 @@ import {
   deleteAsset,
   deleteSubmission,
   deleteWebhook,
-  dispatchWebhooks,
   getAgentReviewRequired,
   getSiteConfig,
   resolveAiRuntimeConfig,
@@ -97,6 +96,7 @@ import {
   getDashboard,
   renameSite,
   resolveDefaultLocale,
+  verifyReauth,
 } from "@paperboy/db";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -144,20 +144,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   // Everything under /manage requires authentication.
   app.addHook("preHandler", requireAuth);
 
-  /**
-   * Fire publish/unpublish webhooks WITHOUT blocking the HTTP response. The
-   * promise is intentionally not awaited (best-effort fan-out); errors are
-   * swallowed by dispatchWebhooks per-hook and logged in webhook_delivery.
-   */
-  function emitContentEvent(
-    event: "content.published" | "content.unpublished",
-    // siteId comes from the request's ACTIVE site: dispatch is partitioned per
-    // site, so a hook belonging to another brand never sees this event.
-    detail: { siteId: string; documentId: string; type: string; kind: string; locale: string; name: string; urlPath: string | null },
-  ): void {
-    void dispatchWebhooks(app.db, { event, ...detail, at: new Date().toISOString() }).catch(() => undefined);
-  }
-
   /* --------------------------- content types ---------------------------- */
   app.get(
     "/content-types",
@@ -175,11 +161,10 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       // Authenticated-only, deliberately: the admin's type panel shows these counts
       // to Editors, so gating on contenttype.manage (Admin-only) would break a
       // legitimate caller.
-      // KNOWN GAP (not fixed): contentTypeUsage full-scans every content_version's
-      // JSONB with no WHERE and no site filter — measured ~113 MiB / 600 ms on a
-      // 500-document corpus. Any authenticated user can loop it, and the aggregate
-      // counts span every site. Needs a GIN-backed aggregate or a cache, not a
-      // permission change.
+      // Counts span every site (types are shared) and the walk runs in Postgres
+      // over current rows only; the rate limit bounds how often one caller can
+      // trigger it.
+      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
       schema: {
         tags: ["manage"],
         response: { 200: z.record(z.string(), z.object({ items: z.number(), inlineIn: z.number() })) },
@@ -457,8 +442,12 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/content",
     { preHandler: [requireCsrf, requirePermission("content.create")], schema: { tags: ["manage"], body: CreateContentRequest, response: { 200: ContentDetail } } },
     async (req) => {
+      // Initial data and slug are written by createContent itself, in the same
+      // transaction as the shell — never as a second update that could leave an
+      // orphan shell behind a 422.
       const created = await createContent(app.db, req.accessCtx!, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.create", documentId: created.documentId, locale: created.locale, ip: req.ip });
+      const withData = Boolean(req.body.data) || req.body.slug !== undefined;
+      await audit(app.db, { actorUserId: req.user!.id, action: "content.create", documentId: created.documentId, locale: created.locale, ip: req.ip, detail: withData ? { withData } : undefined });
       return created;
     },
   );
@@ -492,7 +481,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await publishContent(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.publish", documentId: req.params.documentId, locale, ip: req.ip });
-      emitContentEvent("content.published", { siteId: req.accessCtx!.siteId, documentId: r.documentId, type: r.type, kind: r.kind, locale, name: r.name, urlPath: r.urlPath });
       return r;
     },
   );
@@ -535,7 +523,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await unpublishContent(app.db, req.accessCtx!, req.params.documentId, locale);
       await audit(app.db, { actorUserId: req.user!.id, action: "content.unpublish", documentId: req.params.documentId, locale, ip: req.ip });
-      emitContentEvent("content.unpublished", { siteId: req.accessCtx!.siteId, documentId: r.documentId, type: r.type, kind: r.kind, locale, name: r.name, urlPath: r.urlPath });
       return r;
     },
   );
@@ -791,7 +778,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/delivery-keys",
     { preHandler: [requireCsrf, requirePermission("deliverykey.manage")], schema: { tags: ["manage"], body: z.object({ name: z.string(), type: z.enum(["public", "preview"]) }), response: { 200: z.object({ key: z.string() }) } } },
     async (req) => {
-      const r = await createDeliveryKey(app.db, req.accessCtx!.siteId, req.body.name, req.body.type);
+      const r = await createDeliveryKey(app.db, req.accessCtx!, req.body.name, req.body.type);
       await audit(app.db, { actorUserId: req.user!.id, action: "deliverykey.create", ip: req.ip, detail: { type: req.body.type } });
       return r;
     },
@@ -841,10 +828,15 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   );
   app.post(
     "/mcp-tokens",
-    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], body: z.object({ name: z.string().min(1).max(80), userId: z.string() }), response: { 200: z.object({ token: z.string() }) } } },
+    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], body: z.object({ name: z.string().min(1).max(80), userId: z.string(), password: z.string() }), response: { 200: z.object({ token: z.string() }) } } },
     async (req) => {
-      const r = await createMcpToken(app.db, req.accessCtx!, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "mcptoken.create", ip: req.ip, detail: { name: req.body.name, userId: req.body.userId } });
+      const { password, ...input } = req.body;
+      // Same re-auth gate as enabling/disabling 2FA: a token never expires and
+      // survives a password change, so a hijacked session alone must not be able
+      // to mint itself a permanent credential.
+      await verifyReauth(app.db, req.user!.id, password);
+      const r = await createMcpToken(app.db, req.accessCtx!, input);
+      await audit(app.db, { actorUserId: req.user!.id, action: "mcptoken.create", ip: req.ip, detail: { name: input.name, userId: input.userId } });
       return r;
     },
   );
@@ -894,24 +886,15 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
 
   /* ---------------------------- preview token ---------------------------- */
   /**
-   * Mint a short-lived token for the in-editor preview iframe.
+   * Mint a short-lived token for the in-editor preview iframe. Session-gated so the
+   * long-lived PREVIEW_SECRET never reaches the browser bundle.
    *
-   * Session-authenticated (this router requires auth), so only a signed-in editor
-   * can obtain one — which is the difference that matters: the admin used to carry
-   * the long-lived PREVIEW_SECRET itself, inlined into its unauthenticated JS
-   * bundle, so anyone who fetched that bundle could read every draft forever.
+   * `content.read` AND `siteWide`: the preview perspective it unlocks is KEY-scoped,
+   * not section-scoped, so a section-scoped Author holding one could read every
+   * draft in the site — the same escalation `needDelivery` blocks on the MCP side.
    *
-   * `content.read` because seeing drafts is a read of unpublished content — AND
-   * `siteWide`, because the token is not scoped to a document or section. The
-   * preview perspective it unlocks is KEY-scoped (the frontend uses the preview
-   * delivery key), so it cannot express "only this Author's sections": a
-   * section-scoped Author who got one could read every unpublished draft in the
-   * site, which is exactly the escalation `needDelivery` blocks on the MCP side
-   * (apps/mcp/src/server.ts). Same rule, same reason, both surfaces.
-   *
-   * Minting is audited: this is a bearer credential for all site drafts, and
-   * because it is stateless there is no revocation and no other server-side
-   * artifact — the audit row is the only trail an incident review would have.
+   * Audited: a stateless bearer credential for all site drafts has no revocation,
+   * so the audit row is the only trail an incident review would have.
    */
   app.get(
     "/preview-token",
@@ -1033,7 +1016,10 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   // plus the resolved provider/model/baseUrl. Admin-gated (user.manage).
   const AiConfigStatus = z.object({
     configured: z.boolean(),
-    source: z.enum(["db", "env", "none"]),
+    // "undecryptable": a key IS stored but the current MFA_SECRET/SESSION_SECRET
+    // can't open it (rotated) — distinct from "none", or the admin re-enters a
+    // key that then silently overwrites one nobody knew was there.
+    source: z.enum(["db", "env", "none", "undecryptable"]),
     provider: z.enum(AI_PROVIDERS),
     last4: z.string().nullable(),
     model: z.string().nullable(),
@@ -1181,7 +1167,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   const StockConfigStatus = z.object({
     configured: z.boolean(),
     provider: z.enum(STOCK_PROVIDERS),
-    source: z.enum(["db", "env", "none"]),
+    source: z.enum(["db", "env", "none", "undecryptable"]),
     last4: z.string().nullable(),
   });
   async function stockStatus(): Promise<z.infer<typeof StockConfigStatus>> {
@@ -1190,7 +1176,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     return {
       configured: Boolean(key),
       provider: stored?.provider ?? "unsplash",
-      source: stored?.apiKey ? "db" : app.stockConfig.unsplashKey ? "env" : "none",
+      source: stored?.apiKey ? "db" : app.stockConfig.unsplashKey ? "env" : stored?.undecryptable ? "undecryptable" : "none",
       last4: key ? key.slice(-4) : null,
     };
   }
@@ -1435,7 +1421,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   /* ------------------------------- audit -------------------------------- */
   app.get(
     "/audit",
-    { preHandler: [requirePermission("audit.read")], schema: { tags: ["manage"], querystring: z.object({ limit: z.coerce.number().optional(), before: z.coerce.number().optional(), action: z.string().max(80).optional(), actor: z.string().max(60).optional(), documentId: z.string().max(60).optional(), from: z.string().max(40).optional(), to: z.string().max(40).optional() }), response: { 200: z.array(z.object({ id: z.number(), ts: z.string(), actorUserId: z.string().nullable(), actorName: z.string().nullable(), action: z.string(), documentId: z.string().nullable(), locale: z.string().nullable(), ip: z.string().nullable(), detail: z.unknown() })) } } },
+    { preHandler: [requirePermission("audit.read")], schema: { tags: ["manage"], querystring: z.object({ limit: z.coerce.number().int().min(1).max(500).optional(), before: z.coerce.number().int().min(1).optional(), action: z.string().max(80).optional(), actor: z.string().max(60).optional(), documentId: z.string().max(60).optional(), from: z.string().max(40).optional(), to: z.string().max(40).optional() }), response: { 200: z.array(z.object({ id: z.number(), ts: z.string(), actorUserId: z.string().nullable(), actorName: z.string().nullable(), action: z.string(), documentId: z.string().nullable(), locale: z.string().nullable(), ip: z.string().nullable(), detail: z.unknown() })) } } },
     async (req) => listAudit(app.db, req.accessCtx!, { limit: req.query.limit, before: req.query.before, action: req.query.action, actorUserId: req.query.actor, documentId: req.query.documentId, from: req.query.from, to: req.query.to }),
   );
 
@@ -1597,7 +1583,8 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
-  // Delete a site and everything bound to it (content, media, keys, scopes).
+  // Delete a site and everything bound to it (content, media, keys, scopes,
+  // webhooks with their delivery log, form submissions).
   // Irreversible — the caller must echo the site's slug as ?confirm=<slug>.
   app.delete(
     "/sites/:id",
@@ -1612,9 +1599,12 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
     async (req) => {
       const r = await deleteSite(app.db, req.accessCtx!, req.params.id, req.query.confirm);
-      // Rows are gone; now the bytes. Without this every image of a deleted site
-      // stayed downloadable at its previously-published URL forever.
-      for (const path of r.assetPaths) await removeAssetFiles(app.uploadsDir, path);
+      // Rows are gone; now the bytes, or every image of the deleted site stays
+      // downloadable at its published URL. One unlink failure must not stop the
+      // rest (nor the audit row) — it is logged with the path so it can be retried.
+      for (const path of r.assetPaths) {
+        await removeAssetFiles(app.uploadsDir, path).catch((err: unknown) => req.log.error({ err, path }, "site delete: asset unlink failed"));
+      }
       await audit(app.db, {
         actorUserId: req.user!.id,
         action: "site.delete",

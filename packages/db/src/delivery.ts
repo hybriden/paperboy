@@ -1,8 +1,9 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, type FieldDef, type PublicPageEntry, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, formSpecFrom, isCreativeWorkType, isFormType, parseStoredContentTypeDef, scalarToString, sortByRule } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, type FieldDef, type PublicPageEntry, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, parseStoredContentTypeDef, scalarToString, sortByRule } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
 import type { Database } from "./client.js";
+import { Errors } from "./errors.js";
 import { asset, contentItem, contentType, contentVersion, locale, site } from "./schema.js";
 
 /**
@@ -31,29 +32,20 @@ const MAX_RESOLVE_NODES = 500;
 
 class DeliveryCtx {
   types = new Map<string, ContentTypeDef>();
-  itemTypes = new Map<string, string>(); // documentId -> type name
   assets = new Map<string, typeof asset.$inferSelect | null>(); // documentId -> asset row
-  // documentId -> ALL its content_version rows (every locale). Avoids the N+1 of
-  // re-querying per document per locale-chain step.
+  // `${perspective}:${documentId}` -> the content_version rows that perspective may
+  // select (every locale). Avoids the N+1 of re-querying per document per
+  // locale-chain step.
   versionsByDoc = new Map<string, (typeof contentVersion.$inferSelect)[]>();
   locales: (typeof locale.$inferSelect)[] | null = null;
   // Total nodes resolved this request — the fan-out budget (S2-M4).
   nodesResolved = 0;
   /**
    * Highest `cv` of ANY row resolved this request — the cache version of the whole
-   * representation, not just its root row.
-   *
-   * The ETag used to be the root item's own `cv`, which changes only when that item
-   * is republished. So a 304 was returned for representations that demonstrably
-   * changed: republishing an embedded shared block, renaming an ancestor (which moves
-   * `urlPath`, `seo.canonicalPath` and the breadcrumb), or republishing SiteSettings
-   * (which changes `og.siteName` on EVERY page). With `stale-while-revalidate`, each
-   * revalidation refreshed the CDN's own freshness, so the stale copy was served
-   * indefinitely — and @paperboycms/client's etagCache did the same in-process.
-   *
-   * `variantRow` is the single funnel every resolved row passes through — nested
-   * references, the ancestor slug walk, breadcrumbs and siteName — so folding the max
-   * in there covers the entire graph without threading anything.
+   * representation (embedded blocks, ancestor slugs, breadcrumbs, siteName), not
+   * just its root row: an ETag from the root alone 304s a page whose embedded block
+   * or ancestor changed, and `stale-while-revalidate` then keeps a CDN on the stale
+   * copy indefinitely. Folded in `variantRow`, the one funnel every row passes.
    */
   maxCv = 0;
   /** Still within the per-request resolve budget? Past it, callers emit shallow refs. */
@@ -78,49 +70,44 @@ class DeliveryCtx {
     return row;
   }
 
-  /** All version rows for a document (cached). */
-  async docVersions(documentId: string): Promise<(typeof contentVersion.$inferSelect)[]> {
-    const hit = this.versionsByDoc.get(documentId);
-    if (hit) return hit;
-    const rows = await this.db
-      .select()
-      .from(contentVersion)
-      .where(eq(contentVersion.documentId, documentId));
-    this.versionsByDoc.set(documentId, rows);
-    return rows;
-  }
-
   /**
-   * Bulk-prime version rows for many documents in ONE query (batches the N+1).
-   *
-   * `perspective` narrows what is fetched, and it matters a lot: under the PUBLISHED
-   * perspective `selectRow` can only ever return an `isCurrentPublished` row, so
-   * history rows are unreachable — yet this used to fetch every version of every
-   * candidate, with all columns, including the full `data` JSONB. Measured on 2,000
-   * articles (≈6 versions each): 12,009 rows and ~42 MB of heap for a single
-   * `?limit=10` request, and ~1 GB RSS at 20 concurrent — enough to OOM the container
-   * and take the admin and login down with it, on a 600 req/min PUBLIC key.
-   *
-   * PREVIEW still needs everything: its last-resort fallback is "the latest version of
-   * any status", which keeps an unpublished page previewable and can legitimately be a
-   * history row. A DeliveryCtx is built per request and carries one perspective, so
-   * caching the narrowed set is safe.
+   * The version rows `perspective` can select for these documents. Under
+   * PUBLISHED, `selectRow` can only ever return an `isCurrentPublished` row, so
+   * history rows (full `data` JSONB each) are not loaded — on 2,000 articles that
+   * is ~42 MB of heap per `?limit=10` request on a 600 req/min PUBLIC key.
+   * PREVIEW still needs everything: its last-resort fallback is "the latest
+   * version of any status".
    */
-  async primeVersions(documentIds: string[], perspective: Perspective): Promise<void> {
-    const missing = documentIds.filter((id) => !this.versionsByDoc.has(id));
-    if (!missing.length) return;
-    const rows = await this.db
+  private selectableVersions(documentIds: string[], perspective: Perspective) {
+    return this.db
       .select()
       .from(contentVersion)
       .where(
         perspective === "published"
-          ? and(inArray(contentVersion.documentId, missing), eq(contentVersion.isCurrentPublished, true))
-          : inArray(contentVersion.documentId, missing),
+          ? and(inArray(contentVersion.documentId, documentIds), eq(contentVersion.isCurrentPublished, true))
+          : inArray(contentVersion.documentId, documentIds),
       );
+  }
+
+  /** The version rows `perspective` may select for one document (cached). */
+  async docVersions(documentId: string, perspective: Perspective): Promise<(typeof contentVersion.$inferSelect)[]> {
+    const key = `${perspective}:${documentId}`;
+    const hit = this.versionsByDoc.get(key);
+    if (hit) return hit;
+    const rows = await this.selectableVersions([documentId], perspective);
+    this.versionsByDoc.set(key, rows);
+    return rows;
+  }
+
+  /** Bulk-prime version rows for many documents in ONE query (batches the N+1). */
+  async primeVersions(documentIds: string[], perspective: Perspective): Promise<void> {
+    const missing = documentIds.filter((id) => !this.versionsByDoc.has(`${perspective}:${id}`));
+    if (!missing.length) return;
+    const rows = await this.selectableVersions(missing, perspective);
     const grouped = new Map<string, (typeof contentVersion.$inferSelect)[]>();
     for (const id of missing) grouped.set(id, []);
     for (const r of rows) grouped.get(r.documentId)?.push(r);
-    for (const [id, rs] of grouped) this.versionsByDoc.set(id, rs);
+    for (const [id, rs] of grouped) this.versionsByDoc.set(`${perspective}:${id}`, rs);
   }
 
   // Site name from the SiteSettings global (public field), for og:siteName /
@@ -178,10 +165,6 @@ class DeliveryCtx {
     return def;
   }
 
-  async itemType(documentId: string): Promise<string | null> {
-    return (await this.item(documentId))?.type ?? null;
-  }
-
   // documentId -> item row essentials (type/kind/parentId), cached.
   items = new Map<string, { type: string; kind: string; parentId: string | null } | null>();
   async item(documentId: string): Promise<{ type: string; kind: string; parentId: string | null } | null> {
@@ -193,7 +176,6 @@ class DeliveryCtx {
       .limit(1);
     const row = rows[0] ?? null;
     this.items.set(documentId, row);
-    if (row) this.itemTypes.set(documentId, row.type);
     return row;
   }
 
@@ -238,7 +220,7 @@ function selectRow(
  * depth — an expired/early item is unreachable under the public key the instant
  * it should be, independent of the publisher ticker's cadence.
  */
-function publishWindowOpen(r: typeof contentVersion.$inferSelect, now: Date): boolean {
+export function publishWindowOpen(r: typeof contentVersion.$inferSelect, now: Date): boolean {
   if (r.publishAt && r.publishAt > now) return false;
   if (r.expireAt && r.expireAt <= now) return false;
   return true;
@@ -264,7 +246,7 @@ async function variantRow(
   documentId: string,
   loc: string,
 ): Promise<{ row: typeof contentVersion.$inferSelect; usedLocale: string } | null> {
-  const all = await ctx.docVersions(documentId);
+  const all = await ctx.docVersions(documentId, perspective);
   for (const code of await ctx.localeChain(loc)) {
     const row = rowForLocale(all, perspective, code, ctx.now);
     if (row) {
@@ -305,7 +287,7 @@ async function fillNonLocalizedFields(
   const others = (await ctx.enabledLocaleCodes()).filter((c) => !chain.includes(c));
   const rest = [...chain.slice(chain.indexOf(usedLocale) + 1), ...others];
   if (!rest.length) return data;
-  const all = await ctx.docVersions(documentId);
+  const all = await ctx.docVersions(documentId, perspective);
   const out = { ...data };
   let open = missing.map((f) => f.name);
   for (const code of rest) {
@@ -395,11 +377,13 @@ async function sanitize(
       } else if (depth > 0 && ctx.withinResolveBudget()) {
         out[f.name] = await resolveContent(ctx, perspective, rv.documentId, loc, depth - 1);
       } else {
-        out[f.name] = { documentId: rv.documentId, type: rv.type ?? null };
+        // Shallow, but under the same perspective: an unpublished target is null
+        // here just as it is when populated.
+        out[f.name] = (await isVisible(ctx, perspective, rv.documentId, loc)) ? { documentId: rv.documentId, type: rv.type ?? null } : null;
       }
     } else if (f.type === "link" && v != null) {
       out[f.name] = await resolveLink(ctx, perspective, v, loc);
-    } else if (f.type === "richtext" && v && typeof v === "object") {
+    } else if (f.type === "richtext" && isRichTextDoc(v)) {
       // Image srcs are stored as uploaded (usually relative /uploads/… paths);
       // absolutize at read time like image FIELDS, so any frontend origin works.
       out[f.name] = absolutizeRichTextImages(v);
@@ -409,11 +393,14 @@ async function sanitize(
         const blockType = scalarToString(b.blockType);
         const display = b.display ?? "automatic";
         if (b.ref) {
-          // Shared block: resolve through the SAME chokepoint/perspective.
+          // Shared block: resolve through the SAME chokepoint/perspective. The
+          // shallow entry at populate 0 is gated by that perspective too, or an
+          // unpublished block's documentId/type leaked where its body would not.
+          const ref = scalarToString(b.ref);
           const resolved =
             depth > 0 && ctx.withinResolveBudget()
-              ? await resolveContent(ctx, perspective, scalarToString(b.ref), loc, depth - 1)
-              : { documentId: b.ref, type: blockType };
+              ? await resolveContent(ctx, perspective, ref, loc, depth - 1)
+              : (await isVisible(ctx, perspective, ref, loc)) ? { documentId: ref, type: blockType } : null;
           if (resolved) blocks.push({ blockType, display, shared: true, content: resolved });
         } else if (b.inline && typeof b.inline === "object") {
           const inlineData = await sanitize(
@@ -444,6 +431,20 @@ async function sanitize(
     }
   }
   return out;
+}
+
+/** The top-level TipTap doc shape every richtext write is normalized to (see
+ *  RichTextDoc in packages/shared). An ARRAY is not one: after a contentArea →
+ *  richtext retype the stored block array reached the richtext branch, and
+ *  absolutizeRichTextImages mapped it element-wise straight into the output. */
+function isRichTextDoc(v: unknown): boolean {
+  return !!v && typeof v === "object" && !Array.isArray(v) && (v as { type?: unknown }).type === "doc";
+}
+
+/** Would `resolveContent` return this document here? The item row (site, not
+ *  trashed) plus a visible row in this perspective — without sanitizing it. */
+async function isVisible(ctx: DeliveryCtx, perspective: Perspective, documentId: string, loc: string): Promise<boolean> {
+  return (await ctx.item(documentId)) !== null && (await variantRow(ctx, perspective, documentId, loc)) !== null;
 }
 
 /** True for a value a scalar field legitimately stores: a primitive, null, or an
@@ -674,8 +675,10 @@ async function computeSeo(
   const title = asText(data.metaTitle) ?? asText(roleOrConvention(def, "title", data, isStr)) ?? name;
   const description = asText(data.metaDescription) ?? asText(roleOrConvention(def, "description", data, isStr));
   const image = asImage(data.ogImage) ?? asImage(roleOrConvention(def, "image", data, isImg));
+  // The frontend renders this into <link rel="canonical">, so only an absolute
+  // http(s) URL or a root-relative path may replace the page's own path.
   const canonicalField = asText(data.canonicalUrl);
-  const canonicalPath = canonicalField ?? urlPath;
+  const canonicalPath = canonicalField && isSafeUrl(canonicalField) && /^(https?:\/\/|\/)/i.test(canonicalField) ? canonicalField : urlPath;
 
   // schema.org @type: explicit schemaType, else derived from the type's shape.
   const hasDate = def.fields.some((f) => f.seoRole === "datePublished");
@@ -742,6 +745,24 @@ async function computeSeo(
   };
 }
 
+/**
+ * A Form's SHARED field blocks, resolved through the chokepoint at this
+ * perspective whatever the request's populate depth — the spec must be complete
+ * at populate 0 too, and an unpublished, trashed or cross-site field block is
+ * invisible exactly like an inline field that was never published. Sanitized
+ * like any resolved item, so a private field never reaches the spec.
+ */
+async function sharedFormFields(ctx: DeliveryCtx, perspective: Perspective, data: Record<string, unknown>, loc: string): Promise<SharedBlockResolver> {
+  const blocks = new Map<string, { blockType: string; data: Record<string, unknown> }>();
+  for (const raw of Array.isArray(data.fields) ? data.fields : []) {
+    const ref = raw && typeof raw === "object" ? (raw as { ref?: unknown }).ref : undefined;
+    if (typeof ref !== "string" || !ref || blocks.has(ref)) continue;
+    const resolved = await resolveContent(ctx, perspective, ref, loc, 0);
+    if (resolved) blocks.set(ref, { blockType: resolved.type, data: resolved.data });
+  }
+  return (documentId) => blocks.get(documentId);
+}
+
 export async function resolveContent(
   ctx: DeliveryCtx,
   perspective: Perspective,
@@ -749,10 +770,12 @@ export async function resolveContent(
   loc: string,
   depth: number,
 ): Promise<DeliveryContent | null> {
-  const found = await variantRow(ctx, perspective, documentId, loc);
-  if (!found) return null;
+  // Item first: a cross-site or trashed document is not part of this
+  // representation, so its rows must not reach variantRow's maxCv bump.
   const item = await ctx.item(documentId);
   if (!item) return null;
+  const found = await variantRow(ctx, perspective, documentId, loc);
+  if (!found) return null;
   ctx.nodesResolved++; // count this node against the per-request fan-out budget (S2-M4)
   // localized:false fields are SHARED across language branches — fill gaps
   // from other visible variants before sanitizing (same chokepoint rules).
@@ -777,7 +800,9 @@ export async function resolveContent(
   // frontend never has to interpret block payloads to draw a form — and so the
   // labels/rules it renders are exactly the ones the submit endpoint enforces.
   // Computed from SANITIZED data, so a private field can never reach it.
-  const form = isFormType(item.type) ? formSpecFrom(sanitized) : undefined;
+  const form = isFormType(item.type)
+    ? formSpecFrom(sanitized, { sharedBlock: await sharedFormFields(ctx, perspective, data, found.usedLocale) })
+    : undefined;
   return {
     documentId,
     type: item.type,
@@ -865,6 +890,11 @@ export async function deliveryGetBySlug(
   return null;
 }
 
+/** Hard ceiling on what ONE list request may resolve (each item costs its populate
+ *  graph plus an SEO block). Not a default page size — a silent default would
+ *  truncate deployed frontends; past the cap the request is refused with the recipe. */
+export const MAX_LIST_ITEMS = 500;
+
 /** List query options: pagination, sorting and simple field filters. */
 export interface DeliveryListOptions {
   /** Page size. Omitted = all items (back-compat). */
@@ -880,7 +910,6 @@ export interface DeliveryListOptions {
   filter?: Record<string, string>;
 }
 
-/** Sort-key comparator: numbers numerically, everything else as strings (ISO dates compare correctly). */
 /** Word tokens under Postgres' 'simple' text-search config: lowercase, split on
  *  non-alphanumeric. No stemming or stop-words (that's what 'simple' does), so a
  *  whole-token membership check faithfully reproduces an AND-of-terms match. */
@@ -994,6 +1023,12 @@ export async function deliveryList(
   const total = filtered.length;
   const offset = Math.max(0, opts.offset ?? 0);
   const page = opts.limit != null ? filtered.slice(offset, offset + opts.limit) : filtered.slice(offset);
+  if (page.length > MAX_LIST_ITEMS) {
+    throw Errors.badRequest(
+      `This list has ${total} items, more than the ${MAX_LIST_ITEMS} one request may resolve. ` +
+        `Paginate: pass limit (at most ${MAX_LIST_ITEMS}) and offset — every page reports the full total (and X-Total-Count).`,
+    );
+  }
 
   // Only the requested page pays the full resolve cost (populate graph etc.).
   const out: DeliveryContent[] = [];
@@ -1105,20 +1140,12 @@ export async function deliverySearch(
   const q = query.trim();
   if (!q) return { items: [], total: 0 };
 
-  // NEGATION IS A PUBLIC-TEXT OPERATION, and must never reach the SQL tsquery.
-  //
-  // `v.fts` is built from the whole `data` JSONB, private fields included, and
-  // `websearch_to_tsquery` honours `-term`. The leak-safe re-check below only ever
-  // re-verified POSITIVE terms, so an exclusion caused by a PRIVATE match survived
-  // untouched — turning the public delivery key into a word-membership oracle over
-  // private content, one word per request:
-  //
-  //   ?q=Kiwifruit -bluewhale  →  [B]   ⇒ "bluewhale" is in A's private text
-  //   ?q=Kiwifruit -seoNotes   →  []    ⇒ even the private JSON key is queryable
-  //
-  // So strip negated words before building the query, and apply them against the
-  // SANITIZED PUBLIC text instead (see `negated` below). A private match can then
-  // neither include nor exclude a document.
+  // NEGATION IS A PUBLIC-TEXT OPERATION and must never reach the SQL tsquery:
+  // `v.fts` indexes the whole `data` JSONB, private fields included, and a
+  // `-term` the SQL honours turns the public key into a word-membership oracle
+  // over private text (`?q=Kiwifruit -bluewhale → []` ⇒ "bluewhale" is in the
+  // private field). Negated words are applied to the SANITIZED PUBLIC text
+  // (`negated` below), so a private match can neither include nor exclude a document.
   const words = q.split(/\s+/).filter(Boolean);
   const positiveQuery = words.filter((w) => !w.startsWith("-")).join(" ");
   // A query of only negations has nothing to match on; refusing it beats letting

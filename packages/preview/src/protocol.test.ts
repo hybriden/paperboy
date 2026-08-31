@@ -35,6 +35,15 @@ describe("parsePreviewMessage", () => {
     expect(parsePreviewMessage({ type: "paperboy:focus", field: "b", blockIndex: null })?.type).toBe("paperboy:focus");
     expect(parsePreviewMessage({ type: "paperboy:patch", field: "b", html: "x", blockIndex: 3 })?.type).toBe("paperboy:patch");
   });
+
+  it("rejects a non-string field — patch/focus interpolate it into a selector, and it is a string by contract", () => {
+    expect(parsePreviewMessage({ type: "paperboy:patch", field: 42, text: "x" })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:focus" })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:focus", field: null })).toBeNull();
+    // iframe → admin messages carry `field: string | null`; anything else is refused.
+    expect(parsePreviewMessage({ type: "paperboy:edit", field: null })?.type).toBe("paperboy:edit");
+    expect(parsePreviewMessage({ type: "paperboy:edit", field: 42 })).toBeNull();
+  });
 });
 
 describe("message builders", () => {

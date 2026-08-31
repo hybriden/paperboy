@@ -79,7 +79,15 @@ export async function registerAuthRoutes(appBase: FastifyInstance): Promise<void
       if (!password) {
         return { passwordRequired: true as const };
       }
-      const userId = await verifyLogin(app.db, email, password);
+      let userId: string;
+      try {
+        userId = await verifyLogin(app.db, email, password);
+      } catch (err) {
+        // IP only — never the email or password: credential stuffing must show in
+        // Settings → Audit without the log becoming a list of tried logins.
+        await audit(app.db, { action: "auth.login_failed", ip: req.ip });
+        throw err;
+      }
       // Defence-in-depth: if 2FA got enabled between the lookup and here, challenge.
       if ((await getMfaStatus(app.db, userId)).enabled) {
         return { mfaRequired: true as const, mfaToken: signMfaToken(userId) };

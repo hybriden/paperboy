@@ -1,6 +1,8 @@
 import { createHmac } from "node:crypto";
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { BlockList, isIP } from "node:net";
 import { and, desc, eq, lte } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
@@ -64,32 +66,50 @@ export function signPayload(secret: string, body: string): string {
   return `sha256=${createHmac("sha256", secret).update(body).digest("hex")}`;
 }
 
-/** True for non-routable / internal addresses that a webhook must never target
- *  (SSRF): loopback, RFC1918, link-local incl. the 169.254.169.254 cloud-metadata
- *  IP, CGNAT, unique-local, and the unspecified address — IPv4 and IPv6. */
-function isInternalAddress(ip: string): boolean {
-  if (isIP(ip) === 4) {
-    const [a, b] = ip.split(".").map(Number);
-    if (a === 127 || a === 0 || a === 10) return true; // loopback, "this host", 10/8
-    if (a === 172 && b! >= 16 && b! <= 31) return true; // 172.16/12
-    if (a === 192 && b === 168) return true; // 192.168/16
-    if (a === 169 && b === 254) return true; // link-local incl. IMDS 169.254.169.254
-    if (a === 100 && b! >= 64 && b! <= 127) return true; // CGNAT 100.64/10
-    return false;
-  }
-  const v = ip.toLowerCase();
-  if (v === "::1" || v === "::") return true; // loopback / unspecified
-  if (v.startsWith("::ffff:")) return isInternalAddress(v.slice(7)); // IPv4-mapped
-  if (v.startsWith("fe80")) return true; // link-local
-  if (v.startsWith("fc") || v.startsWith("fd")) return true; // unique-local fc00::/7
-  return false;
+/** Non-routable / internal ranges a webhook must never target (SSRF): "this
+ *  host", RFC1918, CGNAT, loopback, link-local (incl. the 169.254.169.254
+ *  cloud-metadata IP), multicast and reserved/broadcast; IPv6 unspecified,
+ *  loopback, unique-local, link-local and NAT64. IPv4-mapped IPv6 addresses
+ *  (::ffff:a.b.c.d) are checked against the IPv4 rules by BlockList itself. */
+const INTERNAL_RANGES = new BlockList();
+for (const [net, prefix] of [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.168.0.0", 16],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4],
+] as const) {
+  INTERNAL_RANGES.addSubnet(net, prefix, "ipv4");
+}
+for (const [net, prefix] of [
+  ["::", 128],
+  ["::1", 128],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["64:ff9b::", 96],
+] as const) {
+  INTERNAL_RANGES.addSubnet(net, prefix, "ipv6");
 }
 
-/** Deny-by-default egress guard for webhook URLs (H3). Requires http(s) and a
- *  PUBLIC host (DNS-resolved, so a hostname can't hide an internal IP, and the
- *  dispatch-time re-check closes DNS-rebinding). PAPERBOY_WEBHOOK_ALLOW_PRIVATE=true
- *  is an explicit escape hatch for deployments with legitimate internal targets. */
-async function assertPublicWebhookUrl(rawUrl: string): Promise<void> {
+function isInternalAddress(ip: string): boolean {
+  const family = isIP(ip);
+  return family === 0 || INTERNAL_RANGES.check(ip, family === 6 ? "ipv6" : "ipv4");
+}
+
+/**
+ * Deny-by-default egress guard for webhook URLs (H3). Requires http(s) and a
+ * PUBLIC host, and returns the vetted addresses so the dispatcher connects to
+ * exactly those: DNS is not consulted a second time at connect, which is what
+ * closes DNS rebinding (a TTL-0 host answering public here and 169.254.169.254
+ * to the connect). Returns undefined under PAPERBOY_WEBHOOK_ALLOW_PRIVATE=true —
+ * the explicit escape hatch for deployments with legitimate internal targets —
+ * and normal DNS then applies.
+ */
+async function assertPublicWebhookUrl(rawUrl: string): Promise<string[] | undefined> {
   let u: URL;
   try {
     u = new URL(rawUrl);
@@ -97,8 +117,9 @@ async function assertPublicWebhookUrl(rawUrl: string): Promise<void> {
     throw Errors.badRequest("Webhook URL must be a valid http(s) URL");
   }
   if (u.protocol !== "https:" && u.protocol !== "http:") throw Errors.badRequest("Webhook URL must be a valid http(s) URL");
-  if (process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE === "true") return;
-  const host = u.hostname;
+  if (process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE === "true") return undefined;
+  // `new URL("http://[::1]/").hostname` keeps the brackets; isIP wants them off.
+  const host = u.hostname.replace(/^\[|\]$/g, "");
   let addrs: string[];
   if (isIP(host)) {
     addrs = [host];
@@ -112,31 +133,87 @@ async function assertPublicWebhookUrl(rawUrl: string): Promise<void> {
   if (!addrs.length || addrs.some(isInternalAddress)) {
     throw Errors.badRequest("Webhook URL must point to a public host (loopback/link-local/private addresses are not allowed)");
   }
+  return addrs;
+}
+
+/** What a webhook POST needs from fetch's RequestInit — shared by the pinned
+ *  transport below and the tests, which build these literals directly. */
+export interface WebhookPostInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+  signal?: AbortSignal;
+}
+export interface WebhookResponse {
+  status: number;
+  headers: { get(name: string): string | null };
 }
 
 /**
- * POST, following redirects MANUALLY so every hop's host is re-checked.
+ * One HTTP(S) request whose socket connects to `addresses` — the guard's vetted
+ * answer — instead of resolving the hostname again. TLS still validates against
+ * the URL's hostname (SNI + certificate), so pinning changes only WHERE the bytes
+ * go, never WHO they are verified as. Without `addresses` (the ALLOW_PRIVATE
+ * escape hatch, or a test injecting its own guard) normal DNS applies.
+ */
+function postPinned(url: string, init: WebhookPostInit, addresses?: string[]): Promise<WebhookResponse> {
+  const u = new URL(url);
+  const request = u.protocol === "https:" ? httpsRequest : httpRequest;
+  const found = addresses?.map((address) => ({ address, family: isIP(address) })) ?? [];
+  const headers = { ...init.headers, ...(init.body !== undefined ? { "content-length": String(Buffer.byteLength(init.body)) } : {}) };
+  const options = {
+    method: init.method ?? "POST",
+    headers,
+    signal: init.signal,
+    lookup: found.length
+      ? (_host: string, opts: { all?: boolean }, cb: (err: Error | null, address: string | typeof found, family?: number) => void) =>
+          opts.all ? cb(null, found) : cb(null, found[0]!.address, found[0]!.family)
+      : undefined,
+  };
+  return new Promise((resolve, reject) => {
+    const req = request(u, options, (res) => {
+      res.destroy(); // the body is irrelevant — free the socket without reading it
+      resolve({
+        status: res.statusCode ?? 0,
+        headers: {
+          get: (name) => {
+            const v = res.headers[name.toLowerCase()];
+            return (Array.isArray(v) ? v[0] : v) ?? null;
+          },
+        },
+      });
+    });
+    req.on("error", reject);
+    req.end(init.body);
+  });
+}
+
+/**
+ * POST, following redirects MANUALLY so every hop's host is re-checked, and
+ * connecting each hop to the addresses `assertAllowed` vetted.
  *
- * undici follows 3xx by default, which made the pre-fetch host check pointless: an
- * allowlisted public host could answer `302 → http://169.254.169.254/…` and the
- * signed POST would go there. And because the response status is persisted on the
- * webhook row (and readable via listWebhooks), that turned into a blind
- * host/port-scan oracle for the deployment's internal network.
+ * Manual hops: a transport that follows 3xx on its own makes the pre-request host
+ * check pointless — an allowlisted public host could answer `302 →
+ * http://169.254.169.254/…` and the signed POST would go there. And because the
+ * response status is persisted on the webhook row (readable via listWebhooks),
+ * that turned into a blind host/port-scan oracle for the deployment's network.
  *
- * Same discipline as stock.ts's downloadBytes (S3-M8), which fixed this for image
- * downloads but was never applied here. `assertAllowed` is injected so it can be
- * tested without controlling DNS.
+ * Pinned connect: the socket goes to the address the guard vetted, never to a
+ * second resolution of the hostname — a TTL-0 host could otherwise answer public
+ * to the check and internal to the connect (DNS rebinding). `assertAllowed` is
+ * injected so both can be tested without controlling DNS; a guard that returns
+ * nothing means "no pin" (normal DNS).
  */
 export async function postFollowingRedirectsSafely(
   url: string,
-  init: RequestInit,
-  assertAllowed: (url: string) => Promise<void>,
+  init: WebhookPostInit,
+  assertAllowed: (url: string) => Promise<string[] | undefined | void>,
   maxHops = 3,
-): Promise<Response> {
+): Promise<WebhookResponse> {
   let current = url;
   for (let hop = 0; hop < maxHops; hop++) {
-    await assertAllowed(current); // re-checked for EVERY hop, including the first
-    const res = await fetch(current, { ...init, redirect: "manual" });
+    const vetted = await assertAllowed(current); // re-checked for EVERY hop, including the first
+    const res = await postPinned(current, init, Array.isArray(vetted) ? vetted : undefined);
     if (res.status < 300 || res.status >= 400) return res;
     const location = res.headers.get("location");
     if (!location) throw Errors.badRequest("Webhook delivery failed: redirect without a location header");
@@ -180,8 +257,13 @@ export async function createWebhook(
 
 export async function deleteWebhook(db: Database, ctx: AccessContext, id: number): Promise<void> {
   requirePermission(ctx, "webhook.manage");
-  // Scoped: an id from another site is a no-op, not a cross-site delete.
-  await db.delete(webhook).where(and(eq(webhook.id, id), eq(webhook.siteId, ctx.siteId)));
+  // Scoped: an id from another site reads as not-found, never a cross-site delete —
+  // and a miss is a 404 rather than a false success that audits a phantom delete.
+  const removed = await db
+    .delete(webhook)
+    .where(and(eq(webhook.id, id), eq(webhook.siteId, ctx.siteId)))
+    .returning({ id: webhook.id });
+  if (!removed[0]) throw Errors.notFound("Webhook");
 }
 
 /**
@@ -223,10 +305,10 @@ export async function dispatchWebhooks(
         const ac = new AbortController();
         const timer = setTimeout(() => ac.abort(), WEBHOOK_TIMEOUT_MS);
         try {
-          // assertPublicWebhookUrl runs per hop (not just once before the fetch):
-          // it is the real egress boundary, and it closes both DNS rebinding — a
-          // host that resolved public at create time and internal now — and
-          // redirect-based SSRF.
+          // assertPublicWebhookUrl runs per hop, and the addresses it vetted are
+          // what each hop's socket connects to (no second DNS answer at connect):
+          // that is the egress boundary against both redirect-based SSRF and DNS
+          // rebinding — a host that resolved public to the check and internal now.
           const res = await postFollowingRedirectsSafely(
             h.url,
             {

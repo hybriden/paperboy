@@ -29,7 +29,7 @@ describe("in-product agent update_content merges by default (M6)", () => {
 
   it("a second update_content keeps fields the first one set", async () => {
     const update = TOOLS.find((t) => t.name === "update_content")!;
-    const deps = { db: s.app.db, ctx, cfg: { model: "none" }, emit: () => undefined };
+    const deps = { db: s.app.db, ctx, cfg: { model: "none" }, emit: () => undefined, run: { created: [], touched: new Map() } };
     await update.run({ documentId: docId, locale: "en", data: { heading: "Kept" } }, deps);
     await update.run({ documentId: docId, locale: "en", data: { seoNotes: "Added" } }, deps);
 

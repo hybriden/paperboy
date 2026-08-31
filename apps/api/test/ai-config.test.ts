@@ -41,6 +41,27 @@ describe("AI provider key — in-CMS config (encrypted, write-only, Admin-only)"
     expect(status.json().enabled).toBe(true);
   });
 
+  // A stored key that the CURRENT secret can't open (MFA_SECRET rotated) must not
+  // read as "not configured": the admin would re-enter a key over one nobody
+  // knew was there, and the reason AI stopped working stays invisible.
+  it("reports source 'undecryptable' when the stored key was encrypted under another secret", async () => {
+    const savedMfa = process.env.MFA_SECRET;
+    process.env.MFA_SECRET = "rotated-away-secret-value-0123456789";
+    try {
+      const put = await s.app.inject({ method: "POST", url: "/api/v1/manage/site/ai", headers: authHeaders(admin), payload: { provider: "anthropic", apiKey: "sk-ant-undecryptable-1234" } });
+      expect(put.statusCode, put.body).toBe(200);
+    } finally {
+      if (savedMfa === undefined) delete process.env.MFA_SECRET;
+      else process.env.MFA_SECRET = savedMfa;
+    }
+    const res = await s.app.inject({ method: "GET", url: "/api/v1/manage/site/ai", headers: authHeaders(admin) });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().source).toBe("undecryptable");
+    expect(res.json().configured).toBe(false);
+    const clear = await s.app.inject({ method: "POST", url: "/api/v1/manage/site/ai", headers: authHeaders(admin), payload: { apiKey: null } });
+    expect(clear.statusCode, clear.body).toBe(200);
+  });
+
   it("clears the key (falls back to env — none in tests)", async () => {
     const post = await s.app.inject({ method: "POST", url: "/api/v1/manage/site/ai", headers: authHeaders(admin), payload: { apiKey: null } });
     expect(post.json()).toMatchObject({ configured: false, source: "none", last4: null });

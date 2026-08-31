@@ -124,9 +124,11 @@ services:
       PAPERBOY_API_URL: http://api:8091
       PAPERBOY_PUBLIC_KEY: ${PAPERBOY_PUBLIC_KEY:-pk_live_seed_public_key_value}
       PAPERBOY_PREVIEW_KEY: ${PAPERBOY_PREVIEW_KEY:-prv_seed_preview_key_value}
-      PREVIEW_SECRET: ${PREVIEW_SECRET:-dev-preview-secret-change-me}
+      PREVIEW_SECRET: ${PREVIEW_SECRET:-}
       # Admin origins allowed to embed the preview iframe (CSP frame-ancestors). Comma-separated.
       ADMIN_ORIGINS: ${ADMIN_ORIGINS:-}
+      SITE_ORIGIN: ${SITE_ORIGIN:-}
+      NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
     depends_on:
       api:
         condition: service_healthy

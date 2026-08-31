@@ -15,10 +15,7 @@ export interface TranslateOfferInput {
 
 export function pickTranslateSource({ currentLocale, defaultLocale, localesWithContent }: TranslateOfferInput): string | null {
   if (localesWithContent.includes(currentLocale)) return null; // already translated
-  // Directionless (2026-06-07: an nb-only article opened in en got NO offer —
-  // the old logic only fired outside the default locale, seeding only FROM
-  // it). Prefer the default locale as source; otherwise the first locale that
-  // actually has content.
+  // Prefer the default locale as source; otherwise the first locale that has content.
   const candidates = localesWithContent.filter((code) => code !== currentLocale);
   if (candidates.includes(defaultLocale)) return defaultLocale;
   return candidates[0] ?? null;

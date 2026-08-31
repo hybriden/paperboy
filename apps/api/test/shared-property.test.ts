@@ -1,9 +1,11 @@
+import { createRequire } from "node:module";
 import fc from "fast-check";
-import { describe, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   type ContentTypeDef,
   type FieldDef,
   type FieldType,
+  MD_PATTERNS,
   coerceData,
   coerceFieldValue,
   dataSchemaFor,
@@ -111,6 +113,30 @@ describe("richtext coercion (markdown→TipTap + sanitizer) — property", () =>
       }),
       { numRuns: 300 },
     );
+  });
+
+  // A nested quantifier over spaced markers (/^(\s*[-*_]\s*){3,}$/) backtracks
+  // exponentially on "- - - … x" (1.3 s at 27 markers, doubling per marker), and
+  // the thematic-break matcher runs per line on every Markdown string an Author
+  // or MCP token sends to a richtext field — a 60-byte body freezes the event loop.
+  it("a run of spaced markers ending in a non-marker is parsed in bounded time", () => {
+    const start = performance.now();
+    const out = coerceFieldValue(f("richtext"), "- ".repeat(40) + "x");
+    expect(performance.now() - start).toBeLessThan(50);
+    expect(isDoc(out)).toBe(true);
+  });
+
+  it("thematic breaks: one marker kind, ≥3 of it, spaces allowed (CommonMark)", () => {
+    const firstType = (s: string) => (coerceFieldValue(f("richtext"), s) as { content: Array<{ type: string }> }).content[0]!.type;
+    for (const hr of ["---", " - - - ", "***", "___", "* * *", "-- -"]) expect(firstType(hr), hr).toBe("horizontalRule");
+    for (const notHr of ["-*-", "--", "--- x", "-*_"]) expect(firstType(notHr), notHr).not.toBe("horizontalRule");
+  });
+
+  it("every regex in the Markdown→TipTap parser passes safe-regex (no nested quantifiers)", () => {
+    // safe-regex is a dependency of @paperboy/shared, not of this package.
+    const safe = createRequire(new URL("../../../packages/shared/package.json", import.meta.url))("safe-regex") as (re: string) => boolean;
+    expect(Object.keys(MD_PATTERNS).length).toBeGreaterThan(10);
+    for (const [name, re] of Object.entries(MD_PATTERNS)) expect(safe(re.source), `${name}: ${re.source}`).toBe(true);
   });
 
   it("sanitizer is a fixpoint on arbitrary doc-ish structures (incl. junk marks + deep nesting)", () => {

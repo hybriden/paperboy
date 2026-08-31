@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FieldDef } from "@paperboy/shared";
-import { blockInstanceFromDrop } from "./block-drop.js";
+import { blockInstanceFromDrop, newBlock, newBlockKey } from "./block-drop.js";
 
 // A content-area field; allowedBlocks empty = any block type allowed.
 const area = (allowedBlocks: string[] = []): FieldDef =>
@@ -68,5 +68,27 @@ describe("blockInstanceFromDrop", () => {
       new Set(["FormDateField"]),
     );
     expect(r.ok).toBe(true);
+  });
+});
+
+describe("newBlock", () => {
+  it("builds an inline instance", () => {
+    expect(newBlock({ blockType: "HeroBlock", inline: { title: "Hi" } }, "k")).toEqual({
+      key: "k", blockType: "HeroBlock", display: "automatic", inline: { title: "Hi" }, ref: null,
+    });
+  });
+
+  it("builds a reference instance", () => {
+    expect(newBlock({ blockType: "CardBlock", ref: "doc1" }, "k")).toEqual({
+      key: "k", blockType: "CardBlock", display: "automatic", inline: null, ref: "doc1",
+    });
+  });
+
+  it("mints a fresh key when none is given", () => {
+    const a = newBlock({ blockType: "X", inline: {} });
+    const b = newBlock({ blockType: "X", inline: {} });
+    expect(a.key).toMatch(/^b_/);
+    expect(a.key).not.toBe(b.key);
+    expect(newBlockKey()).not.toBe(newBlockKey());
   });
 });

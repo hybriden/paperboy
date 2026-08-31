@@ -34,13 +34,11 @@ export function MenuItem({
   onSelect,
   destructive,
   disabled,
-  shortcut,
 }: {
   children: React.ReactNode;
   onSelect?: () => void;
   destructive?: boolean;
   disabled?: boolean;
-  shortcut?: string;
 }) {
   return (
     <RMenu.Item
@@ -51,7 +49,6 @@ export function MenuItem({
       }`}
     >
       {children}
-      {shortcut && <span className="ml-auto text-[11px] tracking-wide text-muted">{shortcut}</span>}
     </RMenu.Item>
   );
 }

@@ -1,6 +1,5 @@
 "use server";
 
-import { randomUUID } from "node:crypto";
 import { submitForm } from "../lib/delivery";
 
 /**
@@ -14,6 +13,11 @@ import { submitForm } from "../lib/delivery";
  * Note what is deliberately NOT here: validation. The CMS recompiles the rules
  * from the published form definition and returns one message per field, so
  * duplicating them here would just create a second set to drift out of sync.
+ *
+ * Nor the idempotency key: the FORM mints it, once per attempt, so a retry of
+ * the same attempt is deduplicated by the CMS while a new submission after a
+ * success still counts. Minted here it would be fresh on every call — a retry
+ * would never match.
  */
 export async function submitFormAction(input: {
   formId: string;
@@ -22,16 +26,12 @@ export async function submitFormAction(input: {
   honeypot: string;
   turnstileToken?: string;
   locale?: string;
+  idempotencyKey: string;
 }): Promise<
   { ok: true; confirmation: { type: string; text?: unknown } } | { ok: false; fields: Record<string, string> }
 > {
   try {
-    const res = await submitForm({
-      ...input,
-      // A fresh key per attempt, so a network retry of THIS action is
-      // deduplicated by the CMS while a genuine second submission still counts.
-      idempotencyKey: randomUUID(),
-    });
+    const res = await submitForm(input);
     return res.ok ? { ok: true, confirmation: res.confirmation } : res;
   } catch {
     // Never leak transport detail to a visitor; tell them what to do instead.

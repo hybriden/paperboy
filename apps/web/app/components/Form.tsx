@@ -32,6 +32,9 @@ export interface FormProps {
   spec: FormSpec;
   /** The Form document's id — where the submission is posted. */
   formId: string;
+  /** Cloudflare Turnstile SITE key (public). Needed only when `spec.turnstile`;
+   *  without it the form says so instead of rendering a widget that never loads. */
+  turnstileSiteKey?: string;
   /** POSTs to the CMS. Server action or route handler; keeps the key server-side. */
   action: (input: {
     formId: string;
@@ -39,21 +42,36 @@ export interface FormProps {
     elapsedMs: number;
     honeypot: string;
     turnstileToken?: string;
+    idempotencyKey: string;
   }) => Promise<{ ok: true; confirmation: { type: string; text?: unknown } } | { ok: false; fields: Record<string, string> }>;
 }
 
 type Status = "editing" | "sending" | "sent";
+
+const TURNSTILE_API = "https://challenges.cloudflare.com/turnstile/v0/api.js";
 
 /** FormData yields `string | File | null`; a File is never a valid answer here. */
 function fieldText(v: FormDataEntryValue | null): string {
   return typeof v === "string" ? v : "";
 }
 
-export function Form({ spec, formId, action }: FormProps) {
+/** randomUUID exists only in secure contexts (https, localhost); a LAN http demo
+ *  still has getRandomValues. Any unique string ≤ 120 chars is a valid key. */
+function newIdempotencyKey(): string {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export function Form({ spec, formId, action, turnstileSiteKey }: FormProps) {
   const timer = useMemo(() => formTimer(), []);
   const honeypot = honeypotAttrs(spec);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<Status>("editing");
+  // One key per ATTEMPT: retries of this submission reuse it (the CMS dedupes),
+  // and a success mints the next one. useState's initializer runs once per
+  // instance — useMemo is not guaranteed to.
+  const [idempotencyKey, setIdempotencyKey] = useState(newIdempotencyKey);
   const summaryRef = useRef<HTMLDivElement>(null);
 
   const answered = spec.fields.filter((f) => f.kind !== "static" && f.name);
@@ -73,11 +91,14 @@ export function Form({ spec, formId, action }: FormProps) {
       values,
       elapsedMs: timer.elapsed(),
       honeypot: fieldText(data.get(honeypot.name)),
+      // The Turnstile widget injects this hidden input into its container.
       turnstileToken: spec.turnstile ? fieldText(data.get("cf-turnstile-response")) : undefined,
+      idempotencyKey,
     });
     if (res.ok) {
       setErrors({});
       setStatus("sent");
+      setIdempotencyKey(newIdempotencyKey());
       return;
     }
     setErrors(res.fields);
@@ -132,12 +153,28 @@ export function Form({ spec, formId, action }: FormProps) {
       ))}
 
       {/* Hidden from sight AND from assistive technology, never focusable. */}
-      <div style={{ position: "absolute", left: "-9999px", width: 1, height: 1, overflow: "hidden" }}>
+      <div aria-hidden="true" style={{ position: "absolute", left: "-9999px", width: 1, height: 1, overflow: "hidden" }}>
         <label htmlFor="pb-hp">Leave this field empty</label>
         <input id="pb-hp" name={honeypot.name} type="text" tabIndex={-1} autoComplete="off" aria-hidden="true" />
       </div>
 
-      {spec.turnstile && <div className="cf-turnstile" data-sitekey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY} />}
+      {spec.turnstile &&
+        (turnstileSiteKey ? (
+          <>
+            {/* React 19 hoists an async script to <head> and dedupes it. Turnstile's
+                implicit mode then renders into .cf-turnstile and adds the
+                cf-turnstile-response input the submit handler reads. */}
+            <script async src={TURNSTILE_API} />
+            <div className="cf-turnstile" data-sitekey={turnstileSiteKey} />
+          </>
+        ) : (
+          // Honest, not a dead widget: the CMS refuses a challenge-requiring form
+          // it cannot verify, so say why before the visitor types anything.
+          <p className="pb-form-error">
+            This form requires a spam challenge, but no Turnstile site key is configured (NEXT_PUBLIC_TURNSTILE_SITE_KEY) — submissions
+            will be refused.
+          </p>
+        ))}
 
       <button type="submit" disabled={status === "sending"}>
         {status === "sending" ? "Sending…" : spec.submitLabel}
@@ -147,8 +184,6 @@ export function Form({ spec, formId, action }: FormProps) {
 }
 
 function Field({ field, error }: { field: FormField; error?: string }): React.ReactElement | null {
-  const a = fieldAttrs(field, { error });
-
   if (field.kind === "static") {
     return (
       <div className="pb-form-static">
@@ -157,6 +192,7 @@ function Field({ field, error }: { field: FormField; error?: string }): React.Re
     );
   }
 
+  const a = fieldAttrs(field, { error });
   const help = field.helpText ? (
     <p className="pb-form-help" id={a.helpId}>
       {field.helpText}
@@ -169,10 +205,12 @@ function Field({ field, error }: { field: FormField; error?: string }): React.Re
   ) : null;
 
   // A radio group is a GROUP: the question has to be announced once, which is
-  // what fieldset/legend does and a bare label cannot.
+  // what fieldset/legend does and a bare label cannot. ARIA 1.2 supports
+  // aria-invalid on `radiogroup` — not on the fieldset's implicit `group`, nor
+  // on a `radio` — so the fieldset takes that role explicitly.
   if (field.kind === "radio") {
     return (
-      <fieldset className="pb-form-field" aria-describedby={a.describedBy} aria-invalid={error ? true : undefined}>
+      <fieldset className="pb-form-field" role="radiogroup" aria-describedby={a.describedBy} aria-invalid={error ? true : undefined}>
         <legend>
           {field.label}
           {field.required && <RequiredMark />}

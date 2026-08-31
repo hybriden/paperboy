@@ -115,6 +115,14 @@ describe("multisite phase 3 — site routes + active-site header", () => {
     const docId = page.json().documentId as string;
     const key = await s.app.inject({ method: "POST", url: "/api/v1/manage/delivery-keys", headers: siteHeaders, payload: { name: "del-key", type: "public" } });
     expect(key.statusCode, key.body).toBe(200);
+    // …plus a webhook (+ a delivery log row) and a form submission: both carry a
+    // site FK (migrations 0022/0023), and a site holding either could not be
+    // deleted at all (23503 → 500).
+    const hook = await s.app.inject({ method: "POST", url: "/api/v1/manage/webhooks", headers: siteHeaders, payload: { name: "del-hook", url: "https://example.com/h", events: ["content.published"] } });
+    expect(hook.statusCode, hook.body).toBe(200);
+    const hookId = hook.json().id as number;
+    await raw.sql`INSERT INTO webhook_delivery (webhook_id, event) VALUES (${hookId}, 'content.published')`;
+    await raw.sql`INSERT INTO form_submission (submission_id, site_id, form_id, locale, values) VALUES ('sub_site_del', ${created.id}, 'form_del', 'en', '{}'::jsonb)`;
 
     // Editor (no user.manage) is forbidden.
     const forbidden = await s.app.inject({ method: "DELETE", url: `/api/v1/manage/sites/${created.id}?confirm=brand-del`, headers: authHeaders(ed) });
@@ -140,6 +148,9 @@ describe("multisite phase 3 — site routes + active-site header", () => {
     expect(versions.length).toBe(0);
     const keys = (await raw.sql`SELECT 1 FROM delivery_key WHERE site_id = ${created.id}`) as unknown[];
     expect(keys.length).toBe(0);
+    expect(((await raw.sql`SELECT 1 FROM webhook WHERE site_id = ${created.id}`) as unknown[]).length).toBe(0);
+    expect(((await raw.sql`SELECT 1 FROM webhook_delivery WHERE webhook_id = ${hookId}`) as unknown[]).length).toBe(0);
+    expect(((await raw.sql`SELECT 1 FROM form_submission WHERE site_id = ${created.id}`) as unknown[]).length).toBe(0);
     const auditRows = (await raw.sql`SELECT detail FROM audit_log WHERE action = 'site.delete'`) as Array<{ detail: { id: string } }>;
     expect(auditRows.some((a) => a.detail.id === created.id)).toBe(true);
   });

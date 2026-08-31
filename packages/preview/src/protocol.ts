@@ -184,6 +184,11 @@ export function parsePreviewMessage(data: unknown): PaperboyMessage | null {
   // protocol chokepoint, rather than trusting every reader to re-check.
   const bi = (data as { blockIndex?: unknown }).blockIndex;
   if (bi !== undefined && bi !== null && !Number.isInteger(bi)) return null;
+  // `field` is `string | null` everywhere, and a plain `string` on the two
+  // admin → iframe messages the bridge resolves to an element.
+  const field = (data as { field?: unknown }).field;
+  if (field != null && typeof field !== "string") return null;
+  if ((type === "paperboy:patch" || type === "paperboy:focus") && typeof field !== "string") return null;
   return data as PaperboyMessage;
 }
 

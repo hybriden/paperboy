@@ -22,6 +22,26 @@ import { useToast } from "./ui/toast.js";
 
 const PAGE = 50;
 
+/** A failed load must never read as "nothing here" — that would be a lie, and
+ *  the honest reading of a dropped request is that we don't know. 403 is its own
+ *  case: the permission is enforced on the server, so it can differ from what
+ *  this session's permission list says. */
+export function SubmissionsLoadError({ error, subject }: { error: unknown; subject: "form" | "site" }) {
+  if (error instanceof ApiError && error.status === 403) {
+    return (
+      <Callout tone="caution" title="You can’t read form submissions">
+        Submissions hold personal data visitors sent you, so they need their own permission. Ask an administrator for the
+        Editor role (or higher) if answering these is part of your job.
+      </Callout>
+    );
+  }
+  return (
+    <Callout tone="critical" title={subject === "form" ? "Couldn’t load the submissions" : "Couldn’t load the forms"}>
+      This isn’t an empty {subject} — the list failed to load. Reload to try again.
+    </Callout>
+  );
+}
+
 /** One answer as display text. Objects/arrays become JSON so a nested value is
  *  still visible (never "[object Object]"), and a checkbox reads the way the
  *  visitor saw it. */
@@ -113,22 +133,7 @@ export function FormSubmissions({ formId, canManage }: { formId: string; canMana
     onError: (e) => toast.error("Couldn’t export", (e as Error).message),
   });
 
-  // A failed load must never fall through to the empty state below: "no
-  // submissions yet" would be a lie, and the honest reading of a dropped request
-  // is that we don't know. 403 is its own case — the permission is enforced on
-  // the server, so it can differ from what this session's permission list says.
-  if (list.isError) {
-    return list.error instanceof ApiError && list.error.status === 403 ? (
-      <Callout tone="caution" title="You can’t read form submissions">
-        Submissions hold personal data visitors sent you, so they need their own permission. Ask an administrator for the
-        Editor role (or higher) if answering these is part of your job.
-      </Callout>
-    ) : (
-      <Callout tone="critical" title="Couldn’t load the submissions">
-        This isn’t an empty form — the list failed to load. Reload to try again.
-      </Callout>
-    );
-  }
+  if (list.isError) return <SubmissionsLoadError error={list.error} subject="form" />;
 
   const rows = list.data?.items ?? [];
   const total = list.data?.total ?? 0;

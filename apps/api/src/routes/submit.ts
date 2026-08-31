@@ -1,5 +1,6 @@
 import {
   dispatchWebhooks,
+  formSiteId,
   getSiteById,
   loadPublishedForm,
   resolveDefaultLocale,
@@ -10,6 +11,7 @@ import {
 import { MAX_ANSWER_LENGTH, checkSpamHeuristics } from "@paperboy/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
+import { nanoid } from "nanoid";
 import { z } from "zod";
 
 /**
@@ -125,6 +127,9 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
     "/forms/:documentId/submissions",
     {
       config: {
+        // @fastify/cors is configured for the ADMIN origin; this route grants
+        // the SITE's own origins itself (below), so the plugin must stay out.
+        cors: false,
         // Tighter than the global per-IP ceiling, and per form as well as per
         // IP: one scraped form endpoint must not be able to exhaust the budget
         // every other site's forms share.
@@ -174,17 +179,20 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
         });
         return reply.code(202).send({
           ok: true,
-          submissionId: "sub_discarded",
+          // Shaped like a real id — a constant would be a bot-readable tell. The
+          // `confirmation` shape is a residual tell by design: the form is
+          // deliberately not loaded before the heuristics run.
+          submissionId: `sub_${nanoid(18)}`,
           confirmation: { type: "message" as const },
         });
       }
 
       // Total answer size, so a form without per-field limits can't be used as
       // free storage. Field-level limits are enforced by the compiled schema.
-      const totalLength = Object.values(body.values).reduce<number>(
-        (n, v) => n + (typeof v === "string" ? v.length : 0),
-        0,
-      );
+      // Multi-select answers arrive as arrays, so their elements count too.
+      const textLength = (v: unknown): number =>
+        typeof v === "string" ? v.length : Array.isArray(v) ? v.reduce<number>((n, x) => n + textLength(x), 0) : 0;
+      const totalLength = Object.values(body.values).reduce<number>((n, v) => n + textLength(v), 0);
       if (totalLength > MAX_ANSWER_LENGTH * 20) {
         return reply.code(413).send({ error: "payload_too_large", message: "The submission is too large." });
       }
@@ -284,18 +292,18 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
-  // Preflight for a JSON submission from a browser on the site's own origin.
-  app.options("/forms/:documentId/submissions", { schema: { hide: true } }, async (req, reply) => {
-    const auth = req.headers.authorization;
-    const key = auth?.startsWith("Bearer ") ? auth.slice(7).trim() : "";
-    const resolved = key ? await verifyDeliveryKey(app.db, key) : null;
-    const site = resolved ? await getSiteById(app.db, resolved.siteId) : null;
+  // Preflight for a JSON submission from a browser on the site's own origin. A
+  // preflight carries NO credential (browsers strip Authorization), so the site
+  // — and with it the grantable origins — comes from the form's own id.
+  app.options("/forms/:documentId/submissions", { schema: { hide: true }, config: { cors: false } }, async (req, reply) => {
+    const siteId = await formSiteId(app.db, (req.params as { documentId: string }).documentId);
+    const site = siteId ? await getSiteById(app.db, siteId) : null;
     const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
-    // Without a resolvable key we cannot know the site, so we grant nothing —
-    // the browser then blocks the real request, which is the correct outcome.
+    // An unknown form grants nothing — the browser then blocks the real request,
+    // which is the correct outcome.
     if (origin && allowedOrigins(site).includes(origin)) {
       reply.header("Access-Control-Allow-Origin", origin);
-      reply.header("Access-Control-Allow-Headers", "content-type, authorization, idempotency-key");
+      reply.header("Access-Control-Allow-Headers", "content-type, authorization, x-api-key, idempotency-key");
       reply.header("Access-Control-Allow-Methods", "POST, OPTIONS");
       reply.header("Access-Control-Max-Age", "600");
       reply.header("Vary", "Origin");

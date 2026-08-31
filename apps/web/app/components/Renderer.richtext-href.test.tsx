@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { DeliveryContent } from "@paperboy/shared";
+import type { DeliveryContent } from "@paperboycms/client";
 import { Renderer } from "./Renderer";
 
 // Richtext link marks carry an author-supplied href. The delivery sanitizer keeps

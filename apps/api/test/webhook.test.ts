@@ -97,6 +97,11 @@ describe("Webhooks (HMAC-signed publish events)", () => {
     expect(payload.urlPath).toBe("/hooked");
   });
 
+  it("deleting an unknown (or another site's) webhook id is a 404, not a silent success", async () => {
+    const res = await s.app.inject({ method: "DELETE", url: "/api/v1/manage/webhooks/999999", headers: authHeaders(admin) });
+    expect(res.statusCode, res.body).toBe(404);
+  });
+
   it("lists webhooks without exposing the secret", async () => {
     const res = await s.app.inject({ method: "GET", url: "/api/v1/manage/webhooks", headers: authHeaders(admin) });
     expect(res.statusCode).toBe(200);

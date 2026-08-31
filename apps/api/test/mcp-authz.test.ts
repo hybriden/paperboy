@@ -40,7 +40,7 @@ describe("MCP authorization — delivery tools and token revocation", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "authz-suite-author", userId: authorId },
+      payload: { name: "authz-suite-author", userId: authorId, password: "Admin!Passw0rd" },
     });
     expect(minted.statusCode, minted.body).toBe(200);
     authorToken = minted.json().token as string;
@@ -76,6 +76,32 @@ describe("MCP authorization — delivery tools and token revocation", () => {
     // security theatre that breaks a legitimate agent use case.
     const r = await authorMcp.call("delivery_list", { type: "ArticlePage" });
     expect(r.isError, r.text).toBe(false);
+  }, 60_000);
+
+  it("a locale-less call on a document outside the caller's scope is refused by authz, not by the locale resolver (no 'exists in: nb' oracle)", async () => {
+    // A root page that exists in 'nb' and 'de' but NOT in the default 'en' —
+    // outside the Author's section. The omitted-locale resolver used to run
+    // BEFORE any authorization and answer "This document has no 'en' variant —
+    // it exists in: nb, de", telling a scoped caller both that the id exists and
+    // which languages it has.
+    expect((await s.app.inject({ method: "POST", url: "/api/v1/manage/locales", headers: authHeaders(admin), payload: { code: "de", displayName: "Deutsch" } })).statusCode).toBe(200);
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: authHeaders(admin),
+      payload: { type: "ArticlePage", locale: "nb", name: "Utenfor sonen" },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const foreignId = created.json().documentId as string;
+    const de = await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${foreignId}?locale=de`, headers: authHeaders(admin), payload: { name: "Außerhalb", data: {} } });
+    expect(de.statusCode, de.body).toBe(200);
+
+    const withLocale = await authorMcp.call("get_content", { documentId: foreignId, locale: "nb" });
+    expect(withLocale.isError).toBe(true); // the tool's own authz path
+    const withoutLocale = await authorMcp.call("get_content", { documentId: foreignId });
+    expect(withoutLocale.isError).toBe(true);
+    expect(withoutLocale.text).not.toMatch(/exists in/i);
+    expect(withoutLocale.text, "same verdict whether or not a locale was passed").toBe(withLocale.text);
   }, 60_000);
 
   it("revoking the boot token locks the running HTTP server out (no restart)", async () => {

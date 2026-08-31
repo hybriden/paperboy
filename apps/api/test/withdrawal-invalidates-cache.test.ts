@@ -18,8 +18,10 @@ import { PUBLIC_KEY, type Suite, authHeaders, login, setupApi } from "./helpers.
  *
  * A real fix needs a monotonic per-site (or per-type) change counter folded into the
  * ETag, so that a REMOVAL can move it. That is a schema change and is tracked as
- * open work; the same task covers the other half of the finding (an embedded shared
- * block, an ancestor rename, or a SiteSettings republish also leave `cv` untouched).
+ * open work. (The other half of the original finding — an embedded shared block, an
+ * ancestor rename or a SiteSettings republish leaving the ETag untouched — is fixed:
+ * `DeliveryCtx.maxCv` folds every resolved row into it, pinned by
+ * etag-graph-invalidation.test.ts.)
  *
  * What this file DOES pin: withdrawal really removes the item from the published
  * perspective (the no-leak guarantee), which is independent of caching.

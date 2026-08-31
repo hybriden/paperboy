@@ -59,16 +59,49 @@ export function isPreviewOrigin(eventOrigin: string | null | undefined, previewU
 }
 
 /**
+ * Origin of the preview frontend — the ONLY origin the admin exchanges bridge
+ * messages with. Used to address outbound posts (never "*", which would hand draft
+ * content to whatever the iframe has navigated to) and to authenticate inbound
+ * ones (see Editor's message handler). Strictly the site's CONFIGURED preview
+ * URL: null while the site query hasn't resolved or nothing is set — never a
+ * guessed host, which would send the live preview token to an unconfigured
+ * origin and trust whatever answered. Callers fail closed on null.
+ */
+export function previewOrigin(site: { previewBaseUrl: string } | undefined): string | null {
+  return originOf(site?.previewBaseUrl);
+}
+
+/** The sender identity a MessageEvent carries. */
+export interface InboundMessage {
+  origin: string | null | undefined;
+  source: unknown;
+}
+
+/**
+ * Is this message from the preview IFRAME itself — not merely from its origin?
+ *
+ * The preview origin is the customer's PUBLIC site, so the origin alone proves
+ * little: an XSS on any public page can window.open() the admin and post from
+ * that very origin. The window handle can't be forged, so identity is checked
+ * on `source` (the bridge does the same for its parent). Fails closed while no
+ * frame is mounted.
+ */
+export function isFromPreviewFrame(e: InboundMessage, previewUrl: string | null | undefined, frameWindow: Window | null | undefined): boolean {
+  if (!frameWindow || e.source !== frameWindow) return false;
+  return isPreviewOrigin(e.origin, previewUrl);
+}
+
+/**
  * Does this message prove the preview frame is ALIVE (loaded and rendering)?
  *
- * ANY valid `paperboy:*` message from the preview origin counts — not just
+ * ANY valid `paperboy:*` message from the preview frame counts — not just
  * `paperboy:preview-ready` (a page whose bridge speaks an older protocol, or
  * only starts talking on interaction, was read as "silent" and triggered the
  * "refusing to be framed?" hint while the preview rendered fine). Used ONLY to
  * suppress that hint; the write-path handlers keep their stricter parsing.
  */
-export function isPreviewActivity(eventOrigin: string | null | undefined, previewUrl: string | null | undefined, data: unknown): boolean {
-  if (!isPreviewOrigin(eventOrigin, previewUrl)) return false;
+export function isPreviewActivity(e: InboundMessage, previewUrl: string | null | undefined, frameWindow: Window | null | undefined, data: unknown): boolean {
+  if (!isFromPreviewFrame(e, previewUrl, frameWindow)) return false;
   const type = (data as { type?: unknown } | null | undefined)?.type;
   return typeof type === "string" && type.startsWith("paperboy:");
 }

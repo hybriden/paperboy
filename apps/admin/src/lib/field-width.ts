@@ -1,25 +1,11 @@
 import type { FieldDef } from "@paperboy/shared";
 
 /**
- * How wide a field's control should be.
- *
- * Width is a hint about how much to type, so a form that stretches every input
- * to the column tells the editor the wrong thing everywhere: a datetime and a
- * page heading both arrived 720px wide (measured 2026-08-23). These caps come
- * from what the type DECLARES — the field's kind and its own maxLength — so
- * nobody building a content type has to think about layout.
- *
- * THREE steps, not five values. The principle above is right, but the caps were
- * 130 / 210 / 340 / 440 / 520px, which put fifteen controls on four different
- * right edges in one panel (measured 2026-08-25) — and whitespace only reads as
- * deliberate when the edges bounding it are. A scale of three says the same
- * thing about expected input length while giving the eye three edges to learn
- * instead of five to measure.
- *
- * Multi-line fields (markdown, richtext), content areas and composites (link,
- * image) get no cap: there the width IS the point.
- *
- * One home, because a block's fields must read the same as a page's.
+ * How wide a field's control should be: a hint about how much to type, derived
+ * from what the type DECLARES (its kind and maxLength) on a three-step scale, so
+ * a panel's controls share a few right edges instead of many. Multi-line fields,
+ * content areas and composites (link, image) get no cap — there the width IS the
+ * point. One home, because a block's fields must read the same as a page's.
  */
 
 /** Enough for a date, a number, a code — anything you read at a glance. */

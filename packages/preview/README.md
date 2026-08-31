@@ -4,6 +4,10 @@ The browser-side **on-page-editing bridge** for the [Paperboy](https://github.co
 
 It is the single source of truth for the message protocol between the CMS admin (parent window) and a frontend rendered inside the preview iframe — so frontends and the admin can't drift.
 
+**Changes in 0.4.1** — `initPreviewBridge()` is a no-op without a DOM (safe at module
+scope under SSR) and idempotent (a second call returns the existing teardown instead of
+stacking chrome and listeners); `parsePreviewMessage` refuses a non-string `field`.
+
 ## Frontend (inside the preview iframe)
 
 Call `initPreviewBridge()` once, only in preview, and mark your editable DOM:
@@ -18,6 +22,16 @@ if (inPreviewMode) {
   });
 }
 ```
+
+### Options
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `parentOrigin` | — | Origin of the embedding admin. Recommended — see below |
+| `target` | `window.parent` | Window to post messages to |
+| `doc` | `document` | Document to bind to (tests, a different frame) |
+| `accent` | `#0077BC` | Outline/highlight colour |
+| `badge` | `true` | Show the "Preview — click to edit" badge. It is click-transparent and fades out after a few seconds; the outlines carry the mode from there |
 
 ### Sender trust (read this)
 
@@ -65,15 +79,31 @@ The bridge then:
   message; the chip hides while a block drag is in progress,
 - injects its own styles and persists scroll across reloads.
 
-## Admin (parent window) — types only, no DOM
+## Protocol subpath — types only, no DOM
+
+`@paperboycms/preview/protocol` is the contract itself: constants, message types and
+builders, nothing that touches a document. The admin (parent window) imports it;
+a frontend imports it to spell the attribute names.
 
 ```ts
-import { parsePreviewMessage, patchMessage, focusMessage } from "@paperboycms/preview/protocol";
+import { ATTR, DRAG_MIME, PROTOCOL_VERSION, parsePreviewMessage, patchMessage, focusMessage } from "@paperboycms/preview/protocol";
 ```
+
+| Export | What it is |
+| --- | --- |
+| `ATTR` | The attribute names — `field`, `area`, `blockIndex`, `blockType`. Spell markers through it (`{ [ATTR.field]: "title" }`) so your markup can't drift from the bridge |
+| `DRAG_MIME` | `application/x-paperboy` — the `dataTransfer` type of an Assets-pane drag |
+| `PROTOCOL_VERSION` | `1` — carried by `paperboy:preview-ready` |
+| `parsePreviewMessage(data)` | Narrows an untrusted `MessageEvent.data` to the typed union, or `null` (unknown type, or a non-integer `blockIndex`) |
+| `patchMessage` `focusMessage` `dragSourceMessage` `dragEndMessage` `dragAtMessage` `dropAtMessage` `pingMessage` | Builders for the admin → iframe messages |
+| Types | `FromPreview` = `ReadyMessage` \| `EditMessage` \| `RectMessage` \| `DropMessage` \| `AddBlockMessage`; `ToPreview` = `PatchMessage` \| `FocusMessage` \| `DragSourceMessage` \| `DragEndMessage` \| `DragAtMessage` \| `DropAtMessage` \| `PingMessage`; `PaperboyMessage`, `Rect`, `Caret` |
 
 `parsePreviewMessage(ev.data)` narrows an incoming message to the typed union (or `null` for unknown/garbage — the protocol is additive-only and both ends ignore unknown types, so independently-deployed admin/frontends degrade gracefully).
 
 ## Attribute contract
+
+The names are exported as `ATTR` from the protocol subpath (above); prefer that
+over hand-writing them.
 
 | Attribute | Meaning |
 | --- | --- |

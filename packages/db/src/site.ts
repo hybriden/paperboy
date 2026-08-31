@@ -147,28 +147,31 @@ export interface StoredAiConfig {
   keyProvider: AiProvider | null;
   model: string | null;
   baseUrl: string | null;
+  /** A key IS stored but the current MFA_SECRET/SESSION_SECRET cannot open it (rotated). */
+  undecryptable: boolean;
 }
 
 /**
  * The AI config stored in the CMS. The key is AES-GCM encrypted at rest — same
  * scheme/key as TOTP secrets; a key that can't be decrypted (e.g. secret
- * rotated) is treated as unset.
+ * rotated) is unusable, and the status says so rather than "not configured".
  */
 export async function getStoredAiConfig(db: Database): Promise<StoredAiConfig> {
   const keyRow = await getSetting<{ cipher: string; provider?: AiProvider }>(db, AI_API_KEY);
   let apiKey: string | null = null;
+  let undecryptable = false;
   if (keyRow?.cipher) {
     try {
       apiKey = decryptSecret(keyRow.cipher, "ai.key");
     } catch {
-      apiKey = null;
+      undecryptable = true;
     }
   }
   const provider = (await getSetting<{ provider: AiProvider }>(db, AI_PROVIDER_KEY))?.provider ?? null;
   const model = (await getSetting<{ model: string }>(db, AI_MODEL_KEY))?.model ?? null;
   const baseUrl = (await getSetting<{ url: string }>(db, AI_BASE_URL_KEY))?.url ?? null;
   // Keys stored before providers existed are Anthropic keys by definition.
-  return { provider, apiKey, keyProvider: apiKey ? (keyRow?.provider ?? "anthropic") : null, model, baseUrl };
+  return { provider, apiKey, keyProvider: apiKey ? (keyRow?.provider ?? "anthropic") : null, model, baseUrl, undecryptable };
 }
 
 /**
@@ -224,7 +227,7 @@ export interface AiEnv {
 
 /** The resolved runtime config plus where the key came from (for the status UI). */
 export interface ResolvedAiConfig extends AiConfig {
-  source: "db" | "env" | "none";
+  source: "db" | "env" | "none" | "undecryptable";
 }
 
 /**
@@ -268,6 +271,6 @@ export async function resolveAiRuntimeConfig(db: Database, env: AiEnv): Promise<
     apiKey: envKey || undefined,
     baseUrl: provider === "openai" ? (env.OPENAI_BASE_URL?.trim().replace(/\/+$/, "") || DEFAULT_OPENAI_BASE_URL) : undefined,
     model: stored.model || env.AI_MODEL?.trim() || DEFAULT_AI_MODELS[provider],
-    source: envKey ? "env" : "none",
+    source: envKey ? "env" : stored.undecryptable ? "undecryptable" : "none",
   };
 }

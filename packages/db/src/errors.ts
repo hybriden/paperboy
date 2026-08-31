@@ -14,6 +14,23 @@ export class AppError extends Error {
   }
 }
 
+/**
+ * The Postgres SQLSTATE of a driver error, or null. drizzle-orm ≥0.44 wraps the
+ * driver error in a DrizzleQueryError with the Postgres error as `cause`, so the
+ * cause chain is walked (bounded). Lets a losing concurrent write become a
+ * self-teaching 409 instead of an opaque 500.
+ */
+export function pgErrorCode(err: unknown, depth = 0): string | null {
+  if (typeof err !== "object" || err === null || depth > 5) return null;
+  const code = (err as { code?: unknown }).code;
+  if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) return code;
+  return pgErrorCode((err as { cause?: unknown }).cause, depth + 1);
+}
+
+export const PG_UNIQUE_VIOLATION = "23505";
+export const PG_FOREIGN_KEY_VIOLATION = "23503";
+export const PG_INVALID_TEXT_REPRESENTATION = "22P02";
+
 export const Errors = {
   notFound: (what = "Resource") => new AppError(404, "not_found", `${what} not found`),
   forbidden: (msg = "Forbidden") => new AppError(403, "forbidden", msg),

@@ -355,8 +355,8 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
   }
 
   // --- Delivery keys (deterministic from env so the web app can use them) -
-  const publicKey = process.env.PAPERBOY_PUBLIC_KEY ?? "pk_live_seed_public_key_value";
-  const previewKey = process.env.PAPERBOY_PREVIEW_KEY ?? "prv_seed_preview_key_value";
+  const publicKey = process.env.PAPERBOY_PUBLIC_KEY ?? DEFAULT_PUBLIC_KEY;
+  const previewKey = process.env.PAPERBOY_PREVIEW_KEY ?? DEFAULT_PREVIEW_KEY;
   await db.insert(deliveryKey).values([
     { name: "Default public key", keyHash: sha256(publicKey), keyPrefix: "pk_live_", type: "public" },
     { name: "Default preview key", keyHash: sha256(previewKey), keyPrefix: "prv_", type: "preview" },

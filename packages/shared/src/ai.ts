@@ -103,6 +103,12 @@ interface ChatRequest {
   timeoutMs: number;
 }
 
+/** The configured key, or the self-teaching refusal — never an `undefined` sent as a header. */
+function requireKey(cfg: AiConfig): string {
+  if (!cfg.apiKey) throw new AiUnavailableError();
+  return cfg.apiKey;
+}
+
 /** Trim a provider error body to something short and self-teaching. */
 function errExcerpt(body: string): string {
   const flat = body.replace(/\s+/g, " ").trim();
@@ -117,15 +123,16 @@ export async function postAnthropicMessages(
   cfg: AiConfig,
   payload: Record<string, unknown>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": cfg.apiKey!, "anthropic-version": "2023-06-01" },
+      headers: { "content-type": "application/json", "x-api-key": requireKey(cfg), "anthropic-version": "2023-06-01" },
       body: JSON.stringify(payload),
-      signal: ac.signal,
+      signal: signal ? AbortSignal.any([ac.signal, signal]) : ac.signal,
     });
     if (!res.ok) throw new Error(`Anthropic ${res.status}${errExcerpt(await res.text().catch(() => ""))}`);
     return (await res.json()) as Record<string, unknown>;
@@ -145,18 +152,20 @@ export async function postOpenAiChat(
   cfg: AiConfig,
   payload: Record<string, unknown>,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
   const base = (cfg.baseUrl?.trim() || DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, "");
   const url = `${base}/chat/completions`;
+  const key = requireKey(cfg);
   const attempt = async (body: Record<string, unknown>): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; status: number; text: string }> => {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
       const res = await fetch(url, {
         method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${cfg.apiKey!}` },
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
         body: JSON.stringify(body),
-        signal: ac.signal,
+        signal: signal ? AbortSignal.any([ac.signal, signal]) : ac.signal,
       });
       if (!res.ok) return { ok: false, status: res.status, text: await res.text().catch(() => "") };
       return { ok: true, data: (await res.json()) as Record<string, unknown> };
@@ -210,8 +219,8 @@ export async function listAiModels(cfg: AiConfig, timeoutMs = 10_000): Promise<s
       ? `${(cfg.baseUrl?.trim() || DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, "")}/models`
       : "https://api.anthropic.com/v1/models?limit=1000";
     const headers: Record<string, string> = openai
-      ? { authorization: `Bearer ${cfg.apiKey!}` }
-      : { "x-api-key": cfg.apiKey!, "anthropic-version": "2023-06-01" };
+      ? { authorization: `Bearer ${requireKey(cfg)}` }
+      : { "x-api-key": requireKey(cfg), "anthropic-version": "2023-06-01" };
     const res = await fetch(url, { headers, signal: ac.signal });
     if (!res.ok) throw new Error(`${openai ? "OpenAI-compatible" : "Anthropic"} ${res.status}${errExcerpt(await res.text().catch(() => ""))}`);
     const data = (await res.json()) as { data?: Array<{ id?: unknown }> };
@@ -488,7 +497,12 @@ async function callModelTranslate(texts: string[], targetLocale: string, cfg: Ai
   const prompt = `Translate each string in this JSON array into ${localeDisplayName(targetLocale)}. Return ONLY a JSON array of translations, same order and length.\n\n${JSON.stringify(texts)}`;
   let text = await chat(cfg, { system: TRANSLATE_SYSTEM, user: prompt, maxTokens: 8192, timeoutMs: 30_000 });
   text = text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-  const arr = JSON.parse(text);
+  let arr: unknown;
+  try {
+    arr = JSON.parse(text);
+  } catch {
+    throw new AiUnavailableError("The model did not return a JSON array of translations — try again, or check the model in Settings → AI.");
+  }
   if (!Array.isArray(arr) || !arr.every((x) => typeof x === "string")) throw new Error("Bad translate response");
   return arr as string[];
 }

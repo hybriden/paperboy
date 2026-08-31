@@ -1,4 +1,4 @@
-import type { HTMLAttributes } from "react";
+import type { ComponentProps } from "react";
 
 /**
  * Surface — a single card/panel primitive, the way Sanity's <Card> separates
@@ -38,7 +38,7 @@ const elevationClass = ["", "shadow-panel", "shadow-pop"] as const;
 const radiusClass = { md: "rounded", lg: "rounded-lg" } as const;
 const paddingClass = { none: "", sm: "p-3", md: "p-4", lg: "p-5" } as const;
 
-export interface SurfaceProps extends HTMLAttributes<HTMLDivElement> {
+export interface SurfaceProps extends ComponentProps<"div"> {
   tone?: SurfaceTone;
   elevation?: 0 | 1 | 2;
   radius?: keyof typeof radiusClass;

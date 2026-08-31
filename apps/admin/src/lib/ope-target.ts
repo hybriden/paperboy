@@ -1,17 +1,6 @@
 /**
- * What an on-page click should DO.
- *
- * The bridge reports which field (and, inside a rendered block, which block
- * index) the visitor clicked. Turning that into an action used to be a hundred
- * lines of nested conditions inside one effect, with the consequential branch —
- * "drop the whole editor into side-by-side" — as its fall-through. So a click on
- * anything not editable in place teleported the editor out of the mode it had
- * deliberately entered. Clicking page background is exactly that click: it
- * bubbles to the nearest `[data-pb-field]`, which is normally the content area
- * wrapping the blocks (reported 2026-08-23, "clunky to say the least").
- *
- * The rule now: ON-PAGE IS A MODE THE EDITOR CHOSE, AND AN INCOMING CLICK NEVER
- * CHANGES IT. Editable in place → the anchored overlay. Anything else → stay
+ * What an on-page click should DO. An incoming click never changes the mode the
+ * editor chose: editable in place → the anchored overlay; anything else → stay
  * put, silently for a stray background click and with a hint for a deliberate
  * click on a block the form owns.
  */

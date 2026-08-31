@@ -1,8 +1,8 @@
 import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { ChildSort, coerceData, dataSchemaFor, detectContentLanguage, duplicateFieldKeys, expectedLanguageForLocale, fieldFormatHint, isFormType, MAX_INLINE_DEPTH, parseStoredContentTypeDef, sortByRule, stripSeoGroup, tiptapToPlainText, type BlockSummary, type BlockTypeResolver, type ContentDetail, type ContentTypeDef, type CreateContentRequest, type TreeNode, type UpdateContentRequest, withSeoGroup } from "@paperboy/shared";
-import type { Database } from "./client.js";
-import { Errors } from "./errors.js";
+import { ChildSort, coerceData, dataSchemaFor, detectContentLanguage, duplicateFieldKeys, expectedLanguageForLocale, fieldFormatHint, generalBlockTypes, isFormType, MAX_INLINE_DEPTH, parseStoredContentTypeDef, sortByRule, stripSeoGroup, tiptapToPlainText, type BlockSummary, type BlockTypeResolver, type ContentDetail, type ContentTypeDef, type CreateContentRequest, type TreeNode, type UpdateContentRequest, withSeoGroup } from "@paperboy/shared";
+import type { Database, Queryable, Transaction } from "./client.js";
+import { Errors, PG_UNIQUE_VIOLATION, pgErrorCode } from "./errors.js";
 import {
   type AccessContext,
   loadAuthorized,
@@ -12,15 +12,7 @@ import { DEFAULT_SITE_ID, auditLog, contentItem, contentReference, contentType, 
 import { getAgentReviewRequired } from "./site.js";
 import { dispatchWebhooks } from "./webhooks.js";
 
-/** Postgres unique-constraint violation (SQLSTATE 23505) — used to turn a losing
- *  concurrent write into a self-teaching 409 instead of an opaque 500.
- *  drizzle-orm ≥0.44 wraps driver errors in DrizzleQueryError with the Postgres
- *  error (carrying the SQLSTATE) as `cause`, so walk the cause chain too. */
-function isUniqueViolation(err: unknown, depth = 0): boolean {
-  if (typeof err !== "object" || err === null || depth > 5) return false;
-  if ((err as { code?: string }).code === "23505") return true;
-  return isUniqueViolation((err as { cause?: unknown }).cause, depth + 1);
-}
+const isUniqueViolation = (err: unknown): boolean => pgErrorCode(err) === PG_UNIQUE_VIOLATION;
 
 /* ----------------------------- content types ----------------------------- */
 
@@ -31,13 +23,14 @@ export async function listContentTypes(db: Database): Promise<ContentTypeDef[]> 
 }
 
 /** Per-type usage: standalone items of that type, plus pages/blocks that embed
- *  it INLINE in a content area. `inlineIn` counts distinct documents (current
- *  published + working draft only, not historical versions). */
+ *  it INLINE in a content area. `inlineIn` counts distinct documents — current
+ *  published + working draft only, unless `includeHistory` (the delete guard:
+ *  a historical version can be restored). */
 export interface ContentTypeUsage {
   items: number;
   inlineIn: number;
 }
-export async function contentTypeUsage(db: Database): Promise<Record<string, ContentTypeUsage>> {
+export async function contentTypeUsage(db: Database, opts: { includeHistory?: boolean } = {}): Promise<Record<string, ContentTypeUsage>> {
   const usage: Record<string, ContentTypeUsage> = {};
   const bump = (t: string, k: keyof ContentTypeUsage) => {
     (usage[t] ??= { items: 0, inlineIn: 0 })[k]++;
@@ -51,28 +44,19 @@ export async function contentTypeUsage(db: Database): Promise<Record<string, Con
     .groupBy(contentItem.type);
   for (const c of counts) (usage[c.type] ??= { items: 0, inlineIn: 0 }).items = c.n;
 
-  // Inline block usage: scan only CURRENT content — the working draft and the
-  // current-published row (any locale), never historical versions. A document
-  // counts once per block type it embeds in either (union), so usage reflects
-  // what's live or about to be, not stale history.
-  const rows = await db
-    .select({ documentId: contentVersion.documentId, status: contentVersion.status, isPub: contentVersion.isCurrentPublished, data: contentVersion.data })
-    .from(contentVersion);
-  const collectBlockTypes = (node: unknown, into: Set<string>): void => {
-    if (Array.isArray(node)) {
-      for (const n of node) collectBlockTypes(n, into);
-    } else if (node && typeof node === "object") {
-      const o = node as Record<string, unknown>;
-      if (typeof o.blockType === "string") into.add(o.blockType);
-      for (const v of Object.values(o)) collectBlockTypes(v, into);
-    }
-  };
+  // Inline block usage: Postgres walks each version's JSONB for every nested
+  // `blockType` (any depth), so only the type names cross the wire, never the
+  // documents. A document counts once per block type it embeds (any locale).
+  const rows = (await db.execute(sql`
+    SELECT document_id, jsonb_path_query_array(data, '$.**.blockType') AS block_types
+    FROM content_version
+    ${opts.includeHistory ? sql`` : sql`WHERE status = 'draft' OR is_current_published`}
+  `)) as unknown as { document_id: string; block_types: unknown[] }[];
   const byDoc = new Map<string, Set<string>>(); // documentId -> block types it embeds
   for (const r of rows) {
-    if (r.status !== "draft" && !r.isPub) continue; // skip history
-    const set = byDoc.get(r.documentId) ?? new Set<string>();
-    collectBlockTypes(r.data, set);
-    byDoc.set(r.documentId, set);
+    const set = byDoc.get(r.document_id) ?? new Set<string>();
+    for (const t of r.block_types) if (typeof t === "string") set.add(t);
+    byDoc.set(r.document_id, set);
   }
   for (const types of byDoc.values()) {
     for (const t of types) bump(t, "inlineIn");
@@ -100,6 +84,7 @@ export async function findReferencingDocuments(
   ctx: AccessContext,
   documentId: string,
 ): Promise<ReferencingDoc[]> {
+  requirePermission(ctx, "content.read");
   // Partition: the target must live in the active site (else not-found, like every other read).
   const target = await db
     .select({ documentId: contentItem.documentId })
@@ -147,26 +132,20 @@ export async function findReferencingDocuments(
   return [...byDoc.values()];
 }
 
-/**
- * Sync block-type lookup for `coerceData`'s content-area recursion.
- *
- * coerceData is pure/sync (it lives in packages/shared and is shared by the API,
- * MCP and admin), so it can't query — it takes a resolver. One extra read of the
- * (small, cached-by-Postgres) content_type table per write is the cost of having
- * the coercion chokepoint reach INSIDE blocks instead of stopping at the top level.
- */
-async function blockTypeResolver(db: Database): Promise<BlockTypeResolver> {
-  const byName = new Map((await listContentTypes(db)).map((t) => [t.name, t]));
-  return (name: string) => byName.get(name);
+/** The enabled locale codes — what the coercion chokepoint may unwrap a {locale: value} map against. */
+async function localeCodes(db: Database): Promise<string[]> {
+  return (await listLocales(db)).map((l) => l.code);
 }
 
-export async function getContentType(db: Database, name: string): Promise<ContentTypeDef> {
+// Self-teaching (rule 2): agents guess casings ("blog-post" for BlogPost —
+// real 2026-06-07 run). Hand them the actual names so one retry lands.
+const typeNotFound = (name: string, available: string[]) => Errors.notFound(`Content type '${name}' (available: ${available.join(", ")})`);
+
+export async function getContentType(db: Queryable, name: string): Promise<ContentTypeDef> {
   const rows = await db.select().from(contentType).where(eq(contentType.name, name)).limit(1);
   if (!rows[0]) {
-    // Self-teaching (rule 2): agents guess casings ("blog-post" for BlogPost —
-    // real 2026-06-07 run). Hand them the actual names so one retry lands.
     const all = await db.select({ name: contentType.name }).from(contentType).orderBy(asc(contentType.name));
-    throw Errors.notFound(`Content type '${name}' (available: ${all.map((t) => t.name).join(", ")})`);
+    throw typeNotFound(name, all.map((t) => t.name));
   }
   // Inject the reserved SEO group (page kinds) — every consumer (validation,
   // coercion, delivery writes, MCP get) sees SEO automatically.
@@ -175,7 +154,7 @@ export async function getContentType(db: Database, name: string): Promise<Conten
 
 /** Admin-only: create a new content type. The body must already be schema-valid. */
 export async function createContentType(
-  db: Database,
+  db: Queryable,
   ctx: AccessContext,
   def: ContentTypeDef,
 ): Promise<ContentTypeDef> {
@@ -197,31 +176,32 @@ export async function createContentType(
 }
 
 /**
- * Admin-only: update a content type. `name` and `kind` are immutable (they key
- * existing content rows). Existing content is NOT migrated — renaming/retyping a
- * field orphans its stored JSONB value and adding a required field will block the
- * next re-publish of existing items (documented; the UI warns).
- */
-/**
  * Delete a content type — only when NOTHING uses it. Guard is server-side: any
- * standalone item or inline embedding refuses the delete (409), so a type in use
- * can never be removed out from under existing content. Forward-only; a reseed
+ * standalone item or inline embedding — in ANY version, history included, since
+ * a restore would resurrect it — refuses the delete (409), so a type in use can
+ * never be removed out from under existing content. Forward-only; a reseed
  * would recreate seed types.
  */
 export async function deleteContentType(db: Database, ctx: AccessContext, name: string): Promise<void> {
   requirePermission(ctx, "contenttype.manage");
   const rows = await db.select().from(contentType).where(eq(contentType.name, name)).limit(1);
   if (!rows[0]) throw Errors.notFound(`Content type '${name}'`);
-  const usage = (await contentTypeUsage(db))[name];
+  const usage = (await contentTypeUsage(db, { includeHistory: true }))[name];
   if (usage && (usage.items > 0 || usage.inlineIn > 0)) {
-    const parts = [usage.items ? `${usage.items} item(s)` : null, usage.inlineIn ? `embedded in ${usage.inlineIn} page(s)` : null].filter(Boolean);
+    const parts = [usage.items ? `${usage.items} item(s)` : null, usage.inlineIn ? `embedded in ${usage.inlineIn} page(s), version history included` : null].filter(Boolean);
     throw Errors.conflict(`'${name}' is still in use (${parts.join(", ")}). Remove those first.`);
   }
   await db.delete(contentType).where(eq(contentType.name, name));
 }
 
+/**
+ * Admin-only: update a content type. `name` and `kind` are immutable (they key
+ * existing content rows). Existing content is NOT migrated — renaming/retyping a
+ * field orphans its stored JSONB value and adding a required field will block the
+ * next re-publish of existing items (documented; the UI warns).
+ */
 export async function updateContentType(
-  db: Database,
+  db: Queryable,
   ctx: AccessContext,
   name: string,
   def: ContentTypeDef,
@@ -268,12 +248,8 @@ export async function getDefaultLocale(db: Database): Promise<string> {
 /**
  * The locale a request means when it doesn't say — for `siteId` if given.
  *
- * Every route used to spell this as `req.query.locale ?? "en"` (27 places), which
- * made "en" an unconfigurable pivot: a Norwegian instance that added `nb` and set
- * the site's defaultLocale still resolved to `en`, so `getContent` returned a blank
- * non-persisted scaffold for every page, the editor offered to translate FROM the
- * real content, and the first save materialised an orphan `en` version. Delivery
- * calls without `?locale=` returned nothing.
+ * Never a hardcoded "en" pivot: on a Norwegian instance that would scaffold blank
+ * `en` drafts and make delivery without `?locale=` return nothing.
  *
  * Order: the site's own `defaultLocale` → the globally default locale → "en" as an
  * absolute last resort (a brand-new database before any locale row exists).
@@ -378,51 +354,51 @@ interface VariantState {
   status: "draft" | "published";
   hasUnpublishedChanges: boolean;
   name: string;
-  /** Working data (draft-preferred, like the name) — feeds data.<field> child sorting. */
-  data: Record<string, unknown>;
+  /** Working data (draft-preferred, like the name) — feeds data.<field> child sorting. Only loaded on request. */
+  data?: Record<string, unknown>;
 }
 
-/** Per-locale publication state for one document (drives tree badges + editor). */
+/** ORDER BY terms that put a (document, locale)'s WORKING version first: the
+ *  draft, else the current published row, else the latest. */
+const workingVersionFirst = [sql`(${contentVersion.status} = 'draft') desc`, desc(contentVersion.isCurrentPublished), desc(contentVersion.versionNumber)];
+
 /**
- * Per-locale published/draft state for MANY documents in ONE query. The broad
- * management scans (getTree/listBlocks/listPages/listTrash) used to call the
- * single-document version once per row — 1 query per visible node, unbounded.
- * This is the same grouping, keyed by documentId, over one `inArray` read.
+ * Per-locale published/draft state for MANY documents in ONE query — one row per
+ * (document, locale), its working version, so history never crosses the wire.
+ * `data` (the JSONB) is fetched only when the caller sorts by a data field.
  */
 async function variantStatesBatch(
   db: Database,
   documentIds: string[],
+  withData = false,
 ): Promise<Map<string, Record<string, VariantState>>> {
   const out = new Map<string, Record<string, VariantState>>();
   if (!documentIds.length) return out;
   const rows = await db
-    .select()
+    .selectDistinctOn([contentVersion.documentId, contentVersion.locale], {
+      documentId: contentVersion.documentId,
+      locale: contentVersion.locale,
+      name: contentVersion.name,
+      status: contentVersion.status,
+      // The chosen row is the draft when one exists, which hides whether a published row also does.
+      hasPublished: sql<boolean>`bool_or(${contentVersion.isCurrentPublished}) over (partition by ${contentVersion.documentId}, ${contentVersion.locale})`,
+      data: withData ? contentVersion.data : sql<null>`null`,
+    })
     .from(contentVersion)
-    .where(inArray(contentVersion.documentId, documentIds));
+    .where(inArray(contentVersion.documentId, documentIds))
+    .orderBy(contentVersion.documentId, contentVersion.locale, ...workingVersionFirst);
   for (const r of rows) {
     let byLocale = out.get(r.documentId);
     if (!byLocale) {
       byLocale = {};
       out.set(r.documentId, byLocale);
     }
-    const cur = byLocale[r.locale] ?? {
-      status: "draft" as const,
-      hasUnpublishedChanges: false,
+    byLocale[r.locale] = {
+      status: r.hasPublished ? "published" : "draft",
+      hasUnpublishedChanges: r.status === "draft",
       name: r.name,
-      data: r.data as Record<string, unknown>,
+      ...(withData ? { data: r.data as Record<string, unknown> } : {}),
     };
-    if (r.isCurrentPublished) {
-      cur.status = "published";
-      cur.name = r.name;
-      cur.data = r.data as Record<string, unknown>;
-    }
-    if (r.status === "draft") {
-      cur.hasUnpublishedChanges = true;
-      // Prefer the draft name (and data) as the freshest state.
-      cur.name = r.name;
-      cur.data = r.data as Record<string, unknown>;
-    }
-    byLocale[r.locale] = cur;
   }
   return out;
 }
@@ -469,7 +445,7 @@ export async function getTree(
   // Two batched reads instead of 2 per node: all variant states in one query,
   // and one grouped count of which of these nodes have page children.
   const visibleIds = visible.map((i) => i.documentId);
-  const statesById = await variantStatesBatch(db, visibleIds);
+  const statesById = await variantStatesBatch(db, visibleIds, dataField !== null);
   const childCounts = visibleIds.length
     ? await db
         .select({ parentId: contentItem.parentId, c: sql<number>`count(*)::int` })
@@ -545,21 +521,6 @@ export async function listBlocks(db: Database, ctx: AccessContext): Promise<Bloc
 
 /* ------------------------------ URL paths --------------------------------- */
 
-/**
- * Anything a READ can run on: the pool handle, or an already-open transaction.
- *
- * This exists because `createContent` called `autoSlug(db, …)` from INSIDE
- * `db.transaction(...)`. That asks the pool for a SECOND connection while the
- * transaction still holds the first — so at `max: 10` (client.ts), ten concurrent
- * creates each held one connection and waited for an eleventh that could never
- * arrive. postgres.js queues instead of erroring, so the whole API — delivery,
- * login, health — hung indefinitely with no timeout and no recovery until restart.
- * Ten simultaneous editors, one bulk import, or one agent doing Promise.all over ten
- * pages was enough. Read helpers therefore take a Queryable and callers inside a
- * transaction pass `tx`.
- */
-type Queryable = Database | Parameters<Parameters<Database["transaction"]>[0]>[0];
-
 /** Working slug for the editor's perspective (draft, else current published, else latest). */
 async function workingSlug(db: Queryable, documentId: string, loc: string): Promise<string | null> {
   const rows = await db
@@ -634,8 +595,14 @@ export async function resolveRequestedLocale(
   db: Database,
   documentId: string,
   requested?: string,
+  ctx?: AccessContext,
 ): Promise<string> {
   if (requested) return requested;
+  // Authorize BEFORE discovering the document's locales: the "it exists in:
+  // nb, de" error below is otherwise an existence/locale oracle for documents
+  // the caller cannot see. A caller that passes a locale authorizes in its own
+  // read/write path, so only this discovery branch needs the gate.
+  if (ctx) await loadAuthorized(db, ctx, documentId, "read");
   const rows = await db
     .selectDistinct({ locale: contentVersion.locale })
     .from(contentVersion)
@@ -692,15 +659,18 @@ export async function computePath(db: Database, documentId: string, loc: string)
   return `/${segments.join("/")}`;
 }
 
-/** True when a page sibling (same parent + locale) already uses this segment. */
-async function slugTakenBySibling(
+/**
+ * The URL segments the page siblings under `parentId` hold in `loc` — each one's
+ * working slug (draft, else current published, else latest) — excluding
+ * `documentId` itself. One query, whatever the sibling count.
+ */
+async function siblingSlugs(
   db: Queryable,
   documentId: string,
   parentId: string | null,
   loc: string,
-  slug: string,
   knownSiteId?: string,
-): Promise<boolean> {
+): Promise<Set<string>> {
   // Scope siblings to the document's own site so two sites can each own a root
   // "/about" (slug uniqueness is per-site + per-parent + locale). For non-root
   // pages this is implied (siblings share a parent → a site); it matters for
@@ -716,27 +686,39 @@ async function slugTakenBySibling(
       .limit(1);
     siteId = own[0]?.siteId;
   }
-  const siblings = await db
-    .select({ documentId: contentItem.documentId })
-    .from(contentItem)
+  const rows = await db
+    .selectDistinctOn([contentVersion.documentId], { slug: contentVersion.slug })
+    .from(contentVersion)
+    .innerJoin(contentItem, eq(contentItem.documentId, contentVersion.documentId))
     .where(
       and(
         parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
         eq(contentItem.kind, "page"),
         isNull(contentItem.deletedAt),
-        ...(siteId ? [eq(contentItem.siteId, siteId)] : []),
+        siteId ? eq(contentItem.siteId, siteId) : undefined,
+        ne(contentItem.documentId, documentId),
+        eq(contentVersion.locale, loc),
       ),
-    );
-  for (const sib of siblings) {
-    if (sib.documentId === documentId) continue;
-    if ((await workingSlug(db, sib.documentId, loc)) === slug) return true;
-  }
-  return false;
+    )
+    .orderBy(contentVersion.documentId, ...workingVersionFirst);
+  return new Set(rows.map((r) => r.slug).filter((slug): slug is string => slug != null));
+}
+
+/** True when a page sibling (same parent + locale) already uses this segment. */
+async function slugTakenBySibling(
+  db: Queryable,
+  documentId: string,
+  parentId: string | null,
+  loc: string,
+  slug: string,
+  knownSiteId?: string,
+): Promise<boolean> {
+  return (await siblingSlugs(db, documentId, parentId, loc, knownSiteId)).has(slug);
 }
 
 /** Reject a URL segment already used by a page sibling (same parent + locale). */
 async function assertSlugUnique(
-  db: Database,
+  db: Queryable,
   documentId: string,
   parentId: string | null,
   loc: string,
@@ -745,6 +727,31 @@ async function assertSlugUnique(
   if (await slugTakenBySibling(db, documentId, parentId, loc, slug)) {
     throw Errors.conflict(`Another page already uses the URL segment "${slug}" here`);
   }
+}
+
+/**
+ * Serialize sibling-slug allocation for one (site, parent, locale) within `tx`
+ * (xact-scoped advisory lock, released on commit/rollback). EVERY path that
+ * writes a page's URL segment — create, save, restore, publish, move — checks
+ * AND writes under this lock; a check outside it is a TOCTOU that lets two
+ * concurrent writers commit the same segment (slug-race.test.ts).
+ */
+async function lockSiblingSlugs(tx: Transaction, siteId: string, parentId: string | null, loc: string): Promise<void> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`slug:${siteId}:${parentId ?? "root"}:${loc}`}))`);
+}
+
+/** A transaction holding the sibling-slug lock for `item`'s slot. Blocks and
+ *  globals have no URL segment, so for them it is a plain transaction. */
+async function withSiblingSlugLock<T>(
+  db: Database,
+  item: { kind: string; siteId: string; parentId: string | null },
+  loc: string,
+  fn: (tx: Transaction) => Promise<T>,
+): Promise<T> {
+  return db.transaction(async (tx) => {
+    if (item.kind === "page") await lockSiblingSlugs(tx, item.siteId, item.parentId, loc);
+    return fn(tx);
+  });
 }
 
 /** Kebab-case URL segment derived from a page name ("Hobby Projects" → "hobby-projects"). */
@@ -780,9 +787,10 @@ async function autoSlug(
 ): Promise<string | null> {
   const base = slugify(name);
   if (!base) return null;
+  const taken = await siblingSlugs(db, documentId, parentId, loc, knownSiteId);
   for (let i = 0; i < 50; i++) {
     const candidate = i === 0 ? base : `${base}-${i + 1}`;
-    if (!(await slugTakenBySibling(db, documentId, parentId, loc, candidate, knownSiteId))) return candidate;
+    if (!taken.has(candidate)) return candidate;
   }
   return `${base}-${documentId.slice(0, 6).toLowerCase()}`;
 }
@@ -803,6 +811,32 @@ async function listedTypeOf(db: Database, parentDocumentId: string): Promise<str
     .limit(1);
   const listed = (rows[0]?.data as Record<string, unknown> | undefined)?.listedType;
   return typeof listed === "string" && listed ? listed : null;
+}
+
+/**
+ * A global is a per-site singleton: delivery serves the lowest id, so a second
+ * live one would save fine and simply never be delivered. Every door that brings
+ * a live global into a site — create, duplicate, restore — asks this.
+ */
+async function assertGlobalSingleton(db: Database, type: ContentTypeDef, siteId: string, exceptDocumentId?: string): Promise<void> {
+  if (type.kind !== "global") return;
+  const existing = await db
+    .select({ documentId: contentItem.documentId })
+    .from(contentItem)
+    .where(
+      and(
+        eq(contentItem.type, type.name),
+        eq(contentItem.siteId, siteId),
+        isNull(contentItem.deletedAt),
+        exceptDocumentId ? ne(contentItem.documentId, exceptDocumentId) : undefined,
+      ),
+    )
+    .limit(1);
+  if (existing[0]) {
+    throw Errors.conflict(
+      `A '${type.name}' global already exists in this site (${existing[0].documentId}) — globals are singletons and delivery would ignore a second one. Edit the existing one instead.`,
+    );
+  }
 }
 
 export async function createContent(
@@ -844,7 +878,8 @@ export async function createContent(
         `or pass allowTypeMismatch: true if a sub-page of another type is intended.`,
     );
   }
-  const type = await getContentType(db, typeName);
+  const reg = await loadTypeRegistry(db);
+  const type = requireType(reg, typeName);
 
   const documentId = nanoid(24);
   // A new top-level item is its own section.
@@ -857,12 +892,17 @@ export async function createContent(
   // parent is in the active site); a new root belongs to the active site.
   const effectiveSiteId = parent ? parent.siteId : ctx.siteId;
 
-  // Atomic create: a per-(site, parent, locale) advisory lock serializes sibling
-  // slug allocation so two concurrent creates of the same name can't both pick the
-  // same segment (S2-M9 TOCTOU). autoSlug runs inside the tx and sees this row's
-  // own uncommitted item (so knownSiteId is passed) plus committed siblings.
-  await db.transaction(async (tx) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`slug:${effectiveSiteId}:${req.parentId ?? "root"}:${req.locale}`}))`);
+  await assertGlobalSingleton(db, type, effectiveSiteId);
+
+  // Initial field values take the same verdict an update would (one chokepoint),
+  // BEFORE anything is inserted — a 422 leaves no shell behind. Validation reads
+  // must not run inside the transaction below (see Queryable).
+  const data = req.data ? await prepareDraftData(db, ctx, type, reg, effectiveSiteId, req.locale, req.data, req.allowLanguageMismatch) : {};
+
+  // Atomic create under the sibling-slug lock (S2-M9 TOCTOU). autoSlug runs inside
+  // the tx and sees this row's own uncommitted item (so knownSiteId is passed) plus
+  // committed siblings.
+  await withSiblingSlugLock(db, { kind: type.kind, siteId: effectiveSiteId, parentId: req.parentId }, req.locale, async (tx) => {
     // APPEND after the existing siblings. A fixed sortIndex 0 sent every new
     // child to the FRONT of any manually curated order (and left automated
     // containers with an all-zero, insertion-ordered tree).
@@ -885,6 +925,11 @@ export async function createContent(
       siteId: effectiveSiteId,
       createdBy: ctx.userId,
     });
+    // A caller-chosen page slug must be unique among siblings, checked under the
+    // same advisory lock that serializes autoSlug.
+    if (req.slug && type.kind === "page" && (await slugTakenBySibling(tx, documentId, req.parentId, req.locale, req.slug, effectiveSiteId))) {
+      throw Errors.conflict(`The URL segment '${req.slug}' is already used by a sibling page — choose another slug.`);
+    }
     await tx.insert(contentVersion).values({
       documentId,
       locale: req.locale,
@@ -894,15 +939,17 @@ export async function createContent(
       name: req.name,
       // Pages get a URL segment from their name right away (CMS-12 style) —
       // uniquified among siblings; editors can change it in the URL chip.
-      slug: type.kind === "page" ? await autoSlug(tx, documentId, req.parentId, req.locale, req.name, effectiveSiteId) : null,
+      slug: req.slug ?? (type.kind === "page" ? await autoSlug(tx, documentId, req.parentId, req.locale, req.name, effectiveSiteId) : null),
       displayInNav: true,
-      data: {},
+      data,
       cv: 0,
       createdBy: ctx.userId,
       createdVia: ctx.via ?? null,
       needsReview: ctx.via === "mcp" || ctx.via === "agent",
     });
+    if (req.data) await rebuildReferences(tx, documentId, req.locale, type, data, reg.blockTypes);
   });
+  if (req.data) await recordRichTextCoercion(db, ctx, documentId, req.locale, type, req.data, data);
 
   return getContent(db, ctx, documentId, req.locale);
 }
@@ -1080,9 +1127,10 @@ async function workingData(db: Database, documentId: string, loc: string): Promi
 }
 
 /**
- * Every content type installed, read ONCE so the walk below can visit every
- * level of a document. The previous shape issued a query per block, which made
- * the cost grow with the content instead of with the (tiny) type list.
+ * Every content type installed, read ONCE per write: the walks below visit
+ * every level of a document, and coercion, validation and the reference
+ * rebuild all need the same lookup. `blockTypes` is the sync resolver those
+ * chokepoints take (coerceData lives in packages/shared and cannot query).
  */
 interface TypeRegistry {
   known: Map<string, { kind: string; nestedOnly: boolean; def: ContentTypeDef }>;
@@ -1090,6 +1138,7 @@ interface TypeRegistry {
   placeable: string[];
   /** Every installed name, for `optionsFromContentTypes` fields. */
   installed: string[];
+  blockTypes: BlockTypeResolver;
 }
 
 async function loadTypeRegistry(db: Database): Promise<TypeRegistry> {
@@ -1099,14 +1148,74 @@ async function loadTypeRegistry(db: Database): Promise<TypeRegistry> {
     .orderBy(asc(contentType.name));
   const known = new Map<string, { kind: string; nestedOnly: boolean; def: ContentTypeDef }>();
   for (const r of rows) {
-    const def = r.definition as ContentTypeDef;
-    known.set(r.name, { kind: r.kind, nestedOnly: def?.nestedOnly === true, def });
+    // Same normalization as getContentType (SEO group injected), so a def read
+    // here validates and coerces exactly like one read there.
+    const def = parseStoredContentTypeDef(r.definition);
+    known.set(r.name, { kind: r.kind, nestedOnly: def.nestedOnly === true, def });
   }
+  // The hint lists what an area with no allow-list actually accepts: general
+  // blocks and pages. A PART would be refused two checks later, so naming it
+  // here sent the caller straight into the next refusal.
+  const typed = [...known].map(([name, e]) => ({ name, kind: e.kind, nestedOnly: e.nestedOnly }));
+  const general = new Set(generalBlockTypes(typed).map((t) => t.name));
   return {
     known,
-    placeable: rows.filter((r) => r.kind === "block" || r.kind === "page").map((r) => r.name),
+    placeable: typed.filter((t) => t.kind === "page" || general.has(t.name)).map((t) => t.name),
     installed: rows.map((r) => r.name),
+    blockTypes: (name) => known.get(name)?.def,
   };
+}
+
+/** The installed type by name, from the registry this write already loaded. */
+function requireType(reg: TypeRegistry, name: string): ContentTypeDef {
+  const def = reg.known.get(name)?.def;
+  if (!def) throw typeNotFound(name, reg.installed);
+  return def;
+}
+
+/** What a write may point at: the content_item essentials of a referenced document. */
+type TargetRow = { documentId: string; siteId: string; type: string; kind: string; deletedAt: Date | null };
+
+/** Every documentId a document points at — reference fields and content-area
+ *  `ref`s, through the same inline levels the placement guard walks. */
+function collectTargetIds(type: ContentTypeDef, data: Record<string, unknown>, reg: TypeRegistry, depth: number, out: Set<string>): void {
+  for (const f of type.fields) {
+    const v = data[f.name];
+    if (v == null) continue;
+    if (f.type === "reference" && typeof v === "object") {
+      const id = (v as { documentId?: unknown }).documentId;
+      if (typeof id === "string" && id) out.add(id);
+    }
+    if (f.type === "contentArea" && Array.isArray(v)) {
+      for (const b of v as Array<{ blockType?: string; ref?: unknown; inline?: unknown }>) {
+        if (typeof b?.ref === "string" && b.ref) out.add(b.ref);
+        const entry = b?.blockType ? reg.known.get(b.blockType) : undefined;
+        if (entry && depth < MAX_INLINE_DEPTH && b.inline && typeof b.inline === "object" && !Array.isArray(b.inline)) {
+          collectTargetIds(entry.def, b.inline as Record<string, unknown>, reg, depth + 1, out);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * The referenced document, or a self-teaching refusal when it cannot be pointed
+ * at. Another site's document reads as unknown — deny-by-default, exactly as
+ * every management read treats it — and that is what closes the cross-site
+ * reference gap at write time.
+ */
+function resolveTarget(targets: Map<string, TargetRow>, siteId: string, id: string, subject: string): TargetRow {
+  const target = targets.get(id);
+  if (!target || target.siteId !== siteId) {
+    throw Errors.validation(
+      `${subject} references "${id}", which does not exist in this site — it would deliver nothing. ` +
+        `Reference the documentId of an existing document in this site, or clear it.`,
+    );
+  }
+  if (target.deletedAt) {
+    throw Errors.validation(`${subject} references "${id}", which is in the trash. Restore it first, or reference another document.`);
+  }
+  return target;
 }
 
 /**
@@ -1129,9 +1238,14 @@ function assertPlacement(
   type: ContentTypeDef,
   data: Record<string, unknown>,
   reg: TypeRegistry,
+  targets: Map<string, TargetRow>,
+  siteId: string,
   where: string,
   depth: number,
 ): void {
+  // Where this field sits. Empty at the top level, so the messages agents have
+  // been reading since the HerooBlock fix stay byte-identical there.
+  const at = depth === 0 ? "" : `In ${where}: `;
   for (const f of type.fields) {
     const v = data[f.name];
     if (v == null) continue;
@@ -1151,21 +1265,22 @@ function assertPlacement(
       }
     }
 
-    if (f.type === "reference" && f.allowedTypes.length && typeof v === "object") {
-      const rt = (v as { type?: string }).type;
-      if (rt && !f.allowedTypes.includes(rt)) {
-        throw Errors.validation(`Field "${f.name}" does not allow references to "${rt}"`);
+    if (f.type === "reference" && typeof v === "object") {
+      const id = (v as { documentId?: unknown }).documentId;
+      if (typeof id === "string" && id) {
+        // Enforced on the target's REAL type; the client's `type` is only a hint.
+        const target = resolveTarget(targets, siteId, id, `${at}Field "${f.name}"`);
+        if (f.allowedTypes.length && !f.allowedTypes.includes(target.type)) {
+          throw Errors.validation(`${at}Field "${f.name}" does not allow references to "${target.type}"`);
+        }
       }
     }
 
     if (f.type === "contentArea" && Array.isArray(v)) {
-      const blocks = v as Array<{ blockType?: string; inline?: unknown }>;
+      const blocks = v as Array<{ blockType?: string; ref?: unknown; inline?: unknown }>;
       for (const [i, b] of blocks.entries()) {
         const bt = b?.blockType;
         if (!bt) continue;
-        // Where this block sits. Empty at the top level, so the message an agent
-        // has been reading since the HerooBlock fix stays byte-identical there.
-        const at = depth === 0 ? "" : `In ${where}: `;
         const here = `${where} -> "${f.name}"[${i}] (${bt})`;
 
         // An UNKNOWN blockType is rejected regardless of allowedBlocks. The default
@@ -1204,20 +1319,50 @@ function assertPlacement(
           );
         }
 
+        // A shared reference must point at what it says it points at. Delivery
+        // resolves the target's REAL type and drops anything it cannot see, so a
+        // ref to a Form under blockType "HeroBlock", to a trashed block, or to
+        // another site's document saved and published a block that rendered
+        // nothing (rule #1). Pages stay placeable — they render as teasers.
+        if (typeof b.ref === "string" && b.ref) {
+          const subject = `${at}Content area "${f.name}"[${i}]`;
+          const target = resolveTarget(targets, siteId, b.ref, subject);
+          if (target.kind !== "block" && target.kind !== "page") {
+            throw Errors.validation(
+              `${subject} references "${b.ref}", which is a ${target.kind} ("${target.type}") — only shared blocks and pages can be placed in a content area.`,
+            );
+          }
+          if (target.type !== bt) {
+            throw Errors.validation(
+              `${subject} says blockType "${bt}", but "${b.ref}" is a "${target.type}". Set blockType to "${target.type}" — or reference a ${bt}.`,
+            );
+          }
+        }
+
         // Down into the block's own payload. A shared reference carries none.
         const inline = b?.inline;
         if (!inline || typeof inline !== "object" || Array.isArray(inline)) continue;
-        if (depth + 1 >= MAX_INLINE_DEPTH) {
-          // REFUSED, not waved through. Coercion and schema validation stop at
-          // this same depth, so anything below it would reach storage unchecked
-          // — and an unchecked level is precisely the hole this guard closes,
-          // with nesting the cheapest way to reach it.
+        // Submissions are posted against a Form's documentId, and delivery
+        // attaches `content.form` to an ITEM only — an inline Form has neither,
+        // so it is authorable and dead at delivery.
+        if (isFormType(bt)) {
           throw Errors.validation(
-            `Content areas nest at most ${MAX_INLINE_DEPTH} levels deep, and ${here} is deeper than that, so the ` +
-              `block types below it cannot be checked. Flatten the structure — nothing renders content nested this far.`,
+            `${at}Content area "${f.name}"[${i}] holds an INLINE Form. A Form must be placed as a SHARED block — ` +
+              `submissions are posted against its documentId, which an inline block does not have. Create the Form under ` +
+              `Blocks and reference it here: {"blockType":"Form","ref":"<the Form's documentId>","inline":null}.`,
           );
         }
-        assertPlacement(entry.def, inline as Record<string, unknown>, reg, here, depth + 1);
+        if (depth >= MAX_INLINE_DEPTH) {
+          // REFUSED, not waved through. Coercion and schema validation walk
+          // exactly MAX_INLINE_DEPTH inline levels, so anything below would reach
+          // storage unchecked — and an unchecked level is precisely the hole this
+          // guard closes, with nesting the cheapest way to reach it.
+          throw Errors.validation(
+            `Content areas nest at most ${MAX_INLINE_DEPTH} levels deep, and ${here} is level ${depth + 1}, so its ` +
+              `payload cannot be checked. Flatten the structure — nothing renders content nested this far.`,
+          );
+        }
+        assertPlacement(entry.def, inline as Record<string, unknown>, reg, targets, siteId, here, depth + 1);
       }
     }
   }
@@ -1228,31 +1373,43 @@ function assertPlacement(
  * blocks whose type is in `allowedBlocks`; a reference only accepts targets whose
  * type is in `allowedTypes`. Empty list = unrestricted. This makes the editor hint
  * a real, write-enforced invariant (an API client cannot bypass it), at every
- * level of the document. Throws Errors.validation on the first violation.
+ * level of the document. Every target is loaded ONCE and checked against what it
+ * really is — existing, in `siteId` (the document's own site: shared blocks are
+ * site-wide, so the section scope is the wrong partition), not trashed, and of
+ * the type the write claims. Throws Errors.validation on the first violation.
  *
  * Called from `updateContent` and from `assertDraftPublishable`, so save and
  * publish are held to the same rules by construction.
  */
-async function assertAllowedTypes(db: Database, type: ContentTypeDef, data: Record<string, unknown>): Promise<void> {
-  assertPlacement(type, data, await loadTypeRegistry(db), `content type "${type.name}"`, 0);
+async function assertAllowedTypes(db: Database, type: ContentTypeDef, data: Record<string, unknown>, siteId: string, reg: TypeRegistry): Promise<void> {
+  const ids = new Set<string>();
+  collectTargetIds(type, data, reg, 0, ids);
+  const targets = new Map<string, TargetRow>();
+  if (ids.size > 0) {
+    const rows = await db
+      .select({ documentId: contentItem.documentId, siteId: contentItem.siteId, type: contentItem.type, kind: contentItem.kind, deletedAt: contentItem.deletedAt })
+      .from(contentItem)
+      .where(inArray(contentItem.documentId, [...ids]));
+    for (const r of rows) targets.set(r.documentId, r);
+  }
+  assertPlacement(type, data, reg, targets, siteId, `content type "${type.name}"`, 0);
 }
 
-/** Reads, validates and persists references for a (document, locale) data blob. */
-/** How deep into nested inline blocks reference extraction walks. */
-const MAX_REFERENCE_DEPTH = 4;
-
+/** Persists the outgoing references of a (document, locale) data blob, in the
+ *  same transaction as the version write it indexes. */
 async function rebuildReferences(
-  db: Database,
+  tx: Transaction,
   documentId: string,
   loc: string,
   type: ContentTypeDef,
   data: Record<string, unknown>,
   blockTypes: BlockTypeResolver,
 ): Promise<void> {
-  // Collected first, THEN delete+insert atomically: a crash between the delete
-  // and the insert would otherwise leave the document with zero outgoing
-  // references and nothing to rebuild them — and findReferencingDocuments (what
-  // an editor consults before deleting a page) reads exactly this table.
+  // Collected first, THEN delete+insert in the caller's transaction: a crash
+  // between the delete and the insert would otherwise leave the document with
+  // zero outgoing references and nothing to rebuild them — and
+  // findReferencingDocuments (what an editor consults before deleting a page)
+  // reads exactly this table.
   const refs: (typeof contentReference.$inferInsert)[] = [];
   const add = (toDocumentId: string, toType: string, fieldName: string) => {
     refs.push({ fromDocumentId: documentId, fromLocale: loc, toDocumentId, toType, fieldName });
@@ -1263,7 +1420,9 @@ async function rebuildReferences(
    * area's INLINE block data, because a block's own reference and link fields
    * point at content just as much as a top-level field does — the front page's
    * hero CTA is an inline block, so tracking only the top level would miss the
-   * links that matter most. Depth-capped like the coercion chokepoint.
+   * links that matter most. Walks the same MAX_INLINE_DEPTH levels as coercion,
+   * schema validation and the placement guard, so every link a document can
+   * legally hold is tracked.
    */
   const collect = (fields: ContentTypeDef["fields"], values: Record<string, unknown>, prefix: string, depth: number) => {
     for (const f of fields) {
@@ -1292,13 +1451,64 @@ async function rebuildReferences(
       }
     }
   };
-  collect(type.fields, data, "", MAX_REFERENCE_DEPTH);
-  await db.transaction(async (tx) => {
-    await tx
-      .delete(contentReference)
-      .where(and(eq(contentReference.fromDocumentId, documentId), eq(contentReference.fromLocale, loc)));
-    if (refs.length) await tx.insert(contentReference).values(refs);
-  });
+  collect(type.fields, data, "", MAX_INLINE_DEPTH);
+  await tx
+    .delete(contentReference)
+    .where(and(eq(contentReference.fromDocumentId, documentId), eq(contentReference.fromLocale, loc)));
+  if (refs.length) await tx.insert(contentReference).values(refs);
+}
+
+/**
+ * The ONE path from a caller's raw field map to storable draft data: tolerant
+ * coercion, relaxed (draft) validation with self-teaching errors, placement
+ * rules, and the agent language guard. Shared by create and update so a value
+ * gets exactly one verdict no matter which call carried it. Reads only — safe
+ * to run before a transaction opens (its lookups must never borrow a second
+ * pool connection from inside one).
+ */
+async function prepareDraftData(
+  db: Database,
+  ctx: AccessContext,
+  type: ContentTypeDef,
+  reg: TypeRegistry,
+  siteId: string,
+  loc: string,
+  raw: Record<string, unknown>,
+  allowLanguageMismatch?: boolean,
+): Promise<Record<string, unknown>> {
+  // Tolerant coercion: fix the unambiguous field-shape mistakes agents make
+  // (single block → array, doc → text, string → doc) before validating.
+  const data = coerceData(type, raw, loc, reg.blockTypes, await localeCodes(db));
+
+  // Draft save: relaxed validation (required fields not enforced). On failure
+  // the message names each field's expected JSON shape (with an example), so an
+  // agent can self-correct instead of guessing.
+  // The resolver makes this validate INLINE block payloads too, not just the
+  // document's own fields — a malformed block used to persist and fail only in
+  // the visitor's browser (see contentAreaSchemaFor).
+  const parsed = dataSchemaFor(type, false, reg.blockTypes).safeParse(data);
+  if (!parsed.success) throw Errors.validation(formatDataValidation(parsed.error, type), failedFields(parsed.error));
+  // Placement rules ARE enforced even on draft save (allowed blocks / ref types).
+  await assertAllowedTypes(db, type, data, siteId, reg);
+
+  // Agent write-time language guard: refuse strongly language-mismatched content
+  // BEFORE it lands on the wrong locale branch. A draft is never re-checked
+  // until publish, so without this an agent that forgets to switch locale leaves
+  // (e.g.) a Norwegian page sitting silently on the 'en' branch (2026-06-08).
+  // Agent provenance only — a human editor is never second-guessed; escape hatch
+  // for deliberate cross-language writes. Mirrors the publish guard.
+  if ((ctx.via === "mcp" || ctx.via === "agent") && !allowLanguageMismatch) {
+    const mm = branchLanguageMismatch(type, data, loc);
+    if (mm) {
+      throw Errors.validation(
+        `The text you're writing is ${mm.detected === "nb" ? "Norwegian (nb)" : "English (en)"}, but locale '${loc}' is the ${mm.expected === "nb" ? "Norwegian (nb)" : "English (en)"} branch — ` +
+          `agent writes must match the branch language so content doesn't land on the wrong site. ` +
+          `Write this into the '${mm.detected}' branch instead: pass locale: "${mm.detected}" to create_content / update_content / set_field (create the document in '${mm.detected}' first if it doesn't exist yet). ` +
+          `If writing ${mm.detected} text into '${loc}' is INTENDED, repeat with allowLanguageMismatch: true.`,
+      );
+    }
+  }
+  return data;
 }
 
 export async function updateContent(
@@ -1310,43 +1520,13 @@ export async function updateContent(
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.update");
   const item = await loadAuthorized(db, ctx, documentId);
-  const type = await getContentType(db, item.type);
+  const reg = await loadTypeRegistry(db);
+  const type = requireType(reg, item.type);
 
   // Merge mode: shallow-merge the patch over the current working data so a
   // caller can change one field without round-tripping the whole map.
   const merged = req.merge ? { ...(await workingData(db, documentId, loc)), ...req.data } : req.data;
-  // Tolerant coercion: fix the unambiguous field-shape mistakes agents make
-  // (single block → array, doc → text, string → doc) before validating.
-  const data = coerceData(type, merged, loc, await blockTypeResolver(db));
-
-  // Draft save: relaxed validation (required fields not enforced). On failure
-  // the message names each field's expected JSON shape (with an example), so an
-  // agent can self-correct instead of guessing.
-  // The resolver makes this validate INLINE block payloads too, not just the
-  // document's own fields — a malformed block used to persist and fail only in
-  // the visitor's browser (see contentAreaSchemaFor).
-  const parsed = dataSchemaFor(type, false, await blockTypeResolver(db)).safeParse(data);
-  if (!parsed.success) throw Errors.validation(formatDataValidation(parsed.error, type), failedFields(parsed.error));
-  // Placement rules ARE enforced even on draft save (allowed blocks / ref types).
-  await assertAllowedTypes(db, type, data);
-
-  // Agent write-time language guard: refuse strongly language-mismatched content
-  // BEFORE it lands on the wrong locale branch. A draft is never re-checked
-  // until publish, so without this an agent that forgets to switch locale leaves
-  // (e.g.) a Norwegian page sitting silently on the 'en' branch (2026-06-08).
-  // Agent provenance only — a human editor is never second-guessed; escape hatch
-  // for deliberate cross-language writes. Mirrors the publish guard.
-  if ((ctx.via === "mcp" || ctx.via === "agent") && !req.allowLanguageMismatch) {
-    const mm = branchLanguageMismatch(type, data, loc);
-    if (mm) {
-      throw Errors.validation(
-        `The text you're writing is ${mm.detected === "nb" ? "Norwegian (nb)" : "English (en)"}, but locale '${loc}' is the ${mm.expected === "nb" ? "Norwegian (nb)" : "English (en)"} branch — ` +
-          `agent writes must match the branch language so content doesn't land on the wrong site. ` +
-          `Write this into the '${mm.detected}' branch instead: pass locale: "${mm.detected}" to create_content / update_content / set_field (create the document in '${mm.detected}' first if it doesn't exist yet). ` +
-          `If writing ${mm.detected} text into '${loc}' is INTENDED, repeat with allowLanguageMismatch: true.`,
-      );
-    }
-  }
+  const data = await prepareDraftData(db, ctx, type, reg, item.siteId, loc, merged, req.allowLanguageMismatch);
 
   // Forensic trail (2026-06-08): a richtext "body" that arrives as a Markdown
   // string (set_field) or as a doc-ish value gets transformed by the coercion
@@ -1357,148 +1537,150 @@ export async function updateContent(
   // future "malformed body" report is reproducible from the audit log alone.
   await recordRichTextCoercion(db, ctx, documentId, loc, type, merged, data);
 
-  // URL segments must be unique among page siblings (per locale) so paths are unambiguous.
-  if (item.kind === "page" && req.slug) {
-    await assertSlugUnique(db, documentId, item.parentId, loc, req.slug);
-  }
+  await withSiblingSlugLock(db, item, loc, async (tx) => {
+    // URL segments must be unique among page siblings (per locale) so paths are unambiguous.
+    if (item.kind === "page" && req.slug) {
+      await assertSlugUnique(tx, documentId, item.parentId, loc, req.slug);
+    }
 
-  // Find or create the working draft (single-draft invariant).
-  const existing = await db
-    .select()
-    .from(contentVersion)
-    .where(
-      and(
-        eq(contentVersion.documentId, documentId),
-        eq(contentVersion.locale, loc),
-        eq(contentVersion.status, "draft"),
-      ),
-    )
-    .limit(1);
-
-  // Backfill a missing URL segment from the name when the caller doesn't
-  // address the slug at all (existing slugs are never touched — URL stability).
-  const backfillSlug = async (currentSlug: string | null, name: string): Promise<string | null> =>
-    req.slug === undefined && currentSlug == null && item.kind === "page"
-      ? autoSlug(db, documentId, item.parentId, loc, name)
-      : currentSlug;
-
-  if (existing[0]) {
-    const name = req.name ?? existing[0].name;
-    const slug = req.slug !== undefined ? req.slug : await backfillSlug(existing[0].slug, name);
-    // Optimistic concurrency (see migration 0016). The revision match lives in the
-    // WHERE clause, not in a JS comparison against the row we read above: two
-    // concurrent saves would both pass a check-then-write and the second would
-    // still clobber. Matching in the UPDATE makes the loser affect zero rows.
-    const updated = await db
-      .update(contentVersion)
-      .set({
-        name,
-        slug,
-        displayInNav: req.displayInNav ?? existing[0].displayInNav,
-        data,
-        revision: sql`${contentVersion.revision} + 1`,
-        createdBy: ctx.userId,
-        createdAt: new Date(),
-        // Provenance: an agent (mcp) write flags the draft for human review; a
-        // human (web) write clears it — the human has seen the content.
-        createdVia: ctx.via ?? null,
-        needsReview: ctx.via === "mcp" || ctx.via === "agent",
-      })
+    // Find or create the working draft (single-draft invariant).
+    const existing = await tx
+      .select()
+      .from(contentVersion)
       .where(
         and(
-          eq(contentVersion.id, existing[0].id),
-          req.revision === undefined ? undefined : eq(contentVersion.revision, req.revision),
+          eq(contentVersion.documentId, documentId),
+          eq(contentVersion.locale, loc),
+          eq(contentVersion.status, "draft"),
         ),
       )
-      .returning({ id: contentVersion.id });
-    if (!updated[0]) {
-      // Self-teaching (rule #2): name the cause, the surface that moved it, and
-      // the one-step recovery. This message is what an editor and an agent both
-      // read to recover, so it has to carry the whole recipe.
-      throw Errors.conflict(
-        `This content was changed by someone else since you loaded it (revision ${req.revision} is no longer current). ` +
-          `Your save was refused so their work isn't overwritten. ` +
-          `Re-read the content (GET /manage/content/${documentId}?locale=${loc}), re-apply your change to the fresh data, and save again with the new revision. ` +
-          `To patch a single field without a revision conflict, send merge: true — it merges over whatever is current.`,
-      );
-    }
-  } else {
-    // Reaching the INSERT branch means there is NO draft row right now. A caller
-    // that asserted a specific non-zero revision was therefore looking at a draft
-    // that has since been consumed — published (promoted away) or discarded
-    // (deleted) — so its snapshot is stale and this branch would silently
-    // re-insert it, regressing the live page on the next publish. `revision: 0` is
-    // the honest "I know there is no draft" and is still accepted (getContent
-    // reports 0 for a draft-less document), as is omitting it entirely.
-    if (req.revision !== undefined && req.revision !== 0) {
-      throw Errors.conflict(
-        `The draft you were editing no longer exists — it was published or discarded since you loaded it (revision ${req.revision} is gone). ` +
-          `Your save was refused so it can't overwrite the newer state. ` +
-          `Re-read the content (GET /manage/content/${documentId}?locale=${loc}), re-apply your change, and save again with the revision it returns.`,
-      );
-    }
-    // No working draft yet (editing a published OR an unpublished item): seed a
-    // draft from the best available base — the live published version, else the
-    // latest version of any status. Using the latest version is what prevents an
-    // unpublished page (no current-published row) from losing its name/slug on
-    // the next edit.
-    const maxV = await nextVersionNumber(db, documentId, loc);
-    const sameLocale = (await currentPublished(db, documentId, loc)) ?? (await latestVersion(db, documentId, loc));
-    // First write in a NEW locale: fork identity (name/slug/nav) from the newest
-    // version in any other locale — never the "Untitled" placeholder. An agent
-    // that writes fields without addressing the name otherwise publishes a
-    // placeholder (2026-06-06 incident: nb forked as "Untitled", went live at
-    // /untitled while the en draft held the real name).
-    const fork = sameLocale ? null : await latestVersionAnyLocale(db, documentId);
-    const base = sameLocale ?? fork;
-    const name = req.name ?? base?.name ?? "Untitled";
-    let slug: string | null;
-    if (req.slug !== undefined) {
-      slug = req.slug;
-    } else if (sameLocale || !fork) {
-      slug = await backfillSlug(sameLocale?.slug ?? null, name);
-    } else if (req.name !== undefined || !fork.slug) {
-      // Forking with an explicit name (or no source slug): the URL follows the
-      // name the caller chose for THIS locale, not the source locale's slug.
-      slug = item.kind === "page" ? await autoSlug(db, documentId, item.parentId, loc, name) : null;
-    } else {
-      // Inherit the source locale's slug (it may be editor-customised), unless a
-      // sibling in this locale already uses it — then re-derive from the name.
-      slug = (await slugTakenBySibling(db, documentId, item.parentId, loc, fork.slug))
-        ? await autoSlug(db, documentId, item.parentId, loc, name)
-        : fork.slug;
-    }
-    try {
-      await db.insert(contentVersion).values({
-        documentId,
-        locale: loc,
-        status: "draft",
-        isCurrentPublished: false,
-        versionNumber: maxV,
-        name,
-        slug,
-        displayInNav: req.displayInNav ?? base?.displayInNav ?? true,
-        data,
-        createdBy: ctx.userId,
-        createdVia: ctx.via ?? null,
-        needsReview: ctx.via === "mcp" || ctx.via === "agent",
-      });
-    } catch (err) {
-      // A concurrent write seeded the single working draft first (the
-      // content_version_one_draft partial unique index held the invariant). Turn
-      // the raw 23505 into a self-teaching 409 instead of an opaque 500 (S2-L5).
-      if (isUniqueViolation(err)) {
-        throw Errors.conflict("A draft for this locale was just created by a concurrent edit — re-read the content and retry your update.");
-      }
-      throw err;
-    }
-  }
+      .limit(1);
 
-  await rebuildReferences(db, documentId, loc, type, data, await blockTypeResolver(db));
+    // Backfill a missing URL segment from the name when the caller doesn't
+    // address the slug at all (existing slugs are never touched — URL stability).
+    const backfillSlug = async (currentSlug: string | null, name: string): Promise<string | null> =>
+      req.slug === undefined && currentSlug == null && item.kind === "page"
+        ? autoSlug(tx, documentId, item.parentId, loc, name)
+        : currentSlug;
+
+    if (existing[0]) {
+      const name = req.name ?? existing[0].name;
+      const slug = req.slug !== undefined ? req.slug : await backfillSlug(existing[0].slug, name);
+      // Optimistic concurrency (see migration 0016). The revision match lives in the
+      // WHERE clause, not in a JS comparison against the row we read above: two
+      // concurrent saves would both pass a check-then-write and the second would
+      // still clobber. Matching in the UPDATE makes the loser affect zero rows.
+      const updated = await tx
+        .update(contentVersion)
+        .set({
+          name,
+          slug,
+          displayInNav: req.displayInNav ?? existing[0].displayInNav,
+          data,
+          revision: sql`${contentVersion.revision} + 1`,
+          createdBy: ctx.userId,
+          createdAt: new Date(),
+          // Provenance: an agent (mcp) write flags the draft for human review; a
+          // human (web) write clears it — the human has seen the content.
+          createdVia: ctx.via ?? null,
+          needsReview: ctx.via === "mcp" || ctx.via === "agent",
+        })
+        .where(
+          and(
+            eq(contentVersion.id, existing[0].id),
+            req.revision === undefined ? undefined : eq(contentVersion.revision, req.revision),
+          ),
+        )
+        .returning({ id: contentVersion.id });
+      if (!updated[0]) {
+        // Self-teaching (rule #2): name the cause, the surface that moved it, and
+        // the one-step recovery. This message is what an editor and an agent both
+        // read to recover, so it has to carry the whole recipe.
+        throw Errors.conflict(
+          `This content was changed by someone else since you loaded it (revision ${req.revision} is no longer current). ` +
+            `Your save was refused so their work isn't overwritten. ` +
+            `Re-read the content (GET /manage/content/${documentId}?locale=${loc}), re-apply your change to the fresh data, and save again with the new revision. ` +
+            `To patch a single field without a revision conflict, send merge: true — it merges over whatever is current.`,
+        );
+      }
+    } else {
+      // Reaching the INSERT branch means there is NO draft row right now. A caller
+      // that asserted a specific non-zero revision was therefore looking at a draft
+      // that has since been consumed — published (promoted away) or discarded
+      // (deleted) — so its snapshot is stale and this branch would silently
+      // re-insert it, regressing the live page on the next publish. `revision: 0` is
+      // the honest "I know there is no draft" and is still accepted (getContent
+      // reports 0 for a draft-less document), as is omitting it entirely.
+      if (req.revision !== undefined && req.revision !== 0) {
+        throw Errors.conflict(
+          `The draft you were editing no longer exists — it was published or discarded since you loaded it (revision ${req.revision} is gone). ` +
+            `Your save was refused so it can't overwrite the newer state. ` +
+            `Re-read the content (GET /manage/content/${documentId}?locale=${loc}), re-apply your change, and save again with the revision it returns.`,
+        );
+      }
+      // No working draft yet (editing a published OR an unpublished item): seed a
+      // draft from the best available base — the live published version, else the
+      // latest version of any status. Using the latest version is what prevents an
+      // unpublished page (no current-published row) from losing its name/slug on
+      // the next edit.
+      const maxV = await nextVersionNumber(tx, documentId, loc);
+      const sameLocale = (await currentPublished(tx, documentId, loc)) ?? (await latestVersion(tx, documentId, loc));
+      // First write in a NEW locale: fork identity (name/slug/nav) from the newest
+      // version in any other locale — never the "Untitled" placeholder. An agent
+      // that writes fields without addressing the name otherwise publishes a
+      // placeholder (2026-06-06 incident: nb forked as "Untitled", went live at
+      // /untitled while the en draft held the real name).
+      const fork = sameLocale ? null : await latestVersionAnyLocale(tx, documentId);
+      const base = sameLocale ?? fork;
+      const name = req.name ?? base?.name ?? "Untitled";
+      let slug: string | null;
+      if (req.slug !== undefined) {
+        slug = req.slug;
+      } else if (sameLocale || !fork) {
+        slug = await backfillSlug(sameLocale?.slug ?? null, name);
+      } else if (req.name !== undefined || !fork.slug) {
+        // Forking with an explicit name (or no source slug): the URL follows the
+        // name the caller chose for THIS locale, not the source locale's slug.
+        slug = item.kind === "page" ? await autoSlug(tx, documentId, item.parentId, loc, name) : null;
+      } else {
+        // Inherit the source locale's slug (it may be editor-customised), unless a
+        // sibling in this locale already uses it — then re-derive from the name.
+        slug = (await slugTakenBySibling(tx, documentId, item.parentId, loc, fork.slug))
+          ? await autoSlug(tx, documentId, item.parentId, loc, name)
+          : fork.slug;
+      }
+      try {
+        await tx.insert(contentVersion).values({
+          documentId,
+          locale: loc,
+          status: "draft",
+          isCurrentPublished: false,
+          versionNumber: maxV,
+          name,
+          slug,
+          displayInNav: req.displayInNav ?? base?.displayInNav ?? true,
+          data,
+          createdBy: ctx.userId,
+          createdVia: ctx.via ?? null,
+          needsReview: ctx.via === "mcp" || ctx.via === "agent",
+        });
+      } catch (err) {
+        // A concurrent write seeded the single working draft first (the
+        // content_version_one_draft partial unique index held the invariant). Turn
+        // the raw 23505 into a self-teaching 409 instead of an opaque 500 (S2-L5).
+        if (isUniqueViolation(err)) {
+          throw Errors.conflict("A draft for this locale was just created by a concurrent edit — re-read the content and retry your update.");
+        }
+        throw err;
+      }
+    }
+
+    await rebuildReferences(tx, documentId, loc, type, data, reg.blockTypes);
+  });
   return getContent(db, ctx, documentId, loc);
 }
 
-async function nextVersionNumber(db: Database, documentId: string, loc: string): Promise<number> {
+async function nextVersionNumber(db: Queryable, documentId: string, loc: string): Promise<number> {
   const rows = await db
     .select({ m: sql<number>`coalesce(max(${contentVersion.versionNumber}),0)::int` })
     .from(contentVersion)
@@ -1511,7 +1693,7 @@ async function nextVersionNumber(db: Database, documentId: string, loc: string):
  * locale has no version yet, so a new locale inherits name/slug instead of
  * materialising as "Untitled".
  */
-async function latestVersionAnyLocale(db: Database, documentId: string) {
+async function latestVersionAnyLocale(db: Queryable, documentId: string) {
   const rows = await db
     .select()
     .from(contentVersion)
@@ -1522,7 +1704,7 @@ async function latestVersionAnyLocale(db: Database, documentId: string) {
 }
 
 /** The highest-versionNumber row for a variant, regardless of status. */
-async function latestVersion(db: Database, documentId: string, loc: string) {
+async function latestVersion(db: Queryable, documentId: string, loc: string) {
   const rows = await db
     .select()
     .from(contentVersion)
@@ -1532,7 +1714,7 @@ async function latestVersion(db: Database, documentId: string, loc: string) {
   return rows[0] ?? null;
 }
 
-async function currentPublished(db: Database, documentId: string, loc: string) {
+async function currentPublished(db: Queryable, documentId: string, loc: string) {
   const rows = await db
     .select()
     .from(contentVersion)
@@ -1556,8 +1738,9 @@ async function assertDraftPublishable(
   loc: string,
   draft: typeof contentVersion.$inferSelect,
 ): Promise<void> {
-  const type = await getContentType(db, item.type);
-  const parsed = dataSchemaFor(type, true, await blockTypeResolver(db)).safeParse(draft.data);
+  const reg = await loadTypeRegistry(db);
+  const type = requireType(reg, item.type);
+  const parsed = dataSchemaFor(type, true, reg.blockTypes).safeParse(draft.data);
   if (!parsed.success) {
     // Tell the (often agentic) caller HOW to recover, not just what's wrong:
     // the draft is salvageable with a partial update — no need to rebuild it.
@@ -1568,7 +1751,7 @@ async function assertDraftPublishable(
       failedFields(parsed.error),
     );
   }
-  await assertAllowedTypes(db, type, draft.data as Record<string, unknown>);
+  await assertAllowedTypes(db, type, draft.data as Record<string, unknown>, item.siteId, reg);
   // Placeholder names are never publishable (agent-API rule 1: no
   // garbage-in-success-out). "Untitled" is the auto-default a version gets when
   // nobody ever set its name — publishing one put a live page at /untitled
@@ -1597,7 +1780,8 @@ async function assertDraftPublishable(
       );
     }
   }
-  // Defence-in-depth: sibling URL segments stay unique at publish time too.
+  // Early, unlocked sibling-slug check so a SCHEDULED publish fails at scheduling
+  // time, not at go-live; promoteDraft re-checks under the lock before writing.
   if (item.kind === "page" && draft.slug) {
     await assertSlugUnique(db, item.documentId, item.parentId, loc, draft.slug);
   }
@@ -1608,17 +1792,24 @@ async function assertDraftPublishable(
  * current-published row and promotes `draftId` to live, allocating a fresh cv
  * atomically and clearing its scheduled publish_at. Any expire_at already on the
  * row is preserved (it becomes the live row's expiry). Shared by the manual
- * publish route AND the scheduled-publish ticker.
+ * publish route AND the scheduled-publish ticker. A page's URL segment is
+ * re-checked against its siblings under the slug lock, on the row as it is NOW
+ * (a concurrent save may have changed it since the caller read it).
  */
 async function promoteDraft(
   db: Database,
-  documentId: string,
+  item: Pick<typeof contentItem.$inferSelect, "documentId" | "kind" | "siteId" | "parentId">,
   loc: string,
   draftId: number,
   actorUserId: string | null,
 ): Promise<void> {
+  const { documentId } = item;
   try {
-    await db.transaction(async (tx) => {
+    await withSiblingSlugLock(db, item, loc, async (tx) => {
+      if (item.kind === "page") {
+        const [row] = await tx.select({ slug: contentVersion.slug }).from(contentVersion).where(eq(contentVersion.id, draftId));
+        if (row?.slug) await assertSlugUnique(tx, documentId, item.parentId, loc, row.slug);
+      }
       // Allocate the cache-version atomically with the promotion.
       const cvRow = await tx.execute(sql`SELECT nextval('cv_seq') AS v`);
       const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
@@ -1803,6 +1994,27 @@ async function assertLanguageMatchesBranch(
   );
 }
 
+/**
+ * Fan a publish/unpublish out to the site's webhooks WITHOUT blocking the write.
+ * Lives in the query layer so every surface that promotes or demotes a row —
+ * REST, MCP, the scheduler — announces it; when only the manage route fired
+ * these, an agent publish over MCP never triggered a rebuild. Per-hook failures
+ * are recorded in webhook_delivery by dispatchWebhooks; only a failure to
+ * dispatch at all is logged here.
+ */
+function announceContent(
+  db: Database,
+  event: "content.published" | "content.unpublished",
+  item: { siteId: string; documentId: string; type: string; kind: string },
+  loc: string,
+  name: string,
+  urlPath: string | null,
+): void {
+  void dispatchWebhooks(db, { event, siteId: item.siteId, documentId: item.documentId, type: item.type, kind: item.kind, locale: loc, name, urlPath, at: new Date().toISOString() }).catch(
+    (err: unknown) => console.error(`[paperboy] ${event} webhook dispatch failed for ${item.documentId}:`, err),
+  );
+}
+
 export async function publishContent(
   db: Database,
   ctx: AccessContext,
@@ -1847,8 +2059,10 @@ export async function publishContent(
       throw Errors.conflict("Nothing to publish (no draft changes)");
     }
     await assertDraftPublishable(db, item, loc, latest);
-    await promoteDraft(db, documentId, loc, latest.id, ctx.userId);
-    return getContent(db, ctx, documentId, loc);
+    await promoteDraft(db, item, loc, latest.id, ctx.userId);
+    const published = await getContent(db, ctx, documentId, loc);
+    announceContent(db, "content.published", item, loc, published.name, published.urlPath);
+    return published;
   }
 
   await assertDraftPublishable(db, item, loc, draft);
@@ -1856,8 +2070,10 @@ export async function publishContent(
   if ((ctx.via === "mcp" || ctx.via === "agent") && !opts?.allowLanguageMismatch) {
     await assertLanguageMatchesBranch(db, item, loc, draft);
   }
-  await promoteDraft(db, documentId, loc, draft.id, ctx.userId);
-  return getContent(db, ctx, documentId, loc);
+  await promoteDraft(db, item, loc, draft.id, ctx.userId);
+  const published = await getContent(db, ctx, documentId, loc);
+  announceContent(db, "content.published", item, loc, published.name, published.urlPath);
+  return published;
 }
 
 /* ---------------------------- scheduled publish --------------------------- */
@@ -1919,21 +2135,8 @@ export async function schedulePublish(
       .update(contentVersion)
       .set({ publishAt: null, expireAt: opts.expireAt ?? null })
       .where(eq(contentVersion.id, draft.id));
-    await promoteDraft(db, documentId, loc, draft.id, ctx.userId);
-    // Manual publish fires its webhook from the route; this query-layer path fires
-    // its own (fire-and-forget, same payload) so integrations see the publish.
-    const urlPath = item.kind === "page" ? await computePath(db, documentId, loc) : null;
-    void dispatchWebhooks(db, {
-      event: "content.published",
-      siteId: item.siteId,
-      documentId,
-      type: item.type,
-      kind: item.kind,
-      locale: loc,
-      name: draft.name,
-      urlPath,
-      at: new Date().toISOString(),
-    }).catch(() => undefined);
+    await promoteDraft(db, item, loc, draft.id, ctx.userId);
+    announceContent(db, "content.published", item, loc, draft.name, item.kind === "page" ? await computePath(db, documentId, loc) : null);
     return getContent(db, ctx, documentId, loc);
   }
 
@@ -1994,8 +2197,8 @@ export async function runScheduledPublish(
         await db.update(contentVersion).set({ publishAt: null }).where(eq(contentVersion.id, d.id));
         continue;
       }
-      const type = await getContentType(db, item.type);
-      const parsed = dataSchemaFor(type, true, await blockTypeResolver(db)).safeParse(d.data);
+      const reg = await loadTypeRegistry(db);
+      const parsed = dataSchemaFor(requireType(reg, item.type), true, reg.blockTypes).safeParse(d.data);
       if (!parsed.success) {
         // Re-validation failed (e.g. the type changed since scheduling). Leave as
         // a draft, drop the schedule, and record why so the editor can see it.
@@ -2009,7 +2212,7 @@ export async function runScheduledPublish(
         failed++;
         continue;
       }
-      await promoteDraft(db, d.documentId, d.locale, d.id, d.createdBy);
+      await promoteDraft(db, item, d.locale, d.id, d.createdBy);
       const urlPath = item.kind === "page" ? await computePath(db, d.documentId, d.locale) : null;
       await dispatchWebhooks(db, {
         event: "content.published",
@@ -2090,14 +2293,13 @@ export async function unpublishContent(
   loc: string,
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.publish");
-  await loadAuthorized(db, ctx, documentId);
-  // Allocate a fresh cv on the way out, even though the row is leaving the public
-  // set. Delivery derives its ETag from the cv of the rows it returned, so an
-  // unpublish that bumped nothing produced a BYTE-IDENTICAL ETag for the list the
-  // item just left: the next conditional GET 304'd, and because the response
-  // carries `stale-while-revalidate`, the CDN kept refreshing its own freshness and
-  // served the withdrawn content indefinitely. Withdrawal has to move the version
-  // counter for the same reason publishing does.
+  const item = await loadAuthorized(db, ctx, documentId);
+  // The path is computed BEFORE demoting — afterwards the page is no longer publicly resolvable.
+  const live = await currentPublished(db, documentId, loc);
+  const urlPath = live && item.kind === "page" ? await computePath(db, documentId, loc) : null;
+  // ponytail: the fresh cv only versions the withdrawn ROW; the LIST ETag (max cv
+  // over returned items) stays byte-identical, so a CDN keeps serving the
+  // withdrawn item — open, pinned by withdrawal-invalidates-cache.test.ts.
   const cvRow = await db.execute(sql`SELECT nextval('cv_seq') AS v`);
   const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
   await db
@@ -2110,6 +2312,7 @@ export async function unpublishContent(
         eq(contentVersion.isCurrentPublished, true),
       ),
     );
+  if (live) announceContent(db, "content.unpublished", item, loc, live.name, urlPath);
   return getContent(db, ctx, documentId, loc);
 }
 
@@ -2188,24 +2391,21 @@ export async function deleteVariant(
       `Cannot delete the only language version ('${loc}') of this content — move the whole page to trash instead.`,
     );
   }
-  // References are keyed (fromDocumentId, fromLocale) — drop this locale's first.
-  await db
-    .delete(contentReference)
-    .where(and(eq(contentReference.fromDocumentId, documentId), eq(contentReference.fromLocale, loc)));
-  const deleted = await db
-    .delete(contentVersion)
-    .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)))
-    .returning({ id: contentVersion.id });
+  // References are keyed (fromDocumentId, fromLocale); both deletes land together.
+  const deleted = await db.transaction(async (tx) => {
+    await tx
+      .delete(contentReference)
+      .where(and(eq(contentReference.fromDocumentId, documentId), eq(contentReference.fromLocale, loc)));
+    return tx
+      .delete(contentVersion)
+      .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)))
+      .returning({ id: contentVersion.id });
+  });
   return { ok: true, deleted: deleted.length };
 }
 
 /* --------------------------------- move ----------------------------------- */
 
-/**
- * Reorder a content item among its siblings (same parent). `beforeId`/`afterId`
- * name the sibling to drop next to; omit both to move to the end. Reorder-only
- * (parent is not changed). Renumbers the whole sibling group by 10s.
- */
 /**
  * Move a page within the hierarchy. `parentId === undefined` → reorder among the
  * current siblings (sortIndex only). Otherwise RE-PARENT to `parentId` (a page)
@@ -2248,16 +2448,6 @@ export async function moveContent(
       }
     }
     targetParentId = newParentId;
-
-    // Sibling URL-segment uniqueness at the destination, for every locale that has a segment.
-    const localeRows = await db
-      .select({ locale: contentVersion.locale })
-      .from(contentVersion)
-      .where(eq(contentVersion.documentId, documentId));
-    for (const locale of new Set(localeRows.map((r) => r.locale))) {
-      const slug = await workingSlug(db, documentId, locale);
-      if (slug) await assertSlugUnique(db, documentId, targetParentId, locale, slug);
-    }
   }
 
   await db.transaction(async (tx) => {
@@ -2266,6 +2456,18 @@ export async function moveContent(
       // reparent write are atomic — two opposing concurrent reparents can't both
       // pass and form a cycle. The advisory xact lock auto-releases on commit/rollback.
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`move:${ctx.siteId}`}))`);
+      // Sibling URL-segment uniqueness at the destination, for every locale that
+      // has a segment — under the same lock a save into that slot takes.
+      const localeRows = await tx
+        .select({ locale: contentVersion.locale })
+        .from(contentVersion)
+        .where(eq(contentVersion.documentId, documentId));
+      for (const locale of new Set(localeRows.map((r) => r.locale))) {
+        const slug = await workingSlug(tx, documentId, locale);
+        if (!slug) continue;
+        await lockSiblingSlugs(tx, item.siteId, targetParentId, locale);
+        await assertSlugUnique(tx, documentId, targetParentId, locale, slug);
+      }
       if (targetParentId !== null) {
         // Re-walk up from the destination against COMMITTED state under the lock.
         const guard = new Set<string>();
@@ -2331,9 +2533,10 @@ export async function moveContent(
     if (opts.beforeId && ids.includes(opts.beforeId)) insertAt = ids.indexOf(opts.beforeId);
     else if (opts.afterId && ids.includes(opts.afterId)) insertAt = ids.indexOf(opts.afterId) + 1;
     ids.splice(insertAt, 0, documentId);
-    for (let i = 0; i < ids.length; i++) {
-      await tx.update(contentItem).set({ sortIndex: i * 10 }).where(eq(contentItem.documentId, ids[i]!));
-    }
+    await tx.execute(sql`
+      UPDATE content_item AS c SET sort_index = v.i
+      FROM (VALUES ${sql.join(ids.map((id, i) => sql`(${id}::text, ${i * 10}::int)`), sql`, `)}) AS v(id, i)
+      WHERE c.document_id = v.id`);
   });
 }
 
@@ -2392,10 +2595,15 @@ export interface SearchHit {
 }
 
 /**
- * Full-text-ish content search (Phase A): case-insensitive match on the version
- * name/URL segment across EVERY in-scope document (pages + blocks), not just the
- * loaded tree. Deny-by-default scope (siteWide or section-scoped); excludes trash.
- * One hit per document, preferring the published-then-latest matching version.
+ * Content search (⌘K): case-insensitive substring match on the CURRENT versions'
+ * name/URL segment (working draft or live published — never history) across
+ * every in-scope document (pages + blocks), not just the loaded tree.
+ * Deny-by-default scope (siteWide or section-scoped); excludes trash. One hit
+ * per document, preferring the published-then-latest matching version.
+ *
+ * ILIKE on name/slug rather than the `fts` column: the palette promises
+ * substring matches on titles, while fts is word-prefix matching over body text
+ * too — different results, not a faster path to the same ones.
  */
 export async function searchContent(
   db: Database,
@@ -2406,18 +2614,18 @@ export async function searchContent(
   requirePermission(ctx, "content.read");
   const q = query.trim();
   if (q.length < 1) return [];
+  if (!ctx.readSiteWide && ctx.sections.length === 0) return [];
   const limit = Math.min(Math.max(opts.limit ?? 20, 1), 50);
   // Escape LIKE metacharacters (Postgres default ESCAPE is backslash).
   const pattern = `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`;
 
   const rows = await db
-    .select({
+    .selectDistinctOn([contentVersion.documentId], {
       documentId: contentVersion.documentId,
       locale: contentVersion.locale,
       name: contentVersion.name,
       type: contentItem.type,
       kind: contentItem.kind,
-      sectionId: contentItem.sectionId,
     })
     .from(contentVersion)
     .innerJoin(contentItem, eq(contentItem.documentId, contentVersion.documentId))
@@ -2425,31 +2633,22 @@ export async function searchContent(
       and(
         isNull(contentItem.deletedAt),
         eq(contentItem.siteId, ctx.siteId), // multisite: search is confined to the active site
+        ctx.readSiteWide ? undefined : inArray(sql`coalesce(${contentItem.sectionId}, ${contentItem.documentId})`, ctx.sections),
+        or(eq(contentVersion.status, "draft"), eq(contentVersion.isCurrentPublished, true)),
         or(ilike(contentVersion.name, pattern), ilike(contentVersion.slug, pattern)),
       ),
     )
-    .orderBy(
-      asc(contentVersion.documentId),
-      desc(contentVersion.isCurrentPublished),
-      desc(contentVersion.versionNumber),
-    );
+    .orderBy(contentVersion.documentId, desc(contentVersion.isCurrentPublished), desc(contentVersion.versionNumber))
+    .limit(limit);
 
-  const seen = new Set<string>();
-  const hits: SearchHit[] = [];
-  for (const r of rows) {
-    if (seen.has(r.documentId)) continue;
-    if (!(ctx.readSiteWide || ctx.sections.includes(r.sectionId ?? r.documentId))) continue;
-    seen.add(r.documentId);
-    hits.push({
-      documentId: r.documentId,
-      type: r.type,
-      kind: r.kind as SearchHit["kind"],
-      name: r.name,
-      locale: r.locale,
-      urlPath: null,
-    });
-    if (hits.length >= limit) break;
-  }
+  const hits: SearchHit[] = rows.map((r) => ({
+    documentId: r.documentId,
+    type: r.type,
+    kind: r.kind as SearchHit["kind"],
+    name: r.name,
+    locale: r.locale,
+    urlPath: null,
+  }));
   // Hierarchical URL only for the (bounded) page hits.
   for (const h of hits) {
     if (h.kind === "page") h.urlPath = await computePath(db, h.documentId, h.locale);
@@ -2572,7 +2771,8 @@ export async function restoreVersion(
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.update");
   const item = await loadAuthorized(db, ctx, documentId);
-  const type = await getContentType(db, item.type);
+  const reg = await loadTypeRegistry(db);
+  const type = requireType(reg, item.type);
 
   const srcRows = await db
     .select()
@@ -2585,41 +2785,43 @@ export async function restoreVersion(
   // Coerce on restore too: a historic version may predate the richtext
   // sanitizer and still contain editor-breaking TipTap (one such node blanks
   // the whole doc in the admin), so it must not re-enter the working draft raw.
-  const data = coerceData(type, src.data as Record<string, unknown>, loc, await blockTypeResolver(db));
-  // Slug must stay unique among page siblings (the source slug may now collide).
-  if (item.kind === "page" && src.slug) {
-    await assertSlugUnique(db, documentId, item.parentId, loc, src.slug);
-  }
+  const data = coerceData(type, src.data as Record<string, unknown>, loc, reg.blockTypes, await localeCodes(db));
 
-  const existingDraft = await db
-    .select()
-    .from(contentVersion)
-    .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc), eq(contentVersion.status, "draft")))
-    .limit(1);
-  if (existingDraft[0]) {
-    await db
-      .update(contentVersion)
-      // revision: this is an in-place draft write like any other. Without the bump
-      // an editor holding the pre-restore token saved straight over the restore —
-      // 200, no conflict, and no history trace of what was lost.
-      .set({ name: src.name, slug: src.slug, displayInNav: src.displayInNav, data, revision: sql`${contentVersion.revision} + 1`, createdBy: ctx.userId, createdAt: new Date(), comment: `Restored from v${src.versionNumber}` })
-      .where(eq(contentVersion.id, existingDraft[0].id));
-  } else {
-    await db.insert(contentVersion).values({
-      documentId,
-      locale: loc,
-      status: "draft",
-      isCurrentPublished: false,
-      versionNumber: await nextVersionNumber(db, documentId, loc),
-      name: src.name,
-      slug: src.slug,
-      displayInNav: src.displayInNav,
-      data,
-      createdBy: ctx.userId,
-      comment: `Restored from v${src.versionNumber}`,
-    });
-  }
-  await rebuildReferences(db, documentId, loc, type, data, await blockTypeResolver(db));
+  await withSiblingSlugLock(db, item, loc, async (tx) => {
+    // Slug must stay unique among page siblings (the source slug may now collide).
+    if (item.kind === "page" && src.slug) {
+      await assertSlugUnique(tx, documentId, item.parentId, loc, src.slug);
+    }
+    const existingDraft = await tx
+      .select()
+      .from(contentVersion)
+      .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc), eq(contentVersion.status, "draft")))
+      .limit(1);
+    if (existingDraft[0]) {
+      await tx
+        .update(contentVersion)
+        // revision: this is an in-place draft write like any other. Without the bump
+        // an editor holding the pre-restore token saved straight over the restore —
+        // 200, no conflict, and no history trace of what was lost.
+        .set({ name: src.name, slug: src.slug, displayInNav: src.displayInNav, data, revision: sql`${contentVersion.revision} + 1`, createdBy: ctx.userId, createdAt: new Date(), comment: `Restored from v${src.versionNumber}` })
+        .where(eq(contentVersion.id, existingDraft[0].id));
+    } else {
+      await tx.insert(contentVersion).values({
+        documentId,
+        locale: loc,
+        status: "draft",
+        isCurrentPublished: false,
+        versionNumber: await nextVersionNumber(tx, documentId, loc),
+        name: src.name,
+        slug: src.slug,
+        displayInNav: src.displayInNav,
+        data,
+        createdBy: ctx.userId,
+        comment: `Restored from v${src.versionNumber}`,
+      });
+    }
+    await rebuildReferences(tx, documentId, loc, type, data, reg.blockTypes);
+  });
   return getContent(db, ctx, documentId, loc);
 }
 
@@ -2639,7 +2841,9 @@ export async function cloneContent(
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.create");
   const src = await loadAuthorized(db, ctx, documentId);
-  const type = await getContentType(db, src.type);
+  const reg = await loadTypeRegistry(db);
+  const type = requireType(reg, src.type);
+  await assertGlobalSingleton(db, type, src.siteId);
 
   const newId = nanoid(24);
   const section = src.sectionId ?? src.documentId;
@@ -2664,58 +2868,57 @@ export async function cloneContent(
     }
   }
 
-  await db.insert(contentItem).values({
-    documentId: newId,
-    type: src.type,
-    kind: src.kind,
-    parentId: src.parentId,
-    sortIndex: (src.sortIndex ?? 0) + 1,
-    sectionId: newSection,
-    // Inherit the SOURCE's site and folder. Omitting siteId let the column
-    // DEFAULT ('site_default') apply, so duplicating inside any other site wrote
-    // the copy into the Default site — and the getContent below then 404'd on the
-    // active-site check, leaving an orphan copy in another tenant's tree.
-    siteId: src.siteId,
-    folderId: src.folderId,
-    createdBy: ctx.userId,
+  const locales = await localeCodes(db);
+  await db.transaction(async (tx) => {
+    await tx.insert(contentItem).values({
+      documentId: newId,
+      type: src.type,
+      kind: src.kind,
+      parentId: src.parentId,
+      sortIndex: (src.sortIndex ?? 0) + 1,
+      sectionId: newSection,
+      // Inherit the SOURCE's site and folder. Omitting siteId let the column
+      // DEFAULT ('site_default') apply, so duplicating inside any other site wrote
+      // the copy into the Default site — and the getContent below then 404'd on the
+      // active-site check, leaving an orphan copy in another tenant's tree.
+      siteId: src.siteId,
+      folderId: src.folderId,
+      createdBy: ctx.userId,
+    });
+    for (const [code, row] of byLocale) {
+      // Coerce on clone for the same reason as restoreVersion: the source data
+      // may predate the richtext sanitizer.
+      const data = coerceData(type, row.data as Record<string, unknown>, code, reg.blockTypes, locales);
+      await tx.insert(contentVersion).values({
+        documentId: newId,
+        locale: code,
+        status: "draft",
+        isCurrentPublished: false,
+        versionNumber: 1,
+        name: `${row.name} (copy)`,
+        slug: src.kind === "page" ? null : row.slug,
+        displayInNav: row.displayInNav,
+        data,
+        createdBy: ctx.userId,
+      });
+      await rebuildReferences(tx, newId, code, type, data, reg.blockTypes);
+    }
+    // If the source had no version at all, seed an empty draft so the doc is editable.
+    if (byLocale.size === 0) {
+      await tx.insert(contentVersion).values({
+        documentId: newId,
+        locale: loc,
+        status: "draft",
+        isCurrentPublished: false,
+        versionNumber: 1,
+        name: "Untitled (copy)",
+        slug: null,
+        displayInNav: true,
+        data: {},
+        createdBy: ctx.userId,
+      });
+    }
   });
-  let count = 0;
-  // Resolved ONCE for the whole clone, not per locale.
-  const blockTypes = await blockTypeResolver(db);
-  for (const [code, row] of byLocale) {
-    // Coerce on clone for the same reason as restoreVersion: the source data
-    // may predate the richtext sanitizer.
-    const data = coerceData(type, row.data as Record<string, unknown>, code, blockTypes);
-    await db.insert(contentVersion).values({
-      documentId: newId,
-      locale: code,
-      status: "draft",
-      isCurrentPublished: false,
-      versionNumber: 1,
-      name: `${row.name} (copy)`,
-      slug: src.kind === "page" ? null : row.slug,
-      displayInNav: row.displayInNav,
-      data,
-      createdBy: ctx.userId,
-    });
-    await rebuildReferences(db, newId, code, type, data, blockTypes);
-    count++;
-  }
-  // If the source had no version at all, seed an empty draft so the doc is editable.
-  if (count === 0) {
-    await db.insert(contentVersion).values({
-      documentId: newId,
-      locale: loc,
-      status: "draft",
-      isCurrentPublished: false,
-      versionNumber: 1,
-      name: "Untitled (copy)",
-      slug: null,
-      displayInNav: true,
-      data: {},
-      createdBy: ctx.userId,
-    });
-  }
   return getContent(db, ctx, newId, loc);
 }
 
@@ -2750,22 +2953,21 @@ export async function softDelete(
   requirePermission(ctx, "content.delete");
   await loadAuthorized(db, ctx, documentId);
 
-  // Collect the moved subtree (guarded downward BFS).
-  const ids = [documentId];
-  const visited = new Set<string>([documentId]);
-  let frontier = [documentId];
-  while (frontier.length) {
-    const kids = await db
-      .select({ documentId: contentItem.documentId })
-      .from(contentItem)
-      .where(and(inArray(contentItem.parentId, frontier), isNull(contentItem.deletedAt)));
-    const next = kids.map((k) => k.documentId).filter((id) => !visited.has(id));
-    next.forEach((id) => { visited.add(id); ids.push(id); });
-    frontier = next;
-  }
-
   const now = new Date();
-  await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
+    // Collect the subtree (guarded downward BFS) in the same transaction that trashes it.
+    const ids = [documentId];
+    const visited = new Set<string>([documentId]);
+    let frontier = [documentId];
+    while (frontier.length) {
+      const kids = await tx
+        .select({ documentId: contentItem.documentId })
+        .from(contentItem)
+        .where(and(inArray(contentItem.parentId, frontier), isNull(contentItem.deletedAt)));
+      const next = kids.map((k) => k.documentId).filter((id) => !visited.has(id));
+      next.forEach((id) => { visited.add(id); ids.push(id); });
+      frontier = next;
+    }
     await tx.update(contentItem).set({ deletedAt: now }).where(inArray(contentItem.documentId, ids));
     // Bump cv on the way out, same reason as unpublishContent: delivery's ETag is
     // derived from the cv of the rows it returned, so trashing without bumping left
@@ -2776,8 +2978,8 @@ export async function softDelete(
       .update(contentVersion)
       .set({ isCurrentPublished: false, cv })
       .where(and(inArray(contentVersion.documentId, ids), eq(contentVersion.isCurrentPublished, true)));
+    return { trashed: ids.length };
   });
-  return { trashed: ids.length };
 }
 
 /** Restore from trash (clears deletedAt). Republishing is a separate, explicit step. */
@@ -2794,6 +2996,7 @@ export async function restoreContent(
     const p = await db.select({ deletedAt: contentItem.deletedAt }).from(contentItem).where(eq(contentItem.documentId, item.parentId)).limit(1);
     if (p[0]?.deletedAt) throw Errors.conflict("Restore the parent page first");
   }
+  await assertGlobalSingleton(db, await getContentType(db, item.type), item.siteId, item.documentId);
 
   // Restore the item + ONLY the descendants trashed in the SAME sweep. softDelete
   // stamps one shared `deletedAt` across a sweep and skips already-trashed nodes,
@@ -2801,20 +3004,22 @@ export async function restoreContent(
   // must stay trashed (S2-M8) — restoring it would resurrect content the user never
   // asked back. Scope both the walk and the update to the parent's sweep timestamp.
   const ts = item.deletedAt;
-  const ids = [documentId];
-  const visited = new Set<string>([documentId]);
-  let frontier = [documentId];
-  while (frontier.length) {
-    const kids = await db
-      .select({ documentId: contentItem.documentId })
-      .from(contentItem)
-      .where(and(inArray(contentItem.parentId, frontier), eq(contentItem.deletedAt, ts)));
-    const next = kids.map((k) => k.documentId).filter((id) => !visited.has(id));
-    next.forEach((id) => { visited.add(id); ids.push(id); });
-    frontier = next;
-  }
-  await db.update(contentItem).set({ deletedAt: null }).where(and(inArray(contentItem.documentId, ids), eq(contentItem.deletedAt, ts)));
-  return { restored: ids.length };
+  return db.transaction(async (tx) => {
+    const ids = [documentId];
+    const visited = new Set<string>([documentId]);
+    let frontier = [documentId];
+    while (frontier.length) {
+      const kids = await tx
+        .select({ documentId: contentItem.documentId })
+        .from(contentItem)
+        .where(and(inArray(contentItem.parentId, frontier), eq(contentItem.deletedAt, ts)));
+      const next = kids.map((k) => k.documentId).filter((id) => !visited.has(id));
+      next.forEach((id) => { visited.add(id); ids.push(id); });
+      frontier = next;
+    }
+    await tx.update(contentItem).set({ deletedAt: null }).where(and(inArray(contentItem.documentId, ids), eq(contentItem.deletedAt, ts)));
+    return { restored: ids.length };
+  });
 }
 
 /** List trashed items in scope (each with its display name) — powers the Trash view. */

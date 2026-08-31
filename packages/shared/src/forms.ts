@@ -1,6 +1,6 @@
 import { z } from "zod";
 import safe from "safe-regex";
-import type { BlockTypeResolver } from "./content-types.js";
+import { type BlockTypeResolver, ISO_8601 } from "./content-types.js";
 
 /**
  * Forms: the normalized spec, the submission validator, and the invisible spam
@@ -99,10 +99,6 @@ export const HONEYPOT_FIELD = "pb_contact_reason";
  *  seconds. Generous enough for a one-field form with autofill. */
 export const MIN_FILL_MS = 2500;
 
-/** A submission older than this had its page open for hours — usually a stale
- *  tab, occasionally a replay. Accepted, but the timing check can't vouch for it. */
-export const MAX_FILL_MS = 12 * 60 * 60 * 1000;
-
 export type SpamVerdict = { ok: true } | { ok: false; reason: "honeypot" | "too_fast" };
 
 /** The invisible checks. Runs before validation: a bot's payload should cost
@@ -125,7 +121,21 @@ const num = (v: unknown): number | undefined => {
   const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : Number.NaN;
   return Number.isFinite(n) ? n : undefined;
 };
-const bool = (v: unknown): boolean => v === true || v === "true" || v === "on" || v === 1;
+/**
+ * A checkbox in every spelling a form posts it: a real boolean, an HTML
+ * checkbox's "on", the "1"/"true"/"yes" other frontends send. `undefined` for
+ * anything else, so the caller can leave it for the validator to REJECT rather
+ * than guess — "maybe" is not an unticked box.
+ */
+const parseBool = (v: unknown): boolean | undefined => {
+  if (typeof v === "boolean") return v;
+  if (v === 1 || v === 0) return v === 1;
+  if (typeof v !== "string") return undefined;
+  const s = v.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(s)) return true;
+  if (["0", "false", "no", "off", ""].includes(s)) return false;
+  return undefined;
+};
 
 /**
  * Parse the editor's option list. One per line; `value|Label` splits the stored
@@ -166,7 +176,7 @@ export function fieldSpecFromBlock(blockType: string, inline: Record<string, unk
     name,
     label: str(inline.label),
     // Consent is meaningless if it can be skipped; the checkbox is always required.
-    required: kind === "consent" ? true : bool(inline.required),
+    required: kind === "consent" ? true : parseBool(inline.required) === true,
     helpText: str(inline.helpText) || undefined,
     placeholder: str(inline.placeholder) || undefined,
     errorMessage: str(inline.errorMessage) || undefined,
@@ -186,28 +196,42 @@ export function fieldSpecFromBlock(blockType: string, inline: Record<string, unk
   return base;
 }
 
+/** A shared field block's type and payload, looked up by documentId. Returns
+ *  undefined for a block the caller must not see (unpublished, trashed, another
+ *  site), which drops the field from the spec. */
+export type SharedBlockResolver = (documentId: string) => { blockType: string; data: Record<string, unknown> } | undefined;
+
 /**
- * Build the spec from a Form block's own data. `resolveBlock` is only needed
- * for shared (referenced) field blocks; inline fields carry their own payload.
+ * Build the spec from a Form block's data. Inline fields carry their own
+ * payload; a SHARED (referenced) field block is read from the delivered
+ * `content` when it was resolved, else through `sharedBlock` — which every
+ * caller must pass, or a form whose consent box is a shared block is delivered
+ * (and enforced) without it.
  */
-export function formSpecFrom(
-  data: Record<string, unknown>,
-  opts: { sharedBlock?: (documentId: string) => { blockType: string; data: Record<string, unknown> } | undefined } = {},
-): FormSpec {
+export function formSpecFrom(data: Record<string, unknown>, opts: { sharedBlock?: SharedBlockResolver } = {}): FormSpec {
   const area = Array.isArray(data.fields) ? data.fields : [];
   const fields: FormFieldSpec[] = [];
   const seen = new Set<string>();
   for (const raw of area) {
     if (!raw || typeof raw !== "object") continue;
-    const b = raw as { blockType?: unknown; inline?: unknown; data?: unknown; ref?: unknown };
+    const b = raw as { blockType?: unknown; inline?: unknown; data?: unknown; ref?: unknown; shared?: unknown; content?: unknown };
     let blockType = typeof b.blockType === "string" ? b.blockType : "";
     // `inline` is the STORED shape; `data` is the DELIVERED shape (delivery
     // serializes an inline block as { blockType, data, fieldTypes }). The spec
     // is computed on both sides of that boundary, so accept either.
     const payload = b.inline ?? b.data;
     let inline = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
-    if (!inline && typeof b.ref === "string" && opts.sharedBlock) {
-      const shared = opts.sharedBlock(b.ref);
+    // A shared block: stored as { ref }, delivered as { shared:true, content } where
+    // content is the resolved item ({ type, data }) or, at populate 0, a shallow
+    // { documentId, type }. Either way the resolver answers for what is missing.
+    const content = b.shared === true && b.content && typeof b.content === "object" ? (b.content as { documentId?: unknown; type?: unknown; data?: unknown }) : null;
+    if (!inline && content && content.data && typeof content.data === "object") {
+      blockType = typeof content.type === "string" ? content.type : blockType;
+      inline = content.data as Record<string, unknown>;
+    }
+    const ref = typeof b.ref === "string" ? b.ref : typeof content?.documentId === "string" ? content.documentId : "";
+    if (!inline && ref && opts.sharedBlock) {
+      const shared = opts.sharedBlock(ref);
       if (shared) {
         blockType = shared.blockType;
         inline = shared.data;
@@ -240,8 +264,9 @@ export function formSpecFrom(
 
 /* ------------------------- validating a submission ------------------------ */
 
-/** Hard ceiling per answer, so a form without a maxLength can't be used to
- *  store megabytes. Generous for a long message, cheap to store. */
+/** Ceiling per answer when the editor set no maxLength, so a form can't be used
+ *  to store megabytes. A declared maxLength wins either way (the template lets
+ *  an editor raise it to 10 000). Generous for a long message, cheap to store. */
 export const MAX_ANSWER_LENGTH = 5000;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -268,7 +293,9 @@ export function coerceSubmissionValues(spec: FormSpec, raw: Record<string, unkno
       }
       case "checkbox":
       case "consent":
-        out[f.name] = v === "" || v == null ? false : bool(v);
+        // An absent box is an unticked box; anything unrecognisable stays as
+        // sent, for the validator to reject.
+        out[f.name] = v == null ? false : (parseBool(v) ?? v);
         break;
       default:
         out[f.name] = typeof v === "string" ? v.trim() : v;
@@ -331,12 +358,15 @@ export function submissionSchemaFor(spec: FormSpec): z.ZodType<Record<string, un
         break;
       }
       case "date":
-        s = z.string({ message: missing }).max(40).refine((v) => v === "" || !Number.isNaN(Date.parse(v)), {
+        // The ISO shape a date/datetime-local input posts, AND a real instant:
+        // Date.parse alone accepts "1" (year 2001) and the regex alone accepts
+        // month 13.
+        s = z.string({ message: missing }).max(40).refine((v) => v === "" || (ISO_8601.test(v) && !Number.isNaN(Date.parse(v))), {
           message: message ?? `Enter a valid date for "${f.label || f.name}".`,
         });
         break;
       case "checkbox":
-        s = z.boolean();
+        s = z.boolean({ message: message ?? `"${f.label || f.name}" must be ticked or left unticked.` });
         break;
       case "consent":
         // Required means required: an unticked consent box is a failed submission.

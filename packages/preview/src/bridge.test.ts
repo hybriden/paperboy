@@ -28,6 +28,26 @@ describe("initPreviewBridge", () => {
     expect(document.querySelector("style[data-pb-bridge]")).toBeNull();
   });
 
+  it("is idempotent: a second init returns the existing teardown and stacks nothing", () => {
+    // A second call stacked styles, badge, chrome and listeners — every click
+    // then posted paperboy:edit twice.
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-field="heading">Hi</div>`;
+    const first = initPreviewBridge({ target, badge: false });
+    const second = initPreviewBridge({ target, badge: false });
+    expect(second).toBe(first);
+    expect(document.querySelectorAll("style[data-pb-bridge]")).toHaveLength(1);
+    target.postMessage.mockClear();
+    document.querySelector("[data-pb-field]")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(target.postMessage).toHaveBeenCalledTimes(1);
+    first();
+    expect(document.querySelector("style[data-pb-bridge]")).toBeNull();
+    // After teardown, init is a fresh bridge again.
+    const third = initPreviewBridge({ target, badge: false });
+    expect(third).not.toBe(first);
+    third();
+  });
+
   it("posts paperboy:edit when an editable region is clicked", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-field="heading">Hi</div>`;

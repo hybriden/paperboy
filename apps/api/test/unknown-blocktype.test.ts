@@ -215,6 +215,11 @@ describe("nested-only parts are rejected where any block goes", () => {
  *
  * The guard runs from `updateContent` and from `assertDraftPublishable`, so
  * fixing it in one place closes save and publish together.
+ *
+ * The container is a test-defined FieldsetBlock whose `fields` area names the
+ * form field parts, not an inline Form: a Form must be a SHARED block (its
+ * documentId is what submissions post against), so an inline one is refused
+ * before any nesting is looked at — see reference-target-validation.test.ts.
  */
 describe("an unknown blockType is rejected inside a nested block too", () => {
   let s: Suite;
@@ -223,7 +228,7 @@ describe("an unknown blockType is rejected inside a nested block too", () => {
   beforeAll(async () => {
     s = await setupApi();
     admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
-    for (const name of ["Form", "FormTextField", "FormDateField"]) {
+    for (const name of ["FormTextField", "FormDateField"]) {
       const r = await s.app.inject({
         method: "POST",
         url: `/api/v1/manage/type-templates/${name}/instantiate`,
@@ -232,17 +237,32 @@ describe("an unknown blockType is rejected inside a nested block too", () => {
       });
       expect(r.statusCode, r.body).toBe(200);
     }
+    const fieldset = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content-types",
+      headers: authHeaders(admin),
+      payload: {
+        name: "FieldsetBlock",
+        displayName: "Fieldset",
+        kind: "block",
+        fields: [
+          { name: "title", displayName: "Title", type: "text", delivery: "public" },
+          { name: "fields", displayName: "Fields", type: "contentArea", delivery: "public", allowedBlocks: ["FormTextField", "FormDateField"] },
+        ],
+      },
+    });
+    expect(fieldset.statusCode, fieldset.body).toBe(200);
   });
   afterAll(async () => {
     await s.app.close();
   });
 
-  /** A Form block, inline in a page area, holding one field block in `fields`. */
+  /** A FieldsetBlock, inline in a page area, holding one field block in `fields`. */
   const formWith = (fieldBlockType: string) => ({
     area: [
       {
         key: "form1",
-        blockType: "Form",
+        blockType: "FieldsetBlock",
         display: "automatic",
         shared: false,
         ref: null,
@@ -320,7 +340,7 @@ describe("an unknown blockType is rejected inside a nested block too", () => {
     // Rule #2: an error an agent can act on has to say WHERE, or the fix is a
     // guess. The path names the outer field and the block it is nested in.
     expect(message).toMatch(/area/);
-    expect(message).toMatch(/Form/);
+    expect(message).toMatch(/FieldsetBlock/);
   });
 
   it("refuses it at PUBLISH as well, since both surfaces share the guard", async () => {
@@ -349,8 +369,8 @@ describe("an unknown blockType is rejected inside a nested block too", () => {
   });
 
   it("still accepts a PART nested in the area that names it", async () => {
-    // Form.fields lists its field blocks explicitly, so a part belongs there —
-    // the recursion must not start refusing legitimate nesting.
+    // FieldsetBlock.fields lists the field parts explicitly, so a part belongs
+    // there — the recursion must not start refusing legitimate nesting.
     const id = await pageWithOpenArea("NestedPartOptedIn");
     const res = await save(id, formWith("FormDateField"));
     expect(res.statusCode, res.body).toBe(200);
@@ -409,6 +429,29 @@ describe("an unknown blockType is rejected inside a nested block too", () => {
       const id = await pageWithOpenArea("DepthLegal");
       const res = await save(id, chain(4));
       expect(res.statusCode, res.body).toBe(200);
+    });
+
+    /**
+     * "At most 10 levels deep" means ten nested inline blocks are legal and the
+     * eleventh is refused — the same ten levels coercion and schema validation
+     * walk (MAX_INLINE_DEPTH). The guard used to refuse the tenth while its
+     * message promised ten, so the three disagreed by one.
+     */
+    it("accepts exactly MAX_INLINE_DEPTH (10) nested inline blocks", async () => {
+      await selfNestingType();
+      const id = await pageWithOpenArea("DepthAtCap");
+      const res = await save(id, chain(10));
+      expect(res.statusCode, res.body).toBe(200);
+    });
+
+    it("refuses the eleventh, naming its level", async () => {
+      await selfNestingType();
+      const id = await pageWithOpenArea("DepthPastCap");
+      const res = await save(id, chain(11));
+      expect(res.statusCode, res.body).toBe(422);
+      const message = res.json().message as string;
+      expect(message).toMatch(/at most 10 levels/i);
+      expect(message).toMatch(/level 11/);
     });
 
     it("refuses a payload nested past the cap, and says so", async () => {

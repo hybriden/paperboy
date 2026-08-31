@@ -18,7 +18,7 @@ function fold(s: string): string {
   return s
     .toLowerCase()
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "");
+    .replace(/\p{M}/gu, "");
 }
 
 /**

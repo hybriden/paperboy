@@ -1,5 +1,4 @@
-import type { AreaBlock } from "@paperboycms/client";
-import type { DeliveryContent } from "@paperboy/shared";
+import type { AreaBlock, DeliveryContent } from "@paperboycms/client";
 
 /**
  * One delivered document, wrapped as the AreaBlock shape the Renderer's Block

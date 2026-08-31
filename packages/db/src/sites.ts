@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
-import { DEFAULT_SITE_ID, asset, contentItem, contentReference, contentVersion, deliveryKey, folder, locale, site, userScope } from "./schema.js";
+import { DEFAULT_SITE_ID, asset, contentItem, contentReference, contentVersion, deliveryKey, folder, formSubmission, locale, site, userScope, webhook, webhookDelivery } from "./schema.js";
 
 /**
  * The `site` entity (multisite). Content, delivery keys, media and user scopes
@@ -103,8 +103,10 @@ export async function renameSite(
 
 /**
  * Delete a site AND everything partitioned to it: content (incl. trash and all
- * versions/references), media assets, folders, delivery keys and user scopes.
- * Cross-site admin (user.manage). Irreversible, so the caller must echo the
+ * versions/references), media assets, folders, delivery keys, user scopes,
+ * webhooks (with their delivery log) and form submissions — the last two carry a
+ * site FK too (migrations 0022/0023), and a site holding either could not be
+ * deleted at all. Cross-site admin (user.manage). Irreversible, so the caller must echo the
  * site's slug in `confirmSlug` — a mismatch is rejected with the expected value
  * so a mistaken caller can self-correct. The Default site can never be deleted.
  */
@@ -122,17 +124,19 @@ export async function deleteSite(
   }
   if (confirmSlug !== existing.slug) {
     throw Errors.badRequest(
-      `Deleting a site is irreversible and removes all of its content, media and delivery keys. ` +
+      `Deleting a site is irreversible and removes all of its content, media, delivery keys, webhooks and form submissions. ` +
         `Pass confirm='${existing.slug}' (the site's slug) to proceed.`,
     );
   }
 
-  const docs = await db.select({ documentId: contentItem.documentId }).from(contentItem).where(eq(contentItem.siteId, siteId));
-  const docIds = docs.map((d) => d.documentId);
   let assets = 0;
   let assetPaths: string[] = [];
   let keys = 0;
+  let docIds: string[] = [];
   await db.transaction(async (tx) => {
+    // Collected inside the transaction so a document created between the read
+    // and the delete cannot be left behind referencing a site that is gone.
+    docIds = (await tx.select({ documentId: contentItem.documentId }).from(contentItem).where(eq(contentItem.siteId, siteId))).map((d) => d.documentId);
     if (docIds.length > 0) {
       await tx.delete(contentReference).where(inArray(contentReference.fromDocumentId, docIds));
       await tx.delete(contentVersion).where(inArray(contentVersion.documentId, docIds));
@@ -150,6 +154,9 @@ export async function deleteSite(
     await tx.delete(folder).where(eq(folder.siteId, siteId));
     keys = (await tx.delete(deliveryKey).where(eq(deliveryKey.siteId, siteId)).returning({ id: deliveryKey.id })).length;
     await tx.delete(userScope).where(eq(userScope.siteId, siteId));
+    await tx.delete(formSubmission).where(eq(formSubmission.siteId, siteId));
+    const hooks = await tx.delete(webhook).where(eq(webhook.siteId, siteId)).returning({ id: webhook.id });
+    if (hooks.length > 0) await tx.delete(webhookDelivery).where(inArray(webhookDelivery.webhookId, hooks.map((h) => h.id)));
     await tx.delete(site).where(eq(site.id, siteId));
   });
   return { site: existing, contentItems: docIds.length, assets, assetPaths, deliveryKeys: keys };

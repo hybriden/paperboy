@@ -248,11 +248,8 @@ export const api = {
       action: "created" | "updated";
       blocks?: { created: string[]; existing: string[]; missing: string[] };
     }>("POST", `/manage/type-templates/${encodeURIComponent(name)}/instantiate`, opts ?? {}),
-  exportTypeTemplates: (names?: string[]) =>
-    request<{ format: string; version: number; exportedAt: string; templates: ContentTypeDef[] }>(
-      "GET",
-      `/manage/type-templates/export${names?.length ? `?names=${encodeURIComponent(names.join(","))}` : ""}`,
-    ),
+  exportTypeTemplates: () =>
+    request<{ format: string; version: number; exportedAt: string; templates: ContentTypeDef[] }>("GET", "/manage/type-templates/export"),
   importTypeTemplates: (body: { templates: unknown[]; overwrite?: boolean }) =>
     request<{ created: string[]; updated: string[]; skipped: { name: string; reason: string }[] }>(
       "POST",
@@ -278,8 +275,7 @@ export const api = {
 
   // site config (start page)
   site: (signal?: AbortSignal) => request<{ startPageId: string | null; previewBaseUrl: string }>("GET", "/manage/site", undefined, signal),
-  /** Short-lived token for the preview iframe. Replaces the build-time
-   *  VITE_PREVIEW_SECRET, which shipped the long-lived secret in the public bundle. */
+  /** Short-lived token for the preview iframe. */
   previewToken: (signal?: AbortSignal) => request<{ token: string; expiresAt: number }>("GET", "/manage/preview-token", undefined, signal),
   setStartPage: (documentId: string | null, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }, undefined, siteOverride),
@@ -421,7 +417,10 @@ export const api = {
   // MCP tokens
   mcpTokens: (signal?: AbortSignal) =>
     request<{ id: number; name: string; userId: string; email: string; createdAt: string; lastUsedAt: string | null; revokedAt: string | null }[]>("GET", "/manage/mcp-tokens", undefined, signal),
-  createMcpToken: (name: string, userId: string) => request<{ token: string }>("POST", "/manage/mcp-tokens", { name, userId }),
+  // `password` is the SIGNED-IN admin's own — the same reauth gate as enabling
+  // 2FA, because a token acts as a user indefinitely.
+  createMcpToken: (name: string, userId: string, password: string) =>
+    request<{ token: string }>("POST", "/manage/mcp-tokens", { name, userId, password }),
   revokeMcpToken: (id: number) => request<{ ok: boolean }>("POST", `/manage/mcp-tokens/${id}/revoke`),
 
   webhooks: (signal?: AbortSignal) => request<WebhookRow[]>("GET", "/manage/webhooks", undefined, signal),
@@ -568,6 +567,9 @@ export interface AgentEvent {
   name?: string;
   ok?: boolean;
   created?: Array<{ documentId: string; name: string; type: string }>;
+  /** Existing documents the run edited (a translation brief, or content-borne
+   *  steering) — shown beside `created` so the reviewer sees every write. */
+  touched?: Array<{ documentId: string; name: string; locale: string }>;
 }
 
 export type AiTask = "meta_title" | "meta_description" | "summarize" | "improve" | "alt_text" | "translate" | "rewrite" | "variants" | "write" | "schema_fields";

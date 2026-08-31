@@ -1,24 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage, pingMessage } from "@paperboycms/preview/protocol";
+import { DRAG_MIME, dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage, pingMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
-import { isPreviewActivity, originOf, previewTokenUsable } from "../lib/preview-origin.js";
+import { isPreviewActivity, previewOrigin, previewTokenUsable } from "../lib/preview-origin.js";
 import { Surface } from "./ui/surface.js";
 
 /**
  * How long before expiry we refresh the preview token. The API mints 15-minute
  * tokens; refreshing at 10 keeps a long editing session from loading a preview with
  * an already-dead token.
- *
- * There is deliberately NO build-time secret here any more. VITE_PREVIEW_SECRET
- * inlined the long-lived PREVIEW_SECRET into this bundle, which nginx serves with
- * no auth — so anyone who fetched the admin's JS could read every draft, forever.
  */
 const PREVIEW_TOKEN_REFRESH_MS = 10 * 60 * 1000;
 
-/** Fallback web origin when no preview URL is configured in Settings: derive it
- *  from the host the admin is loaded on (works on localhost, LAN IP or domain). */
+/** Fallback web origin for the "View on site" link when no preview URL is
+ *  configured in Settings: derive it from the host the admin is loaded on. Only
+ *  for that plain published link — the FRAMED preview never uses a guess: its
+ *  URL carries the preview token and its origin is trusted for inbound bridge
+ *  messages (see lib/preview-origin). */
 function fallbackWebUrl(): string {
   const env = import.meta.env.VITE_WEB_URL as string | undefined;
   if (env) return env;
@@ -29,19 +28,8 @@ function fallbackWebUrl(): string {
 }
 
 /**
- * Origin of the preview frontend — the ONLY origin the admin exchanges bridge
- * messages with. Used to address outbound posts (never "*", which would hand draft
- * content to whatever the iframe has navigated to) and to authenticate inbound
- * ones (see Editor's message handler). Null only if no origin can be determined,
- * in which case callers must fail closed.
- */
-export function previewOrigin(site: { previewBaseUrl: string } | undefined): string | null {
-  return originOf(site?.previewBaseUrl || fallbackWebUrl());
-}
-
-/**
  * Public (published) URL of a page on the end-user site. Shared by the preview
- * iframe (which appends the ?pb=<secret> draft param) and the "View on site"
+ * iframe (which appends the ?pbt=<token> draft param) and the "View on site"
  * shortcut in the publish menu (which opens it as-is — published perspective).
  */
 export function publicSiteUrl(
@@ -100,6 +88,7 @@ export interface PbRect { x: number; y: number; w: number; h: number }
 export type PreviewMode = "inspect" | "edit";
 
 export function PreviewPane({
+  frameRef,
   locale,
   urlPath,
   documentId,
@@ -111,6 +100,9 @@ export function PreviewPane({
   livePatch,
   toolbarExtra,
 }: {
+  /** The preview iframe. Owned by the Editor, which authenticates inbound
+   *  bridge messages against this frame's window (lib/preview-origin). */
+  frameRef: React.RefObject<HTMLIFrameElement | null>;
   locale: string;
   urlPath: string | null;
   documentId?: string;
@@ -122,8 +114,9 @@ export function PreviewPane({
   mode?: PreviewMode;
   /** Anchored on-page editor: rect + click offset from the bridge, content from
    *  Editor. The card opens at the CLICK point (ox/oy within the element) — a
-   *  very tall element would otherwise push it out of sight. */
-  overlay?: { rect: PbRect; ox: number; oy: number; content: React.ReactNode; onClose: () => void; label?: string } | null;
+   *  very tall element would otherwise push it out of sight. `n` is bumped per
+   *  open: focus moves into the card once per open, not on every reflow. */
+  overlay?: { rect: PbRect; ox: number; oy: number; content: React.ReactNode; onClose: () => void; label?: string; n: number } | null;
   /** Live DOM patch for the page (text/html swap, no reload) — keyed by n. */
   livePatch?: { field: string; text?: string; html?: string; blockIndex?: number; n: number } | null;
   /** Extra toolbar content (e.g. the borrowed-page picker when a block
@@ -132,9 +125,8 @@ export function PreviewPane({
 }) {
   const [device, setDevice] = useState<Device>("desktop");
   const [nonce, setNonce] = useState(0);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  // Preview origin is configured in Settings → Site; fall back to the
-  // build-time/derived host if it hasn't been set yet.
+  // Preview origin is configured in Settings → Site; nothing is framed until
+  // it is known.
   const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
   // Every post below is addressed to THIS origin, never "*": a wildcard would
   // deliver draft content (patchMessage carries the rendered field html) to
@@ -144,7 +136,7 @@ export function PreviewPane({
   const targetOrigin = previewOrigin(site.data);
   const postToPreview = (message: unknown): void => {
     if (!targetOrigin) return;
-    iframeRef.current?.contentWindow?.postMessage(message, targetOrigin);
+    frameRef.current?.contentWindow?.postMessage(message, targetOrigin);
   };
   // Reload the iframe whenever the editor saves (near-live preview).
   useEffect(() => { if (refreshSignal > 0) setNonce((n) => n + 1); }, [refreshSignal]);
@@ -186,11 +178,11 @@ export function PreviewPane({
     // ANY valid bridge message counts as proof of life, not just preview-ready —
     // the hint below must only ever appear when the frame is truly silent.
     const onReady = (e: MessageEvent) => {
-      if (isPreviewActivity(e.origin, targetOrigin, e.data)) setBridgeSeen(true);
+      if (isPreviewActivity(e, targetOrigin, frameRef.current?.contentWindow, e.data)) setBridgeSeen(true);
     };
     window.addEventListener("message", onReady);
     return () => window.removeEventListener("message", onReady);
-  }, [targetOrigin]);
+  }, [targetOrigin, frameRef]);
   useEffect(() => {
     setQuiet(false);
     setBridgeSeen(false);
@@ -237,6 +229,19 @@ export function PreviewPane({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [livePatch, targetOrigin]);
+  // The card is a dialog, so it takes focus when it opens: the field itself when
+  // one is mounted, else the first control that isn't Close, else the card.
+  const cardRef = useRef<HTMLDivElement>(null);
+  const overlayN = overlay?.n;
+  useEffect(() => {
+    if (overlayN == null) return;
+    const card = cardRef.current;
+    const control =
+      card?.querySelector<HTMLElement>('input, textarea, select, [contenteditable="true"]') ??
+      card?.querySelector<HTMLElement>('button:not([aria-label="Close"])');
+    (control ?? card)?.focus();
+  }, [overlayN]);
+
   // Esc closes the on-page overlay (when focus is on the admin side).
   useEffect(() => {
     if (!overlay) return;
@@ -296,7 +301,10 @@ export function PreviewPane({
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [previewToken.data, usableToken]);
-  const src = usableToken
+  // Never framed against a guessed host: targetOrigin is null until the site
+  // query resolves (the token query can win that race) and when no preview URL
+  // is configured — and this URL carries the token.
+  const src = usableToken && targetOrigin
     ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(usableToken.token)}&n=${nonce}`
     : null;
 
@@ -395,7 +403,7 @@ export function PreviewPane({
             <>
             <iframe
               key={device}
-              ref={iframeRef}
+              ref={frameRef}
               title="Content preview"
               src={src}
               // The preview frames the site's OWN (cross-origin) frontend. Sandbox
@@ -467,7 +475,7 @@ export function PreviewPane({
                 <span className="mt-1 block">
                   and must NOT send <code className="font-mono">X-Frame-Options: DENY</code> (it blocks framing on its
                   own, and can’t express “only the CMS”). Paperboy can’t set headers on another origin — this has to
-                  change on the frontend; <code className="font-mono">apps/web/middleware.ts</code> is a working
+                  change on the frontend; <code className="font-mono">apps/web/proxy.ts</code> is a working
                   example.
                 </span>
               </div>
@@ -480,10 +488,12 @@ export function PreviewPane({
             // roles — telling an Author to go fix a config that is perfectly fine.
             // Both messages are written to be read by the person seeing them.
             <div className="flex h-full items-center justify-center border border-line bg-panel p-6 text-center text-sm text-muted">
-              {previewToken.isError
-                ? ((previewToken.error as Error | undefined)?.message ??
-                  "Preview isn’t available right now.")
-                : "Preparing preview…"}
+              {site.isSuccess && !targetOrigin
+                ? "No preview URL is set for this site. Add one under Settings → Site to preview drafts here."
+                : previewToken.isError
+                  ? ((previewToken.error as Error | undefined)?.message ??
+                    "Preview isn’t available right now.")
+                  : "Preparing preview…"}
             </div>
           )}
         </div>
@@ -506,7 +516,7 @@ export function PreviewPane({
               e.preventDefault();
               const r = stageRef.current?.getBoundingClientRect();
               let payload: unknown = drag.payload;
-              const raw = e.dataTransfer.getData("application/x-paperboy");
+              const raw = e.dataTransfer.getData(DRAG_MIME);
               if (raw) { try { payload = JSON.parse(raw); } catch { /* fall back to broadcast payload */ } }
               if (r) postToPreview(dropAtMessage((e.clientX - r.left - tx) / scale, (e.clientY - r.top) / scale, payload));
               setDrag(null);
@@ -527,6 +537,8 @@ export function PreviewPane({
             />
             {/* The anchored editor card (unscaled admin UI). */}
             <Surface
+              ref={cardRef}
+              tabIndex={-1}
               elevation={2}
               radius="lg"
               className="absolute z-20"

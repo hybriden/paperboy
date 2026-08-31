@@ -1,5 +1,4 @@
-import { createClient } from "@paperboycms/client";
-import type { DeliveryContent } from "@paperboy/shared";
+import { createClient, type DeliveryContent } from "@paperboycms/client";
 
 const API = process.env.PAPERBOY_API_URL ?? "http://localhost:8091";
 const PUBLIC_KEY = process.env.PAPERBOY_PUBLIC_KEY ?? "pk_live_seed_public_key_value";
@@ -35,12 +34,11 @@ export async function fetchById(documentId: string, locale: string, preview: boo
 
 /** List delivered content of a type and/or the children of a page (ListPage, teaser blocks). */
 export async function fetchList(type: string | null, locale: string, preview: boolean, parentId?: string): Promise<DeliveryContent[]> {
-  try {
-    const { items } = await cms(preview).list(type, { locale, populate: 0, parentId });
-    return items;
-  } catch {
-    return []; // listing is decorative on this reference frontend — degrade quietly
-  }
+  // The client already answers a 404 (no such parent/type) with an empty list;
+  // anything else — a bad key (401), a transport failure — must surface, not
+  // render as "nothing".
+  const { items } = await cms(preview).list(type, { locale, populate: 0, parentId });
+  return items;
 }
 
 /**

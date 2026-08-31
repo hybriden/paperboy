@@ -1,6 +1,7 @@
 import { draftMode } from "next/headers";
 import { type NextRequest, NextResponse } from "next/server";
 import { fetchByPath, fetchBySlug } from "../../lib/delivery";
+import { DEFAULT_LOCALE } from "../../lib/locale";
 import { matchesPreviewSecret, safeRedirectLocation } from "../../lib/preview";
 
 /**
@@ -12,7 +13,7 @@ import { matchesPreviewSecret, safeRedirectLocation } from "../../lib/preview";
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const { searchParams } = new URL(req.url);
   const secret = searchParams.get("secret");
-  const locale = searchParams.get("locale") ?? "en";
+  const locale = searchParams.get("locale") ?? DEFAULT_LOCALE;
   const path = searchParams.get("path");
   const slug = searchParams.get("slug");
 

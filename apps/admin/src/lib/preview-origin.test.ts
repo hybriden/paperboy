@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { PREVIEW_TOKEN_SKEW_MS, isPreviewActivity, isPreviewOrigin, originOf, previewTokenUsable } from "./preview-origin.js";
+import { PREVIEW_TOKEN_SKEW_MS, isFromPreviewFrame, isPreviewActivity, isPreviewOrigin, originOf, previewOrigin, previewTokenUsable } from "./preview-origin.js";
+
+// Window handles are compared by identity only, so any distinct object stands in.
+const frame = {} as Window;
+const stranger = {} as Window;
 
 /**
  * The admin's postMessage handler turns `paperboy:drop` into a block append that
@@ -63,8 +67,53 @@ describe("isPreviewOrigin", () => {
   });
 });
 
+describe("previewOrigin", () => {
+  it("is the origin of the CONFIGURED preview URL", () => {
+    expect(previewOrigin({ previewBaseUrl: "https://web.example.com/" })).toBe("https://web.example.com");
+  });
+
+  it("is null while the site is unknown — never a guessed host", () => {
+    // The site query hasn't resolved. This origin is trusted for inbound writes
+    // AND receives the preview token in the iframe src, so guessing it (the
+    // admin host on :4321) sent a live token to an unconfigured host and
+    // trusted whatever answered there. Fail closed until the site is known.
+    expect(previewOrigin(undefined)).toBeNull();
+  });
+
+  it("is null when no preview URL is configured", () => {
+    expect(previewOrigin({ previewBaseUrl: "" })).toBeNull();
+    expect(previewOrigin({ previewBaseUrl: "not a url" })).toBeNull();
+  });
+});
+
+describe("isFromPreviewFrame", () => {
+  const preview = "https://web.example.com/en/about";
+
+  it("accepts a message from the preview frame's window at the preview origin", () => {
+    expect(isFromPreviewFrame({ origin: "https://web.example.com", source: frame }, preview, frame)).toBe(true);
+  });
+
+  it("rejects the right origin from the WRONG window", () => {
+    // The preview origin is the customer's public site: an XSS on any public
+    // page can window.open() the admin and post from that very origin. Only the
+    // iframe's own window handle proves the sender is the preview.
+    expect(isFromPreviewFrame({ origin: "https://web.example.com", source: stranger }, preview, frame)).toBe(false);
+    expect(isFromPreviewFrame({ origin: "https://web.example.com", source: null }, preview, frame)).toBe(false);
+  });
+
+  it("rejects the right window from the wrong origin (frame navigated away)", () => {
+    expect(isFromPreviewFrame({ origin: "https://evil.example.com", source: frame }, preview, frame)).toBe(false);
+  });
+
+  it("fails closed while no frame is mounted", () => {
+    expect(isFromPreviewFrame({ origin: "https://web.example.com", source: frame }, preview, null)).toBe(false);
+    expect(isFromPreviewFrame({ origin: "https://web.example.com", source: frame }, preview, undefined)).toBe(false);
+  });
+});
+
 describe("isPreviewActivity", () => {
   const preview = "https://web.example.com/en/blog";
+  const fromFrame = { origin: "https://web.example.com", source: frame };
 
   // Reported 2026-08-04: the "Preview looks empty? … refusing to be framed"
   // hint showed while the preview was rendering fine — the pane only counted
@@ -73,21 +122,22 @@ describe("isPreviewActivity", () => {
   // ANY valid paperboy:* message from the preview origin proves the frame is
   // alive and rendering; the hint must only appear when nothing arrives.
   it("counts any paperboy:* message from the preview origin as proof of life", () => {
-    expect(isPreviewActivity("https://web.example.com", preview, { type: "paperboy:preview-ready", version: 1 })).toBe(true);
-    expect(isPreviewActivity("https://web.example.com", preview, { type: "paperboy:rect", field: "body" })).toBe(true);
-    expect(isPreviewActivity("https://web.example.com", preview, { type: "paperboy:edit", field: "title" })).toBe(true);
+    expect(isPreviewActivity(fromFrame, preview, frame, { type: "paperboy:preview-ready", version: 1 })).toBe(true);
+    expect(isPreviewActivity(fromFrame, preview, frame, { type: "paperboy:rect", field: "body" })).toBe(true);
+    expect(isPreviewActivity(fromFrame, preview, frame, { type: "paperboy:edit", field: "title" })).toBe(true);
   });
 
-  it("rejects messages from any other origin (trust boundary unchanged)", () => {
-    expect(isPreviewActivity("https://evil.example.com", preview, { type: "paperboy:preview-ready" })).toBe(false);
-    expect(isPreviewActivity("null", preview, { type: "paperboy:preview-ready" })).toBe(false);
+  it("rejects messages from any other origin or window (trust boundary unchanged)", () => {
+    expect(isPreviewActivity({ origin: "https://evil.example.com", source: frame }, preview, frame, { type: "paperboy:preview-ready" })).toBe(false);
+    expect(isPreviewActivity({ origin: "null", source: frame }, preview, frame, { type: "paperboy:preview-ready" })).toBe(false);
+    expect(isPreviewActivity({ origin: "https://web.example.com", source: stranger }, preview, frame, { type: "paperboy:preview-ready" })).toBe(false);
   });
 
   it("ignores non-bridge messages (react devtools, ads, random postMessage noise)", () => {
-    expect(isPreviewActivity("https://web.example.com", preview, { type: "webpackWarnings" })).toBe(false);
-    expect(isPreviewActivity("https://web.example.com", preview, "paperboy:preview-ready")).toBe(false);
-    expect(isPreviewActivity("https://web.example.com", preview, { type: 42 })).toBe(false);
-    expect(isPreviewActivity("https://web.example.com", preview, null)).toBe(false);
+    expect(isPreviewActivity(fromFrame, preview, frame, { type: "webpackWarnings" })).toBe(false);
+    expect(isPreviewActivity(fromFrame, preview, frame, "paperboy:preview-ready")).toBe(false);
+    expect(isPreviewActivity(fromFrame, preview, frame, { type: 42 })).toBe(false);
+    expect(isPreviewActivity(fromFrame, preview, frame, null)).toBe(false);
   });
 });
 

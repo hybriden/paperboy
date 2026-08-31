@@ -77,6 +77,39 @@ describe("loadEnv production guard on MFA_SECRET", () => {
   });
 });
 
+// PREVIEW_SECRET signs the preview tokens that grant draft access, so it gets the
+// same guard: a shipped placeholder means anyone can forge ?pbt= and read every
+// draft. env.ts guards it only WHEN SET — unset merely disables in-editor preview.
+describe("loadEnv production guard on PREVIEW_SECRET", () => {
+  const strong = { SESSION_SECRET: STRONG_SESSION, CSRF_SECRET: STRONG_CSRF };
+
+  it("refuses the docker-compose please-override placeholder", () => {
+    expect(() =>
+      loadEnv({ ...base, ...strong, PREVIEW_SECRET: "prod-preview-secret-please-override-32+chars" }),
+    ).toThrow(/PREVIEW_SECRET/);
+  });
+
+  it("refuses a change-me placeholder PREVIEW_SECRET", () => {
+    expect(() => loadEnv({ ...base, ...strong, PREVIEW_SECRET: "dev-preview-secret-change-me-please-32x" })).toThrow(
+      /PREVIEW_SECRET/,
+    );
+  });
+
+  it("accepts a genuinely strong PREVIEW_SECRET", () => {
+    expect(() =>
+      loadEnv({ ...base, ...strong, PREVIEW_SECRET: "a-genuinely-strong-preview-secret-value" }),
+    ).not.toThrow();
+  });
+
+  it("treats an empty PREVIEW_SECRET as unset (preview disabled, boot allowed)", () => {
+    expect(() => loadEnv({ ...base, ...strong, PREVIEW_SECRET: "" })).not.toThrow();
+  });
+
+  it("refuses a too-short PREVIEW_SECRET in any environment", () => {
+    expect(() => loadEnv({ ...base, ...strong, PREVIEW_SECRET: "short" })).toThrow();
+  });
+});
+
 describe("parseTrustProxy (M9: configurable trusted-proxy boundary)", () => {
   it("maps true/false to booleans", () => {
     expect(parseTrustProxy("true")).toBe(true);
@@ -112,5 +145,34 @@ describe("parseTrustProxy (M9: configurable trusted-proxy boundary)", () => {
   });
   it("maps a CSV to a trimmed list of trusted proxies", () => {
     expect(parseTrustProxy("10.0.0.0/8, 172.16.0.0/12")).toEqual(["10.0.0.0/8", "172.16.0.0/12"]);
+  });
+});
+
+describe("loadEnv: DATABASE_POOL_MAX", () => {
+  const ok = { DATABASE_URL: "postgresql://paperboy:paperboy@localhost:5433/paperboy", NODE_ENV: "test" as const };
+
+  it("defaults to 10 and accepts 1..100", () => {
+    expect(loadEnv({ ...ok }).DATABASE_POOL_MAX).toBe(10);
+    expect(loadEnv({ ...ok, DATABASE_POOL_MAX: "25" }).DATABASE_POOL_MAX).toBe(25);
+  });
+
+  it("refuses 0, 101 and a non-integer", () => {
+    expect(() => loadEnv({ ...ok, DATABASE_POOL_MAX: "0" })).toThrow();
+    expect(() => loadEnv({ ...ok, DATABASE_POOL_MAX: "101" })).toThrow();
+    expect(() => loadEnv({ ...ok, DATABASE_POOL_MAX: "2.5" })).toThrow();
+  });
+});
+
+describe("loadEnv: CORS_ORIGIN is normalised to an origin", () => {
+  const ok = { DATABASE_URL: "postgresql://paperboy:paperboy@localhost:5433/paperboy", NODE_ENV: "test" as const };
+
+  it("a trailing slash or path is dropped so the browser's Origin header compares equal", () => {
+    expect(loadEnv({ ...ok, CORS_ORIGIN: "https://cms.example.com/" }).CORS_ORIGIN).toBe("https://cms.example.com");
+    expect(loadEnv({ ...ok, CORS_ORIGIN: "https://cms.example.com/admin" }).CORS_ORIGIN).toBe("https://cms.example.com");
+    expect(loadEnv({ ...ok, CORS_ORIGIN: "http://localhost:8090" }).CORS_ORIGIN).toBe("http://localhost:8090");
+  });
+
+  it("refuses a value that is not a URL", () => {
+    expect(() => loadEnv({ ...ok, CORS_ORIGIN: "cms.example.com" })).toThrow(/CORS_ORIGIN/);
   });
 });

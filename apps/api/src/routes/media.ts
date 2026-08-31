@@ -11,7 +11,7 @@ import { z } from "zod";
 // (24 Mpix ≈ 6000×4000 — covers real photos, rejects bombs) and the libvips
 // thread pool so a burst of transform requests can't pin every core. An
 // over-limit source throws in sharp and falls back to serving the original below.
-const MAX_INPUT_PIXELS = 24_000_000;
+export const MAX_INPUT_PIXELS = 24_000_000;
 sharp.concurrency(2);
 
 /**
@@ -46,7 +46,7 @@ const QUALITIES = [50, 60, 75, 85, 90];
 const TRANSFORMABLE = new Set(["png", "jpg", "jpeg", "webp"]);
 
 function snapUp(value: number, allowed: number[]): number {
-  return allowed.find((a) => a >= value) ?? allowed[allowed.length - 1]!;
+  return allowed.find((a) => a >= value) ?? allowed.at(-1)!;
 }
 
 function serveFile(reply: FastifyReply, path: string, mime: string, size: number): FastifyReply {

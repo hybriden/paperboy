@@ -16,6 +16,7 @@ const TYPES = [
   t("ZHero"),
   t("TextBlock"),
   t("FormTextField", { nestedOnly: true }),
+  t("Form"),
   t("ArticlePage", { kind: "page" }),
 ];
 
@@ -38,5 +39,13 @@ describe("allowedBlockTypesFor", () => {
 
   it("an allow-list may opt a part IN (that is how containers use parts)", () => {
     expect(allowedBlockTypesFor(area(["FormTextField"]), TYPES).map((x) => x.name)).toEqual(["FormTextField"]);
+  });
+
+  // A Form placed INLINE is dead: submissions post against a documentId that
+  // only a shared block has. The inline palette must not offer it — the reuse
+  // picker (SharedBlockPicker) is where a Form is added.
+  it("never offers a Form inline, with or without an allow-list", () => {
+    expect(allowedBlockTypesFor(area([]), TYPES).map((x) => x.name)).not.toContain("Form");
+    expect(allowedBlockTypesFor(area(["Form", "TextBlock"]), TYPES).map((x) => x.name)).toEqual(["TextBlock"]);
   });
 });

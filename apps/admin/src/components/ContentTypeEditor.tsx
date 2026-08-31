@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
-import { ContentTypeDef, SEO_FIELD_NAMES, type ContentKind, type FieldOption, type FieldType, type FieldValidation, type SchemaFieldGap, type SchemaFieldSuggestion, resolveSchemaSuggestions, schemaFieldGaps, seoRoleEligible } from "@paperboy/shared";
+import { ContentTypeDef, SEO_FIELD_NAMES, type ContentKind, type FieldOption, FieldType, type FieldValidation, type SchemaFieldGap, type SchemaFieldSuggestion, resolveSchemaSuggestions, schemaFieldGaps, seoRoleEligible } from "@paperboy/shared";
 import { api, ApiError } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
@@ -11,8 +11,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
 import { Switch } from "./ui/switch.js";
 import { useToast } from "./ui/toast.js";
 
-const FIELD_TYPES: FieldType[] = ["text", "richtext", "boolean", "number", "datetime", "select", "link", "image", "reference", "contentArea"];
 const KINDS: ContentKind[] = ["page", "block", "global"];
+
+/** `_key`: a stable React key for editable rows — the array index shifted
+ *  DOM state onto the wrong row when one was removed. Stripped on save. */
+type DraftOption = FieldOption & { _key: string };
 
 interface DraftField {
   _key: string;
@@ -25,7 +28,7 @@ interface DraftField {
   group: string;
   allowedBlocks: string[];
   allowedTypes: string[];
-  options: FieldOption[];
+  options: DraftOption[];
   multiple: boolean;
   slugifyValues: boolean;
   validation?: FieldValidation;
@@ -64,6 +67,8 @@ const SCHEMA_TYPES = [
 ] as const;
 
 let uid = 0;
+const withKey = (o: FieldOption): DraftOption => ({ ...o, _key: `o${uid++}` });
+const stripKey = <T extends { _key: string }>({ _key, ...rest }: T) => rest;
 const newField = (): DraftField => ({
   _key: `nf${uid++}`,
   name: "",
@@ -208,7 +213,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
     // list; a locked note tells the editor it's automatic on every page.
     () => (initial?.fields ?? [])
       .filter((f) => !SEO_FIELD_NAMES.has(f.name))
-      .map((f) => ({ ...f, _key: `f${uid++}`, helpText: f.helpText })) as DraftField[],
+      .map((f) => ({ ...f, _key: `f${uid++}`, options: f.options.map(withKey), helpText: f.helpText })) as DraftField[],
   );
   const [errors, setErrors] = useState<string[]>([]);
 
@@ -320,7 +325,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
       icon,
       ...(schemaType.trim() ? { schemaType: schemaType.trim() } : {}),
       nestedOnly,
-      fields: fields.map(({ _key, ...f }) => f),
+      fields: fields.map((f) => ({ ...stripKey(f), options: f.options.map(stripKey) })),
     };
     const parsed = ContentTypeDef.safeParse(def);
     if (!parsed.success) {
@@ -441,7 +446,9 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                 <input className="field-input" placeholder="Display name" value={f.displayName} onChange={(e) => patchField(f._key, { displayName: e.target.value })} aria-label="Field display name" />
                 <select className="field-input" value={f.type} aria-label="Field type"
                   onChange={(e) => patchField(f._key, { type: e.target.value as FieldType, allowedBlocks: [], allowedTypes: [] })}>
-                  {FIELD_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  {FieldType.options
+                    .filter((t) => t !== "media" || f.type === "media") // legacy kind: keep, never offer
+                    .map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
                 <input className="field-input" placeholder="Group" value={f.group} onChange={(e) => patchField(f._key, { group: e.target.value })} aria-label="Field group" />
               </div>
@@ -633,14 +640,14 @@ function OptionsEditor({
   onMultiple,
   onSlugify,
 }: {
-  options: FieldOption[];
+  options: DraftOption[];
   multiple: boolean;
   slugifyValues: boolean;
-  onChange: (o: FieldOption[]) => void;
+  onChange: (o: DraftOption[]) => void;
   onMultiple: (m: boolean) => void;
   onSlugify: (s: boolean) => void;
 }) {
-  const patch = (i: number, p: Partial<FieldOption>) => onChange(options.map((o, j) => (j === i ? { ...o, ...p } : o)));
+  const patch = (key: string, p: Partial<FieldOption>) => onChange(options.map((o) => (o._key === key ? { ...o, ...p } : o)));
   return (
     <div className="mt-2 border-t border-line pt-2">
       <div className="mb-1 flex items-center justify-between gap-3">
@@ -656,18 +663,18 @@ function OptionsEditor({
         </span>
       </div>
       <div className="space-y-1">
-        {options.map((o, i) => (
-          <div key={i} className="flex items-center gap-1.5">
+        {options.map((o) => (
+          <div key={o._key} className="flex items-center gap-1.5">
             <input className="field-input font-mono" placeholder="value" value={o.value} aria-label="Option value"
-              onChange={(e) => patch(i, { value: e.target.value })} />
+              onChange={(e) => patch(o._key, { value: e.target.value })} />
             <input className="field-input" placeholder="Label" value={o.label} aria-label="Option label"
-              onChange={(e) => patch(i, { label: e.target.value })} />
-            <button className="rounded p-1 text-danger hover:bg-danger/10" aria-label="Remove option" onClick={() => onChange(options.filter((_, j) => j !== i))}>
+              onChange={(e) => patch(o._key, { label: e.target.value })} />
+            <button className="rounded p-1 text-danger hover:bg-danger/10" aria-label="Remove option" onClick={() => onChange(options.filter((x) => x._key !== o._key))}>
               <Icon.Trash width={13} height={13} />
             </button>
           </div>
         ))}
-        <button className="btn-subtle px-2 py-0.5 text-xs" onClick={() => onChange([...options, { value: "", label: "" }])}>
+        <button className="btn-subtle px-2 py-0.5 text-xs" onClick={() => onChange([...options, withKey({ value: "", label: "" })])}>
           <Icon.Plus width={12} height={12} /> Add option
         </button>
       </div>

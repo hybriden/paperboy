@@ -97,9 +97,16 @@ if (!DATABASE_URL) {
   console.error("[paperboy-mcp] DATABASE_URL is required");
   process.exit(1);
 }
-const MCP_TOKEN = process.env.MCP_TOKEN; // a Paperboy-issued MCP token (preferred)
-const MCP_EMAIL = process.env.MCP_EMAIL ?? "admin@paperboy.test";
-const MCP_PASSWORD = process.env.MCP_PASSWORD ?? "Admin!Passw0rd";
+// "" counts as unset: compose passes `MCP_TOKEN: ${MCP_TOKEN:-}` through empty.
+const MCP_TOKEN = process.env.MCP_TOKEN || undefined; // a Paperboy-issued MCP token (preferred)
+const MCP_LOGIN =
+  process.env.MCP_EMAIL && process.env.MCP_PASSWORD ? { email: process.env.MCP_EMAIL, password: process.env.MCP_PASSWORD } : undefined;
+// No fallback identity: the seeded demo login is a published constant in this
+// public repo, so defaulting to it booted an unconfigured server as admin.
+if (!MCP_TOKEN && !MCP_LOGIN) {
+  console.error("[paperboy-mcp] No credentials: set MCP_TOKEN (mint one in Settings → MCP), or MCP_EMAIL and MCP_PASSWORD");
+  process.exit(1);
+}
 // AI config resolves PER CALL through the same chokepoint as the API: a config
 // stored in the CMS (Settings → AI) wins over these env fallbacks, and each
 // env key is bound to its own provider (ANTHROPIC_API_KEY → anthropic,
@@ -124,6 +131,10 @@ const UPLOADS_DIR = process.env.UPLOADS_DIR ?? "/app/uploads";
 // unrevoked admin-minted token belonging to the SAME user — so "mint a token
 // in Settings → MCP, paste it into the client" works with no server restart.
 const MCP_HTTP_PORT = process.env.MCP_HTTP_PORT ? Number(process.env.MCP_HTTP_PORT) : undefined;
+if (MCP_HTTP_PORT !== undefined && !(Number.isInteger(MCP_HTTP_PORT) && MCP_HTTP_PORT > 0 && MCP_HTTP_PORT < 65536)) {
+  console.error(`[paperboy-mcp] MCP_HTTP_PORT must be a TCP port (1–65535), got "${process.env.MCP_HTTP_PORT}"`);
+  process.exit(1);
+}
 const MCP_HTTP_PATH = process.env.MCP_HTTP_PATH ?? "/mcp";
 
 function bearerOf(req: IncomingMessage): string | null {
@@ -141,11 +152,9 @@ async function bearerOk(req: IncomingMessage, bootUserId: string): Promise<boole
   const presented = bearerOf(req);
   if (!presented) return false;
 
-  // The DATABASE IS CONSULTED FIRST, so revocation always wins. This used to
-  // constant-time-compare against the in-memory boot token before looking
-  // anything up, which meant revoking that token in Settings → MCP had no effect
-  // on the running server: the admin saw "revoked" while the holder kept full
-  // access until someone restarted the container.
+  // The DATABASE IS CONSULTED FIRST, so revocation always wins: a compare against
+  // the in-memory boot token before the lookup would keep a token revoked in
+  // Settings → MCP working until the container restarts.
   const found = await mcpTokenState(db, presented);
   if (found.state === "revoked") return false;
   if (found.state === "active") {
@@ -200,11 +209,15 @@ function needDelivery(preview?: boolean): void {
 /** Omitted locale → the document's safe locale (default-locale variant, else
  *  its sole locale, else a self-teaching error) — never a silent fork of a
  *  phantom 'en' branch on a nb-only document (rule 5; 2026-06-07 incident). */
-const locFor = (documentId: string, locale?: string) => resolveRequestedLocale(db, documentId, locale);
+const locFor = (documentId: string, locale?: string) => resolveRequestedLocale(db, documentId, locale, ctx);
 
-/** Fire-and-forget audit entry — MCP writes leave the same trail as API routes. */
-function mcpAudit(action: string, documentId?: string | null, locale?: string | null, detail?: object): void {
-  void audit(db, { actorUserId: ctx.userId, action, documentId: documentId ?? null, locale: locale ?? null, ip: "mcp", detail }).catch(() => undefined);
+/** Audit entry for an MCP write — the same trail as the API routes. Every tool
+ *  AWAITS it so a failed insert lands in that tool's stderr trail (rule #6); it
+ *  is logged rather than thrown because the write itself already succeeded. */
+function mcpAudit(action: string, documentId?: string | null, locale?: string | null, detail?: object): Promise<void> {
+  return audit(db, { actorUserId: ctx.userId, action, documentId: documentId ?? null, locale: locale ?? null, ip: "mcp", detail }).catch((err: unknown) =>
+    console.error(`[paperboy-mcp] audit failed for ${action}:`, err),
+  );
 }
 
 // Tool definitions are collected as registrations so a fresh McpServer can be
@@ -247,7 +260,7 @@ function buildServer(): McpServer {
   return server;
 }
 
-const loc = z.string().optional().describe("Locale code (default 'en')");
+const loc = z.string().optional().describe("Locale code. Omit for the document's own locale (its site-default variant, else its only variant).");
 const docId = z.string().describe("Content documentId");
 /** Strict ISO instant — a bare local time has no timezone and would publish at a server-dependent moment (rule 1: reject, don't guess). */
 const isoInstant = (field: string) =>
@@ -287,22 +300,24 @@ tool(
     data: z.record(z.string(), z.unknown()).optional().describe("Initial field values (field name → value), same shapes as update_content. Provide this to create a FILLED draft in one call. Call get_content_type first for the field names/shapes."),
     slug: z.string().optional().describe("URL slug for a page. Omit to auto-derive from the name."),
     allowTypeMismatch: z.boolean().optional().describe("Set true ONLY for a deliberate sub-page whose type differs from the parent list page's listedType"),
+    allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately create text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)"),
   },
-  async ({ type, parentId, locale, name, data, slug, allowTypeMismatch }) => {
-    const shell = await createContent(db, ctx, { type, parentId: parentId ?? null, locale: (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), name, allowTypeMismatch });
-    mcpAudit("content.create", shell.documentId, shell.locale);
-    // Persist initial data through the SAME coerce/validate chokepoint as
-    // update_content (rule #3) — don't silently drop a body the caller sent
-    // (the Harmonix incident: valid data in → empty draft out → rule #1).
-    const hasData = data && Object.keys(data).length > 0;
-    const created =
-      hasData || slug !== undefined
-        ? await (async () => {
-            const updated = await updateContent(db, ctx, shell.documentId, shell.locale, { data: data ?? {}, slug, merge: true });
-            mcpAudit("content.update", shell.documentId, shell.locale);
-            return updated;
-          })()
-        : shell;
+  async ({ type, parentId, locale, name, data, slug, allowTypeMismatch, allowLanguageMismatch }) => {
+    // Initial data takes the same coerce/validate verdict as update_content
+    // (rule #3), inside createContent's own transaction — a body the caller sent
+    // is never dropped (rule #1) and a refused one leaves no shell behind.
+    const hasData = Boolean(data && Object.keys(data).length > 0);
+    const created = await createContent(db, ctx, {
+      type,
+      parentId: parentId ?? null,
+      locale: locale ?? (await resolveDefaultLocale(db, ctx.siteId)),
+      name,
+      allowTypeMismatch,
+      allowLanguageMismatch,
+      data: hasData ? data : undefined,
+      slug,
+    });
+    await mcpAudit("content.create", created.documentId, created.locale, hasData || slug !== undefined ? { withData: true } : undefined);
     // In-band nudges the agent reads from the result (the create still
     // succeeds — these situations are legal, but each is a real incident):
     //  - FILL: only when no data was provided — the draft is blank and must be
@@ -328,6 +343,8 @@ tool(
   "update_content",
   [
     "Save the working draft of a content item. `data` maps field name → value.",
+    "For LONG text/markdown values prefer set_field: a flat string parameter survives",
+    "tool-call serialization that can mangle long strings nested inside `data`.",
     "IMPORTANT: each field's value shape depends on its content-type field TYPE —",
     "call get_content_type first. text/markdown → a plain string; richtext → a TipTap",
     "doc object {type:'doc',content:[…]}; contentArea → an ARRAY of block instances;",
@@ -347,7 +364,7 @@ tool(
   async ({ documentId, locale, name, slug, displayInNav, data, merge, revision, allowLanguageMismatch }) => {
     const l = await locFor(documentId, locale);
     const updated = await updateContent(db, ctx, documentId, l, { name, slug, displayInNav, data, merge: merge ?? true, revision, allowLanguageMismatch });
-    mcpAudit("content.update", documentId, l);
+    await mcpAudit("content.update", documentId, l);
     return updated;
   });
 tool(
@@ -366,7 +383,7 @@ tool(
       field === "name"
         ? await updateContent(db, ctx, documentId, l, { name: value, data: {}, merge: true, allowLanguageMismatch })
         : await updateContent(db, ctx, documentId, l, { data: { [field]: value }, merge: true, allowLanguageMismatch });
-    mcpAudit("content.update", documentId, l, { field });
+    await mcpAudit("content.update", documentId, l, { field });
     return updated;
   });
 tool(
@@ -397,11 +414,11 @@ tool(
         publishAt: publishAt ? new Date(publishAt) : new Date(),
         expireAt: expireAt ? new Date(expireAt) : null,
       });
-      mcpAudit("content.schedule", documentId, l, { publishAt: publishAt ?? null, expireAt: expireAt ?? null });
+      await mcpAudit("content.schedule", documentId, l, { publishAt: publishAt ?? null, expireAt: expireAt ?? null });
       return scheduled;
     }
     const published = await publishContent(db, ctx, documentId, l, { allowLanguageMismatch });
-    mcpAudit("content.publish", documentId, l);
+    await mcpAudit("content.publish", documentId, l);
     return published;
   });
 tool(
@@ -416,31 +433,31 @@ tool(
   { documentId: docId, fromLocale: z.string().describe("Locale to copy FROM"), toLocale: z.string().describe("Locale to copy TO") },
   async ({ documentId, fromLocale, toLocale }) => {
     const copied = await copyVariant(db, ctx, documentId, fromLocale, toLocale);
-    mcpAudit("content.copy_variant", documentId, toLocale, { fromLocale });
+    await mcpAudit("content.copy_variant", documentId, toLocale, { fromLocale });
     return copied;
   });
 tool("unpublish", "Unpublish (take down) a content item for a locale.", { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {
     const l = await locFor(documentId, locale);
     const result = await unpublishContent(db, ctx, documentId, l);
-    mcpAudit("content.unpublish", documentId, l);
+    await mcpAudit("content.unpublish", documentId, l);
     return result;
   });
 tool("discard_draft", "Discard unpublished draft changes for a locale.", { documentId: docId, locale: loc },
-  async ({ documentId, locale }) => { const l = await locFor(documentId, locale); await discardDraft(db, ctx, documentId, l); mcpAudit("content.discard_draft", documentId, l); return { ok: true }; });
+  async ({ documentId, locale }) => { const l = await locFor(documentId, locale); await discardDraft(db, ctx, documentId, l); await mcpAudit("content.discard_draft", documentId, l); return { ok: true }; });
 tool("move_content", "Reorder (beforeId/afterId) or re-parent (parentId) a page.",
   { documentId: docId, parentId: z.string().nullable().optional(), beforeId: z.string().nullable().optional(), afterId: z.string().nullable().optional() },
-  async ({ documentId, parentId, beforeId, afterId }) => { await moveContent(db, ctx, documentId, { parentId, beforeId, afterId }); mcpAudit("content.move", documentId); return { ok: true }; });
+  async ({ documentId, parentId, beforeId, afterId }) => { await moveContent(db, ctx, documentId, { parentId, beforeId, afterId }); await mcpAudit("content.move", documentId); return { ok: true }; });
 tool("duplicate_content", "Duplicate a content item as a new draft sibling.", { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {
     const copy = await cloneContent(db, ctx, documentId, await locFor(documentId, locale));
-    mcpAudit("content.duplicate", copy.documentId, copy.locale, { source: documentId });
+    await mcpAudit("content.duplicate", copy.documentId, copy.locale, { source: documentId });
     return copy;
   });
 tool("trash_content", "Soft-delete a content item (and its subtree) to the trash.", { documentId: docId },
-  async ({ documentId }) => { const r = await softDelete(db, ctx, documentId); mcpAudit("content.trash", documentId); return r; });
+  async ({ documentId }) => { const r = await softDelete(db, ctx, documentId); await mcpAudit("content.trash", documentId); return r; });
 tool("restore_content", "Restore a content item from the trash.", { documentId: docId },
-  async ({ documentId }) => { const r = await restoreContent(db, ctx, documentId); mcpAudit("content.restore", documentId); return r; });
+  async ({ documentId }) => { const r = await restoreContent(db, ctx, documentId); await mcpAudit("content.restore", documentId); return r; });
 tool("list_trash", "List soft-deleted content in scope.", {}, () => listTrash(db, ctx));
 tool("list_versions", "List the version history of a content item for a locale.", { documentId: docId, locale: loc },
   async ({ documentId, locale }) => listVersions(db, ctx, documentId, await locFor(documentId, locale)));
@@ -448,7 +465,7 @@ tool("restore_version", "Restore a historical version into a new draft.", { docu
   async ({ documentId, locale, versionId }) => {
     const l = await locFor(documentId, locale);
     const restored = await restoreVersion(db, ctx, documentId, l, versionId);
-    mcpAudit("content.version_restore", documentId, l, { versionId });
+    await mcpAudit("content.version_restore", documentId, l, { versionId });
     return restored;
   });
 tool("list_blocks", "List shared blocks (the assets pane).", {}, () => listBlocks(db, ctx));
@@ -457,6 +474,21 @@ tool("list_pages", "Flat list of all pages in scope (for move/parent pickers).",
 /* ----------------------------- content model --------------------------- */
 // Annotate each field with the JSON shape update_content expects for it, so an
 // agent learns the encoding from the type itself (not by trial and error).
+/** The read-side annotations withFieldFormats adds. A definition an agent read,
+ *  edited and sent back carries them; they are ours, so drop them before the
+ *  strict parse instead of refusing the write over our own keys. */
+function withoutFieldFormats(def: Record<string, unknown>): Record<string, unknown> {
+  if (!Array.isArray(def.fields)) return def;
+  const fields = def.fields.map((f: unknown) => {
+    if (!f || typeof f !== "object") return f;
+    const copy = { ...(f as Record<string, unknown>) };
+    delete copy.valueFormat;
+    delete copy.valueExample;
+    return copy;
+  });
+  return { ...def, fields };
+}
+
 function withFieldFormats<T extends { fields: FieldDef[] }>(def: T): T & { fields: Array<FieldDef & { valueFormat: string; valueExample: unknown }> } {
   return {
     ...def,
@@ -471,9 +503,9 @@ tool("list_content_types", "List all content types (fields annotated with the va
 tool("get_content_type", "Get a content type definition by name. Each field includes valueFormat + valueExample — the exact JSON shape update_content expects.", { name: z.string() },
   async ({ name }) => { need("content.read"); const def = await getContentType(db, name); return def ? withFieldFormats(def) : def; });
 tool("create_content_type", "Create a content type from a full ContentTypeDef object.", { definition: z.record(z.string(), z.unknown()) },
-  async ({ definition }) => { const def = ContentTypeDef.parse(definition); const r = await createContentType(db, ctx, def); mcpAudit("contenttype.create", null, null, { name: def.name, kind: def.kind }); return r; });
+  async ({ definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createContentType(db, ctx, def); await mcpAudit("contenttype.create", null, null, { name: def.name, kind: def.kind }); return r; });
 tool("update_content_type", "Update a content type (name and kind are immutable).", { name: z.string(), definition: z.record(z.string(), z.unknown()) },
-  async ({ name, definition }) => { const r = await updateContentType(db, ctx, name, ContentTypeDef.parse(definition)); mcpAudit("contenttype.update", null, null, { name }); return r.next; });
+  async ({ name, definition }) => { const r = await updateContentType(db, ctx, name, ContentTypeDef.parse(withoutFieldFormats(definition))); await mcpAudit("contenttype.update", null, null, { name }); return r.next; });
 
 /* --------------------- content-type template collection ------------------ */
 // Named, reusable ContentTypeDef recipes: save a type as a template, then
@@ -483,11 +515,11 @@ tool("list_type_templates", "List all content-type templates — named ContentTy
 tool("get_type_template", "Get a type template definition by name (stored or built-in). Each field includes valueFormat + valueExample.", { name: z.string() },
   async ({ name }) => { need("content.read"); return withFieldFormats(await getTypeTemplate(db, name)); });
 tool("create_type_template", "Save a content type definition as a reusable template (a starter/backup recipe). The template's name is the content type name instantiate materialises by default — use a name no existing template takes (built-in template names are reserved).", { definition: z.record(z.string(), z.unknown()).describe("Full ContentTypeDef, same shape as create_content_type") },
-  async ({ definition }) => { const def = ContentTypeDef.parse(definition); const r = await createTypeTemplate(db, ctx, def); mcpAudit("type_template.create", null, null, { name: def.name, kind: def.kind }); return r; });
+  async ({ definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createTypeTemplate(db, ctx, def); await mcpAudit("type_template.create", null, null, { name: def.name, kind: def.kind }); return r; });
 tool("update_type_template", "Update a stored type template in place (name and kind are immutable; built-in templates are read-only — copy one under a new name instead).", { name: z.string(), definition: z.record(z.string(), z.unknown()) },
-  async ({ name, definition }) => { const def = ContentTypeDef.parse(definition); const r = await updateTypeTemplate(db, ctx, name, def); mcpAudit("type_template.update", null, null, { name }); return r.next; });
+  async ({ name, definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await updateTypeTemplate(db, ctx, name, def); await mcpAudit("type_template.update", null, null, { name }); return r.next; });
 tool("delete_type_template", "Delete a stored type template (built-ins can't be deleted). Types instantiated from it are NOT affected.", { name: z.string() },
-  async ({ name }) => { await deleteTypeTemplate(db, ctx, name); mcpAudit("type_template.delete", null, null, { name }); return { ok: true }; });
+  async ({ name }) => { await deleteTypeTemplate(db, ctx, name); await mcpAudit("type_template.delete", null, null, { name }); return { ok: true }; });
 tool(
   "instantiate_type_template",
   "Materialise a type template into a real content type. Default: creates the type under the template's own name. " +
@@ -502,7 +534,7 @@ tool(
   },
   async ({ name, updateExisting, asName, withBlocks }) => {
     const r = await instantiateTypeTemplate(db, ctx, name, { updateExisting, asName, withBlocks });
-    mcpAudit("type_template.instantiate", null, null, { template: name, type: r.name, action: r.action, ...(r.blocks ? { blocks: r.blocks } : {}) });
+    await mcpAudit("type_template.instantiate", null, null, { template: name, type: r.name, action: r.action, ...(r.blocks ? { blocks: r.blocks } : {}) });
     return r;
   },
 );
@@ -526,7 +558,7 @@ tool(
   async ({ templates, overwrite }) => {
     const defs = templates.map((t) => ContentTypeDef.parse(t));
     const r = await importTypeTemplates(db, ctx, defs, overwrite ?? false);
-    mcpAudit("type_template.import", null, null, { created: r.created, updated: r.updated, skipped: r.skipped.map((s) => s.name), overwrite: overwrite ?? false });
+    await mcpAudit("type_template.import", null, null, { created: r.created, updated: r.updated, skipped: r.skipped.map((s) => s.name), overwrite: overwrite ?? false });
     return r;
   },
 );
@@ -558,14 +590,14 @@ tool(
   { formId: z.string().optional() },
   async ({ formId }) => {
     const res = await exportSubmissions(db, ctx, formId);
-    mcpAudit("form.submissions_exported", formId ?? null, null, { rows: res.rows });
+    await mcpAudit("form.submissions_exported", formId ?? null, null, { rows: res.rows });
     return res;
   },
 );
 tool("delete_form_submission", "Delete one submission permanently.", { submissionId: z.string() },
   async ({ submissionId }) => {
     const ok = await deleteSubmission(db, ctx, submissionId);
-    mcpAudit("form.submission_deleted", null, null, { submissionId, found: ok });
+    await mcpAudit("form.submission_deleted", null, null, { submissionId, found: ok });
     return { ok };
   });
 tool(
@@ -576,7 +608,7 @@ tool(
     const res = await eraseSubmissionsByEmail(db, ctx, email);
     // The address is the subject of an erasure request — log that one happened
     // and how much it removed, never the address itself.
-    mcpAudit("form.submissions_erased", null, null, { deleted: res.deleted });
+    await mcpAudit("form.submissions_erased", null, null, { deleted: res.deleted });
     return res;
   },
 );
@@ -584,9 +616,9 @@ tool(
 /* -------------------------------- media -------------------------------- */
 tool("list_assets", "List uploaded media assets.", {}, () => listAssets(db, ctx));
 tool("update_asset_alt", "Set an asset's alt text.", { documentId: docId, alt: z.string() },
-  async ({ documentId, alt }) => { const r = await updateAssetAlt(db, ctx, documentId, alt); mcpAudit("asset.alt", documentId); return r; });
+  async ({ documentId, alt }) => { const r = await updateAssetAlt(db, ctx, documentId, alt); await mcpAudit("asset.alt", documentId); return r; });
 tool("delete_asset", "Delete a media asset.", { documentId: docId },
-  async ({ documentId }) => { await deleteAsset(db, ctx, documentId, UPLOADS_DIR); mcpAudit("asset.delete", documentId); return { ok: true }; });
+  async ({ documentId }) => { await deleteAsset(db, ctx, documentId, UPLOADS_DIR); await mcpAudit("asset.delete", documentId); return { ok: true }; });
 tool(
   "search_stock_images",
   "Search the configured stock photo provider (Settings → Stock images; Unsplash). Returns photo candidates with id, description and attribution. To USE a photo: call import_stock_image with its id, then set_field the returned asset documentId on an image field.",
@@ -609,7 +641,7 @@ tool(
         return { relativePath: `${MEDIA_PREFIX}/${fileName}` };
       },
     });
-    mcpAudit("asset.import", rec.documentId, null, { provider: rec.sourceMeta?.provider, providerId, mime: rec.mime, size: rec.size });
+    await mcpAudit("asset.import", rec.documentId, null, { provider: rec.sourceMeta?.provider, providerId, mime: rec.mime, size: rec.size });
     return rec;
   },
 );
@@ -647,28 +679,28 @@ tool("delivery_start", "Read the configured start page (served at /).", { locale
 /* --------------------------------- site -------------------------------- */
 tool("get_site_config", "Get site config (current start page).", {}, () => getSiteConfig(db, ctx));
 tool("set_start_page", "Set (or clear with null) the page served at /.", { documentId: z.string().nullable() },
-  async ({ documentId }) => { await setStartPage(db, ctx, documentId); mcpAudit("site.start_page", documentId); return { ok: true }; });
+  async ({ documentId }) => { await setStartPage(db, ctx, documentId); await mcpAudit("site.start_page", documentId); return { ok: true }; });
 
 /* ---------------------------- platform admin --------------------------- */
 tool("list_users", "List users with roles and section scopes (admin).", {}, () => listUsers(db, ctx));
 tool("create_user", "Create a user (admin).", { email: z.string().email(), name: z.string(), password: z.string().min(10), roles: z.array(RoleName).min(1), sections: z.array(z.string()).optional() },
-  async (a) => { const id = await adminCreateUser(db, ctx, a); mcpAudit("user.create", null, null, { email: a.email, roles: a.roles }); return { id }; });
+  async (a) => { const id = await adminCreateUser(db, ctx, a); await mcpAudit("user.create", null, null, { email: a.email, roles: a.roles }); return { id }; });
 tool("update_user", "Update a user's name/roles/sections (admin).", { id: z.string(), name: z.string().optional(), roles: z.array(RoleName).optional(), sections: z.array(z.string()).optional() },
-  async ({ id, ...rest }) => { await adminUpdateUser(db, ctx, id, rest); mcpAudit("user.update", null, null, { id }); return { ok: true }; });
+  async ({ id, ...rest }) => { await adminUpdateUser(db, ctx, id, rest); await mcpAudit("user.update", null, null, { id }); return { ok: true }; });
 tool("delete_user", "Delete a user (admin).", { id: z.string() },
-  async ({ id }) => { await adminDeleteUser(db, ctx, id); mcpAudit("user.delete", null, null, { id }); return { ok: true }; });
+  async ({ id }) => { await adminDeleteUser(db, ctx, id); await mcpAudit("user.delete", null, null, { id }); return { ok: true }; });
 tool("list_delivery_keys", "List delivery API keys (admin).", {}, () => listDeliveryKeys(db, ctx));
 tool("create_delivery_key", "Create a delivery API key (admin). Returns the secret once.", { name: z.string(), type: z.enum(["public", "preview"]) },
-  async ({ name, type }) => { need("deliverykey.manage"); const r = await createDeliveryKey(db, ctx.siteId, name, type); mcpAudit("deliverykey.create", null, null, { name, type }); return r; });
+  async ({ name, type }) => { const r = await createDeliveryKey(db, ctx, name, type); await mcpAudit("deliverykey.create", null, null, { name, type }); return r; });
 tool("rename_delivery_key", "Rename a delivery API key (admin).", { id: z.number(), name: z.string().min(1) },
-  async ({ id, name }) => { await renameDeliveryKey(db, ctx, id, name); mcpAudit("deliverykey.rename", null, null, { id, name }); return { ok: true }; });
+  async ({ id, name }) => { await renameDeliveryKey(db, ctx, id, name); await mcpAudit("deliverykey.rename", null, null, { id, name }); return { ok: true }; });
 tool("revoke_delivery_key", "Revoke a delivery API key by id (admin).", { id: z.number() },
-  async ({ id }) => { await revokeDeliveryKey(db, ctx, id); mcpAudit("deliverykey.revoke", null, null, { id }); return { ok: true }; });
+  async ({ id }) => { await revokeDeliveryKey(db, ctx, id); await mcpAudit("deliverykey.revoke", null, null, { id }); return { ok: true }; });
 tool("list_webhooks", "List webhook subscriptions (admin).", {}, () => listWebhooks(db, ctx));
 tool("create_webhook", "Create a webhook (admin). Returns the signing secret once.", { name: z.string(), url: z.string(), events: z.array(z.string()).optional() },
-  async (a) => { const r = await createWebhook(db, ctx, a); mcpAudit("webhook.create", null, null, { name: a.name }); return r; });
+  async (a) => { const r = await createWebhook(db, ctx, a); await mcpAudit("webhook.create", null, null, { name: a.name }); return r; });
 tool("delete_webhook", "Delete a webhook by id (admin).", { id: z.number() },
-  async ({ id }) => { await deleteWebhook(db, ctx, id); mcpAudit("webhook.delete", null, null, { id }); return { ok: true }; });
+  async ({ id }) => { await deleteWebhook(db, ctx, id); await mcpAudit("webhook.delete", null, null, { id }); return { ok: true }; });
 tool("list_audit", "Read the append-only audit log (admin). Filter by action prefix (e.g. 'content.'), actor user id, documentId, or ISO time range.",
   { limit: z.number().optional(), before: z.number().optional(), action: z.string().optional(), actorUserId: z.string().optional(), documentId: z.string().optional(), from: z.string().optional(), to: z.string().optional() },
   (a) => listAudit(db, ctx, a));
@@ -691,7 +723,7 @@ async function main(): Promise<void> {
     }
     userId = id;
   } else {
-    userId = await verifyLogin(db, MCP_EMAIL, MCP_PASSWORD);
+    userId = await verifyLogin(db, MCP_LOGIN!.email, MCP_LOGIN!.password);
   }
   // via:"mcp" — every write through this server is agent provenance: versions
   // record created_via='mcp' and drafts carry the needs-review flag.
@@ -723,12 +755,11 @@ async function main(): Promise<void> {
       httpPath: MCP_HTTP_PATH,
       bearerOk: async (req) => {
         if (!(await bearerOk(req, userId))) return false;
-        // Re-resolve the identity's roles/scopes per request. `ctx` was captured
-        // once at boot, so demoting the MCP user, narrowing its sections or
-        // removing a role changed nothing until someone restarted the container.
-        // Safe to reassign: bearerOk has just proven this request belongs to the
-        // SAME user the process authenticated as, so concurrent requests can only
-        // ever install an identical identity — never another user's.
+        // Roles/scopes are re-resolved per request so demoting the MCP user or
+        // narrowing its sections applies live, not at the next restart. Safe to
+        // reassign: bearerOk has just proven this request belongs to the SAME user
+        // the process authenticated as, so concurrent requests can only ever
+        // install an identical identity — never another user's.
         ctx = { ...(await getAccessContext(db, userId)), via: "mcp" };
         return true;
       },

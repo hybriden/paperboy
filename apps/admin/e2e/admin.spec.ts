@@ -1233,8 +1233,11 @@ test("an area that allows ANY block still does not offer parts (a form's field b
   ]) {
     await expect(palette.getByRole("menuitem", { name: part, exact: true }), part).toHaveCount(0);
   }
-  // The Form itself is real page composition and stays on offer.
-  await expect(palette.getByRole("menuitem", { name: "Form", exact: true })).toBeVisible();
+  // The Form itself is never offered INLINE either — submissions post against a
+  // documentId only a shared block has (the API refuses an inline Form). It is
+  // placed through the shared-block route, which the palette still offers.
+  await expect(palette.getByRole("menuitem", { name: "Form", exact: true })).toHaveCount(0);
+  await expect(palette.getByRole("menuitem", { name: /^Existing block/ })).toBeVisible();
   await page.keyboard.press("Escape");
 
   await page.request.delete(`/api/v1/manage/content/${doc.documentId}`, { headers });
@@ -1743,7 +1746,8 @@ test.describe("forms builder", () => {
     // Side by side defaults to the STANDALONE preview — picking the host page
     // in the preview-target picker borrows it. On-page stays page-only.
     await page.goto(`/edit/${documentId}`);
-    await expect(page.getByRole("button", { name: pageName })).toBeVisible({ timeout: 20_000 });
+    // exact: the tree's reorder grip is now named "Drag to reorder <page>" too.
+    await expect(page.getByRole("button", { name: pageName, exact: true })).toBeVisible({ timeout: 20_000 });
     const split = page.getByRole("button", { name: "Side by side" });
     await expect(split).toBeEnabled();
     await expect(page.getByRole("button", { name: "On-page" })).toBeDisabled();

@@ -73,6 +73,49 @@ describe("AI routes — no provider key", () => {
     expect(r.json().message).toContain("Settings → AI");
   });
 
+  // /ai/alt-text decodes the stored bytes with sharp. The media route caps the
+  // decoded pixel count (a 40000×40000 header on a tiny file is a decompression
+  // bomb); this route must use the same limit and answer with a self-teaching
+  // 413, not a 500 or an unbounded decode.
+  it("/ai/alt-text refuses an image whose header exceeds the pixel limit (413, names the limit)", async () => {
+    const realFetch = globalThis.fetch;
+    const { default: sharp } = await import("sharp");
+    const { crc32 } = await import("node:zlib");
+    const png = await sharp({ create: { width: 1, height: 1, channels: 3, background: "#fff" } }).png().toBuffer();
+    // Patch IHDR (bytes 16..23 = width, height) and recompute its CRC (over "IHDR" + data).
+    png.writeUInt32BE(40_000, 16);
+    png.writeUInt32BE(40_000, 20);
+    png.writeUInt32BE(crc32(png.subarray(12, 29)) >>> 0, 29);
+
+    const boundary = "----paperboyalt1234567890";
+    const body = Buffer.concat([
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="bomb.png"\r\nContent-Type: image/png\r\n\r\n`),
+      png,
+      Buffer.from(`\r\n--${boundary}--\r\n`),
+    ]);
+    const up = await s.app.inject({ method: "POST", url: "/api/v1/manage/assets", headers: { ...authHeaders(ed), "content-type": `multipart/form-data; boundary=${boundary}` }, payload: body });
+    expect(up.statusCode, up.body).toBe(200);
+
+    s.app.aiEnv.ANTHROPIC_API_KEY = "sk-test";
+    let modelCalls = 0;
+    globalThis.fetch = (async (url: RequestInfo | URL, init?: RequestInit) => {
+      if (String(url instanceof Request ? url.url : url).includes("api.anthropic.com")) {
+        modelCalls++;
+        return new Response(JSON.stringify({ content: [{ type: "text", text: "never" }] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return realFetch(url as never, init as never);
+    }) as typeof fetch;
+    try {
+      const r = await s.app.inject({ method: "POST", url: "/api/v1/ai/alt-text", headers: authHeaders(ed), payload: { documentId: up.json().documentId } });
+      expect(r.statusCode, r.body).toBe(413);
+      expect(r.json().message).toMatch(/pixel/i);
+      expect(modelCalls).toBe(0);
+    } finally {
+      globalThis.fetch = realFetch;
+      s.app.aiEnv.ANTHROPIC_API_KEY = undefined;
+    }
+  });
+
   it("/ai/translate refuses with ai_unavailable when no key is set (no copy-source echo)", async () => {
     const r = await s.app.inject({
       method: "POST",

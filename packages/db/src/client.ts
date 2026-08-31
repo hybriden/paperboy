@@ -1,13 +1,17 @@
-import { sql as sqlTag } from "drizzle-orm";
+import { type Logger, sql as sqlTag } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schema from "./schema.js";
 
 export type Database = ReturnType<typeof createDb>["db"];
+export type Transaction = Parameters<Parameters<Database["transaction"]>[0]>[0];
+/** Query helpers take a Queryable so a caller inside a transaction passes `tx` and
+ *  never borrows a second pool connection (a full pool then deadlocks the API). */
+export type Queryable = Database | Transaction;
 
-export function createDb(connectionString: string) {
-  const sql = postgres(connectionString, { max: 10 });
-  const db = drizzle(sql, { schema });
+export function createDb(connectionString: string, opts: { max?: number; logger?: Logger } = {}) {
+  const sql = postgres(connectionString, { max: opts.max ?? 10 });
+  const db = drizzle(sql, { schema, logger: opts.logger });
   return { db, sql };
 }
 

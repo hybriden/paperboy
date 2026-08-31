@@ -38,7 +38,7 @@ export function collectRichTextStrings(doc: unknown): string[] {
  * or failed translation batch can never blank text).
  */
 export function applyRichTextStrings(doc: unknown, strings: readonly (string | undefined)[]): unknown {
-  const clone = JSON.parse(JSON.stringify(doc));
+  const clone = structuredClone(doc);
   let i = 0;
   visit(clone, (n) => {
     const next = strings[i];

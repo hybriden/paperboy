@@ -7,7 +7,24 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import swagger from "@fastify/swagger";
 import swaggerUI from "@fastify/swagger-ui";
-import { AppError, audit, createDb, getAccessContext, getSessionUser, getSiteById, readSession, runAuditRetention, runScheduledPublish, runSubmissionRetention, runWebhookDeliveryRetention } from "@paperboy/db";
+import {
+  AppError,
+  PG_FOREIGN_KEY_VIOLATION,
+  PG_INVALID_TEXT_REPRESENTATION,
+  PG_UNIQUE_VIOLATION,
+  audit,
+  createDb,
+  getAccessContext,
+  getSessionUser,
+  getSiteById,
+  pgErrorCode,
+  readSession,
+  runAuditRetention,
+  runScheduledPublish,
+  runSessionRetention,
+  runSubmissionRetention,
+  runWebhookDeliveryRetention,
+} from "@paperboy/db";
 import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
 import {
   type ZodTypeProvider,
@@ -54,7 +71,7 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   // close). Close it on app shutdown so connections aren't leaked — harmless for a
   // long-lived prod app, but essential for the test suite, where dozens of apps are
   // built and torn down against one Postgres (else: "too many clients already").
-  const owned = opts.db ? null : createDb(env.DATABASE_URL);
+  const owned = opts.db ? null : createDb(env.DATABASE_URL, { max: env.DATABASE_POOL_MAX });
   const db = opts.db ?? owned!.db;
   if (owned) app.addHook("onClose", async () => owned.sql.end());
   app.decorate("db", db);
@@ -132,6 +149,7 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
       openapi: "3.1.0",
       info: { title: "Paperboy API", version: "0.1.0", description: "Headless CMS — Management + Delivery API" },
       tags: [
+        { name: "health", description: "Liveness and readiness probes" },
         { name: "auth", description: "Authentication" },
         { name: "manage", description: "Management API (authenticated)" },
         { name: "ai", description: "AI editorial assistant" },
@@ -191,6 +209,17 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     if (sc && sc >= 400 && sc < 500) {
       return reply.code(sc).send({ error: "request_error", message: (err as Error).message });
     }
+    // Safety net for a driver error that escaped the query layer: every "does it
+    // exist?" pre-check races, and the loser's unique/FK violation is a client
+    // condition, not a server fault.
+    switch (pgErrorCode(err)) {
+      case PG_UNIQUE_VIOLATION:
+        return reply.code(409).send({ error: "conflict", message: "A record with the same unique value already exists — re-read and retry with a different value." });
+      case PG_FOREIGN_KEY_VIOLATION:
+        return reply.code(409).send({ error: "conflict", message: "The record is referenced by other rows (or references one that does not exist) — remove the dependents first." });
+      case PG_INVALID_TEXT_REPRESENTATION:
+        return reply.code(400).send({ error: "bad_request", message: "A value has the wrong format for its column (e.g. text where a number or id is expected)." });
+    }
     req.log.error({ err }, "unhandled error");
     return reply.code(500).send({ error: "internal_error", message: "Internal server error" });
   });
@@ -213,38 +242,56 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   // long-lived process (one container); the query uses no cross-request state.
   // Disabled under test — specs drive runScheduledPublish(db, now) directly.
   if (env.NODE_ENV !== "test") {
-    void runScheduledPublish(db).catch((err) => app.log.error({ err }, "scheduled publish (boot) failed"));
-    const schedTimer = setInterval(() => {
-      void runScheduledPublish(db).catch((err) => app.log.error({ err }, "scheduled publish failed"));
-    }, 60_000);
-    if (typeof schedTimer.unref === "function") schedTimer.unref();
-    app.addHook("onClose", async () => clearInterval(schedTimer));
+    // A tick that outlives its interval (slow database) must not stack a second
+    // run on top of itself, so each ticker skips while its previous run is in flight.
+    const ticker = (label: string, run: () => Promise<void>, everyMs: number): void => {
+      let inFlight: Promise<void> | null = null;
+      const tick = (): void => {
+        if (inFlight) return;
+        inFlight = run()
+          .catch((err) => app.log.error({ err }, `${label} failed`))
+          .finally(() => (inFlight = null));
+      };
+      tick();
+      const timer = setInterval(tick, everyMs).unref();
+      app.addHook("onClose", async () => clearInterval(timer));
+    };
+
+    // Scheduled-publish ticker: promotes due drafts and expires due content.
+    ticker(
+      "scheduled publish",
+      async () => {
+        await runScheduledPublish(db);
+      },
+      60_000,
+    );
 
     // Submission retention sweep. In-process and ON BY DEFAULT, deliberately:
     // Umbraco Forms ships the same per-form policy but it silently does nothing
     // until a separate scheduled task is enabled in configuration, so editors
     // believe data is being deleted when it isn't. Hourly is plenty for a
     // day-granularity policy, and each sweep logs its count so deletion is provable.
-    const sweep = async (): Promise<void> => {
-      const { deleted } = await runSubmissionRetention(db);
-      if (deleted > 0) {
-        app.log.info({ deleted }, "form submissions deleted by retention policy");
-        await audit(db, { action: "form.retention_sweep", detail: { deleted } });
-      }
-      // Same timer prunes the two append-only log tables so neither grows
-      // without bound. webhook_delivery has a 90-day default; audit_log prunes
-      // only when AUDIT_RETENTION_DAYS is set (compliance trail — kept by default).
-      const wh = await runWebhookDeliveryRetention(db, env.WEBHOOK_DELIVERY_RETENTION_DAYS);
-      if (wh.deleted > 0) app.log.info({ deleted: wh.deleted }, "webhook deliveries pruned by retention policy");
-      const au = await runAuditRetention(db, env.AUDIT_RETENTION_DAYS);
-      if (au.deleted > 0) app.log.info({ deleted: au.deleted }, "audit rows pruned by retention policy");
-    };
-    void sweep().catch((err) => app.log.error({ err }, "submission retention (boot) failed"));
-    const retentionTimer = setInterval(() => {
-      void sweep().catch((err) => app.log.error({ err }, "submission retention failed"));
-    }, 3_600_000);
-    if (typeof retentionTimer.unref === "function") retentionTimer.unref();
-    app.addHook("onClose", async () => clearInterval(retentionTimer));
+    ticker(
+      "retention sweep",
+      async () => {
+        const { deleted } = await runSubmissionRetention(db);
+        if (deleted > 0) {
+          app.log.info({ deleted }, "form submissions deleted by retention policy");
+          await audit(db, { action: "form.retention_sweep", detail: { deleted } });
+        }
+        // Same timer prunes the two append-only log tables so neither grows
+        // without bound. webhook_delivery has a 90-day default; audit_log prunes
+        // only when AUDIT_RETENTION_DAYS is set (compliance trail — kept by default).
+        const wh = await runWebhookDeliveryRetention(db, env.WEBHOOK_DELIVERY_RETENTION_DAYS);
+        if (wh.deleted > 0) app.log.info({ deleted: wh.deleted }, "webhook deliveries pruned by retention policy");
+        const au = await runAuditRetention(db, env.AUDIT_RETENTION_DAYS);
+        if (au.deleted > 0) app.log.info({ deleted: au.deleted }, "audit rows pruned by retention policy");
+        // Expired sessions are otherwise deleted only when their cookie is presented again.
+        const se = await runSessionRetention(db);
+        if (se.deleted > 0) app.log.info({ deleted: se.deleted }, "expired sessions pruned");
+      },
+      3_600_000,
+    );
   }
 
   return app;

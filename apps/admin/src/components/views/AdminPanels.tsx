@@ -1,13 +1,14 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
-import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName } from "@paperboy/shared";
+import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName, slugifyValue } from "@paperboy/shared";
 import { ACTIVE_SITE_KEY, type AiProviderName, api, ApiError, type FormRow, type ManagedUser, type SeoFilesConfig, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
 import { ContentTypeEditor } from "../ContentTypeEditor.js";
-import { FormSubmissions } from "../FormSubmissions.js";
+import { FormSubmissions, SubmissionsLoadError } from "../FormSubmissions.js";
+import { switchSite } from "../SiteSwitcher.js";
 import { Dialog, DialogContent } from "../ui/dialog.js";
 import { Badge } from "../ui/badge.js";
 import { Switch } from "../ui/switch.js";
@@ -16,6 +17,8 @@ import { Surface } from "../ui/surface.js";
 import { useToast } from "../ui/toast.js";
 
 const ROLES: RoleName[] = ["Admin", "Editor", "Author", "Viewer"];
+
+const isSlug = (s: string) => s !== "" && s === slugifyValue(s);
 
 function PanelShell({ title, hint, action, children }: { title: string; hint?: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
@@ -809,7 +812,6 @@ export function LanguagesPanel() {
   );
 }
 
-/* ------------------------------- Your account ----------------------------- */
 export function SitePanel() {
   const { user } = useUser();
   const canManageSites = user.permissions.includes("user.manage");
@@ -847,14 +849,14 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
   const [step, setStep] = useState<1 | 2>(1);
   const [name, setName] = useState("");
   const [slugEdited, setSlugEdited] = useState<string | null>(null);
-  const autoSlug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const autoSlug = slugifyValue(name);
   const slug = slugEdited ?? autoSlug;
   const [locale, setLocale] = useState(defaultLocale);
   const [previewUrl, setPreviewUrl] = useState("");
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => { nameRef.current?.focus(); }, []);
 
-  const slugValid = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug);
+  const slugValid = isSlug(slug);
   const canNext = name.trim().length > 0 && slugValid;
 
   const create = useMutation({
@@ -928,10 +930,6 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
   );
 }
 
-/** One site row in the Sites panel: name, slug, preview URL and start page, all
- *  edited in place and persisted by a SINGLE Save button. Every write targets
- *  THIS site (per-call x-paperboy-site override), without changing the admin's
- *  working site. */
 /** The per-site public-files draft (robots/llms/security.txt config), "" = unset. */
 const filesOf = (s: SiteRow): Record<keyof SeoFilesConfig, string> => ({
   robotsExtra: s.seoFiles.robotsExtra ?? "",
@@ -942,6 +940,10 @@ const filesOf = (s: SiteRow): Record<keyof SeoFilesConfig, string> => ({
   securityLanguages: s.seoFiles.securityLanguages ?? "",
 });
 
+/** One site row in the Sites panel: name, slug, preview URL and start page, all
+ *  edited in place and persisted by a SINGLE Save button. Every write targets
+ *  THIS site (per-call x-paperboy-site override), without changing the admin's
+ *  working site. */
 function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean; canManage: boolean }) {
   const toast = useToast();
   const qc = useQueryClient();
@@ -972,7 +974,7 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
 
   const pages = useQuery({ queryKey: ["pages", site.id], queryFn: ({ signal }) => api.pages(signal, site.id) });
 
-  const slugValid = /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug.trim());
+  const slugValid = isSlug(slug.trim());
   const nameChanged = canManage && (name.trim() !== site.name || slug.trim() !== site.slug);
   const previewChanged = previewUrl.trim() !== (site.previewBaseUrl ?? "");
   const startChanged = (startPageId || null) !== (site.startPageId ?? null);
@@ -1039,7 +1041,7 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
         <span className="field-label">Preview base URL</span>
         <input aria-label="Preview base URL" className="field-input" type="url" inputMode="url" placeholder="https://example.com" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} />
         <span className="mt-1 block text-xs text-muted">
-          Preview opens <code>{(previewUrl || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pb=…</code>. Empty = fall back to the admin host on :4321.
+          Preview opens <code>{(previewUrl || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pbt=…</code> (a short-lived preview token). Empty = no side-by-side preview.
         </span>
       </label>
 
@@ -1172,13 +1174,6 @@ function DeleteSiteDialog({ site, active, onClose }: { site: SiteRow; active: bo
       </DialogContent>
     </Dialog>
   );
-}
-
-/** Persist the active site and reload from the content root so every query
- *  refetches under the new site's x-paperboy-site header. */
-function switchSite(id: string): void {
-  localStorage.setItem("paperboy.activeSite", id);
-  window.location.href = "/edit";
 }
 
 /* ----------------------------- AI assistant ------------------------------- */
@@ -1419,7 +1414,7 @@ export function StockImagesPanel() {
           <div className="flex flex-wrap items-end gap-3">
             <label className="text-sm" style={{ minWidth: 160 }}>
               <span className="field-label">Provider</span>
-              <select className="field-input" value="unsplash" onChange={() => undefined}>
+              <select className="field-input" value="unsplash" disabled>
                 <option value="unsplash">Unsplash</option>
               </select>
             </label>
@@ -1704,10 +1699,11 @@ export function McpTokensPanel() {
   const [created, setCreated] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [userId, setUserId] = useState("");
+  const [password, setPassword] = useState("");
 
   const create = useMutation({
-    mutationFn: () => api.createMcpToken(name || "MCP token", userId || users.data?.[0]?.id || ""),
-    onSuccess: (r) => { setCreated(r.token); setName(""); void qc.invalidateQueries({ queryKey: ["mcp-tokens"] }); },
+    mutationFn: () => api.createMcpToken(name || "MCP token", userId || users.data?.[0]?.id || "", password),
+    onSuccess: (r) => { setCreated(r.token); setName(""); setPassword(""); void qc.invalidateQueries({ queryKey: ["mcp-tokens"] }); },
     onError: (e) => toast.error("Couldn’t create token", (e as Error).message),
   });
   const revoke = useMutation({
@@ -1729,14 +1725,15 @@ export function McpTokensPanel() {
   return (
     <PanelShell
       title="MCP tokens"
-      hint="Tokens the MCP server presents instead of a password. A token acts AS the chosen user (inherits its roles). Run the MCP with MCP_TOKEN=… — the secret is shown once."
+      hint="Tokens the MCP server presents instead of a password. A token acts AS the chosen user (inherits its roles) indefinitely, so creating one asks you to confirm your own password. Run the MCP with MCP_TOKEN=… — the secret is shown once."
       action={
         <div className="flex items-center gap-1.5">
           <input className="field-input" placeholder="Token name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Token name" />
           <select className="field-input" value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="Acts as user">
             {(users.data ?? []).map((u) => <option key={u.id} value={u.id}>{u.email}</option>)}
           </select>
-          <button className="btn-subtle px-2 py-1 text-xs" disabled={create.isPending || !(users.data?.length)} onClick={() => create.mutate()}>
+          <input className="field-input" type="password" autoComplete="current-password" placeholder="Your password" value={password} onChange={(e) => setPassword(e.target.value)} aria-label="Your password" />
+          <button className="btn-subtle px-2 py-1 text-xs" disabled={create.isPending || !(users.data?.length) || !password} onClick={() => create.mutate()}>
             <Icon.Plus width={14} height={14} /> Create
           </button>
         </div>
@@ -1891,16 +1888,7 @@ export function FormSubmissionsPanel() {
       {/* A failed load must not read as "no forms" — unknown state stays unknown. */}
       {forms.isError ? (
         <div className="p-4">
-          {forms.error instanceof ApiError && forms.error.status === 403 ? (
-            <Callout tone="caution" title="You can’t read form submissions">
-              Submissions need their own permission because they hold personal data. Ask an administrator if answering
-              these is part of your job.
-            </Callout>
-          ) : (
-            <Callout tone="critical" title="Couldn’t load the forms">
-              This isn’t an empty site — the list failed to load. Reload to try again.
-            </Callout>
-          )}
+          <SubmissionsLoadError error={forms.error} subject="site" />
         </div>
       ) : forms.isLoading ? (
         <p className="p-4 text-sm text-muted">Loading…</p>

@@ -74,6 +74,36 @@ describe("delivery hardening (P2)", () => {
     expect(Array.isArray(after.json().data.body)).toBe(false);
   });
 
+  it("#5b: a contentArea → richtext retype does not leak either (the richtext branch took any object, arrays included)", async () => {
+    // Same block type as #5; a second page type so the retype is independent.
+    const pageType = {
+      name: "RetypeLeakRichPage",
+      displayName: "Retype Leak Rich Page",
+      kind: "page",
+      fields: [{ name: "body", displayName: "Body", type: "contentArea", delivery: "public", allowedBlocks: [] }],
+    };
+    expect((await s.app.inject({ method: "POST", url: "/api/v1/manage/content-types", headers: authHeaders(admin), payload: pageType })).statusCode).toBe(200);
+    const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(admin), payload: { type: "RetypeLeakRichPage", locale: "en", name: "Retype rich victim" } });
+    const id = created.json().documentId as string;
+    await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${id}?locale=en`,
+      headers: authHeaders(admin),
+      payload: { data: { body: [{ key: "b1", blockType: "RetypeLeakBlock", display: "automatic", shared: false, ref: null, inline: { label: "visible", secret: "SENTINEL_LEAK_RICH" } }] } },
+    });
+    expect((await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(admin) })).statusCode).toBe(200);
+
+    // Retype body: contentArea -> richtext. `absolutizeRichTextImages` maps an
+    // array element-wise, so the stale block array shipped verbatim.
+    const retyped = { ...pageType, fields: [{ name: "body", displayName: "Body", type: "richtext", delivery: "public" }] };
+    expect((await s.app.inject({ method: "PUT", url: "/api/v1/manage/content-types/RetypeLeakRichPage", headers: authHeaders(admin), payload: retyped })).statusCode).toBe(200);
+
+    const after = await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${id}?locale=en`, headers: pub });
+    expect(after.statusCode).toBe(200);
+    expect(after.body).not.toContain("SENTINEL_LEAK_RICH");
+    expect(Array.isArray(after.json().data.body)).toBe(false);
+  });
+
   it("#6: noIndex set on one locale hides the sibling locale from the inventory too", async () => {
     // Home (en) / Hjem (nb) are the same document; noIndex is localized:false.
     const homeId = s.ids.homeId;

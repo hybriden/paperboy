@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import type { Folder, FolderKind } from "@paperboy/shared";
+import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { useToast } from "./ui/toast.js";
@@ -9,7 +10,7 @@ import { useToast } from "./ui/toast.js";
  * Folder navigator for an asset-pane tab (Media or Shared blocks). Owns the
  * folders query + CRUD for one tree (`kind`); the parent tracks the current
  * folder and filters its items by it. Folders accept drops of items of the
- * matching kind (drag payload `application/x-paperboy`) to file them.
+ * matching kind (drag payload DRAG_MIME) to file them.
  */
 export function FolderNav({
   kind,
@@ -66,7 +67,7 @@ export function FolderNav({
   // Accept a drop only if the dragged item belongs to this tree's kind.
   const itemKind = kind === "media" ? "media" : "block";
   const parsePaperboy = (e: React.DragEvent): { documentId: string } | null => {
-    const raw = e.dataTransfer.getData("application/x-paperboy");
+    const raw = e.dataTransfer.getData(DRAG_MIME);
     if (!raw) return null;
     try {
       const p = JSON.parse(raw) as { kind?: string; documentId?: string };
@@ -76,7 +77,7 @@ export function FolderNav({
   };
   const dropProps = (folderId: string | null) => ({
     onDragOver: (e: React.DragEvent) => {
-      if (e.dataTransfer.types.includes("application/x-paperboy")) { e.preventDefault(); setDropTarget(folderId); }
+      if (e.dataTransfer.types.includes(DRAG_MIME)) { e.preventDefault(); setDropTarget(folderId); }
     },
     onDragLeave: () => setDropTarget("none"),
     onDrop: (e: React.DragEvent) => {

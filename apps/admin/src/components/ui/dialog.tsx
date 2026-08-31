@@ -2,8 +2,6 @@ import * as RDialog from "@radix-ui/react-dialog";
 import { Icon } from "../../lib/icons.js";
 
 export const Dialog = RDialog.Root;
-export const DialogTrigger = RDialog.Trigger;
-export const DialogClose = RDialog.Close;
 
 /** Named widths, each clamped to the viewport so dialogs stay usable on phones. */
 const sizeClass = {

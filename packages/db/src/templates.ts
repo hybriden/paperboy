@@ -6,8 +6,8 @@ import {
   parseStoredContentTypeDef,
   stripSeoGroup,
 } from "@paperboy/shared";
-import type { Database } from "./client.js";
-import { Errors } from "./errors.js";
+import type { Database, Queryable } from "./client.js";
+import { AppError, Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { contentType, typeTemplate } from "./schema.js";
 import { createContentType, getContentType, updateContentType } from "./content.js";
@@ -40,13 +40,13 @@ function mergeWithBuiltins(stored: ContentTypeDef[]): ContentTypeDef[] {
   return [...stored, ...builtins].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 }
 
-export async function listTypeTemplates(db: Database): Promise<ContentTypeDef[]> {
+export async function listTypeTemplates(db: Queryable): Promise<ContentTypeDef[]> {
   const rows = await db.select().from(typeTemplate).orderBy(asc(typeTemplate.name));
   // Same read chokepoint as content types: normalise stored shape + inject SEO.
   return mergeWithBuiltins(rows.map((r) => parseStoredContentTypeDef(r.definition)));
 }
 
-export async function getTypeTemplate(db: Database, name: string): Promise<ContentTypeDef> {
+export async function getTypeTemplate(db: Queryable, name: string): Promise<ContentTypeDef> {
   const rows = await db.select().from(typeTemplate).where(eq(typeTemplate.name, name)).limit(1);
   if (rows[0]) return parseStoredContentTypeDef(rows[0].definition);
   const builtin = BUILTIN_TYPE_TEMPLATES.find((t) => t.name === name);
@@ -184,24 +184,28 @@ export async function instantiateTypeTemplate(
     // spelled out, not persist a broken type row.
     def = ContentTypeDefOrReject({ ...template, name: opts.asName }, templateName);
   }
-  const existing = await db.select({ id: contentType.id }).from(contentType).where(eq(contentType.name, def.name)).limit(1);
-  let result: InstantiateResult;
-  if (existing[0]) {
-    if (!opts.updateExisting) {
-      throw Errors.conflict(
-        `Content type '${def.name}' already exists — refusing to overwrite it implicitly. ` +
-          `Pass updateExisting: true to re-apply template '${templateName}' onto it ` +
-          `(kind must match, existing content is not migrated), or asName to create a type with a different name.`,
-      );
+  // One transaction: a set that fails halfway (a referenced block template that
+  // turns out invalid) must not leave a partial type family installed.
+  return db.transaction(async (tx) => {
+    const existing = await tx.select({ id: contentType.id }).from(contentType).where(eq(contentType.name, def.name)).limit(1);
+    let result: InstantiateResult;
+    if (existing[0]) {
+      if (!opts.updateExisting) {
+        throw Errors.conflict(
+          `Content type '${def.name}' already exists — refusing to overwrite it implicitly. ` +
+            `Pass updateExisting: true to re-apply template '${templateName}' onto it ` +
+            `(kind must match, existing content is not migrated), or asName to create a type with a different name.`,
+        );
+      }
+      const { next } = await updateContentType(tx, ctx, def.name, def);
+      result = { type: next, name: def.name, action: "updated" };
+    } else {
+      const created = await createContentType(tx, ctx, def);
+      result = { type: created, name: def.name, action: "created" };
     }
-    const { next } = await updateContentType(db, ctx, def.name, def);
-    result = { type: next, name: def.name, action: "updated" };
-  } else {
-    const created = await createContentType(db, ctx, def);
-    result = { type: created, name: def.name, action: "created" };
-  }
-  if (opts.withBlocks) result.blocks = await instantiateReferencedBlocks(db, ctx, def);
-  return result;
+    if (opts.withBlocks) result.blocks = await instantiateReferencedBlocks(tx, ctx, def);
+    return result;
+  });
 }
 
 /** Block type names a definition's content areas allow-list. */
@@ -216,7 +220,7 @@ function referencedBlockNames(def: ContentTypeDef): string[] {
 
 /** Create the block types a definition references (recursively), create-only. */
 async function instantiateReferencedBlocks(
-  db: Database,
+  db: Queryable,
   ctx: AccessContext,
   def: ContentTypeDef,
 ): Promise<{ created: string[]; existing: string[]; missing: string[] }> {
@@ -247,7 +251,9 @@ async function instantiateReferencedBlocks(
     let tpl: ContentTypeDef;
     try {
       tpl = await getTypeTemplate(db, name);
-    } catch {
+    } catch (err) {
+      // Only "no such template" means missing; a database failure must surface.
+      if (!(err instanceof AppError && err.status === 404)) throw err;
       missing.push(name); // an allowedBlocks hint with no template behind it
       continue;
     }

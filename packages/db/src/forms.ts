@@ -1,18 +1,21 @@
 import {
   type FormSpec,
+  type SharedBlockResolver,
   coerceSubmissionValues,
   fieldSnapshot,
   formSpecFrom,
+  isFormFieldType,
   isFormType,
   submissionErrors,
   submissionSchemaFor,
 } from "@paperboy/shared";
-import { and, asc, count, desc, eq, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { resolveDefaultLocale } from "./content.js";
+import { publishWindowOpen } from "./delivery.js";
 import { contentItem, contentVersion, formSubmission, siteSetting } from "./schema.js";
 
 /**
@@ -63,6 +66,21 @@ const asStr = (v: unknown): string => (typeof v === "string" ? v : "");
  * `delivery: private` and are therefore absent from delivered JSON — they must
  * never leave the server, but the server needs them.
  */
+/**
+ * The site a live Form belongs to, or null. A browser's CORS preflight carries
+ * no credential, so the submit route's OPTIONS handler can only learn the site —
+ * and therefore which origins may post — from the form's own id.
+ */
+export async function formSiteId(db: Database, formId: string): Promise<string | null> {
+  const rows = await db
+    .select({ siteId: contentItem.siteId, type: contentItem.type, deletedAt: contentItem.deletedAt })
+    .from(contentItem)
+    .where(eq(contentItem.documentId, formId))
+    .limit(1);
+  const item = rows[0];
+  return item && !item.deletedAt && isFormType(item.type) ? item.siteId : null;
+}
+
 export async function loadPublishedForm(
   db: Database,
   siteId: string,
@@ -79,17 +97,22 @@ export async function loadPublishedForm(
   // or a document that isn't a Form all look identical from outside.
   if (!item || item.deletedAt || !isFormType(item.type)) return null;
 
-  const rows = await db
-    .select()
-    .from(contentVersion)
-    .where(
-      and(
-        eq(contentVersion.documentId, formId),
-        eq(contentVersion.status, "published"),
-        eq(contentVersion.isCurrentPublished, true),
-      ),
-    );
-  if (rows.length === 0) return null; // an unpublished form accepts nothing
+  // The publish window applies here as it does in delivery: a form whose
+  // expire_at has passed is no longer served, so it no longer accepts either.
+  const now = new Date();
+  const rows = (
+    await db
+      .select()
+      .from(contentVersion)
+      .where(
+        and(
+          eq(contentVersion.documentId, formId),
+          eq(contentVersion.status, "published"),
+          eq(contentVersion.isCurrentPublished, true),
+        ),
+      )
+  ).filter((r) => publishWindowOpen(r, now));
+  if (rows.length === 0) return null; // an unpublished (or expired) form accepts nothing
 
   // An unrecognised locale must not select a variant by accident: a caller
   // sending a locale this form has never published in falls back to the site's
@@ -135,7 +158,7 @@ export async function loadPublishedForm(
     .reduce<number | null>((min, n) => (min === null || n < min ? n : min), null);
   const requiresTurnstile = variants.some((v) => asStr(v.spamProtection) === "heuristics+turnstile");
 
-  const spec = formSpecFrom(data);
+  const spec = formSpecFrom(data, { sharedBlock: await publishedFieldBlocks(db, siteId, data.fields, row.locale, now) });
   return {
     formId,
     siteId,
@@ -150,6 +173,62 @@ export async function loadPublishedForm(
       notifyEmail: firstDefined((v) => (typeof v.notifyEmail === "string" && v.notifyEmail ? v.notifyEmail : null)) ?? "",
     },
   };
+}
+
+/**
+ * The form's SHARED field blocks, read the way the form itself is: the current
+ * published version, this site, not trashed, inside its publish window, and a
+ * form field part — so a shared consent box binds a submission exactly like an
+ * inline one, and an unpublished one binds nothing.
+ */
+async function publishedFieldBlocks(
+  db: Database,
+  siteId: string,
+  area: unknown,
+  locale: string,
+  now: Date,
+): Promise<SharedBlockResolver> {
+  const refs = [
+    ...new Set(
+      (Array.isArray(area) ? area : [])
+        .map((b) => (b && typeof b === "object" ? (b as { ref?: unknown }).ref : undefined))
+        .filter((r): r is string => typeof r === "string" && r !== ""),
+    ),
+  ];
+  const blocks = new Map<string, { blockType: string; data: Record<string, unknown> }>();
+  if (refs.length === 0) return (documentId) => blocks.get(documentId);
+
+  const items = (
+    await db
+      .select({ documentId: contentItem.documentId, type: contentItem.type })
+      .from(contentItem)
+      .where(and(inArray(contentItem.documentId, refs), eq(contentItem.siteId, siteId), isNull(contentItem.deletedAt)))
+  ).filter((i) => isFormFieldType(i.type));
+  if (items.length === 0) return (documentId) => blocks.get(documentId);
+
+  const rows = (
+    await db
+      .select()
+      .from(contentVersion)
+      .where(
+        and(
+          inArray(contentVersion.documentId, items.map((i) => i.documentId)),
+          eq(contentVersion.status, "published"),
+          eq(contentVersion.isCurrentPublished, true),
+        ),
+      )
+  ).filter((r) => publishWindowOpen(r, now));
+  for (const item of items) {
+    const variants = rows.filter((r) => r.documentId === item.documentId);
+    const own = variants.find((r) => r.locale === locale) ?? variants[0];
+    if (!own) continue;
+    // The form's locale wins; siblings fill what a translated branch left empty
+    // (the key and the required flag are not localized, but are stored per
+    // locale-version — the same gap loadPublishedForm closes for its settings).
+    const data = Object.assign({}, ...variants.filter((v) => v !== own).map((v) => v.data ?? {}), own.data ?? {}) as Record<string, unknown>;
+    blocks.set(item.documentId, { blockType: item.type, data });
+  }
+  return (documentId) => blocks.get(documentId);
 }
 
 async function instanceRetentionDays(db: Database): Promise<number | null> {
@@ -370,8 +449,9 @@ export async function deleteSubmission(db: Database, ctx: AccessContext, submiss
  * — the data-subject-erasure path. One action, so a request can be answered
  * completely and provably instead of hunting per form.
  *
- * Matching is case-insensitive across all answer VALUES rather than a named
- * "email" field: the address may have been given in any field the editor built.
+ * Matching is a case-insensitive CONTAINS across all answer VALUES rather than
+ * an exact match on a named "email" field: the address may have been given in
+ * any field the editor built, including in passing inside a message.
  */
 export async function eraseSubmissionsByEmail(
   db: Database,
@@ -388,7 +468,7 @@ export async function eraseSubmissionsByEmail(
         eq(formSubmission.siteId, ctx.siteId),
         sql`exists (
           select 1 from jsonb_each_text(${formSubmission.values}) kv
-          where lower(kv.value) = ${needle}
+          where position(${needle} in lower(kv.value)) > 0
         )`,
       ),
     )

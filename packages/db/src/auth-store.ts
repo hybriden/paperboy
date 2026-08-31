@@ -254,14 +254,14 @@ export async function adminDeleteUser(db: Database, ctx: AccessContext, userId: 
   });
 }
 
-/** Self-service password change: verify the current password, then re-hash. */
 /**
  * Re-verify the account password for a sensitive action (change-password,
- * disable-2FA) WITH the same per-account lockout as login (S3-L3) — otherwise a
- * session holder could brute-force the password on these unguarded reauth paths.
- * Throws a generic unauthorized on any failure (locked, wrong, or unknown).
+ * enable/disable-2FA, minting an MCP token) WITH the same per-account lockout as
+ * login (S3-L3) — otherwise a session holder could brute-force the password on
+ * these unguarded reauth paths. Throws a generic unauthorized on any failure
+ * (locked, wrong, or unknown).
  */
-async function verifyReauth(db: Database, userId: string, password: string): Promise<void> {
+export async function verifyReauth(db: Database, userId: string, password: string): Promise<void> {
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const user = rows[0];
   const generic = Errors.unauthorized("Current password is incorrect");
@@ -280,6 +280,7 @@ async function verifyReauth(db: Database, userId: string, password: string): Pro
   }
 }
 
+/** Self-service password change: verify the current password, then re-hash. */
 export async function changePassword(
   db: Database,
   userId: string,
@@ -499,15 +500,16 @@ export async function destroySession(db: Database, token: string): Promise<void>
 
 export async function createDeliveryKey(
   db: Database,
-  siteId: string,
+  ctx: AccessContext,
   name: string,
   type: "public" | "preview",
 ): Promise<{ key: string }> {
+  requirePermission(ctx, "deliverykey.manage");
   const prefix = type === "public" ? "pk_live_" : "prv_";
   const secret = randomBytes(32).toString("base64url"); // 256-bit
   const key = `${prefix}${secret}`;
   // D1: the key belongs to the active site — it will only ever see that site.
-  await db.insert(deliveryKey).values({ name, keyHash: sha256(key), keyPrefix: prefix, type, siteId });
+  await db.insert(deliveryKey).values({ name, keyHash: sha256(key), keyPrefix: prefix, type, siteId: ctx.siteId });
   return { key };
 }
 
@@ -570,6 +572,16 @@ export async function verifyDeliveryKey(
   const row = rows[0];
   if (!row || row.revokedAt) return null;
   return { type: row.type as "public" | "preview", siteId: row.siteId };
+}
+
+/**
+ * Delete sessions past their absolute expiry. readSession removes an expired row
+ * only when its cookie is presented again, so sessions that simply stop being
+ * used would otherwise accumulate forever. Swept hourly with the other retention jobs.
+ */
+export async function runSessionRetention(db: Database, now: Date = new Date()): Promise<{ deleted: number }> {
+  const res = await db.delete(session).where(lte(session.expiresAt, now)).returning({ id: session.id });
+  return { deleted: res.length };
 }
 
 /* --------------------------------- audit ---------------------------------- */

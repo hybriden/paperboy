@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { isFormType } from "@paperboy/shared";
 import type { ContentTypeDef } from "@paperboy/shared";
+import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
@@ -135,7 +136,7 @@ export function AssetPane({
                   draggable
                   onDragStart={(e) => {
                     const payload = { kind: "block", documentId: b.documentId, blockType: b.type, name: b.name };
-                    e.dataTransfer.setData("application/x-paperboy", JSON.stringify(payload));
+                    e.dataTransfer.setData(DRAG_MIME, JSON.stringify(payload));
                     e.dataTransfer.effectAllowed = "copy";
                     // Broadcast for the (cross-origin) preview iframe, where the
                     // browser hides dataTransfer — PreviewPane relays it to the bridge.
@@ -148,7 +149,11 @@ export function AssetPane({
                   <Icon.Grip width={13} height={13} className="shrink-0 text-muted/60" />
                   <TypeIcon name={blockTypes.find((t) => t.name === b.type)?.icon} fallback="blocks" width={15} height={15} className="shrink-0 text-muted" />
                   <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => onSelect(b.documentId)}>{b.name}</button>
-                  <span className={`h-2 w-2 shrink-0 rounded-full ${loc?.status === "published" ? "bg-published" : "bg-draft"}`} />
+                  <span
+                    role="img"
+                    aria-label={loc?.status === "published" ? "Published" : "Draft"}
+                    className={`h-2 w-2 shrink-0 rounded-full ${loc?.status === "published" ? "bg-published" : "bg-draft"}`}
+                  />
                   {canCreate && (
                     <button
                       type="button"

@@ -89,6 +89,33 @@ describe("delivery seo contract", () => {
     expect(seo.title).toBe("The Heading");
   });
 
+  it("canonicalUrl is delivered only as an absolute http(s) URL or a root-relative path; anything else falls back to urlPath", async () => {
+    // Free text flowed straight into seo.canonicalPath, which apps/web renders
+    // into <link rel="canonical"> — so a javascript: URL or a stray word became
+    // the page's canonical.
+    const bad = await create("ArticlePage", "Bad Canonical");
+    await put(bad, { heading: "Bad Canonical", canonicalUrl: "javascript:alert(1)" });
+    await publish(bad);
+    const badBody = (await deliver(bad)).json();
+    expect(badBody.seo.canonicalPath).toBe(badBody.urlPath);
+
+    const word = await create("ArticlePage", "Word Canonical");
+    await put(word, { heading: "Word Canonical", canonicalUrl: "not a url" });
+    await publish(word);
+    const wordBody = (await deliver(word)).json();
+    expect(wordBody.seo.canonicalPath).toBe(wordBody.urlPath);
+
+    const abs = await create("ArticlePage", "Absolute Canonical");
+    await put(abs, { heading: "Absolute Canonical", canonicalUrl: "https://example.com/x" });
+    await publish(abs);
+    expect((await deliver(abs)).json().seo.canonicalPath).toBe("https://example.com/x");
+
+    const rel = await create("ArticlePage", "Relative Canonical");
+    await put(rel, { heading: "Relative Canonical", canonicalUrl: "/elsewhere" });
+    await publish(rel);
+    expect((await deliver(rel)).json().seo.canonicalPath).toBe("/elsewhere");
+  });
+
   it("noIndex sets robots to noindex, follow", async () => {
     const id = await create("ArticlePage", "Hidden");
     await put(id, { heading: "Hidden", noIndex: true });

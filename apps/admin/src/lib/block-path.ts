@@ -49,60 +49,6 @@ export function blockAtPath(data: Record<string, unknown>, path: BlockPath): Blo
   return block;
 }
 
-/** The data object whose fields the pane should render for `path`. */
-export function dataAtPath(data: Record<string, unknown>, path: BlockPath): Record<string, unknown> {
-  if (path.length === 0) return data;
-  return blockAtPath(data, path)?.inline ?? {};
-}
-
-/**
- * One field set, immutably, at the end of a path.
- *
- * Returns the ORIGINAL object when a step is stale, so a write into a block that
- * no longer exists is a no-op rather than a resurrection.
- */
-export function setFieldAtPath(
-  data: Record<string, unknown>,
-  path: BlockPath,
-  field: string,
-  value: unknown,
-): Record<string, unknown> {
-  if (path.length === 0) return { ...data, [field]: value };
-
-  const [step, ...rest] = path;
-  if (!step) return { ...data, [field]: value };
-  const blocks = areaOf(data, step.field);
-  const index = blocks.findIndex((b) => b.key === step.key);
-  if (index < 0) return data;
-
-  const block = blocks[index]!;
-  const nextBlocks = [...blocks];
-  nextBlocks[index] = { ...block, inline: setFieldAtPath(block.inline ?? {}, rest, field, value) };
-  return { ...data, [step.field]: nextBlocks };
-}
-
-/**
- * The type definition and a human label for every step of a path — what the
- * breadcrumb renders. Steps whose block or type has gone are dropped, so a
- * breadcrumb never shows a dead crumb.
- */
-export function pathCrumbs(
-  data: Record<string, unknown>,
-  path: BlockPath,
-  types: ContentTypeDef[],
-): { step: BlockPathStep; label: string; type?: ContentTypeDef }[] {
-  const out: { step: BlockPathStep; label: string; type?: ContentTypeDef }[] = [];
-  let current = data;
-  for (const step of path) {
-    const block = areaOf(current, step.field).find((b) => b.key === step.key);
-    if (!block) break;
-    const type = types.find((t) => t.name === block.blockType);
-    out.push({ step, label: type?.displayName ?? block.blockType, type });
-    current = block.inline ?? {};
-  }
-  return out;
-}
-
 /**
  * The line of text a compact row shows under (or beside) the block's type name.
  *

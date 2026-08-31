@@ -5,7 +5,6 @@ set -euo pipefail
 # Backups are a full credential dump (argon2id hashes, encrypted TOTP secrets,
 # session/MCP tokens, delivery keys). Lock them down: owner-only files + dir.
 umask 077
-TOPIC=$(cat /home/hanschr/paperboy-ops/.ntfy-topic)
 DIR=/home/hanschr/paperboy-backups
 STAMP=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$DIR"
@@ -15,9 +14,14 @@ notify() { # title, priority, tags, body
   curl -fsS -m 10 -H "Title: $1" -H "Priority: $2" -H "Tags: $3" -d "$4" "https://ntfy.sh/$TOPIC" >/dev/null 2>&1 || true
 }
 fail() {
+  # stderr as well (cron mail / journal): ntfy is exactly what may be unreachable.
+  echo "Paperboy backup FAILED: $1 (at $STAMP)" >&2
   notify "Paperboy backup FAILED" high rotating_light "$1 (at $STAMP)"
   exit 1
 }
+# Read AFTER fail exists: under set -e a missing topic file used to kill the
+# script right here, before anything could report it.
+TOPIC=$(cat /home/hanschr/paperboy-ops/.ntfy-topic) || fail "cannot read /home/hanschr/paperboy-ops/.ntfy-topic"
 
 # 1. Database — custom format (pg_restore-able, compressed). The host-side
 #    redirect creates the file under our umask 077 (mode 600); make it explicit.

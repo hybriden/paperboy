@@ -57,7 +57,7 @@ describe("MCP agent journeys (real production sequences)", () => {
     admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     const adminId = users.find((u) => u.email === "admin@paperboy.test")!.id;
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "journey-suite", userId: adminId } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "journey-suite", userId: adminId, password: "Admin!Passw0rd" } });
     const token = minted.json().token as string;
     mcp = new McpClient({ DATABASE_URL: TEST_DB, MCP_TOKEN: token, MCP_HTTP_PORT: "" });
     await mcp.initialize();
@@ -561,6 +561,15 @@ describe("MCP agent journeys (real production sequences)", () => {
       const docId = (created.json as { documentId: string }).documentId;
       const forced = await mcp.call("set_field", { documentId: docId, locale: "en", field: "intro", value: NB_BODY, allowLanguageMismatch: true });
       expect(forced.isError, forced.text.slice(0, 200)).toBe(false);
+    });
+
+    it("a one-shot create with initial data is guarded the same way, and its error names an escape hatch create_content actually has", async () => {
+      const wrong = await mcp.call("create_content", { type: "ArticlePage", locale: "en", name: "one-shot norsk", data: { intro: NB_BODY } });
+      expect(wrong.isError).toBe(true);
+      expect(wrong.text).toContain("allowLanguageMismatch");
+      const forced = await mcp.call("create_content", { type: "ArticlePage", locale: "en", name: "one-shot norsk", data: { intro: NB_BODY }, allowLanguageMismatch: true });
+      expect(forced.isError, forced.text.slice(0, 200)).toBe(false);
+      expect((forced.json as { documentId: string }).documentId).toBeTruthy();
     });
   });
 

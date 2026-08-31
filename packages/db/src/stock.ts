@@ -37,19 +37,22 @@ interface StoredStockConfig {
  * if unset). A key that can't be decrypted (e.g. SESSION_SECRET rotated) is
  * treated as unset — same behavior as the AI key.
  */
-export async function getStoredStockConfig(db: Database): Promise<{ provider: StockProviderName; apiKey: string | null } | null> {
+export async function getStoredStockConfig(
+  db: Database,
+): Promise<{ provider: StockProviderName; apiKey: string | null; undecryptable: boolean } | null> {
   const rows = await db.select().from(siteSetting).where(eq(siteSetting.key, STOCK_KEY)).limit(1);
   const v = rows[0]?.value as StoredStockConfig | undefined;
   if (!v) return null;
   let apiKey: string | null = null;
+  let undecryptable = false;
   if (v.apiKey?.cipher) {
     try {
       apiKey = decryptSecret(v.apiKey.cipher, "stock.key");
     } catch {
-      apiKey = null;
+      undecryptable = true; // the status reports it rather than "not configured"
     }
   }
-  return { provider: v.provider, apiKey };
+  return { provider: v.provider, apiKey, undecryptable };
 }
 
 /**

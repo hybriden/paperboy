@@ -1,7 +1,8 @@
 /** Content-Security-Policy for the reference frontend: the frame-ancestors decision
  *  (who may embed the preview iframe, and WHEN) plus safe baseline hardening (S3-L1).
  *  A real script-src needs Next nonces; object-src/base-uri are safe drop-ins. Kept
- *  free of node:crypto so it's importable from the Edge-runtime middleware. */
+ *  free of node:crypto so proxy.ts (Next 16's request proxy — Node runtime here,
+ *  but a customer may deploy the same file at the edge) can import it. */
 export function buildContentSecurityPolicy(frameAncestors: string): string {
   return [`frame-ancestors ${frameAncestors}`, "object-src 'none'", "base-uri 'self'"].join("; ");
 }

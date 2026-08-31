@@ -35,24 +35,19 @@ export function EditView() {
   // Opening Edit with nothing selected defaults to the configured start page ("/")
   // on desktop, so the editor isn't empty. Mobile keeps its list-first flow.
   // Falls back to the Welcome screen when no start page is configured.
-  // DEFERRED one tick: a just-created page's navigation can still be committing
-  // when the site query resolves — redirecting synchronously stomped it ("create
-  // bounces back to Home"). The cleanup cancels the pending redirect as soon as
-  // a real navigation lands.
-  // Assigned in an effect rather than during render (a render-phase ref write
-  // is invisible to React); the read happens 50ms later, well after the commit.
-  const docIdRef = useRef(documentId);
+  // INITIAL entry only: once a document has been open in this mount, landing on
+  // bare /edit again (a create's navigation still committing, a trash) must not
+  // bounce the editor to the start page.
+  const initialEntry = useRef(true);
   useEffect(() => {
-    docIdRef.current = documentId;
-  }, [documentId]);
-  useEffect(() => {
-    if (documentId || isMobile) return;
+    if (documentId) {
+      initialEntry.current = false;
+      return;
+    }
     const startId = site.data?.startPageId;
-    if (!startId) return;
-    const t = setTimeout(() => {
-      if (!docIdRef.current) void navigate(`/edit/${startId}${locale !== "en" ? `?lang=${locale}` : ""}`, { replace: true });
-    }, 50);
-    return () => clearTimeout(t);
+    if (!initialEntry.current || isMobile || !startId) return;
+    initialEntry.current = false;
+    void navigate(`/edit/${startId}${locale !== "en" ? `?lang=${locale}` : ""}`, { replace: true });
   }, [documentId, isMobile, site.data?.startPageId, locale, navigate]);
 
   const setLocale = useCallback(
@@ -198,7 +193,7 @@ export function EditView() {
 function Welcome({ onClearCrumb }: { onClearCrumb: () => void }) {
   // Clear the breadcrumb in an effect, not during render — calling the ancestor's
   // setCrumb mid-render is a render-phase update to a different component (React 19
-  // warns + schedules an extra pass). Matches the other views' useEffect pattern (M11).
+  // warns + schedules an extra pass). Matches the other views' useEffect pattern.
   useEffect(() => {
     onClearCrumb();
   }, [onClearCrumb]);

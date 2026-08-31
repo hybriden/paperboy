@@ -1,14 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { pickTranslateSource } from "./translate-offer";
 
-/**
- * Regression for the one-way translate offer (2026-06-07): an article that
- * existed ONLY in nb showed NO "Translate from …" offer when opened in en —
- * the offer was hardcoded to fire only outside the default locale, with the
- * default locale as the only possible source. The contract is directionless:
- * empty current locale + any other locale with content → offer, preferring
- * the default locale as source.
- */
+/** Regression (2026-06-07): an nb-only article opened in en got no "Translate from …" offer — the contract is directionless. */
 describe("pickTranslateSource", () => {
   it("canonical direction: en→nb (default has content, viewing empty nb)", () => {
     expect(

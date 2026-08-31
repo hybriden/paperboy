@@ -7,7 +7,6 @@ interface ThemeCtx {
   choice: ThemeChoice;
   resolved: Resolved;
   setChoice: (c: ThemeChoice) => void;
-  toggle: () => void;
 }
 
 const Ctx = createContext<ThemeCtx | null>(null);
@@ -53,11 +52,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     setChoiceState(c);
   }, []);
 
-  const toggle = useCallback(() => {
-    setChoice(resolved === "dark" ? "light" : "dark");
-  }, [resolved, setChoice]);
-
-  return <Ctx.Provider value={{ choice, resolved, setChoice, toggle }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ choice, resolved, setChoice }}>{children}</Ctx.Provider>;
 }
 
 export function useTheme(): ThemeCtx {

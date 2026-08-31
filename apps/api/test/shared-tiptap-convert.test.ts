@@ -43,6 +43,24 @@ const doc = (...content: unknown[]) => ({ type: "doc", content });
 const para = (...content: unknown[]) => ({ type: "paragraph", content });
 const text = (t: string, marks?: Array<{ type: string; attrs?: Record<string, unknown> }>) => ({ type: "text", text: t, ...(marks ? { marks } : {}) });
 
+describe("Markdown → tiptap: intraword underscores are not emphasis (CommonMark)", () => {
+  type Inline = { type: string; text?: string; marks?: Array<{ type: string }> };
+  const inlineOf = (markdown: string): Inline[] =>
+    (coerceFieldValue(field("richtext"), markdown) as { content: Array<{ content: Inline[] }> }).content[0]!.content;
+
+  it("keeps snake_case_name as one text node with no italic mark", () => {
+    const nodes = inlineOf("use snake_case_name here");
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]).toEqual({ type: "text", text: "use snake_case_name here" });
+  });
+
+  it("still italicises _a phrase_ that stands on its own", () => {
+    const nodes = inlineOf("an _emphasised_ word");
+    expect(nodes.map((n) => n.text)).toEqual(["an ", "emphasised", " word"]);
+    expect(nodes[1]!.marks).toEqual([{ type: "italic" }]);
+  });
+});
+
 describe("tiptap → Markdown", () => {
   it("headings render with the right number of #, clamped to 1..6", () => {
     expect(md(doc({ type: "heading", attrs: { level: 1 }, content: [text("H1")] }))).toBe("# H1");
@@ -52,6 +70,11 @@ describe("tiptap → Markdown", () => {
     // out-of-range levels clamp to 1 and 6
     expect(md(doc({ type: "heading", attrs: { level: 0 }, content: [text("Low")] }))).toBe("# Low");
     expect(md(doc({ type: "heading", attrs: { level: 99 }, content: [text("High")] }))).toBe("###### High");
+  });
+
+  it("a non-numeric heading level falls back to 2 instead of an empty marker", () => {
+    // Number("x") is NaN, "#".repeat(NaN) is "" — the heading lost its marker.
+    expect(md(doc({ type: "heading", attrs: { level: "x" }, content: [text("Odd")] }))).toBe("## Odd");
   });
 
   it("bullet list renders with '- ' markers", () => {

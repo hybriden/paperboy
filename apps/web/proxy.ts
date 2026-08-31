@@ -39,4 +39,5 @@ export function proxy(req: NextRequest) {
   return res;
 }
 
-export const config = { matcher: "/:path*" };
+// Static assets are never framed as documents, so they need no per-request policy.
+export const config = { matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"] };

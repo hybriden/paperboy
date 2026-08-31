@@ -131,6 +131,23 @@ describe("update_content ergonomics: helpful errors + merge mode", () => {
     expect(got.data.mainArea[0].blockType).toBe("HeroBlock");
   });
 
+  it("a short-keyed object like {id:'abc'} on a text field is REJECTED (422 naming the field), not unwrapped", async () => {
+    // `id` is locale-shaped (2 letters) but not one of the instance's locales;
+    // the write path checks against the real locale list, so this must not be
+    // silently collapsed into the string "abc" and persisted with a 200.
+    const res = await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${pageId}?locale=en`,
+      headers: authHeaders(ed),
+      payload: { merge: true, data: { heading: { id: "abc" } } },
+    });
+    expect(res.statusCode, res.body).toBe(422);
+    expect(res.json().message).toContain("heading");
+    const got = await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${pageId}?locale=en`, headers: authHeaders(ed) });
+    expect(got.json().data.heading).not.toBe("abc");
+    expect(typeof got.json().data.heading).toBe("string");
+  });
+
   it("a raw URL in an image field is REJECTED with an error naming the field and the import path", async () => {
     // Harmonix 2026-06-12: an automation hotlinked a raw Unsplash URL into an
     // image field. It persisted with a success response and delivered no image

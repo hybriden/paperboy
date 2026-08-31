@@ -33,7 +33,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "CI token", userId: adminUserId },
+      payload: { name: "CI token", userId: adminUserId, password: "Admin!Passw0rd" },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as Record<string, unknown>;
@@ -50,7 +50,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "bad", userId: "doesnotexist000000000000" },
+      payload: { name: "bad", userId: "doesnotexist000000000000", password: "Admin!Passw0rd" },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -60,7 +60,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "Listable token", userId: adminUserId },
+      payload: { name: "Listable token", userId: adminUserId, password: "Admin!Passw0rd" },
     });
     const secret = created.json().token as string;
 
@@ -94,7 +94,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "Verifiable token", userId: adminUserId },
+      payload: { name: "Verifiable token", userId: adminUserId, password: "Admin!Passw0rd" },
     });
     const token = created.json().token as string;
     const userId = await verifyMcpToken(s.app.db, token);
@@ -106,7 +106,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "Revokable token", userId: adminUserId },
+      payload: { name: "Revokable token", userId: adminUserId, password: "Admin!Passw0rd" },
     });
     const token = created.json().token as string;
     expect(await verifyMcpToken(s.app.db, token)).toBe(adminUserId);
@@ -149,7 +149,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(editor),
-      payload: { name: "nope", userId: adminUserId },
+      payload: { name: "nope", userId: adminUserId, password: "Admin!Passw0rd" },
     });
     expect(create.statusCode).toBe(403);
 
@@ -166,7 +166,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: { cookie: admin.cookie, origin: ORIGIN },
-      payload: { name: "no csrf", userId: adminUserId },
+      payload: { name: "no csrf", userId: adminUserId, password: "Admin!Passw0rd" },
     });
     expect(create.statusCode).toBe(403);
 

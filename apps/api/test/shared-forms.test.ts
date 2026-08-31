@@ -1,5 +1,6 @@
 import {
   HONEYPOT_FIELD,
+  MAX_ANSWER_LENGTH,
   MIN_FILL_MS,
   checkSpamHeuristics,
   coerceSubmissionValues,
@@ -101,6 +102,47 @@ describe("formSpecFrom", () => {
       fields: [{ key: "k", blockType: "FormTextField", display: "automatic", data: { name: "x", label: "X" } }],
     });
     expect(spec.fields.map((f) => f.name)).toEqual(["x"]);
+  });
+
+  it("reads the delivered SHARED shape, and asks the resolver for a shallow entry", () => {
+    // Delivery serializes a shared field block as { shared:true, content } — the
+    // resolved item at populate ≥ 1, a shallow { documentId, type } at populate 0.
+    // A form whose consent box is a shared block delivered a spec without it, so
+    // the submit validator accepted a submission with no consent.
+    const spec = formSpecFrom(
+      {
+        title: "T",
+        fields: [
+          {
+            key: "a",
+            blockType: "FormConsentField",
+            display: "automatic",
+            shared: true,
+            content: { documentId: "c1", type: "FormConsentField", kind: "block", data: { name: "consent", label: "I agree" } },
+          },
+          { key: "b", blockType: "FormTextField", display: "automatic", shared: true, content: { documentId: "t1", type: "FormTextField" } },
+        ],
+      },
+      { sharedBlock: (id) => (id === "t1" ? { blockType: "FormTextField", data: { name: "note", label: "Note" } } : undefined) },
+    );
+    expect(spec.fields.map((f) => f.name)).toEqual(["consent", "note"]);
+    expect(spec.fields[0]).toMatchObject({ kind: "consent", required: true });
+  });
+
+  it("resolves a STORED shared reference ({ref, inline:null}) through the resolver", () => {
+    const spec = formSpecFrom(
+      { title: "T", fields: [{ key: "a", blockType: "FormConsentField", display: "automatic", ref: "c1", inline: null }] },
+      { sharedBlock: (id) => (id === "c1" ? { blockType: "FormConsentField", data: { name: "consent", label: "I agree" } } : undefined) },
+    );
+    expect(spec.fields.map((f) => f.name)).toEqual(["consent"]);
+  });
+
+  it("drops a shared reference the resolver cannot see (unpublished, trashed, another site)", () => {
+    const spec = formSpecFrom(
+      { title: "T", fields: [{ key: "a", blockType: "FormConsentField", display: "automatic", ref: "gone", inline: null }] },
+      { sharedBlock: () => undefined },
+    );
+    expect(spec.fields).toEqual([]);
   });
 
   it("defaults the submit label and exposes the spam contract", () => {
@@ -230,6 +272,114 @@ describe("submissionSchemaFor", () => {
     const broken = form([{ blockType: "FormTextField", inline: { name: "x", label: "X", pattern: "([unclosed" } }]);
     expect(submissionSchemaFor(broken).safeParse({ x: "anything" }).success).toBe(true);
   });
+
+  describe("date", () => {
+    const dates = form([
+      { blockType: "FormDateField", inline: { name: "when", label: "When", required: true } },
+      { blockType: "FormDateField", inline: { name: "until", label: "Until" } },
+    ]);
+    const parseDates = (values: Record<string, unknown>) =>
+      submissionSchemaFor(dates).safeParse(coerceSubmissionValues(dates, values));
+
+    it("accepts an ISO date (what <input type=date> posts) and a date-time", () => {
+      expect(parseDates({ when: "2026-05-31" }).success).toBe(true);
+      expect(parseDates({ when: "2026-05-31T09:00" }).success).toBe(true);
+    });
+
+    it("rejects a value that is clearly not a date", () => {
+      // Date.parse("1") is a valid instant in V8 (year 2001), so a lone digit
+      // used to be stored as an answer to "When?".
+      for (const bad of ["1", "next tuesday", "31/05/2026", "2026-13-45"]) {
+        expect(parseDates({ when: bad }).success, bad).toBe(false);
+      }
+    });
+
+    it("blank: rejected when required, unanswered when optional", () => {
+      expect(parseDates({ when: "" }).success).toBe(false);
+      const res = parseDates({ when: "2026-05-31", until: "" });
+      expect(res.success).toBe(true);
+      expect("until" in (res.data as Record<string, unknown>)).toBe(false);
+    });
+  });
+
+  describe("checkbox", () => {
+    const boxes = form([
+      { blockType: "FormCheckboxField", inline: { name: "must", label: "Must", required: true } },
+      { blockType: "FormCheckboxField", inline: { name: "may", label: "May" } },
+    ]);
+    const parseBoxes = (values: Record<string, unknown>) =>
+      submissionSchemaFor(boxes).safeParse(coerceSubmissionValues(boxes, values));
+
+    it("accepts a ticked box in boolean and browser spellings", () => {
+      expect(parseBoxes({ must: true }).success).toBe(true);
+      expect(parseBoxes({ must: "on" }).success).toBe(true);
+    });
+
+    it("rejects an unticked or absent REQUIRED box", () => {
+      expect(parseBoxes({ must: false }).success).toBe(false);
+      expect(parseBoxes({ must: "" }).success).toBe(false);
+      expect(parseBoxes({}).success).toBe(false);
+    });
+
+    it("accepts an unticked or absent OPTIONAL box", () => {
+      expect(parseBoxes({ must: true, may: false }).success).toBe(true);
+      expect(parseBoxes({ must: true, may: "" }).success).toBe(true);
+      expect(parseBoxes({ must: true }).success).toBe(true);
+    });
+
+    it("rejects a value that is neither ticked nor unticked", () => {
+      expect(parseBoxes({ must: true, may: "maybe" }).success).toBe(false);
+    });
+  });
+
+  describe("radio", () => {
+    const radios = form([
+      { blockType: "FormRadioField", inline: { name: "size", label: "Size", required: true, choices: "s|Small\nl|Large" } },
+      { blockType: "FormRadioField", inline: { name: "colour", label: "Colour", choices: "red\nblue" } },
+    ]);
+    const parseRadios = (values: Record<string, unknown>) =>
+      submissionSchemaFor(radios).safeParse(coerceSubmissionValues(radios, values));
+
+    it("accepts a declared option and rejects an undeclared one", () => {
+      expect(parseRadios({ size: "s" }).success).toBe(true);
+      expect(parseRadios({ size: "xl" }).success).toBe(false);
+      expect(parseRadios({ size: "l", colour: "blue" }).success).toBe(true);
+      expect(parseRadios({ size: "l", colour: "green" }).success).toBe(false);
+    });
+
+    it("blank: rejected when required, unanswered when optional", () => {
+      expect(parseRadios({ size: "" }).success).toBe(false);
+      const res = parseRadios({ size: "s", colour: "" });
+      expect(res.success).toBe(true);
+      expect("colour" in (res.data as Record<string, unknown>)).toBe(false);
+    });
+  });
+
+  describe("length boundaries", () => {
+    const lengths = form([
+      { blockType: "FormTextField", inline: { name: "capped", label: "Capped", maxLength: 10 } },
+      { blockType: "FormTextField", inline: { name: "floored", label: "Floored", minLength: 2 } },
+      { blockType: "FormTextareaField", inline: { name: "open", label: "Open" } },
+    ]);
+    const parseLengths = (values: Record<string, unknown>) =>
+      submissionSchemaFor(lengths).safeParse(coerceSubmissionValues(lengths, values));
+
+    it("maxLength is inclusive: exactly 10 passes, 11 fails", () => {
+      expect(parseLengths({ capped: "A".repeat(10) }).success).toBe(true);
+      expect(parseLengths({ capped: "A".repeat(11) }).success).toBe(false);
+    });
+
+    it("minLength is inclusive: 1 fails, 2 passes", () => {
+      expect(parseLengths({ floored: "A" }).success).toBe(false);
+      expect(parseLengths({ floored: "AB" }).success).toBe(true);
+    });
+
+    it("a field without maxLength is capped at MAX_ANSWER_LENGTH (5000)", () => {
+      expect(MAX_ANSWER_LENGTH).toBe(5000);
+      expect(parseLengths({ open: "A".repeat(5000) }).success).toBe(true);
+      expect(parseLengths({ open: "A".repeat(5001) }).success).toBe(false);
+    });
+  });
 });
 
 describe("coerceSubmissionValues", () => {
@@ -258,6 +408,28 @@ describe("coerceSubmissionValues", () => {
 
   it("keeps unknown keys so the strict schema can reject them", () => {
     expect(coerceSubmissionValues(spec, { surprise: 1 })).toHaveProperty("surprise");
+  });
+
+  it("reads every spelling of a ticked box, case-insensitively", () => {
+    // A checkbox posted as value="1" was stored as FALSE with a 202, and a
+    // required consent posted as "1" failed "Please confirm" although ticked.
+    for (const v of ["1", "true", "yes", "on", "TRUE", " on "]) {
+      expect(coerceSubmissionValues(spec, { ok: v }).ok, JSON.stringify(v)).toBe(true);
+    }
+  });
+
+  it("reads every spelling of an unticked box", () => {
+    for (const v of ["0", "false", "off", "", "no"]) {
+      expect(coerceSubmissionValues(spec, { ok: v }).ok, JSON.stringify(v)).toBe(false);
+    }
+  });
+
+  it("leaves an ambiguous checkbox value alone so the validator rejects it, keyed by field", () => {
+    const coerced = coerceSubmissionValues(spec, { ok: "maybe" });
+    expect(coerced.ok).toBe("maybe");
+    const res = submissionSchemaFor(spec).safeParse(coerced);
+    expect(res.success).toBe(false);
+    expect(submissionErrors(res.error!).ok).toMatch(/ticked or left unticked/);
   });
 });
 

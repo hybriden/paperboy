@@ -1,15 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { opeAction } from "./ope-target.js";
 
-/**
- * What an on-page click DOES.
- *
- * The rule that matters: on-page editing is a mode the editor chose from the
- * toolbar, so an incoming click must never change it. Clicking a content area —
- * which is what "clicking outside a property" resolves to, because the click
- * bubbles to the nearest tagged ancestor — used to drop the whole editor into
- * side-by-side, yanking the page out from under them (reported 2026-08-23).
- */
 describe("opeAction — on-page (edit) mode", () => {
   const edit = { mode: "edit" as const, hasRect: true };
 

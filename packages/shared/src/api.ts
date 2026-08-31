@@ -154,6 +154,14 @@ export const CreateContentRequest = z.object({
   name: z.string().min(1),
   // Escape hatch for a deliberate off-type sub-page under a list page.
   allowTypeMismatch: z.boolean().optional(),
+  /** Initial field values (field name → value), persisted through the same
+   *  coerce/validate chokepoint as an update — never silently dropped. */
+  data: z.record(z.string(), z.unknown()).optional(),
+  /** URL slug for a page; omitted → auto-derived from the name. */
+  slug: z.string().optional(),
+  /** Same escape hatch as on update: an agent may create text whose language
+   *  differs from the locale branch only when it says so. */
+  allowLanguageMismatch: z.boolean().optional(),
 });
 export type CreateContentRequest = z.infer<typeof CreateContentRequest>;
 

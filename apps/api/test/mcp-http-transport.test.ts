@@ -22,13 +22,16 @@ const URL_ = `http://127.0.0.1:${PORT}/mcp`;
 class HttpMcp {
   sessionId: string | null = null;
   private nextId = 1;
-  constructor(private bearer: string) {}
+  constructor(
+    private bearer: string,
+    private url = URL_,
+  ) {}
 
   /** Raw POST — returns the fetch Response (for status assertions). */
   async post(body: unknown, opts: { bearer?: string | null; session?: string | null } = {}): Promise<Response> {
     const bearer = opts.bearer === undefined ? this.bearer : opts.bearer;
     const session = opts.session === undefined ? this.sessionId : opts.session;
-    return fetch(URL_, {
+    return fetch(this.url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -74,10 +77,32 @@ class HttpMcp {
 // with æøå + «smart quotes» kept — the byte-integrity contract is the point.
 const LONG_BODY = `# HTTP transport roundtrip\n\n${"A paragraph holding æøå, «smart quotes» and code: `pnpm -r typecheck`.\n\n".repeat(60)}`;
 
+/** Boot the real apps/mcp server in HTTP mode as `token`'s user; resolves once it listens. */
+async function spawnHttpMcp(token: string, port: number): Promise<ChildProcess> {
+  const requireFromMcp = createRequire(join(MCP_DIR, "package.json"));
+  const tsxCli = requireFromMcp.resolve("tsx/cli");
+  let stderr = "";
+  const proc = spawn(process.execPath, [tsxCli, "src/server.ts"], {
+    cwd: MCP_DIR,
+    env: { ...process.env, DATABASE_URL: TEST_DB, MCP_TOKEN: token, MCP_HTTP_PORT: String(port) },
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  proc.stderr!.on("data", (c: Buffer) => {
+    stderr += c.toString();
+  });
+  // Wait for the listen line.
+  const deadline = Date.now() + 60_000;
+  while (!stderr.includes("ready on http") && Date.now() < deadline) {
+    if (proc.exitCode != null) throw new Error(`mcp exited early: ${stderr.slice(-1500)}`);
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  if (!stderr.includes("ready on http")) throw new Error(`mcp never came up: ${stderr.slice(-1500)}`);
+  return proc;
+}
+
 describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
   let s: Suite;
   let proc: ChildProcess;
-  let stderr = "";
   let envToken: string; // the MCP_TOKEN the server was booted with
   let adminId: string;
   let admin: Awaited<ReturnType<typeof login>>;
@@ -87,26 +112,9 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     adminId = users.find((u) => u.email === "admin@paperboy.test")!.id;
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-boot", userId: adminId } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-boot", userId: adminId, password: "Admin!Passw0rd" } });
     envToken = minted.json().token as string;
-
-    const requireFromMcp = createRequire(join(MCP_DIR, "package.json"));
-    const tsxCli = requireFromMcp.resolve("tsx/cli");
-    proc = spawn(process.execPath, [tsxCli, "src/server.ts"], {
-      cwd: MCP_DIR,
-      env: { ...process.env, DATABASE_URL: TEST_DB, MCP_TOKEN: envToken, MCP_HTTP_PORT: String(PORT) },
-      stdio: ["ignore", "ignore", "pipe"],
-    });
-    proc.stderr!.on("data", (c: Buffer) => {
-      stderr += c.toString();
-    });
-    // Wait for the listen line.
-    const deadline = Date.now() + 60_000;
-    while (!stderr.includes("ready on http") && Date.now() < deadline) {
-      if (proc.exitCode != null) throw new Error(`mcp exited early: ${stderr.slice(-1500)}`);
-      await new Promise((r) => setTimeout(r, 150));
-    }
-    if (!stderr.includes("ready on http")) throw new Error(`mcp never came up: ${stderr.slice(-1500)}`);
+    proc = await spawnHttpMcp(envToken, PORT);
   }, 90_000);
 
   afterAll(async () => {
@@ -177,7 +185,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
   });
 
   it("a separately minted admin token for the SAME boot user is accepted (token rotation works)", async () => {
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-rotated", userId: adminId } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-rotated", userId: adminId, password: "Admin!Passw0rd" } });
     const rotated = minted.json().token as string;
     const c = new HttpMcp(rotated);
     const init = await c.initialize();
@@ -188,7 +196,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
   it("a minted token for a DIFFERENT user is refused — one process, one identity", async () => {
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     const editorId = users.find((u) => u.email === "editor@paperboy.test")!.id;
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-foreign", userId: editorId } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-foreign", userId: editorId, password: "Admin!Passw0rd" } });
     const foreign = minted.json().token as string;
     const c = new HttpMcp(foreign);
     const res = await c.post({ jsonrpc: "2.0", id: 1, method: "ping" });
@@ -196,7 +204,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
   });
 
   it("a revoked minted token is refused on the next request", async () => {
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-revoke-me", userId: adminId } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-revoke-me", userId: adminId, password: "Admin!Passw0rd" } });
     const token = minted.json().token as string;
     const c = new HttpMcp(token);
     expect((await c.initialize()).status).toBe(200);
@@ -208,4 +216,38 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     const res = await c.post({ jsonrpc: "2.0", id: 99, method: "tools/list" });
     expect(res.status).toBe(401);
   });
+
+  it("role changes apply LIVE: a demoted user's token loses write access without a restart", async () => {
+    // One process = one boot identity (see the test above), so prove the
+    // per-request AccessContext re-resolution on a SECOND server booted as a
+    // fresh Editor, then demote that Editor to Viewer while it runs.
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/users",
+      headers: authHeaders(admin),
+      payload: { email: "live-editor@paperboy.test", name: "Live Editor", password: "LiveEditor!Pass1", roles: ["Editor"] },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const editorId = created.json().id as string;
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-live-editor", userId: editorId, password: "Admin!Passw0rd" } });
+    const token = minted.json().token as string;
+
+    const port = PORT + 1;
+    const editorProc = await spawnHttpMcp(token, port);
+    try {
+      const c = new HttpMcp(token, `http://127.0.0.1:${port}/mcp`);
+      expect((await c.initialize()).status).toBe(200);
+      const before = await c.call("create_content", { type: "ArticlePage", locale: "en", name: "Written while Editor" });
+      expect(before.isError, before.text.slice(0, 300)).toBe(false);
+
+      const demoted = await s.app.inject({ method: "PUT", url: `/api/v1/manage/users/${editorId}`, headers: authHeaders(admin), payload: { roles: ["Viewer"] } });
+      expect(demoted.statusCode, demoted.body).toBe(200);
+
+      const after = await c.call("create_content", { type: "ArticlePage", locale: "en", name: "Written after demotion" });
+      expect(after.isError, "the demotion must apply on the next request, no restart").toBe(true);
+      expect(after.text).toMatch(/content\.create|permission/i);
+    } finally {
+      editorProc.kill();
+    }
+  }, 120_000);
 });

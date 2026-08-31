@@ -1004,16 +1004,25 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
   "GET /health": {
     "requestBodyRequired": [],
     "requiredParams": [],
-    "response200Props": [],
-    "summary": null,
-    "tags": [],
+    "response200Props": [
+      "service",
+      "status",
+    ],
+    "summary": "Liveness",
+    "tags": [
+      "health",
+    ],
   },
   "GET /health/ready": {
     "requestBodyRequired": [],
     "requiredParams": [],
-    "response200Props": [],
-    "summary": null,
-    "tags": [],
+    "response200Props": [
+      "status",
+    ],
+    "summary": "Readiness (database reachable)",
+    "tags": [
+      "health",
+    ],
   },
   "PATCH /api/v1/manage/locales/{code}": {
     "requestBodyRequired": [],
@@ -1626,6 +1635,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
   "POST /api/v1/manage/mcp-tokens": {
     "requestBodyRequired": [
       "name",
+      "password",
       "userId",
     ],
     "requiredParams": [],

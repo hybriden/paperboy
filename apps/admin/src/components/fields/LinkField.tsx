@@ -73,6 +73,11 @@ export function LinkField({
   const v = asLink(value);
   const [mode, setMode] = useState<Mode>(() => detectMode(v));
   const [pickerOpen, setPickerOpen] = useState(false);
+  const pageButtonRef = useRef<HTMLButtonElement>(null);
+  const closePicker = () => {
+    setPickerOpen(false);
+    pageButtonRef.current?.focus();
+  };
 
   const pages = useQuery({ queryKey: ["pages"], queryFn: ({ signal }) => api.pages(signal) });
 
@@ -151,6 +156,7 @@ export function LinkField({
               otherwise the selection would be announced as the name and the
               field it belongs to would go unsaid. */}
           <button
+            ref={pageButtonRef}
             type="button"
             id={id}
             disabled={disabled}
@@ -172,9 +178,9 @@ export function LinkField({
               pages={pages.data ?? []}
               onPick={(documentId) => {
                 set({ documentId, href: "" });
-                setPickerOpen(false);
+                closePicker();
               }}
-              onClose={() => setPickerOpen(false)}
+              onClose={closePicker}
             />
           )}
           <label className="field-label mt-2" htmlFor={`${id}-anchor`}>

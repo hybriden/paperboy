@@ -1,4 +1,4 @@
-import { createDb, runAuditRetention, runWebhookDeliveryRetention } from "@paperboy/db";
+import { createDb, runAuditRetention, runSessionRetention, runWebhookDeliveryRetention } from "@paperboy/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TEST_DB, type Suite, setupApi } from "./helpers.js";
 
@@ -33,6 +33,24 @@ describe("log retention (P5)", () => {
     const { deleted } = await runAuditRetention(s.app.db, 90, now); // 90d < 212d, so the old row goes
     expect(deleted).toBe(1);
     expect(await cnt()).toBe(1); // the recent one survives
+  });
+
+  // An expired session row was deleted only when its cookie was presented again;
+  // sessions that simply stopped being used (closed browsers, revoked laptops)
+  // accumulated forever. The hourly sweep must clear anything past expires_at.
+  it("session retention deletes expired rows and keeps live ones", async () => {
+    const [{ id: userId }] = (await raw.sql`select id from users limit 1`) as Array<{ id: string }>;
+    await raw.sql`insert into session (id, user_id, csrf_token, expires_at, idle_expires_at) values
+      ('test-expired', ${userId}, 'c', ${old.toISOString()}::timestamptz, ${old.toISOString()}::timestamptz),
+      ('test-live', ${userId}, 'c', ${new Date(now.getTime() + 86_400_000).toISOString()}::timestamptz, ${new Date(now.getTime() + 3_600_000).toISOString()}::timestamptz)`;
+    try {
+      const { deleted } = await runSessionRetention(s.app.db, now);
+      expect(deleted).toBeGreaterThanOrEqual(1);
+      const left = (await raw.sql`select id from session where id like 'test-%' order by id`) as Array<{ id: string }>;
+      expect(left.map((r) => r.id)).toEqual(["test-live"]);
+    } finally {
+      await raw.sql`delete from session where id like 'test-%'`;
+    }
   });
 
   it("webhook-delivery retention prunes past the window and keeps recent", async () => {

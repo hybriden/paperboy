@@ -9,27 +9,21 @@ import { Surface, type SurfaceTone } from "./surface.js";
  */
 export function Callout({
   tone = "primary",
-  icon,
   title,
-  action,
   className = "",
   children,
 }: {
   tone?: SurfaceTone;
-  icon?: ReactNode;
   title?: ReactNode;
-  action?: ReactNode;
   className?: string;
   children?: ReactNode;
 }) {
   return (
     <Surface tone={tone} padding="sm" radius="md" className={`flex items-start gap-2.5 text-sm ${className}`}>
-      {icon && <span className="mt-0.5 shrink-0">{icon}</span>}
       <div className="min-w-0 flex-1">
         {title && <div className="font-semibold">{title}</div>}
         {children}
       </div>
-      {action && <div className="shrink-0">{action}</div>}
     </Surface>
   );
 }

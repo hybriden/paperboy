@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { TEST_DB, type Suite, login, setupApi } from "./helpers.js";
+import { ORIGIN, TEST_DB, type Suite, login, setupApi } from "./helpers.js";
 
 describe("Secure login (Argon2id, generic errors, lockout, sessions)", () => {
   let s: Suite;
@@ -106,6 +106,81 @@ describe("Secure login (Argon2id, generic errors, lockout, sessions)", () => {
     // The session is still valid afterwards.
     const me = await s.app.inject({ method: "GET", url: "/api/v1/auth/me", headers: { cookie: ctx.cookie } });
     expect(me.statusCode).toBe(200);
+  });
+
+  // The Origin/Referer check is INDEPENDENT of the token: every other CSRF test
+  // omits both the token and the Origin, which never exercised the fail-closed
+  // branch on its own. A valid token with a foreign Origin must still be refused.
+  it("a valid CSRF token with a foreign Origin is refused (bad_origin) and the session survives", async () => {
+    const ctx = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const res = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/auth/logout",
+      headers: { cookie: ctx.cookie, "x-csrf-token": ctx.csrf, origin: "http://evil.example" },
+    });
+    expect(res.statusCode).toBe(403);
+    expect(res.json().error).toBe("bad_origin");
+    const me = await s.app.inject({ method: "GET", url: "/api/v1/auth/me", headers: { cookie: ctx.cookie } });
+    expect(me.statusCode, "the refused request must not have logged the user out").toBe(200);
+  });
+
+  it("the configured CORS origin is accepted as Origin", async () => {
+    const ctx = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const res = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/auth/logout",
+      headers: { cookie: ctx.cookie, "x-csrf-token": ctx.csrf, origin: ORIGIN },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+  });
+
+  // The clause is fail-CLOSED: a request with neither header must be refused even
+  // with a valid cookie + token. Without this case an `if (!origin) return true`
+  // shortcut would pass every other Origin test in this file.
+  it("a valid CSRF token with NO Origin and NO Referer is refused (bad_origin)", async () => {
+    const ctx = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const res = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/auth/logout",
+      headers: { cookie: ctx.cookie, "x-csrf-token": ctx.csrf },
+    });
+    expect(res.statusCode, res.body).toBe(403);
+    expect(res.json().error).toBe("bad_origin");
+  });
+
+  it("no Origin but a matching Referer is accepted (older browsers on same-origin form posts)", async () => {
+    const ctx = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const res = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/auth/logout",
+      headers: { cookie: ctx.cookie, "x-csrf-token": ctx.csrf, referer: `${ORIGIN}/admin/settings` },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+  });
+
+  it("a failed password login leaves an auth.login_failed audit row with the IP only (no email)", async () => {
+    const { createDb } = await import("@paperboy/db");
+    const { sql } = createDb(TEST_DB);
+    try {
+      const count = async () => Number(((await sql`select count(*)::int as c from audit_log where action = 'auth.login_failed'`) as Array<{ c: number }>)[0]!.c);
+      const before = await count();
+      const res = await s.app.inject({
+        method: "POST",
+        url: "/api/v1/auth/login",
+        payload: { email: "editor@paperboy.test", password: "definitely-wrong" },
+      });
+      expect(res.statusCode).toBe(401);
+      expect(await count()).toBe(before + 1);
+      const rows = (await sql`select actor_user_id, ip, detail::text as detail from audit_log where action = 'auth.login_failed' order by id desc limit 1`) as Array<{ actor_user_id: string | null; ip: string | null; detail: string | null }>;
+      expect(rows[0]!.ip).toBeTruthy();
+      // Credential stuffing must be visible in Settings → Audit, but the log must
+      // not become a list of tried emails (or, worse, passwords).
+      expect(rows[0]!.actor_user_id).toBeNull();
+      expect(JSON.stringify(rows[0])).not.toContain("editor@paperboy.test");
+      expect(JSON.stringify(rows[0])).not.toContain("definitely-wrong");
+    } finally {
+      await sql.end();
+    }
   });
 
   it("stores passwords as Argon2id hashes (never plaintext)", async () => {

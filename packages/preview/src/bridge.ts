@@ -48,8 +48,18 @@ export interface PreviewBridgeOptions {
 
 const EDITABLE = `[${ATTR.field}],[${ATTR.blockIndex}]`;
 
+/** One live bridge per document. A second init returns the first one's teardown
+ *  instead of stacking styles, chrome and listeners (every click would post
+ *  paperboy:edit twice). The style node is the liveness check: once it is gone
+ *  (teardown, or a test resetting <head>) the document is free again. */
+const active = new WeakMap<Document, { style: HTMLStyleElement; teardown: () => void }>();
+
 export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => void {
-  const doc = options.doc ?? document;
+  // No DOM (SSR / prerender evaluating a module-scope call): nothing to bind to.
+  const doc = options.doc ?? (typeof document === "undefined" ? null : document);
+  if (!doc) return () => {};
+  const prior = active.get(doc);
+  if (prior?.style.isConnected) return prior.teardown;
   const win = doc.defaultView ?? (globalThis as unknown as Window);
   const target = options.target ?? win.parent;
   const accent = options.accent ?? "#0077BC";
@@ -104,9 +114,6 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     badgeEl.textContent = "Preview — click any element to edit it";
     doc.body.appendChild(badgeEl);
   }
-
-  const cssEscape = (s: string): string =>
-    typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : s.replace(/["\\]/g, "\\$&");
 
   let tracked: HTMLElement | null = null; // last-clicked element (rect updates follow it)
 
@@ -327,7 +334,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       // unresolvable scope falls back to the page-wide lookup (old behavior).
       const scope: ParentNode =
         (msg.blockIndex != null ? doc.querySelector(`[${ATTR.blockIndex}="${msg.blockIndex}"]`) : null) ?? doc;
-      const el = scope.querySelector<HTMLElement>(`[${ATTR.field}="${cssEscape(msg.field)}"]`);
+      const el = scope.querySelector<HTMLElement>(`[${ATTR.field}="${CSS.escape(msg.field)}"]`);
       if (!el) return;
       if (typeof msg.html === "string") el.innerHTML = msg.html;
       else if (typeof msg.text === "string") el.textContent = msg.text;
@@ -339,7 +346,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       // form always answers with SOME visible anchor on the page.
       const blockEl = msg.blockIndex != null ? doc.querySelector<HTMLElement>(`[${ATTR.blockIndex}="${msg.blockIndex}"]`) : null;
       const el =
-        (blockEl ?? doc).querySelector<HTMLElement>(`[${ATTR.field}="${cssEscape(msg.field)}"]`) ??
+        (blockEl ?? doc).querySelector<HTMLElement>(`[${ATTR.field}="${CSS.escape(msg.field)}"]`) ??
         (msg.blockIndex != null ? blockEl : null);
       if (!el) return;
       el.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -389,7 +396,8 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
 
   target?.postMessage({ type: "paperboy:preview-ready", version: PROTOCOL_VERSION }, postOrigin);
 
-  return function teardown() {
+  const teardown = () => {
+    active.delete(doc);
     doc.removeEventListener("click", onClick, true);
     doc.removeEventListener("pointerover", onPointerOver);
     doc.documentElement.removeEventListener("pointerleave", onPointerLeaveDoc);
@@ -409,4 +417,6 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     badgeEl?.remove();
     doc.body.classList.remove("pb-editing");
   };
+  active.set(doc, { style, teardown });
+  return teardown;
 }

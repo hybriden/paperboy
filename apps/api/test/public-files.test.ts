@@ -131,6 +131,25 @@ describe("public files (robots/sitemap/llms/security) + /delivery/pages", () => 
     await s.app.inject({ method: "POST", url: "/api/v1/manage/site/public-files", headers: authHeaders(admin), payload: { llmsOverride: null } });
   });
 
+  it("a PREVIEW key never advertises: robots disallows everything, sitemap and llms list nothing", async () => {
+    // A staging frontend runs on a preview key and frames unreleased drafts; the
+    // SEO contract makes preview noindex everywhere, so its generated files must
+    // not hand crawlers (or LLM scrapers) a list of unpublished URLs.
+    const robots = await s.app.inject({ method: "GET", url: "/api/v1/delivery/robots.txt", headers: prev });
+    expect(robots.statusCode).toBe(200);
+    expect(robots.body).toContain("Disallow: /");
+    expect(robots.body).not.toContain("Allow: /");
+    expect(robots.body).not.toContain("Sitemap:");
+
+    const sitemap = await s.app.inject({ method: "GET", url: "/api/v1/delivery/sitemap.xml", headers: prev });
+    expect(sitemap.statusCode).toBe(200);
+    expect(sitemap.body).not.toContain("<loc>");
+
+    const llms = await s.app.inject({ method: "GET", url: "/api/v1/delivery/llms.txt", headers: prev });
+    expect(llms.statusCode).toBe(200);
+    expect(llms.body).not.toContain("](https://");
+  });
+
   it("security.txt: 404 self-teaching until a contact is set; then valid RFC 9116 with rolling Expires", async () => {
     const before = await s.app.inject({ method: "GET", url: "/api/v1/delivery/security.txt", headers: pub });
     expect(before.statusCode).toBe(404);

@@ -290,6 +290,12 @@ export function mediaSrcset(url: string, widths: number[] = [320, 640, 1024, 160
 /** Upper bound on the opt-in ETag cache so a long-lived consumer can't leak memory. */
 const ETAG_CACHE_MAX = 500;
 
+/** The consumer's `fetchInit.headers` (any HeadersInit — a Headers instance or
+ *  an entries array spread to `{}`) with the client's own headers on top. */
+function mergeHeaders(extra: RequestInit["headers"], own: Record<string, string>): Record<string, string> {
+  return { ...Object.fromEntries(new Headers(extra)), ...own };
+}
+
 export function createClient(options: PaperboyClientOptions) {
   const base = options.baseUrl.replace(/\/+$/, "");
   const doFetch = options.fetch ?? globalThis.fetch;
@@ -314,7 +320,7 @@ export function createClient(options: PaperboyClientOptions) {
     const cached = etags?.get(url);
     if (cached) headers["if-none-match"] = cached.etag;
 
-    const res = await doFetch(url, { ...options.fetchInit, headers: { ...(options.fetchInit?.headers as Record<string, string>), ...headers } });
+    const res = await doFetch(url, { ...options.fetchInit, headers: mergeHeaders(options.fetchInit?.headers, headers) });
 
     if (res.status === 304 && cached) return { status: 200, body: cached.body as T };
     if (res.status === 404) return { status: 404, body: null };
@@ -433,7 +439,7 @@ export function createClient(options: PaperboyClientOptions) {
       const res = await doFetch(url, {
         ...options.fetchInit,
         method: "POST",
-        headers: { ...(options.fetchInit?.headers as Record<string, string>), ...headers },
+        headers: mergeHeaders(options.fetchInit?.headers, headers),
         body: JSON.stringify({
           values: input.values,
           elapsedMs: input.elapsedMs,
@@ -442,19 +448,12 @@ export function createClient(options: PaperboyClientOptions) {
           locale: input.locale,
         }),
       });
-      if (res.status === 422) {
-        const body = (await res.json()) as { fields?: Record<string, string> };
-        return { ok: false, fields: body.fields ?? { _form: "The form could not be submitted." } };
-      }
       if (!res.ok) {
-        let message = `Form submission failed (${res.status})`;
-        try {
-          const body = (await res.json()) as { message?: string };
-          if (body.message) message = body.message;
-        } catch {
-          /* non-JSON error body */
-        }
-        throw new PaperboyError(res.status, message, null);
+        // One parse for both branches: a 422 is the per-field result ONLY when
+        // it carries JSON — a proxy's HTML 422 is an error like any other.
+        const body = (await res.json().catch(() => null)) as { fields?: Record<string, string>; message?: string } | null;
+        if (res.status === 422 && body) return { ok: false, fields: body.fields ?? { _form: "The form could not be submitted." } };
+        throw new PaperboyError(res.status, body?.message || `Form submission failed (${res.status})`, body);
       }
       const body = (await res.json()) as { submissionId: string; confirmation: FormConfirmation };
       return { ok: true, submissionId: body.submissionId, confirmation: body.confirmation };
@@ -493,9 +492,11 @@ function rtScalar(v: unknown): string {
   return "";
 }
 
+/** Safe schemes, same-document anchors and site-relative paths. A SINGLE leading
+ *  slash: `//host/…` is protocol-relative, i.e. an off-site URL in disguise. */
 function rtSafeHref(href: string): string {
   const h = (href || "").trim();
-  return /^(https?:|mailto:|tel:|\/|#)/i.test(h) ? h : "#";
+  return /^(https?:|mailto:|tel:|\/(?!\/)|#)/i.test(h) ? h : "#";
 }
 
 function rtApplyMarks(text: string, marks?: { type: string; attrs?: Record<string, unknown> }[]): string {
@@ -550,7 +551,7 @@ function rtRenderNode(node: RtNode): string {
       return `<pre><code>${inner}</code></pre>`;
     case "image": {
       const src = rtScalar(node.attrs?.src).trim();
-      if (!/^(https?:|\/)/i.test(src)) return "";
+      if (!/^(https?:|\/(?!\/))/i.test(src)) return "";
       const alt = rtEsc(rtScalar(node.attrs?.alt));
       const width = Number(node.attrs?.width);
       const style = Number.isFinite(width) && width >= 10 && width <= 100 ? ` style="width:${Math.round(width)}%"` : "";

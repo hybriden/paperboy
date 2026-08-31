@@ -3,6 +3,7 @@ import Link from "@tiptap/extension-link";
 import { type Editor, EditorContent, useEditor, useEditorState } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { useEffect, useState } from "react";
+import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { type AiTask, api } from "../../lib/api.js";
 import { type PbCaret, takeCaret } from "../../lib/caret.js";
 import { AI_OFF_HINT, useAiEnabled } from "../../lib/useAiStatus.js";
@@ -165,7 +166,7 @@ function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolea
       } else {
         editor.chain().focus().insertContentAt({ from, to }, r.result).run();
       }
-      if (r.provider === "fallback") toast.success(`${label} (basic mode)`, "Set an AI key in Settings for full AI.");
+      if (r.provider === "fallback") toast.success(`${label} (basic mode)`, AI_OFF_HINT);
     } catch (e) {
       toast.error(`${label} failed`, (e as Error).message);
     } finally {
@@ -208,6 +209,7 @@ export default function RichTextEditor({
   disabled?: boolean;
 }) {
   const [picking, setPicking] = useState(false); // insert-image media picker
+  const toast = useToast();
   const editor = useEditor({
     extensions: [
       // StarterKit now bundles Link; disable it so our custom-configured Link
@@ -227,8 +229,8 @@ export default function RichTextEditor({
       },
       // Drop a media asset (dragged from the Assets pane) → insert an image
       // node at the drop position; an OS image FILE uploads through the normal
-      // asset pipeline first, then inserts the same node. Same
-      // application/x-paperboy channel as image fields and content areas.
+      // asset pipeline first, then inserts the same node. Same DRAG_MIME
+      // channel as image fields and content areas.
       handleDrop: (view, event) => {
         const insertAt = (pos: number, src: string, alt: string, documentId: string | null) => {
           const imageNode = view.state.schema.nodes.image;
@@ -247,7 +249,7 @@ export default function RichTextEditor({
         // references it (no upload). The browser's native <img> drag also tags
         // the image along as a file, and taking that file path would RE-UPLOAD
         // a duplicate — so the payload always wins over the file.
-        const raw = event.dataTransfer?.getData("application/x-paperboy");
+        const raw = event.dataTransfer?.getData(DRAG_MIME);
         if (raw) {
           try {
             const p = JSON.parse(raw) as { kind?: string; documentId?: string; url?: string; alt?: string };
@@ -274,7 +276,7 @@ export default function RichTextEditor({
           // doc may have changed while the upload was in flight).
           void api.uploadAsset(file).then(
             (asset) => insertAt(Math.min(pos, view.state.doc.content.size), asset.url, asset.alt || file.name, asset.documentId),
-            () => undefined, // upload errors surface via the assets pane next refresh
+            (err: unknown) => toast.error("Upload failed", (err as Error).message),
           );
           return true;
         }
@@ -284,7 +286,7 @@ export default function RichTextEditor({
       // the browser refuses the drop.
       handleDOMEvents: {
         dragover: (_view, event) => {
-          if (event.dataTransfer?.types.includes("application/x-paperboy") || event.dataTransfer?.types.includes("Files")) event.preventDefault();
+          if (event.dataTransfer?.types.includes(DRAG_MIME) || event.dataTransfer?.types.includes("Files")) event.preventDefault();
           return false;
         },
       },

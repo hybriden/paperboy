@@ -18,7 +18,9 @@ import { CSS } from "@dnd-kit/utilities";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { duplicateFieldKeys, fieldKeyFromLabel, isFormFieldType } from "@paperboy/shared";
+import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { allowedBlockTypesFor } from "../../lib/area-add.js";
+import { newBlock } from "../../lib/block-drop.js";
 import { blockSummary, type BlockPath } from "../../lib/block-path.js";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "../ui/menu.js";
 import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
@@ -26,17 +28,10 @@ import { api } from "../../lib/api.js";
 import { fieldWidthClass } from "../../lib/field-width.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
-import { ImageField } from "../MediaLibrary.js";
+import { FieldControl } from "./FieldControl.js";
 import { FormQuestionEditor } from "./FormQuestionEditor.js";
-import { LinkField } from "./LinkField.js";
 import { useToast } from "../ui/toast.js";
-import { MarkdownEditor } from "./MarkdownEditor.js";
-import { ReferenceField } from "./ReferenceField.js";
 import { SharedBlockPicker } from "./SharedBlockPicker.js";
-import { RichText } from "./RichText.js";
-
-let keyCounter = 0;
-const newKey = () => `b_${Date.now().toString(36)}_${keyCounter++}`;
 
 interface Props {
   field: FieldDef;
@@ -82,6 +77,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   // The shared-block picker positions itself from a rect; the menu item that
   // opens it has unmounted by then, so the anchor is the row it sat in.
   const addRef = useRef<HTMLSpanElement>(null);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
   const blocks = value ?? [];
   // Form fields only: two sharing a key means the second never reaches the
   // visitor (formSpecFrom keeps the first). Warn on the field itself — a form
@@ -114,14 +110,14 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   const hasSharedRefs = blocks.some((b) => b.ref !== null && !isTeaserRef(b, types));
 
   function addInline(blockType: string) {
-    const key = newKey();
-    onChange([...blocks, { key, blockType, display: "automatic", inline: {}, ref: null }]);
+    const block = newBlock({ blockType, inline: {} });
+    onChange([...blocks, block]);
     // Open the new block: the editor's next act is always filling it in, and
     // a freshly added row that stays collapsed reads as "nothing happened".
-    if (onOpenPath && openPath) onOpenPath([...openPath.slice(0, depth), { field: field.name, key }]);
+    if (onOpenPath && openPath) onOpenPath([...openPath.slice(0, depth), { field: field.name, key: block.key }]);
   }
   function addShared(documentId: string, blockType: string) {
-    onChange([...blocks, { key: newKey(), blockType, display: "automatic", inline: null, ref: documentId }]);
+    onChange([...blocks, newBlock({ blockType, ref: documentId })]);
   }
 
   // ----- image drops: a dropped image becomes a BLOCK carrying that image -----
@@ -130,6 +126,13 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   const imageCandidates = allowed.filter((t) => t.kind === "block" && t.fields.some((f) => f.type === "image"));
   const [imagePicker, setImagePicker] = useState<{ x: number; y: number; documentId: string; index: number } | null>(null);
   const [pickerOpen, setPickerOpen] = useState<{ x: number; y: number } | null>(null);
+  // Closing a picker hands focus back to the area's one persistent control: the
+  // menu item that opened it has unmounted (the row's collapse button does the same).
+  function closePickers() {
+    setPickerOpen(null);
+    setImagePicker(null);
+    addButtonRef.current?.focus();
+  }
 
   /** Insertion index from the drop's Y position over the block rows. */
   function dropIndex(e: React.DragEvent): number {
@@ -147,7 +150,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
     const imageField = type?.fields.find((f) => f.type === "image");
     if (!imageField) return;
     const next = [...blocks];
-    next.splice(index, 0, { key: newKey(), blockType, display: "automatic", inline: { [imageField.name]: documentId }, ref: null });
+    next.splice(index, 0, newBlock({ blockType, inline: { [imageField.name]: documentId } }));
     onChange(next);
   }
 
@@ -191,7 +194,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
     // page references it (no upload). A library/stock thumbnail's native <img>
     // drag also tags the image along as a file — taking the file path would
     // RE-UPLOAD a duplicate, so the payload always wins.
-    const raw = e.dataTransfer.getData("application/x-paperboy");
+    const raw = e.dataTransfer.getData(DRAG_MIME);
     if (raw) {
       e.preventDefault();
       e.stopPropagation();
@@ -271,7 +274,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
         className={`rounded-md border-2 border-dashed p-2 transition-colors ${dropOver ? "border-accent bg-accent/10" : "border-line bg-canvas/60"}`}
         onDragOver={(e) => {
           if (disabled) return;
-          if (e.dataTransfer.types.includes("application/x-paperboy") || e.dataTransfer.types.includes("Files")) {
+          if (e.dataTransfer.types.includes(DRAG_MIME) || e.dataTransfer.types.includes("Files")) {
             e.preventDefault();
             setDropOver(true);
           }
@@ -343,21 +346,13 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
           </p>
         )}
 
-        {/* ADDING happens after the list, not before it.
-         *
-         * This used to be a row of one accent-tinted chip per allowed type —
-         * seventeen of them on a normal page area, 419x122px, repeated inside
-         * every nested area, above the content itself. It was the loudest thing
-         * in the properties pane and it pushed the actual content down.
-         *
-         * One button, and the type list is one click away in a menu. Hidden
-         * entirely when read-only: offering a control that can only produce a
-         * 403 is worse than not showing it. */}
+        {/* Adding comes AFTER the content, as one button; hidden when read-only,
+            where it could only produce a 403. */}
         {!disabled && (
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-1 pt-2">
             <Menu>
               <MenuTrigger asChild>
-                <button type="button" className="btn-subtle px-2 py-1 text-xs">
+                <button ref={addButtonRef} type="button" className="btn-subtle px-2 py-1 text-xs">
                   <Icon.Plus width={14} height={14} />
                   {isQuestionArea ? "Add question" : "Add block"}
                 </button>
@@ -402,9 +397,9 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
                 pages={pages.data ?? []}
                 onPick={(documentId, blockType) => {
                   addShared(documentId, blockType);
-                  setPickerOpen(null);
+                  closePickers();
                 }}
-                onClose={() => setPickerOpen(null)}
+                onClose={closePickers}
               />
             )}
           </div>
@@ -417,9 +412,9 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
           candidates={imageCandidates}
           onPick={(blockType) => {
             insertImageBlock(blockType, imagePicker.documentId, imagePicker.index);
-            setImagePicker(null);
+            closePickers();
           }}
-          onClose={() => setImagePicker(null)}
+          onClose={closePickers}
         />
       )}
     </DndContext>
@@ -754,9 +749,7 @@ function BlockField({ field, fieldId, value, onChange, onCommit, disabled = fals
   fieldId: string;
   value: unknown;
   onChange: (v: unknown) => void;
-  /** Fired when the visitor leaves a text field, for edits that should land
-   *  once rather than per keystroke (deriving a form field's key from it). */
-  onCommit?: (v: unknown) => void;
+  onCommit?: (v: string) => void;
   disabled?: boolean;
   types: ContentTypeDef[];
   sharedBlocks: { documentId: string; name: string; type: string }[];
@@ -795,39 +788,5 @@ function BlockField({ field, fieldId, value, onChange, onCommit, disabled = fals
       </div>
     );
   }
-  return (
-    <div>
-      <label className="field-label" htmlFor={id}>{field.displayName}</label>
-      {field.type === "text" && (
-        <input disabled={disabled} id={id} aria-label={field.displayName} className="field-input" value={(value as string) ?? ""}
-          onChange={(e) => onChange(e.target.value)}
-          onBlur={onCommit ? (e) => onCommit(e.target.value) : undefined} />
-      )}
-      {field.type === "markdown" && (
-        <MarkdownEditor id={id} value={(value as string) ?? ""} onChange={(v) => onChange(v)} minHeight={160} disabled={disabled} />
-      )}
-      {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} disabled={disabled} />}
-      {field.type === "boolean" && (
-        <input disabled={disabled} id={id} aria-label={field.displayName} type="checkbox" checked={Boolean(value)} onChange={(e) => onChange(e.target.checked)} />
-      )}
-      {field.type === "number" && (
-        <input disabled={disabled} id={id} aria-label={field.displayName} type="number" className="field-input" value={(value as number) ?? ""} onChange={(e) => onChange(Number(e.target.value))} />
-      )}
-      {field.type === "datetime" && (
-        <input disabled={disabled} id={id} aria-label={field.displayName} type="datetime-local" className="field-input" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)} />
-      )}
-      {field.type === "select" && (
-        <select disabled={disabled} id={id} className="field-input" value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value || null)}>
-          <option value="">— choose —</option>
-          {field.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      )}
-      {/* A block's link field gets the SAME editor as a page's — it used to be a
-          bare href input here, so an inline block could not set link text, a
-          target, or (now) a page target at all. */}
-      {field.type === "link" && <LinkField id={id} value={value} onChange={onChange} disabled={disabled} />}
-      {field.type === "reference" && <ReferenceField id={id} allowedTypes={field.allowedTypes} value={value} onChange={onChange} disabled={disabled} />}
-      {field.type === "image" && <ImageField id={id} value={value} onChange={onChange} disabled={disabled} />}
-    </div>
-  );
+  return <FieldControl field={field} id={id} value={value} onChange={onChange} onCommit={onCommit} disabled={disabled} types={types} />;
 }

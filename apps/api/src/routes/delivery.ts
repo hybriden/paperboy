@@ -87,12 +87,10 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   // Attach perspective + site before any handler runs.
   //
   // preHandler, NOT onRequest: @fastify/rate-limit installs its check as a
-  // per-route hook, and Fastify runs instance-level onRequest hooks first — so
-  // resolving here on onRequest short-circuited the limiter for every REJECTED
-  // request. Measured: 700 requests with invalid keys → 700x 401, zero 429s, i.e.
-  // unmetered delivery-key guessing plus unmetered load on the credential lookup
-  // (itself a DB query). preHandler still precedes every handler, so nothing is
-  // read before the key is validated.
+  // per-route hook and Fastify runs instance-level onRequest hooks first, so an
+  // onRequest resolver would answer every REJECTED key before the limiter ran —
+  // unmetered key guessing against a DB lookup. preHandler still precedes every
+  // handler, so nothing is read before the key is validated.
   app.addHook("preHandler", async (req) => {
     const { perspective, siteId } = await resolveCredential(app, req);
     req.perspective = perspective;
@@ -122,7 +120,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
         }).catchall(z.string()),
         response: {
           200: z.object({ items: z.array(DeliveryContent), cv: z.number(), total: z.number() }),
-          400: z.object({ error: z.string() }),
+          400: z.object({ error: z.string(), message: z.string().optional() }),
         },
       },
     },
@@ -327,6 +325,12 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       "not_configured",
       `${file} needs absolute URLs — set the site's Canonical base URL (the public origin, e.g. https://www.example.com) in Settings → Site first.`,
     );
+  // A preview key frames unreleased drafts (a staging frontend), and the SEO
+  // contract makes preview noindex everywhere — so its generated files never
+  // advertise: robots disallows all, sitemap/llms carry no pages.
+  const PREVIEW_ROBOTS = "User-agent: *\nDisallow: /\n";
+  const advertisablePages = (req: FastifyRequest) =>
+    req.perspective === "preview" ? Promise.resolve({ pages: [], cv: 0 }) : deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
 
   app.get(
     "/robots.txt",
@@ -334,6 +338,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     async (req, reply) => {
       const { cfg, base } = await siteFiles(req);
       textFileHeaders(reply, req.perspective!, "text/plain; charset=utf-8");
+      if (req.perspective === "preview") return PREVIEW_ROBOTS;
       return buildRobotsTxt({ canonicalBaseUrl: base, robotsExtra: cfg.robotsExtra });
     },
   );
@@ -343,7 +348,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     async (req, reply) => {
       const { base } = await siteFiles(req);
       if (!base) throw needsBase("sitemap.xml");
-      const { pages, cv } = await deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
+      const { pages, cv } = await advertisablePages(req);
       if (notModified(req, req.perspective!, cv)) return reply.code(304).send();
       textFileHeaders(reply, req.perspective!, "application/xml; charset=utf-8", cv);
       return buildSitemapXml(pages, base);
@@ -358,7 +363,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       // A full editor override needs no base URL (it embeds its own links).
       if (cfg.llmsOverride?.trim()) return buildLlmsTxt({ siteName: "", canonicalBaseUrl: "", defaultLocale: "", pages: [], override: cfg.llmsOverride });
       if (!base) throw needsBase("llms.txt");
-      const { pages, cv } = await deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
+      const { pages, cv } = await advertisablePages(req);
       if (notModified(req, req.perspective!, cv)) return reply.code(304).send();
       reply.header("ETag", `W/"cv-${cv}"`);
       return buildLlmsTxt({

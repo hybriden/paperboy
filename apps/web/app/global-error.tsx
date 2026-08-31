@@ -1,5 +1,7 @@
 "use client";
 
+import { DEFAULT_LOCALE } from "./lib/locale";
+
 /**
  * Last-resort boundary for errors thrown in the root layout itself, where
  * app/error.tsx cannot render (it lives inside that layout). Must therefore ship
@@ -7,7 +9,7 @@
  */
 export default function GlobalError({ reset }: { error: Error & { digest?: string }; reset: () => void }) {
   return (
-    <html lang="en">
+    <html lang={DEFAULT_LOCALE}>
       <body>
         <div style={{ textAlign: "center", padding: "80px 24px", fontFamily: "system-ui, sans-serif" }}>
           <h1>Something went wrong</h1>

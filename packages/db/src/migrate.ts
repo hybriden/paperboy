@@ -15,6 +15,9 @@ export async function migrate(connectionString: string): Promise<string[]> {
   const sql = postgres(connectionString, { max: 1 });
   const applied: string[] = [];
   try {
+    // Two replicas booting together must not both run the same file; the lock is
+    // session-level and released with the connection at the end of this run.
+    await sql`SELECT pg_advisory_lock(hashtext('paperboy_migrate'))`;
     await sql`CREATE TABLE IF NOT EXISTS _migrations (
       name TEXT PRIMARY KEY,
       applied_at TIMESTAMPTZ NOT NULL DEFAULT now()

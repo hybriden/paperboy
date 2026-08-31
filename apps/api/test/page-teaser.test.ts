@@ -100,6 +100,17 @@ describe("pages in content areas → teasers", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().data.mainArea).toHaveLength(0);
+
+    // At populate=0 (the default) the entry is delivered SHALLOW — and the
+    // shallow branch skipped the perspective check, so the unpublished page's
+    // documentId and type still leaked into the published area.
+    const shallow = await s.app.inject({
+      method: "GET",
+      url: `/api/v1/delivery/content/${hostId}?locale=en&populate=0`,
+      headers: pub,
+    });
+    expect(shallow.statusCode).toBe(200);
+    expect(shallow.json().data.mainArea).toHaveLength(0);
   });
 
   it("nested: a page in an INLINE block's own content area delivers as a teaser (TeaserListBlock)", async () => {

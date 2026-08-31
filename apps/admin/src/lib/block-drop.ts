@@ -21,6 +21,20 @@ export type DropResult =
   | { ok: true; block: BlockInstance }
   | { ok: false; reason: "not-area" | "bad-payload" | "not-allowed" | "unsupported-kind" };
 
+let keyCounter = 0;
+/** A key unique within this session — the identity a block row keeps while it is reordered. */
+export const newBlockKey = () => `b_${Date.now().toString(36)}_${keyCounter++}`;
+
+/** A fresh block instance: page-local (`inline` data) or a reference to a shared block / page (`ref`). */
+export function newBlock(
+  spec: { blockType: string; inline: Record<string, unknown> } | { blockType: string; ref: string },
+  key = newBlockKey(),
+): BlockInstance {
+  return "ref" in spec
+    ? { key, blockType: spec.blockType, display: "automatic", inline: null, ref: spec.ref }
+    : { key, blockType: spec.blockType, display: "automatic", inline: spec.inline, ref: null };
+}
+
 export function blockInstanceFromDrop(payload: DropPayload, field: FieldDef, key: string, nestedOnly?: ReadonlySet<string>): DropResult {
   if (field.type !== "contentArea") return { ok: false, reason: "not-area" };
   if (!payload?.documentId || !payload?.blockType) return { ok: false, reason: "bad-payload" };
@@ -37,8 +51,5 @@ export function blockInstanceFromDrop(payload: DropPayload, field: FieldDef, key
     return { ok: false, reason: "unsupported-kind" };
   }
 
-  return {
-    ok: true,
-    block: { key, blockType: payload.blockType, display: "automatic", inline: null, ref: payload.documentId },
-  };
+  return { ok: true, block: newBlock({ blockType: payload.blockType, ref: payload.documentId }, key) };
 }

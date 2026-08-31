@@ -1,5 +1,6 @@
+import { createDb } from "@paperboy/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PREVIEW_KEY, PUBLIC_KEY, type Suite, authHeaders, login, setupApi } from "./helpers.js";
+import { PREVIEW_KEY, PUBLIC_KEY, type Suite, TEST_DB, authHeaders, login, setupApi } from "./helpers.js";
 
 /**
  * The ETag must change when anything the representation EMBEDS changes.
@@ -25,6 +26,7 @@ describe("delivery ETag reflects the whole resolved graph", () => {
   let s: Suite;
   let admin: Awaited<ReturnType<typeof login>>;
   const pub = { authorization: `Bearer ${PUBLIC_KEY}` };
+  const raw = createDb(TEST_DB);
 
   beforeAll(async () => {
     s = await setupApi();
@@ -32,6 +34,7 @@ describe("delivery ETag reflects the whole resolved graph", () => {
   });
   afterAll(async () => {
     await s.app.close();
+    await raw.sql.end();
   });
 
   const get = (url: string, headers: Record<string, string> = {}) =>
@@ -96,6 +99,42 @@ describe("delivery ETag reflects the whole resolved graph", () => {
     await publish(settingsId);
 
     expect(await homeEtag(), "og.siteName comes from SiteSettings, so it is part of this payload").not.toBe(before);
+  });
+
+  it("a document that is NOT part of the representation (another site's) does not move the ETag", async () => {
+    // `variantRow` bumped maxCv before `resolveContent` found the item to be
+    // cross-site (or trashed) and dropped it — so a document the page never
+    // embeds still invalidated it on every republish.
+    const site = await s.app.inject({ method: "POST", url: "/api/v1/manage/sites", headers: authHeaders(admin), payload: { slug: "brand-etag", name: "Brand ETag", defaultLocale: "en" } });
+    expect(site.statusCode, site.body).toBe(200);
+    const otherSite = { ...authHeaders(admin), "x-paperboy-site": site.json().id as string };
+
+    const block = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(admin), payload: { type: "CardBlock", locale: "en", name: "Card that moves site" } });
+    const blockId = block.json().documentId as string;
+    await save(blockId, { title: "Movable card", body: null });
+    await publish(blockId);
+
+    const page = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(admin), payload: { type: "LandingPage", locale: "en", name: "Page with a moving card" } });
+    const pageId = page.json().documentId as string;
+    await save(pageId, { heading: "Moving", mainArea: [{ key: "c", blockType: "CardBlock", display: "automatic", ref: blockId, inline: null }] });
+    await publish(pageId);
+
+    // Moving the block to another site is what an editor can no longer do by
+    // reference (write-time validation), so it is done underneath: the page now
+    // holds a cross-site ref, which delivery drops.
+    await raw.sql`UPDATE content_item SET site_id = ${site.json().id as string} WHERE document_id = ${blockId}`;
+    const pageUrl = `/api/v1/delivery/content/${pageId}?locale=en&populate=2`;
+    const before = await get(pageUrl);
+    expect(before.statusCode, before.body).toBe(200);
+    expect(before.body).not.toContain("Movable card");
+
+    const moved = await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${blockId}?locale=en`, headers: otherSite, payload: { data: { title: "Movable card, republished", body: null } } });
+    expect(moved.statusCode, moved.body).toBe(200);
+    const republished = await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${blockId}/publish?locale=en`, headers: otherSite });
+    expect(republished.statusCode, republished.body).toBe(200);
+
+    const after = await get(pageUrl);
+    expect(after.headers.etag, "the block is not in this representation, so its republish must not move the ETag").toBe(before.headers.etag);
   });
 
   it("an unchanged page still returns 304 (the ETag is not simply always-new)", async () => {

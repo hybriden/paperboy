@@ -1,7 +1,7 @@
-import { loadPublishedForm, submissionsToCsv } from "@paperboy/db";
+import { createDb, loadPublishedForm, submissionsToCsv } from "@paperboy/db";
 import { MIN_FILL_MS } from "@paperboy/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PREVIEW_KEY, PUBLIC_KEY, type Suite, authHeaders, login, setupApi } from "./helpers.js";
+import { PREVIEW_KEY, PUBLIC_KEY, type Suite, TEST_DB, authHeaders, login, setupApi } from "./helpers.js";
 
 /**
  * The public form-submission endpoint — Paperboy's ONLY anonymous write path.
@@ -23,6 +23,7 @@ import { PREVIEW_KEY, PUBLIC_KEY, type Suite, authHeaders, login, setupApi } fro
 let s: Suite;
 let admin: { cookie: string; csrf: string };
 let formId: string;
+const raw = createDb(TEST_DB);
 
 const FORM_FIELDS = [
   {
@@ -140,6 +141,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await s.app.close();
+  await raw.sql.end();
 });
 
 describe("the form definition reaches the frontend as a schema", () => {
@@ -291,6 +293,17 @@ describe("spam heuristics", () => {
     expect(res.statusCode).toBe(202);
     expect((res.json() as { ok: boolean }).ok).toBe(true);
     expect(await countSubmissions()).toBe(before); // but nothing was stored
+
+    // Including the id: a constant "sub_discarded" was a bot-readable tell. Real
+    // ids are sub_<nanoid(18)>, and no two drops may share one.
+    const again = await submit(
+      good({ fullName: "Bot", email: "bot@example.com", consent: true }, { honeypot: "http://spam.example" }),
+    );
+    const id1 = (res.json() as { submissionId: string }).submissionId;
+    const id2 = (again.json() as { submissionId: string }).submissionId;
+    expect(id1).toMatch(/^sub_[A-Za-z0-9_-]{18}$/);
+    expect(id2).toMatch(/^sub_[A-Za-z0-9_-]{18}$/);
+    expect(id1).not.toBe(id2);
   });
 
   it("drops an implausibly fast submission", async () => {
@@ -364,6 +377,30 @@ describe("the trust boundary", () => {
     const draftId = (created.json() as { documentId: string }).documentId;
     const res = await submit(good({}), { id: draftId });
     expect(res.statusCode).toBe(404);
+  });
+
+  it("404s a form whose publish window has closed (expire_at in the past)", async () => {
+    // Delivery stops serving an expired row the instant its window closes; the
+    // submit path read `is_current_published` alone and kept accepting.
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: authHeaders(admin),
+      payload: { type: "Form", locale: "en", name: "Expired form" },
+    });
+    const expiredId = (created.json() as { documentId: string }).documentId;
+    await s.app.inject({
+      method: "PUT",
+      url: `/api/v1/manage/content/${expiredId}?locale=en`,
+      headers: authHeaders(admin),
+      payload: { data: { title: "Expired", submitLabel: "Send", confirmation: "message", fields: [FORM_FIELDS[0]] } },
+    });
+    const published = await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${expiredId}/publish?locale=en`, headers: authHeaders(admin) });
+    expect(published.statusCode, published.body).toBe(200);
+    expect((await submit(good({ fullName: "Still open" }), { id: expiredId })).statusCode).toBe(202);
+
+    await raw.sql`UPDATE content_version SET expire_at = now() - interval '1 day' WHERE document_id = ${expiredId} AND is_current_published`;
+    expect((await submit(good({ fullName: "Too late" }), { id: expiredId })).statusCode).toBe(404);
   });
 
   it("never exposes submissions through a delivery read", async () => {
@@ -512,6 +549,12 @@ describe("management access", () => {
 
   it("erases every submission containing an address (data-subject erasure)", async () => {
     await submit(good({ fullName: "Erase Me", email: "erase@example.com", consent: true }));
+    // "contain" means contain: the address given in passing, inside another
+    // answer, is the same person's data. An exact-match erase left this row.
+    const mention = await submit(
+      good({ fullName: "Mentioned", email: "other@example.com", message: "reach me at ERASE@example.com please", consent: true }),
+    );
+    expect(mention.statusCode, mention.body).toBe(202);
     const res = await s.app.inject({
       method: "POST",
       url: "/api/v1/manage/forms/submissions/erase",
@@ -519,13 +562,14 @@ describe("management access", () => {
       payload: { email: "ERASE@example.com" }, // case-insensitive
     });
     expect(res.statusCode).toBe(200);
-    expect((res.json() as { deleted: number }).deleted).toBeGreaterThan(0);
+    expect((res.json() as { deleted: number }).deleted).toBeGreaterThanOrEqual(2);
     const after = await s.app.inject({
       method: "GET",
       url: `/api/v1/manage/forms/submissions?formId=${formId}&limit=200`,
       headers: { cookie: admin.cookie },
     });
     expect(after.body).not.toContain("erase@example.com");
+    expect(after.body).not.toContain("reach me at");
   });
 
   it("lists the site's forms with counts", async () => {
@@ -700,5 +744,59 @@ describe("blank optional answers", () => {
   it("still refuses an unknown key that happens to be blank", async () => {
     const res = await submit(good({ ...browserShaped, surpriseKey: "" }));
     expect(res.statusCode).toBe(422);
+  });
+});
+
+/**
+ * A static frontend on its own origin can only POST if its PREFLIGHT succeeds,
+ * and a browser preflight carries no Authorization header — so the OPTIONS
+ * route must answer from the form's own site (the delivery key pins the site on
+ * the POST, not before). @fastify/cors answers every OPTIONS with the ADMIN
+ * origin in onRequest, so the route-level CORS below has to opt out of it.
+ */
+describe("CORS for a frontend on the site's own origin", () => {
+  const SITE_ORIGIN = "https://site.example";
+  const preflight = (origin: string, id = formId) =>
+    s.app.inject({
+      method: "OPTIONS",
+      url: `/api/v1/delivery/forms/${id}/submissions`,
+      headers: { origin, "access-control-request-method": "POST", "access-control-request-headers": "content-type, idempotency-key" },
+    });
+
+  beforeAll(async () => {
+    const set = await s.app.inject({ method: "POST", url: "/api/v1/manage/site/preview-url", headers: authHeaders(admin), payload: { url: `${SITE_ORIGIN}/` } });
+    expect(set.statusCode, set.body).toBe(200);
+  });
+
+  it("a preflight from the site's origin is answered by the route: 204, that origin, idempotency-key allowed", async () => {
+    const res = await preflight(SITE_ORIGIN);
+    expect(res.statusCode, res.body).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBe(SITE_ORIGIN);
+    expect(String(res.headers["access-control-allow-headers"]).toLowerCase()).toContain("idempotency-key");
+    expect(String(res.headers["access-control-allow-methods"])).toContain("POST");
+  });
+
+  it("a preflight from an unknown origin grants nothing (no ACAO at all — not the admin origin either)", async () => {
+    const res = await preflight("https://evil.example");
+    expect(res.statusCode).toBe(204);
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("a preflight for an unknown form grants nothing", async () => {
+    const res = await preflight(SITE_ORIGIN, "no-such-form");
+    expect(res.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("the POST echoes the site origin, never the admin origin", async () => {
+    const res = await submit(good({ fullName: "Cors Test", email: "c@example.com", consent: true }), { headers: { origin: SITE_ORIGIN, "idempotency-key": "cors-post-1" } });
+    expect(res.statusCode, res.body).toBe(202);
+    expect(res.headers["access-control-allow-origin"]).toBe(SITE_ORIGIN);
+    const foreign = await submit(good({ fullName: "Cors Test", email: "c@example.com", consent: true }), { headers: { origin: "https://evil.example", "idempotency-key": "cors-post-2" } });
+    expect(foreign.headers["access-control-allow-origin"]).toBeUndefined();
+  });
+
+  it("array answers count toward the total-size guard (413), not only strings", async () => {
+    const res = await submit(good({ fullName: "Big", email: "b@example.com", consent: true, topic: Array.from({ length: 300 }, () => "x".repeat(400)) }));
+    expect(res.statusCode, res.body).toBe(413);
   });
 });

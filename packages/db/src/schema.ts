@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   bigint,
   bigserial,
@@ -110,6 +111,9 @@ export const contentItem = pgTable(
     sectionIdx: index("content_item_section_idx").on(t.sectionId),
     siteIdx: index("content_item_site_idx").on(t.siteId),
     folderIdx: index("content_item_folder_idx").on(t.folderId),
+    // Live rows only (migration 0027): the tree and every broad scan filter on these.
+    siteParentLiveIdx: index("content_item_site_parent_live_idx").on(t.siteId, t.parentId).where(sql`deleted_at IS NULL`),
+    siteKindLiveIdx: index("content_item_site_kind_live_idx").on(t.siteId, t.kind).where(sql`deleted_at IS NULL`),
   }),
 );
 
@@ -248,14 +252,20 @@ export const userScope = pgTable(
   }),
 );
 
-export const session = pgTable("session", {
-  id: text("id").primaryKey(), // sha-256 hash of the opaque cookie token
-  userId: text("user_id").notNull(),
-  csrfToken: text("csrf_token").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  idleExpiresAt: timestamp("idle_expires_at", { withTimezone: true }).notNull(),
-});
+export const session = pgTable(
+  "session",
+  {
+    id: text("id").primaryKey(), // sha-256 hash of the opaque cookie token
+    userId: text("user_id").notNull(),
+    csrfToken: text("csrf_token").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    idleExpiresAt: timestamp("idle_expires_at", { withTimezone: true }).notNull(),
+  },
+  (t) => ({
+    userIdx: index("session_user_idx").on(t.userId), // migration 0027
+  }),
+);
 
 export const deliveryKey = pgTable("delivery_key", {
   id: serial("id").primaryKey(),
@@ -280,16 +290,25 @@ export const mcpToken = pgTable("mcp_token", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
 
-export const auditLog = pgTable("audit_log", {
-  id: serial("id").primaryKey(),
-  ts: timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
-  actorUserId: text("actor_user_id"),
-  action: text("action").notNull(),
-  documentId: text("document_id"),
-  locale: text("locale"),
-  ip: text("ip"),
-  detail: jsonb("detail"),
-});
+export const auditLog = pgTable(
+  "audit_log",
+  {
+    id: serial("id").primaryKey(),
+    ts: timestamp("ts", { withTimezone: true }).notNull().defaultNow(),
+    actorUserId: text("actor_user_id"),
+    action: text("action").notNull(),
+    documentId: text("document_id"),
+    locale: text("locale"),
+    ip: text("ip"),
+    detail: jsonb("detail"),
+  },
+  (t) => ({
+    // Migration 0027: the Settings → Audit filters and the retention sweep.
+    documentIdx: index("audit_log_document_idx").on(t.documentId),
+    actorIdx: index("audit_log_actor_idx").on(t.actorUserId),
+    tsIdx: index("audit_log_ts_idx").on(t.ts),
+  }),
+);
 
 /** Outbound webhook subscriptions — HMAC-signed POST on publish/unpublish. */
 export const webhook = pgTable("webhook", {

@@ -14,7 +14,7 @@ import {
 } from "@paperboy/shared";
 import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
-import { api, ApiError, type AiTask, type VersionDetail } from "../lib/api.js";
+import { api, ApiError, type AiTask } from "../lib/api.js";
 import { fieldWidthClass } from "../lib/field-width.js";
 import { blockAtPath, type BlockPath } from "../lib/block-path.js";
 import { filterFields } from "../lib/field-filter.js";
@@ -23,10 +23,11 @@ import { postCaret } from "../lib/caret.js";
 import { applyRichTextStrings, collectRichTextStrings } from "../lib/richtext-strings.js";
 import { pickTranslateSource } from "../lib/translate-offer.js";
 import { reviewBadge } from "../lib/review-badge.js";
+import { diffFields, docToText, wordDiff } from "../lib/version-diff.js";
 import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
 import { allowedBlockTypesFor } from "../lib/area-add.js";
-import { blockInstanceFromDrop, type DropPayload } from "../lib/block-drop.js";
-import { isPreviewOrigin } from "../lib/preview-origin.js";
+import { blockInstanceFromDrop, type DropPayload, newBlock, newBlockKey } from "../lib/block-drop.js";
+import { isFromPreviewFrame, previewOrigin } from "../lib/preview-origin.js";
 import { parsePreviewMessage } from "@paperboycms/preview/protocol";
 import { useConfirm } from "./ui/confirm.js";
 import { ResizeHandle } from "./ui/resize.js";
@@ -35,13 +36,10 @@ import { TypeIcon } from "../lib/typeIcons.js";
 import { BuildFromBriefDialog } from "./BuildFromBrief.js";
 import { FormSubmissions } from "./FormSubmissions.js";
 import { ContentArea } from "./fields/ContentArea.js";
+import { FieldControl } from "./fields/FieldControl.js";
 import { SharedBlockPicker, type PickerBlock } from "./fields/SharedBlockPicker.js";
-import { MarkdownEditor } from "./fields/MarkdownEditor.js";
-import { LinkField } from "./fields/LinkField.js";
-import { ReferenceField } from "./fields/ReferenceField.js";
-import { RichText } from "./fields/RichText.js";
-import { ImageField, StockQueryContext } from "./MediaLibrary.js";
-import { PREVIEW_USEFUL_MAX, PreviewPane, blockPreviewPath, previewOrigin, publicSiteUrl, type PbRect, type PreviewMode } from "./PreviewPane.js";
+import { StockQueryContext } from "./MediaLibrary.js";
+import { PREVIEW_USEFUL_MAX, PreviewPane, blockPreviewPath, publicSiteUrl, type PbRect, type PreviewMode } from "./PreviewPane.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from "./ui/menu.js";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover.js";
@@ -60,9 +58,6 @@ function asText(v: unknown): string {
   return "";
 }
 
-// Unique keys for blocks dropped onto the preview (matches fields/ContentArea).
-let blockKeyCounter = 0;
-const newBlockKey = () => `b_${Date.now().toString(36)}_${blockKeyCounter++}`;
 /** The Episerver-style editor views: form only / side-by-side / on-page edit. */
 type EditorView = "props" | "split" | "onpage";
 
@@ -162,6 +157,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Site config (preview base URL + start page) for the "View on site" shortcut.
   // Same query key as PreviewPane, so the request is shared, not duplicated.
   const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
+  // The preview iframe (mounted by PreviewPane). Inbound bridge messages are
+  // authenticated against ITS window, not just the preview origin — that
+  // origin is the public site, which any page there can post from.
+  const previewFrameRef = useRef<HTMLIFrameElement>(null);
 
   // The agent-review gate (Settings → MCP). The "Needs review" badge is the
   // visible side of this gate, so it only shows when review is actually required.
@@ -388,9 +387,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // A variant is "empty" when it has no saved version (scaffold, versionNumber
   // 0) OR a version with no field values yet (e.g. a page just created in the
   // default locale carries name+slug but data {}). Offer to seed THIS locale
-  // from any OTHER locale that has real content — preferring the default — in
-  // either direction (2026-06-07: an nb-only article opened in en got no offer
-  // because the old logic was one-way AND only checked versionNumber 0).
+  // from any OTHER locale that has real content, preferring the default.
   const defaultLocale = useMemo(() => locales.find((l) => l.isDefault)?.code ?? "en", [locales]);
   const isEmptyVariant = (d?: ContentDetail) =>
     !d || d.versionNumber === 0 || Object.keys(d.data ?? {}).length === 0;
@@ -523,7 +520,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       qc.setQueryData(["content", documentId, locale], updated);
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["blocks"] });
-      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // publish changes WIP/scheduled/review counts (S3-L4)
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // publish changes WIP/scheduled/review counts
       setFieldErrors({});
       toast.success("Published", `“${updated.name}” is live in ${locale.toUpperCase()}.`);
     },
@@ -541,7 +538,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       qc.setQueryData(["content", documentId, locale], updated);
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["blocks"] });
-      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // unpublish changes WIP/published counts (S3-L4)
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // unpublish changes WIP/published counts
       toast.success("Unpublished", `Removed from the public delivery API.`);
     },
     onError: (e) => toast.error("Couldn’t unpublish", (e as Error).message),
@@ -586,7 +583,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       setForm((prev) => (prev ? { ...prev, ...meta } : prev));
       formRef.current = formRef.current ? { ...formRef.current, ...meta } : formRef.current;
       qc.setQueryData(["content", documentId, locale], updated);
-      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // approval clears needs-review → dashboard review count (S3-L4)
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // approval clears needs-review → dashboard review count
       toast.success("Draft approved", "The agent-written draft is marked as reviewed.");
     },
     onError: (e) => toast.error("Couldn’t approve", (e as Error).message),
@@ -636,7 +633,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     mutationFn: (v: { task: AiTask; field: string }) => api.aiAssist(v.task, pageText()).then((r) => ({ ...r, field: v.field })),
     onSuccess: (r) => {
       setField(r.field, r.result);
-      if (r.provider === "fallback") toast.success("Draft suggestion added", "Basic mode — add an AI key in Settings → AI for real suggestions.");
+      if (r.provider === "fallback") toast.success("Draft suggestion added", AI_OFF_HINT);
       else toast.success("Suggestion applied");
     },
     onError: (e) => toast.error("Writing assistant failed", (e as Error).message),
@@ -716,7 +713,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       toast.success(
         res.usedFallback ? "Draft seeded from source" : "Translated draft created",
         res.usedFallback
-          ? "The writing assistant is offline — text was copied for manual translation. Review and publish."
+          ? `${AI_OFF_HINT} Text was copied for manual translation.`
           : "Review the AI translation, then publish.",
       );
     },
@@ -738,8 +735,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       // is a content-write primitive running under the editor's own session — CSRF
       // can't see it, and frame-ancestors doesn't apply because any page can
       // window.open() the admin and postMessage into the handle it gets back.
-      // Fails closed: unknown preview origin → accept nothing.
-      if (!isPreviewOrigin(e.origin, previewOrigin(site.data))) return;
+      // Fails closed: unknown preview origin or no mounted frame → accept
+      // nothing. The origin alone is the customer's PUBLIC site, so the sender
+      // must also be the preview iframe's own window.
+      if (!isFromPreviewFrame(e, previewOrigin(site.data), previewFrameRef.current?.contentWindow)) return;
       const msg = parsePreviewMessage(e.data);
       if (!msg) return; // unknown/garbage (and forward-compat: future message types)
       // Block preview (standalone route or a borrowed page): the bridge
@@ -839,10 +838,6 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         return null;
       })();
 
-      // One rule, unit-tested in lib/ope-target: on-page is a mode the editor
-      // chose, so a click never changes it. (It used to fall through to
-      // setView("split") — clicking page background, which bubbles to the
-      // content area, teleported the whole editor into side-by-side.)
       const action = opeAction({
         mode: opeModeRef.current,
         hasRect: Boolean(d.rect),
@@ -1074,14 +1069,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const nothingToPublish = form.status === "published" && !form.hasUnpublishedChanges;
   // Live preview is a desktop-only split pane; never open it on phones.
   const previewOpen = effectiveView !== "props" && !mobile;
-  // Hoisted on purpose: the preview message handler (registered while the
-  // editor may still be loading) closes over this — a `const` here would stay
-  // un-initialized in that closure (TDZ) and crash the first drop.
   // Filter results, recomputed per render — cheap (a type has tens of fields,
   // not thousands) and always in step with the query.
   const filtered = filterFields(type?.fields ?? [], fieldQuery);
   const matchCount = filtered.reduce((n, g) => n + g.fields.length, 0);
 
+  // A declaration, not a const: the preview message handler above closes over it before this line runs.
   function setField(name: string, value: unknown) {
     patch((prev) => ({ ...prev, data: { ...prev.data, [name]: value } }));
     // Editing a field clears its inline error.
@@ -1616,6 +1609,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       {(() => {
         const previewPaneEl = previewOpen ? (
           <PreviewPane
+            frameRef={previewFrameRef}
             locale={locale}
             urlPath={
               externalPreview
@@ -1668,6 +1662,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                   rect: ope.rect,
                   ox: ope.ox,
                   oy: ope.oy,
+                  n: ope.n,
                   onClose: closeOpe,
                   label: "Add block",
                   content: (
@@ -1675,10 +1670,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                       def={areaDef}
                       types={types}
                       sharedBlocks={sharedBlocks.data ?? []}
-                      onAddInline={(blockType, label) =>
-                        append({ key: newBlockKey(), blockType, display: "automatic", inline: {}, ref: null }, label)}
-                      onAddShared={(documentId, blockType, label) =>
-                        append({ key: newBlockKey(), blockType, display: "automatic", inline: null, ref: documentId }, label)}
+                      onAddInline={(blockType, label) => append(newBlock({ blockType, inline: {} }), label)}
+                      onAddShared={(documentId, blockType, label) => append(newBlock({ blockType, ref: documentId }), label)}
                       onClose={closeOpe}
                     />
                   ),
@@ -1726,6 +1719,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 rect: ope.rect,
                 ox: ope.ox,
                 oy: ope.oy,
+                n: ope.n,
                 onClose: closeOpe,
                 content: (
                   <div>
@@ -2120,7 +2114,7 @@ function ScheduleDialog({
   const save = useMutation({
     mutationFn: (body: { publishAt: string | null; expireAt: string | null }) => api.schedule(documentId, locale, body),
     onSuccess: (updated) => {
-      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // scheduling changes the dashboard's scheduled count (S3-L4)
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // scheduling changes the dashboard's scheduled count
       toast.success(
         updated.publishAt ? "Publish scheduled" : updated.status === "published" ? "Published" : "Schedule updated",
         updated.publishAt
@@ -2222,18 +2216,7 @@ function CompareView({
               {!f.changed && <span className="rounded bg-line px-1 text-[10px] normal-case text-muted">unchanged</span>}
             </div>
             {f.changed ? (
-              <p className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-fg">
-                {wordDiff(f.aText, f.bText).map((s, i) =>
-                  s.t === "eq" ? (
-                    <span key={i}>{s.s}</span>
-                  ) : s.t === "del" ? (
-                    <del key={i} className="bg-danger/15 text-danger line-through decoration-1">{s.s}</del>
-                  ) : (
-                    <ins key={i} className="bg-published/15 text-published no-underline">{s.s}</ins>
-                  ),
-                )}
-                {f.aText === "" && f.bText === "" && <span className="text-muted">(structural change)</span>}
-              </p>
+              <ChangedText aText={f.aText} bText={f.bText} />
             ) : (
               <p className="whitespace-pre-wrap wrap-break-word text-sm text-muted">{f.bText || <span className="italic">empty</span>}</p>
             )}
@@ -2244,116 +2227,32 @@ function CompareView({
   );
 }
 
-/** Flatten a TipTap doc (or any nested {text,content}) to plain text for AI context. */
-function docToText(doc: unknown): string {
-  const node = doc as { text?: string; content?: unknown[] } | null | undefined;
-  if (!node) return "";
-  let s = node.text ?? "";
-  for (const c of node.content ?? []) s += ` ${docToText(c)}`;
-  return s.replace(/\s+/g, " ").trim();
-}
-
-/* ----------------------------- version diff ------------------------------- */
-
-interface FieldDiff {
-  key: string;
-  label: string;
-  aText: string;
-  bText: string;
-  changed: boolean;
-}
-
-function diffEmpty(x: unknown): boolean {
-  return x == null || x === "";
-}
-function diffDeepEq(a: unknown, b: unknown): boolean {
-  if (a === b) return true;
-  if (diffEmpty(a) && diffEmpty(b)) return true;
-  try {
-    return JSON.stringify(a) === JSON.stringify(b);
-  } catch {
-    return false;
+/** Inline word diff, or plain before/after when the field is too long to diff in the tab. */
+function ChangedText({ aText, bText }: { aText: string; bText: string }) {
+  const diff = wordDiff(aText, bText);
+  if (!diff) {
+    return (
+      <div className="space-y-1 text-sm leading-relaxed">
+        <p className="text-xs text-muted">Too long to compare word by word — before, then after:</p>
+        <del className="block whitespace-pre-wrap wrap-break-word bg-danger/10 px-1 text-danger no-underline">{aText}</del>
+        <ins className="block whitespace-pre-wrap wrap-break-word bg-published/10 px-1 text-published no-underline">{bText}</ins>
+      </div>
+    );
   }
-}
-
-/** Render any field value as comparable plain text (uniform word-diff input). */
-function diffTextOf(fieldType: string, value: unknown): string {
-  if (value == null) return "";
-  switch (fieldType) {
-    case "richtext":
-      return docToText(value);
-    case "boolean":
-      return value ? "Yes" : "No";
-    case "link": {
-      const v = value as { href?: string; text?: string };
-      return [v.text, v.href].filter(Boolean).join(" — ");
-    }
-    case "reference": {
-      const v = value as { documentId?: string; type?: string };
-      return v.documentId ? `${v.type ?? "ref"}:${v.documentId}` : "";
-    }
-    case "contentArea": {
-      if (!Array.isArray(value)) return "";
-      const blocks = value as Array<{ blockType?: string }>;
-      const types = blocks.map((bl) => bl.blockType ?? "block").join(", ");
-      return blocks.length ? `${types} (${blocks.length} block${blocks.length === 1 ? "" : "s"})` : "";
-    }
-    case "select":
-      return Array.isArray(value) ? (value as string[]).join(", ") : asText(value);
-    default:
-      return typeof value === "string" ? value : JSON.stringify(value);
-  }
-}
-
-function diffFields(type: ContentTypeDef | undefined, a: VersionDetail, b: VersionDetail): FieldDiff[] {
-  const out: FieldDiff[] = [];
-  const meta: Array<{ key: string; label: string; av: unknown; bv: unknown; ft: string }> = [
-    { key: "__name", label: "Name", av: a.name, bv: b.name, ft: "text" },
-    { key: "__slug", label: "URL segment", av: a.slug ?? "", bv: b.slug ?? "", ft: "text" },
-    { key: "__nav", label: "Show in navigation", av: a.displayInNav, bv: b.displayInNav, ft: "boolean" },
-  ];
-  for (const m of meta) {
-    out.push({ key: m.key, label: m.label, aText: diffTextOf(m.ft, m.av), bText: diffTextOf(m.ft, m.bv), changed: !diffDeepEq(m.av, m.bv) });
-  }
-  for (const f of type?.fields ?? []) {
-    const av = a.data[f.name];
-    const bv = b.data[f.name];
-    out.push({ key: f.name, label: f.displayName, aText: diffTextOf(f.type, av), bText: diffTextOf(f.type, bv), changed: !diffDeepEq(av, bv) });
-  }
-  return out;
-}
-
-/** Word-level LCS diff (whitespace kept as tokens). Field text is small/bounded. */
-function wordDiff(aText: string, bText: string): Array<{ t: "eq" | "del" | "ins"; s: string }> {
-  const a = aText ? aText.split(/(\s+)/) : [];
-  const b = bText ? bText.split(/(\s+)/) : [];
-  const n = a.length;
-  const m = b.length;
-  const dp: number[][] = Array.from({ length: n + 1 }, () => Array.from({ length: m + 1 }, () => 0));
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i]![j] = a[i] === b[j] ? dp[i + 1]![j + 1]! + 1 : Math.max(dp[i + 1]![j]!, dp[i]![j + 1]!);
-    }
-  }
-  const out: Array<{ t: "eq" | "del" | "ins"; s: string }> = [];
-  let i = 0;
-  let j = 0;
-  while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      out.push({ t: "eq", s: a[i]! });
-      i++;
-      j++;
-    } else if (dp[i + 1]![j]! >= dp[i]![j + 1]!) {
-      out.push({ t: "del", s: a[i]! });
-      i++;
-    } else {
-      out.push({ t: "ins", s: b[j]! });
-      j++;
-    }
-  }
-  while (i < n) out.push({ t: "del", s: a[i++]! });
-  while (j < m) out.push({ t: "ins", s: b[j++]! });
-  return out;
+  return (
+    <p className="whitespace-pre-wrap wrap-break-word text-sm leading-relaxed text-fg">
+      {diff.map((s, i) =>
+        s.t === "eq" ? (
+          <span key={i}>{s.s}</span>
+        ) : s.t === "del" ? (
+          <del key={i} className="bg-danger/15 text-danger line-through decoration-1">{s.s}</del>
+        ) : (
+          <ins key={i} className="bg-published/15 text-published no-underline">{s.s}</ins>
+        ),
+      )}
+      {aText === "" && bText === "" && <span className="text-muted">(structural change)</span>}
+    </p>
+  );
 }
 
 function SaveIndicator({ state }: { state: SaveState }) {
@@ -2436,11 +2335,11 @@ function OverlayAi({
             .slice(0, 3);
         }
         setVariants(list.length ? list : [cleaned]);
-        if (r.provider === "fallback") toast.success("Basic mode", "Set an AI key in Settings → Site for real suggestions.");
+        if (r.provider === "fallback") toast.success("Basic mode", AI_OFF_HINT);
       } else {
         apply(r.result);
         setInstruction("");
-        if (r.provider === "fallback") toast.success("Basic mode", "Set an AI key in Settings → Site for full AI.");
+        if (r.provider === "fallback") toast.success("Basic mode", AI_OFF_HINT);
       }
     } catch (e) {
       toast.error("Writing assistant failed", (e as Error).message);
@@ -2562,92 +2461,8 @@ function Field({
       </div>
     );
   }
-  return (
-    <div>
-      <label className="field-label flex items-center gap-2" htmlFor={id}>
-        {field.displayName}
-        {field.required && <span className="text-danger" title="Required to publish">*</span>}
-        {field.delivery === "private" && <span className="rounded bg-line px-1 text-[10px] text-muted">private</span>}
-      </label>
-      {field.helpText && <p className="mb-1 text-xs text-muted">{field.helpText}</p>}
-      {field.type === "text" && (
-        <div>
-          <input id={id} aria-label={field.displayName} aria-invalid={error ? true : undefined} className="field-input" value={(value as string) ?? ""} disabled={disabled}
-            onChange={(e) => onChange(e.target.value)} />
-          {field.validation?.maxLength != null && (
-            <div className={`mt-0.5 text-right text-[11px] ${((value as string) ?? "").length > field.validation.maxLength ? "text-danger" : "text-muted"}`}>
-              {((value as string) ?? "").length} / {field.validation.maxLength}
-            </div>
-          )}
-        </div>
-      )}
-      {field.type === "markdown" && (
-        <MarkdownEditor id={id} value={(value as string) ?? ""} disabled={disabled} onChange={(v) => onChange(v)} />
-      )}
-      {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} disabled={disabled} />}
-      {field.type === "boolean" && (
-        <input id={id} aria-label={field.displayName} type="checkbox" checked={Boolean(value)} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
-      )}
-      {field.type === "number" && (
-        <input id={id} aria-label={field.displayName} aria-invalid={error ? true : undefined} type="number" className="field-input" value={(value as number) ?? ""} disabled={disabled}
-          onChange={(e) => onChange(Number(e.target.value))} />
-      )}
-      {field.type === "datetime" && (
-        <input id={id} aria-label={field.displayName} aria-invalid={error ? true : undefined} type="datetime-local" className="field-input" value={(value as string) ?? ""} disabled={disabled}
-          onChange={(e) => onChange(e.target.value || null)} />
-      )}
-      {field.type === "select" && <SelectField id={id} field={field} types={types} value={value} disabled={disabled} onChange={onChange} />}
-      {field.type === "reference" && <ReferenceField id={id} allowedTypes={field.allowedTypes} value={value} disabled={disabled} onChange={onChange} />}
-      {field.type === "link" && <LinkField id={id} value={value} disabled={disabled} onChange={onChange} />}
-      {field.type === "image" && (
-        <ImageField id={id} value={value} disabled={disabled} onChange={onChange} />
-      )}
-      {field.type === "media" && (
-        <input id={id} aria-label={field.displayName} aria-invalid={error ? true : undefined} className="field-input" placeholder="Asset documentId" value={(value as string) ?? ""} disabled={disabled}
-          onChange={(e) => onChange(e.target.value)} />
-      )}
-      <FieldError>{error}</FieldError>
-    </div>
-  );
+  return <FieldControl field={field} id={id} value={value} onChange={onChange} disabled={disabled} types={types} error={error} />;
 }
-
-function SelectField({ id, field, types, value, disabled, onChange }: { id: string; field: FieldDef; types: ContentTypeDef[]; value: unknown; disabled: boolean; onChange: (v: unknown) => void }) {
-  // optionsFromContentTypes: the dropdown reflects the INSTALLED page content
-  // types (reality), not a hardcoded option list (2026-06-07: a list page could
-  // be set to list "ArticlePage" when no such type existed). The current value
-  // is always shown — even if its type is missing — so a misconfigured page is
-  // visible rather than silently blank.
-  const options = field.optionsFromContentTypes
-    ? (() => {
-        const installed = types.filter((t) => t.kind === "page").map((t) => ({ value: t.name, label: t.displayName || t.name }));
-        const cur = typeof value === "string" ? value : "";
-        if (cur && !installed.some((o) => o.value === cur)) installed.push({ value: cur, label: `${cur} (not installed)` });
-        return installed;
-      })()
-    : field.options;
-  if (field.multiple) {
-    const arr = Array.isArray(value) ? (value as string[]) : [];
-    const toggle = (v: string) => onChange(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
-    return (
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label={field.displayName}>
-        {options.map((o) => (
-          <button key={o.value} type="button" disabled={disabled} aria-pressed={arr.includes(o.value)} onClick={() => toggle(o.value)}
-            className={`rounded-full border px-2.5 py-0.5 text-xs ${arr.includes(o.value) ? "border-accent bg-accent/15 text-fg" : "border-line text-muted hover:bg-line/60"}`}>
-            {o.label}
-          </button>
-        ))}
-        {options.length === 0 && <span className="text-xs text-muted">No options configured.</span>}
-      </div>
-    );
-  }
-  return (
-    <select id={id} className="field-input" value={(value as string) ?? ""} disabled={disabled} onChange={(e) => onChange(e.target.value || null)}>
-      <option value="">— choose —</option>
-      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-    </select>
-  );
-}
-
 
 /**
  * The "＋ Add block" palette the preview's area chip opens (paperboy:add-block),
@@ -2675,6 +2490,11 @@ function AddBlockCard({
   // Pages placeable as teasers — same source the sidebar picker uses.
   const pages = useQuery({ queryKey: ["pages"], queryFn: ({ signal }) => api.pages(signal) });
   const [picker, setPicker] = useState<{ x: number; y: number } | null>(null);
+  const existingRef = useRef<HTMLButtonElement>(null);
+  const closePicker = () => {
+    setPicker(null);
+    existingRef.current?.focus();
+  };
   const isQuestionArea = allowed.length > 0 && allowed.every((t) => isFormFieldType(t.name));
   return (
     <div>
@@ -2699,6 +2519,7 @@ function AddBlockCard({
           <p className="px-2 py-2 text-xs text-muted">This area only takes existing shared blocks.</p>
         )}
         <button
+          ref={existingRef}
           type="button"
           className="mt-1 flex w-full items-center gap-2 rounded border-t border-line px-2 pb-1.5 pt-2 text-left text-xs font-medium text-accent-700 hover:bg-canvas"
           onClick={(e) => setPicker({ x: e.clientX, y: e.clientY })}
@@ -2714,10 +2535,10 @@ function AddBlockCard({
           sharedBlocks={sharedBlocks}
           pages={pages.data ?? []}
           onPick={(documentId, blockType) => {
-            setPicker(null);
+            closePicker();
             onAddShared(documentId, blockType, sharedBlocks.find((b) => b.documentId === documentId)?.name);
           }}
-          onClose={() => setPicker(null)}
+          onClose={closePicker}
         />
       )}
     </div>

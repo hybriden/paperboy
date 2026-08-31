@@ -24,7 +24,7 @@ describe("MCP publish carries publishAt/expireAt (scheduled publishing over MCP)
     admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     const adminId = users.find((u) => u.email === "admin@paperboy.test")!.id;
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "sched-suite", userId: adminId } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "sched-suite", userId: adminId, password: "Admin!Passw0rd" } });
     expect(minted.statusCode).toBe(200);
     mcp = new McpClient({ DATABASE_URL: TEST_DB, MCP_TOKEN: minted.json().token as string, MCP_HTTP_PORT: "" });
     await mcp.initialize();

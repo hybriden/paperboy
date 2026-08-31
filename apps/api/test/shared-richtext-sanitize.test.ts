@@ -298,6 +298,65 @@ describe("richtext sanitizer: content-model structural fixes", () => {
   });
 });
 
+/**
+ * Node and mark attrs are stored and DELIVERED verbatim to every frontend, so the
+ * sanitizer keeps only what the admin editor (StarterKit heading 2/3 + Link +
+ * Image) can itself produce, and drops style, class, event handlers and unknown
+ * keys. Only `src` and `href` were scheme-checked before; everything else rode
+ * through.
+ */
+describe("richtext sanitizer: attrs are allowlisted per node / mark", () => {
+  it("drops style/onclick on a paragraph, class/onclick on a link mark, srcset/style on an image", () => {
+    const out = san({
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          attrs: { style: "position:fixed", onclick: "alert(1)" },
+          content: [{ type: "text", text: "x", marks: [{ type: "link", attrs: { href: "https://a.test", class: "evil", onclick: "alert(1)", target: "_blank", rel: "noopener", title: "T" } }] }],
+        },
+        { type: "image", attrs: { src: "/uploads/a.png", alt: "A", title: "t", width: 50, height: null, "data-document-id": "asset_1", srcset: "x 2x", style: "width:9999px", onerror: "alert(1)" } },
+      ],
+    });
+    expect(out.content[0]).not.toHaveProperty("attrs");
+    const text = (out.content[0]!.content as Array<{ marks: Array<{ attrs: Record<string, unknown> }> }>)[0]!;
+    expect(text.marks[0]!.attrs).toEqual({ href: "https://a.test", target: "_blank", rel: "noopener", title: "T" });
+    expect(out.content[1]!.attrs).toEqual({ src: "/uploads/a.png", alt: "A", title: "t", width: 50, height: null, "data-document-id": "asset_1" });
+  });
+
+  it("keeps the editor's own attrs: heading level, codeBlock language, orderedList start/type", () => {
+    const out = san({
+      type: "doc",
+      content: [
+        { type: "heading", attrs: { level: 3 }, content: [{ type: "text", text: "h" }] },
+        { type: "codeBlock", attrs: { language: "ts" }, content: [{ type: "text", text: "c" }] },
+        { type: "orderedList", attrs: { start: 4, type: null }, content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "i" }] }] }] },
+      ],
+    });
+    expect(out.content[0]!.attrs).toEqual({ level: 3 });
+    expect(out.content[1]!.attrs).toEqual({ language: "ts" });
+    expect(out.content[2]!.attrs).toEqual({ start: 4, type: null });
+  });
+
+  it("clamps heading level to the editor's configured 2..3 and drops a non-numeric level", () => {
+    const out = san({
+      type: "doc",
+      content: [
+        { type: "heading", attrs: { level: 1 }, content: [{ type: "text", text: "a" }] },
+        { type: "heading", attrs: { level: 6 }, content: [{ type: "text", text: "b" }] },
+        { type: "heading", attrs: { level: "x" }, content: [{ type: "text", text: "c" }] },
+      ],
+    });
+    expect(out.content.map((n) => (n.attrs as { level: number }).level)).toEqual([2, 3, 2]);
+  });
+
+  it("a link mark target other than _blank/_self is dropped (no javascript-shaped targets)", () => {
+    const out = san({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text: "x", marks: [{ type: "link", attrs: { href: "/p", target: "top" } }] }] }] });
+    const text = (out.content[0]!.content as Array<{ marks: Array<{ attrs: Record<string, unknown> }> }>)[0]!;
+    expect(text.marks[0]!.attrs).toEqual({ href: "/p" });
+  });
+});
+
 describe("richtext sanitizer: property — never throws, fixpoint (idempotent)", () => {
   // Build a recursive arbitrary of arbitrary junk "doc-like" JSON: random type
   // strings (mix of real, aliased, and garbage), optional text/marks/attrs/content,

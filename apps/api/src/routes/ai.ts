@@ -8,6 +8,7 @@ import { AI_RESULT_PROVIDERS, AI_TASKS, AiUnavailableError, aiAssist, aiImageAlt
 import { AppError, getAssetRow, resolveAiRuntimeConfig, resolveDefaultLocale } from "@paperboy/db";
 import { runContentAgent } from "../agent.js";
 import { requireAuth, requireCsrf, requirePermission } from "../security.js";
+import { MAX_INPUT_PIXELS } from "./media.js";
 
 /**
  * AI editorial assistant. One endpoint, several editor-facing tasks (SEO title/
@@ -76,6 +77,7 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
           400: z.object({ error: z.string(), message: z.string() }),
           404: z.object({ error: z.string(), message: z.string() }),
           409: z.object({ error: z.string(), message: z.string() }),
+          413: z.object({ error: z.string(), message: z.string() }),
         },
       },
     },
@@ -93,8 +95,24 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
       // under uploadsDir with server-generated names.
       const file = await readFile(join(app.uploadsDir, basename(row.url)));
       // Downscale before sending: vision quality saturates well below original
-      // resolution, and request size/cost scale with pixels.
-      const small = await sharp(file).resize(1024, 1024, { fit: "inside", withoutEnlargement: true }).jpeg({ quality: 80 }).toBuffer();
+      // resolution, and request size/cost scale with pixels. Same decoded-pixel
+      // cap as the media transforms: the upload route only sniffs magic bytes, so
+      // a decompression bomb reaches this decode otherwise.
+      let small: Buffer;
+      try {
+        small = await sharp(file, { failOn: "none", limitInputPixels: MAX_INPUT_PIXELS })
+          .resize(1024, 1024, { fit: "inside", withoutEnlargement: true })
+          .jpeg({ quality: 80 })
+          .toBuffer();
+      } catch (err) {
+        if (err instanceof Error && /pixel limit/i.test(err.message)) {
+          return reply.code(413).send({
+            error: "image_too_large",
+            message: `This image declares more than ${MAX_INPUT_PIXELS.toLocaleString("en-US")} pixels, which exceeds the decode limit — upload a smaller rendition (≤ 6000×4000) and try again.`,
+          });
+        }
+        throw err;
+      }
       try {
         return await aiImageAltText(
           { imageBase64: small.toString("base64"), mediaType: "image/jpeg", filename: row.filename },
@@ -163,6 +181,8 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
           // site's default locale so a non-English instance isn't pinned to en.
           locale: z.string().max(40).optional(),
         }),
+        // The 200 is a hijacked SSE stream, so only the refusal has a JSON shape.
+        response: { 409: z.object({ error: z.string() }) },
       },
     },
     async (req, reply) => {
@@ -180,11 +200,15 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
         "x-accel-buffering": "no",
       });
       const send = (ev: unknown) => reply.raw.write(`data: ${JSON.stringify(ev)}\n\n`);
+      // A closed tab must stop the loop: without this the run kept calling the
+      // model and creating drafts for up to four minutes after the editor left.
+      const abort = new AbortController();
+      reply.raw.on("close", () => abort.abort());
       try {
         await runContentAgent(
           // via:"agent" — drafts the brief-builder writes are agent provenance:
           // versions record created_via='agent' and carry the needs-review flag.
-          { db: app.db, ctx: { ...req.accessCtx!, via: "agent" }, cfg, emit: send },
+          { db: app.db, ctx: { ...req.accessCtx!, via: "agent" }, cfg, emit: send, signal: abort.signal },
           req.body.brief,
           {
             parentId: req.body.parentId ?? null,

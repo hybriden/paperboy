@@ -51,9 +51,6 @@ export const Icon = {
   ),
   Up: (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><polyline points="18 15 12 9 6 15" /></svg>),
   Down: (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><polyline points="6 9 12 15 18 9" /></svg>),
-  Eye: (p: SVGProps<SVGSVGElement>) => (
-    <svg {...base(p)}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8Z" /><circle cx="12" cy="12" r="3" /></svg>
-  ),
   Grip: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base(p)}><circle cx="9" cy="6" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="9" cy="18" r="1" /><circle cx="15" cy="6" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="18" r="1" /></svg>
   ),
@@ -76,15 +73,11 @@ export const Icon = {
   Dots: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base(p)}><circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /></svg>
   ),
-  Help: (p: SVGProps<SVGSVGElement>) => (
-    <svg {...base(p)}><circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 2.5" /><path d="M12 17h.01" /></svg>
-  ),
   History: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base(p)}><path d="M3 3v5h5" /><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8" /><path d="M12 7v5l4 2" /></svg>
   ),
   Bold: (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><path d="M6 4h7a4 4 0 0 1 0 8H6zM6 12h8a4 4 0 0 1 0 8H6z" /></svg>),
   Italic: (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><path d="M19 4h-9M14 20H5M15 4 9 20" /></svg>),
-  Heading: (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><path d="M6 4v16M18 4v16M6 12h12" /></svg>),
   ListBullet: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base(p)}><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" /></svg>
   ),
@@ -96,9 +89,6 @@ export const Icon = {
   ),
   Undo: (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><path d="M3 7v6h6" /><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" /></svg>),
   Redo: (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><path d="M21 7v6h-6" /><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13" /></svg>),
-  Copy: (p: SVGProps<SVGSVGElement>) => (
-    <svg {...base(p)}><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></svg>
-  ),
   Template: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base(p)}><rect x="3" y="3" width="12" height="12" rx="2" /><path d="M21 6v12a3 3 0 0 1-3 3H8" /></svg>
   ),

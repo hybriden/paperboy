@@ -117,17 +117,16 @@ export async function findAssetBySource(
   return rows[0] ? toRecord(rows[0]) : null;
 }
 
-export async function getAssetRecord(db: Database, documentId: string): Promise<AssetRecord> {
+async function getAssetRecord(db: Database, documentId: string): Promise<AssetRecord> {
   const rows = await db.select().from(asset).where(eq(asset.documentId, documentId)).limit(1);
   if (!rows[0]) throw Errors.notFound("Asset");
   return toRecord(rows[0]);
 }
 
-/** Raw row (or null) for delivery resolution — no throw, used per-image. When a
- *  siteId is given (delivery), a cross-site asset resolves to null (D2). */
-export async function getAssetRow(db: Database, documentId: string, siteId?: string) {
-  const where = siteId ? and(eq(asset.documentId, documentId), eq(asset.siteId, siteId)) : eq(asset.documentId, documentId);
-  const rows = await db.select().from(asset).where(where).limit(1);
+/** Raw row (or null) for delivery resolution — no throw, used per-image. Site-
+ *  partitioned: a cross-site asset resolves to null (D2). */
+export async function getAssetRow(db: Database, documentId: string, siteId: string) {
+  const rows = await db.select().from(asset).where(and(eq(asset.documentId, documentId), eq(asset.siteId, siteId))).limit(1);
   return rows[0] ?? null;
 }
 

@@ -47,7 +47,6 @@ export const FieldValidation = z.object({
 });
 export type FieldValidation = z.infer<typeof FieldValidation>;
 
-/** A structured link value. */
 /**
  * Schemes a stored link may use. Same rule the richtext renderer already enforces
  * (`rtSafeHref` in packages/client) — but that guard is unreachable for a STRUCTURED
@@ -101,6 +100,11 @@ export function isSafeUrl(raw: string): boolean {
   return SAFE_URL_SCHEMES.has(scheme[1]!.toLowerCase());
 }
 
+/** ISO 8601: a date, optionally T time (seconds/ms/offset all optional) — covers
+ *  a date input, a datetime-local input and a full-offset instant. */
+export const ISO_8601 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})?)?$/;
+
+/** A structured link value. */
 export const LinkValue = z.object({
   href: z
     .string()
@@ -133,8 +137,8 @@ export const LinkValue = z.object({
 });
 export type LinkValue = z.infer<typeof LinkValue>;
 
-/** Definition of a single field on a content type. */
-export const FieldDef = z.object({
+/** Definition of a single field on a content type (the lenient shape; see FieldDef). */
+const FieldDefShape = z.object({
   name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*$/).max(60),
   displayName: z.string().min(1).max(80),
   type: FieldType,
@@ -200,10 +204,18 @@ export const FieldDef = z.object({
     .max(80)
     .optional(),
 });
+/**
+ * Strict on WRITE: an unknown key is refused, never stripped. A stripped
+ * `deliver: "public"` or `localised: true` used to create the field private /
+ * non-localized with a 200 — the caller learned only when delivery omitted it
+ * (agent-API rule #2). Stored rows are read through the lenient shape instead
+ * (parseStoredContentTypeDef), so a key an older schema wrote can't 500 a listing.
+ */
+export const FieldDef = FieldDefShape.strict();
 export type FieldDef = z.infer<typeof FieldDef>;
 
 /** A content type (e.g. "StandardPage", "HeroBlock"). */
-export const ContentTypeDef = z
+const ContentTypeDefShape = z
   .object({
     name: z.string().regex(/^[A-Z][a-zA-Z0-9]*$/).max(60),
     displayName: z.string().min(1).max(80),
@@ -244,26 +256,35 @@ export const ContentTypeDef = z
      * subsystem and re-implements versioning and permissions around them.
      */
     nestedOnly: z.boolean().default(false),
-  })
-  // Field names must be unique within a type (else dataSchemaFor / delivery collide).
-  .refine(
-    (t) => new Set(t.fields.map((f) => f.name)).size === t.fields.length,
-    { message: "Field names must be unique within a content type", path: ["fields"] },
-  )
-  // At most ONE field per seoRole — a second "title"/"description"/… is
-  // ambiguous for the seo contract. Self-teaching message (agent-API rule 2).
-  .refine(
-    (t) => {
-      const roles = t.fields.map((f) => f.seoRole).filter(Boolean) as string[];
-      return new Set(roles).size === roles.length;
-    },
-    {
-      message:
-        "Each seoRole (title/description/image/datePublished/dateModified/author/keywords) may be used by at most one field — two fields claim the same role.",
-      path: ["fields"],
-    },
-  );
+  });
+
+/** The cross-field rules every definition must satisfy, strict or stored. */
+const withTypeRules = <T extends z.ZodType<{ fields: Array<{ name: string; seoRole?: string }> }>>(schema: T): T =>
+  schema
+    // Field names must be unique within a type (else dataSchemaFor / delivery collide).
+    .refine(
+      (t) => new Set(t.fields.map((f) => f.name)).size === t.fields.length,
+      { message: "Field names must be unique within a content type", path: ["fields"] },
+    )
+    // At most ONE field per seoRole — a second "title"/"description"/… is
+    // ambiguous for the seo contract. Self-teaching message (agent-API rule 2).
+    .refine(
+      (t) => {
+        const roles = t.fields.map((f) => f.seoRole).filter(Boolean) as string[];
+        return new Set(roles).size === roles.length;
+      },
+      {
+        message:
+          "Each seoRole (title/description/image/datePublished/dateModified/author/keywords) may be used by at most one field — two fields claim the same role.",
+        path: ["fields"],
+      },
+    );
+
+/** Strict at every level — see FieldDef for why a typo'd key must be refused. */
+export const ContentTypeDef = withTypeRules(ContentTypeDefShape.strict());
 export type ContentTypeDef = z.infer<typeof ContentTypeDef>;
+/** Lenient twin for rows already in the database (unknown keys stripped on READ). */
+const ContentTypeDefStored = withTypeRules(ContentTypeDefShape.extend({ fields: z.array(FieldDefShape) }));
 
 /**
  * The reserved SEO field group — INTRINSIC to every page. Defined ONCE here,
@@ -319,7 +340,7 @@ export function stripSeoGroup(def: ContentTypeDef): ContentTypeDef {
  * SEO group for page kinds.
  */
 export function parseStoredContentTypeDef(raw: unknown): ContentTypeDef {
-  return withSeoGroup(ContentTypeDef.parse(raw));
+  return withSeoGroup(ContentTypeDefStored.parse(raw));
 }
 
 /** Display option for a block placed in a content area. */
@@ -474,13 +495,10 @@ function dataSchemaAtDepth(
         s = applyNumberValidation(z.number(), f, strict);
         break;
       case "datetime": {
-        // ISO 8601: a date, optionally T time (seconds/ms/offset all optional) —
-        // covers both a datetime-local input and a full-offset instant. Empty is
-        // allowed (an unset field). "next tuesday" and other free text are not:
-        // an invalid datetime silently poisons JSON-LD datePublished and string
-        // sorting. Applies in draft AND publish — a datetime is never validly
-        // half-written the way a required text field can be.
-        const ISO_8601 = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?(\.\d{1,3})?(Z|[+-]\d{2}:\d{2})?)?$/;
+        // Empty is allowed (an unset field). "next tuesday" and other free text
+        // are not: an invalid datetime silently poisons JSON-LD datePublished and
+        // string sorting. Applies in draft AND publish — a datetime is never
+        // validly half-written the way a required text field can be.
         s = z.string().refine((v) => v === "" || ISO_8601.test(v), {
           message: 'must be an ISO 8601 date/time (e.g. "2026-05-31T09:00" or "2026-05-31T09:00:00.000Z")',
         });
@@ -568,13 +586,6 @@ export function fieldFormatHint(f: FieldDef): { format: string; example: unknown
 }
 
 /**
- * Canonical URL-safe slug for a tag-style select value. Deterministic and
- * shared by every write path (and mirrorable by frontends for tag URLs):
- * lowercase, Norwegian letters transliterated, diacritics stripped, every
- * non-alphanumeric run collapsed to one hyphen.
- * "Llama.CPP" → "llama-cpp", "RTX Spark" → "rtx-spark", "Blåbær" → "blabaer".
- */
-/**
  * The block types offerable where a content area allows ANY block.
  *
  * ONE authority for "any block", because five surfaces asked the question
@@ -586,6 +597,13 @@ export function generalBlockTypes<T extends { kind: string; nestedOnly?: boolean
   return types.filter((t) => t.kind === "block" && !t.nestedOnly);
 }
 
+/**
+ * Canonical URL-safe slug for a tag-style select value. Deterministic and
+ * shared by every write path (and mirrorable by frontends for tag URLs):
+ * lowercase, Norwegian letters transliterated, diacritics stripped, every
+ * non-alphanumeric run collapsed to one hyphen.
+ * "Llama.CPP" → "llama-cpp", "RTX Spark" → "rtx-spark", "Blåbær" → "blabaer".
+ */
 export function slugifyValue(raw: string): string {
   return raw
     .trim()
@@ -676,7 +694,8 @@ function ttBlocks(nodes: TtNode[] | undefined, md: boolean): string[] {
   for (const n of nodes ?? []) {
     switch (n.type) {
       case "heading": {
-        const lvl = Math.min(Math.max(Number(n.attrs?.level ?? 2), 1), 6);
+        const level = Number(n.attrs?.level);
+        const lvl = Math.min(Math.max(Number.isFinite(level) ? level : 2, 1), 6);
         out.push(md ? `${"#".repeat(lvl)} ${ttInline(n.content, md)}` : ttInline(n.content, md));
         break;
       }
@@ -724,7 +743,6 @@ export function tiptapToPlainText(doc: unknown): string {
   const d = doc as TtNode;
   return ttBlocks(Array.isArray(d?.content) ? d.content : [d as TtNode], false).join("\n").trim();
 }
-// Wrap a plain (possibly multi-paragraph) string into a TipTap doc.
 /**
  * Parse inline Markdown (code, links, bold, italic) into TipTap text nodes
  * with marks. Pragmatic, single-level: unmatched/over-nested markers fall
@@ -736,7 +754,7 @@ function mdInline(text: string): Array<Record<string, unknown>> {
     if (!t) return;
     nodes.push(marks && marks.length ? { type: "text", text: t, marks } : { type: "text", text: t });
   };
-  const re = /(`[^`]+`)|(\[[^\]]+\]\([^)\s]+\))|(\*\*[^*]+\*\*|__[^_]+__)|(\*[^*\n]+\*|_[^_\n]+_)/;
+  const re = MD_PATTERNS.inline;
   let rest = text;
   while (rest.length) {
     const m = re.exec(rest);
@@ -749,20 +767,48 @@ function mdInline(text: string): Array<Record<string, unknown>> {
     if (m[1]) {
       pushText(tok.slice(1, -1), [{ type: "code" }]);
     } else if (m[2]) {
-      const lm = /\[([^\]]+)\]\(([^)\s]+)\)/.exec(tok)!;
+      const lm = MD_PATTERNS.link.exec(tok)!;
       pushText(lm[1]!, [{ type: "link", attrs: { href: lm[2] } }]);
     } else if (m[3]) {
-      pushText(tok.replace(/^(\*\*|__)/, "").replace(/(\*\*|__)$/, ""), [{ type: "bold" }]);
+      pushText(tok.replace(MD_PATTERNS.boldOpen, "").replace(MD_PATTERNS.boldClose, ""), [{ type: "bold" }]);
     } else if (m[4]) {
-      pushText(tok.replace(/^[*_]/, "").replace(/[*_]$/, ""), [{ type: "italic" }]);
+      pushText(tok.replace(MD_PATTERNS.italicOpen, "").replace(MD_PATTERNS.italicClose, ""), [{ type: "italic" }]);
     }
     rest = rest.slice(m.index + tok.length);
   }
   return nodes;
 }
 
-const MD_BLOCK_START = /^(#{1,6}\s|```|>\s?|\s*[-*+]\s+|\s*\d+\.\s+)/;
-const MD_HR = /^(\s*[-*_]\s*){3,}$/;
+/**
+ * Every regex the Markdown parser runs on agent-supplied text, in one place so a
+ * test can hold each of them to safe-regex (no nested quantifiers). They run per
+ * line on every Markdown string written to a richtext field, by any Author or
+ * MCP token, so one backtracking pattern here is a one-request event-loop
+ * freeze: `/^(\s*[-*_]\s*){3,}$/` doubled its runtime per "- " and took 1.3 s
+ * at 27 markers.
+ */
+export const MD_PATTERNS = {
+  newline: /\r\n?/g,
+  blockStart: /^(#{1,6}\s|```|>\s?|\s*[-*+]\s+|\s*\d+\.\s+)/,
+  whitespace: /\s+/g,
+  /** Tested against the line with ALL whitespace removed: one marker kind, ≥3 of it (CommonMark). */
+  thematicBreak: /^(?:-{3,}|\*{3,}|_{3,})$/,
+  heading: /^(#{1,6})\s+(.*)$/,
+  quote: /^>\s?/,
+  bullet: /^\s*[-*+]\s+/,
+  ordered: /^\s*\d+\.\s+/,
+  // Inline precedence: code span → link → bold → italic. Underscore emphasis
+  // needs a non-word boundary on both sides (CommonMark's intraword rule), or
+  // `snake_case_name` is parsed as snake + *case* + name.
+  inline: /(`[^`]+`)|(\[[^\]]+\]\([^)\s]+\))|(\*\*[^*]+\*\*|(?<!\w)__[^_]+__(?!\w))|(\*[^*\n]+\*|(?<!\w)_[^_\n]+_(?!\w))/,
+  link: /\[([^\]]+)\]\(([^)\s]+)\)/,
+  boldOpen: /^(\*\*|__)/,
+  boldClose: /(\*\*|__)$/,
+  italicOpen: /^[*_]/,
+  italicClose: /[*_]$/,
+} as const;
+
+const isThematicBreak = (line: string): boolean => MD_PATTERNS.thematicBreak.test(line.replace(MD_PATTERNS.whitespace, ""));
 
 /**
  * Markdown → TipTap doc, constrained to the richtext editor schema (StarterKit
@@ -772,7 +818,7 @@ const MD_HR = /^(\s*[-*_]\s*){3,}$/;
  * not full CommonMark — and the sanitizer normalises whatever this produces.
  */
 function markdownToTiptapDoc(src: string): unknown {
-  const lines = String(src).replace(/\r\n?/g, "\n").split("\n");
+  const lines = String(src).replace(MD_PATTERNS.newline, "\n").split("\n");
   const out: Array<Record<string, unknown>> = [];
   let i = 0;
   while (i < lines.length) {
@@ -789,36 +835,35 @@ function markdownToTiptapDoc(src: string): unknown {
       out.push({ type: "codeBlock", content: buf.length ? [{ type: "text", text: buf.join("\n") }] : [] });
       continue;
     }
-    if (MD_HR.test(line)) {
+    if (isThematicBreak(line)) {
       out.push({ type: "horizontalRule" });
       i++;
       continue;
     }
-    const h = /^(#{1,6})\s+(.*)$/.exec(line);
+    const h = MD_PATTERNS.heading.exec(line);
     if (h) {
-      const level = Math.min(Math.max(h[1]!.length, 2), 3); // editor schema: heading 2/3
-      out.push({ type: "heading", attrs: { level }, content: mdInline(h[2]!.trim()) });
+      out.push({ type: "heading", attrs: { level: clampHeadingLevel(h[1]!.length) }, content: mdInline(h[2]!.trim()) });
       i++;
       continue;
     }
-    if (/^>\s?/.test(line)) {
+    if (MD_PATTERNS.quote.test(line)) {
       const buf: string[] = [];
-      while (i < lines.length && /^>\s?/.test(lines[i]!)) buf.push(lines[i++]!.replace(/^>\s?/, ""));
+      while (i < lines.length && MD_PATTERNS.quote.test(lines[i]!)) buf.push(lines[i++]!.replace(MD_PATTERNS.quote, ""));
       out.push({ type: "blockquote", content: [{ type: "paragraph", content: mdInline(buf.join("\n")) }] });
       continue;
     }
-    if (/^\s*[-*+]\s+/.test(line)) {
+    if (MD_PATTERNS.bullet.test(line)) {
       const items: Array<Record<string, unknown>> = [];
-      while (i < lines.length && /^\s*[-*+]\s+/.test(lines[i]!)) {
-        items.push({ type: "listItem", content: [{ type: "paragraph", content: mdInline(lines[i++]!.replace(/^\s*[-*+]\s+/, "")) }] });
+      while (i < lines.length && MD_PATTERNS.bullet.test(lines[i]!)) {
+        items.push({ type: "listItem", content: [{ type: "paragraph", content: mdInline(lines[i++]!.replace(MD_PATTERNS.bullet, "")) }] });
       }
       out.push({ type: "bulletList", content: items });
       continue;
     }
-    if (/^\s*\d+\.\s+/.test(line)) {
+    if (MD_PATTERNS.ordered.test(line)) {
       const items: Array<Record<string, unknown>> = [];
-      while (i < lines.length && /^\s*\d+\.\s+/.test(lines[i]!)) {
-        items.push({ type: "listItem", content: [{ type: "paragraph", content: mdInline(lines[i++]!.replace(/^\s*\d+\.\s+/, "")) }] });
+      while (i < lines.length && MD_PATTERNS.ordered.test(lines[i]!)) {
+        items.push({ type: "listItem", content: [{ type: "paragraph", content: mdInline(lines[i++]!.replace(MD_PATTERNS.ordered, "")) }] });
       }
       out.push({ type: "orderedList", content: items });
       continue;
@@ -826,7 +871,7 @@ function markdownToTiptapDoc(src: string): unknown {
     // Paragraph: gather consecutive lines until a blank line or a block start.
     const buf = [line];
     i++;
-    while (i < lines.length && lines[i]!.trim() !== "" && !MD_BLOCK_START.test(lines[i]!) && !MD_HR.test(lines[i]!)) {
+    while (i < lines.length && lines[i]!.trim() !== "" && !MD_PATTERNS.blockStart.test(lines[i]!) && !isThematicBreak(lines[i]!)) {
       buf.push(lines[i++]!);
     }
     out.push({ type: "paragraph", content: mdInline(buf.join("\n")) });
@@ -866,6 +911,23 @@ const MARK_ALIASES: Record<string, string> = {
   strong: "bold", b: "bold", em: "italic", i: "italic",
   strikethrough: "strike", s: "strike", u: "underline", a: "link", hyperlink: "link",
 };
+/**
+ * Attrs the admin editor itself emits, per node type (StarterKit heading 2/3,
+ * codeBlock `language`, orderedList `start`/`type`; the AssetImage extension's
+ * `width` + `data-document-id` on top of Image's own). Attrs are stored and
+ * DELIVERED verbatim to every frontend, so anything outside this list — style,
+ * class, event handlers, srcset — is dropped rather than passed through.
+ */
+const NODE_ATTRS: Record<string, ReadonlySet<string>> = {
+  heading: new Set(["level"]),
+  codeBlock: new Set(["language"]),
+  orderedList: new Set(["start", "type"]),
+  image: new Set(["src", "alt", "title", "width", "height", "data-document-id"]),
+};
+const LINK_ATTRS: ReadonlySet<string> = new Set(["href", "target", "rel", "title"]);
+const LINK_TARGETS = new Set(["_blank", "_self"]);
+/** The editor's configured heading levels (StarterKit `heading: { levels: [2, 3] }`). */
+const HEADING_LEVEL = { min: 2, max: 3 };
 const INLINE_NODES = new Set(["text", "hardBreak"]);
 const VOID_NODES = new Set(["horizontalRule", "hardBreak", "image"]);
 /** Parents whose content model is inline-only / block-only / listItem-only. */
@@ -875,9 +937,36 @@ const LIST_PARENTS = new Set(["bulletList", "orderedList"]);
 
 type RtNode = Record<string, unknown>;
 
+const clampHeadingLevel = (level: unknown): number =>
+  typeof level === "number" && Number.isFinite(level) ? Math.min(Math.max(Math.round(level), HEADING_LEVEL.min), HEADING_LEVEL.max) : HEADING_LEVEL.min;
+
+const isScalar = (v: unknown): boolean => v === null || ["string", "number", "boolean"].includes(typeof v);
+
+/** The allowlisted, scalar-valued subset of `attrs`; undefined when nothing survives. */
+function keepAttrs(attrs: unknown, allowed: ReadonlySet<string> | undefined): RtNode | undefined {
+  if (!allowed || !attrs || typeof attrs !== "object" || Array.isArray(attrs)) return undefined;
+  const out: RtNode = {};
+  for (const [k, v] of Object.entries(attrs as RtNode)) if (allowed.has(k) && isScalar(v)) out[k] = v;
+  return Object.keys(out).length ? out : undefined;
+}
+
+/** Reduce a node's attrs to what the editor emits for its type (see NODE_ATTRS). */
+function sanitizeAttrsInPlace(node: RtNode): void {
+  const attrs = keepAttrs(node.attrs, NODE_ATTRS[node.type as string]);
+  if (node.type === "heading") node.attrs = { ...attrs, level: clampHeadingLevel(attrs?.level) };
+  else if (attrs) node.attrs = attrs;
+  else delete node.attrs;
+}
+
+function linkAttrs(attrs: unknown): RtNode | undefined {
+  const kept = keepAttrs(attrs, LINK_ATTRS);
+  if (kept && "target" in kept && kept.target !== null && !LINK_TARGETS.has(kept.target as string)) delete kept.target;
+  return kept;
+}
+
 /**
  * Sanitize a node's marks IN PLACE: drop non-objects, alias types, keep only allowed
- * mark types, and drop a `link` whose href isn't safe.
+ * mark types, drop a `link` whose href isn't safe, and keep only a link's own attrs.
  *
  * An empty result KEEPS the empty array — that is the pinned contract ("unknown marks
  * dropped, array kept"), and both call sites must agree on it or hoisting an image
@@ -893,12 +982,13 @@ function sanitizeMarksInPlace(node: RtNode): void {
   if (!Array.isArray(node.marks)) return;
   const marks = (node.marks as RtNode[])
     .filter((m) => m && typeof m === "object")
-    .map((m) => ({ ...m, type: MARK_ALIASES[m.type as string] ?? m.type }))
+    .map((m) => ({ type: MARK_ALIASES[m.type as string] ?? m.type, attrs: m.attrs }))
     .filter((m) => RICHTEXT_MARKS.has(m.type as string))
-    .filter((m) => {
-      if (m.type !== "link") return true;
-      const href = ((m as RtNode).attrs as RtNode | undefined)?.href;
-      return typeof href === "string" && isSafeUrl(href);
+    .flatMap((m): RtNode[] => {
+      if (m.type !== "link") return [{ type: m.type }];
+      const attrs = linkAttrs(m.attrs);
+      const href = attrs?.href;
+      return typeof href === "string" && isSafeUrl(href) ? [{ type: "link", attrs }] : [];
     });
   node.marks = marks;
 }
@@ -934,9 +1024,10 @@ function collectImages(children: unknown): RtNode[] {
       if (validImage(n)) {
         const img: RtNode = { ...n, type: "image" };
         delete img.content;
-        // Same helper as the per-node pass — a hoisted image must be byte-identical
-        // to what re-sanitizing would produce (fixpoint), marks included.
+        // Same helpers as the per-node pass — a hoisted image must be byte-identical
+        // to what re-sanitizing would produce (fixpoint), marks and attrs included.
         sanitizeMarksInPlace(img);
+        sanitizeAttrsInPlace(img);
         out.push(img);
       }
     } else {
@@ -960,6 +1051,7 @@ function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] 
     const type = NODE_ALIASES[rawType] ?? rawType;
     node.type = type;
     sanitizeMarksInPlace(node);
+    sanitizeAttrsInPlace(node);
     if (type === "text") {
       // PM forbids empty text nodes; a text node never has content.
       if (typeof node.text !== "string" || node.text === "") continue;
@@ -1061,7 +1153,8 @@ function isEmptyContainer(n: RtNode): boolean {
 
 /** Normalize a TipTap doc to the shape the admin editor can actually load. */
 function sanitizeRichTextDoc(doc: unknown): unknown {
-  const o = doc as RtNode;
+  const o = { ...(doc as RtNode) };
+  delete o.attrs;
   const content = sanitizeRichTextNodes(o.content, "doc");
   // The fallback paragraph carries content: [] like every sanitized paragraph,
   // so sanitize(sanitize(x)) === sanitize(x) exactly (single-pass fixpoint).
@@ -1087,6 +1180,10 @@ const NOT_LOCALE_KEYS = new Set(["url", "uri", "src", "alt", "ref", "rel", "img"
  * through to the validation error.
  */
 const TEXT_CARRIER_KEYS = new Set(["text", "value", "raw", "content", "markdown"]);
+const LINK_KEYS = Object.keys(LinkValue.shape);
+function hasLinkKey(value: unknown): boolean {
+  return !!value && typeof value === "object" && !Array.isArray(value) && LINK_KEYS.some((k) => k in value);
+}
 function unwrapTextCarrier(value: unknown): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const obj = value as Record<string, unknown>;
@@ -1116,7 +1213,7 @@ function unwrapTextCarrier(value: unknown): unknown {
  *  - contentArea given a single block object      → wrapped in an array
  *  - image/media given a resolved asset object    → its documentId string
  */
-export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): unknown {
+export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string, knownLocales?: readonly string[]): unknown {
   if (value == null) return value;
   if (typeof value === "object" && !Array.isArray(value)) {
     const obj = value as Record<string, unknown>;
@@ -1124,12 +1221,14 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
     if (keys.length === 1 && keys[0] === f.name) value = obj[f.name];
   }
   // Locale-map unwrap: {en: "..."} (agents copy the localized mental model into
-  // the value). Unambiguous when the requested locale is a key, or when every
-  // key is locale-shaped — no field type has locale-shaped object keys.
+  // the value). Unambiguous when every key IS one of the instance's locales; the
+  // shape heuristic is only for callers with no locale list — it cannot tell
+  // {id: "abc"} from {en: "abc"}, and `no` is a real locale, so no denylist can.
+  const isLocaleKey = (k: string): boolean => (knownLocales ? knownLocales.includes(k) : LOCALE_KEY.test(k) && !NOT_LOCALE_KEYS.has(k));
   if (value && typeof value === "object" && !Array.isArray(value)) {
     const obj = value as Record<string, unknown>;
     const keys = Object.keys(obj);
-    if (keys.length > 0 && keys.every((k) => LOCALE_KEY.test(k) && !NOT_LOCALE_KEYS.has(k))) {
+    if (keys.length > 0 && keys.every(isLocaleKey)) {
       const picked = locale && locale in obj ? obj[locale] : keys.length === 1 ? obj[keys[0]!] : undefined;
       if (picked !== undefined) value = picked;
     }
@@ -1165,7 +1264,11 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
       // is unambiguous here (and only here: genuine option lists keep commas).
       if (f.multiple && typeof v === "string") v = v.split(",");
       if (Array.isArray(v)) {
-        const slugs = v.map((x) => (typeof x === "string" ? slugifyValue(x) : "")).filter(Boolean);
+        // A number is a tag too (2024 → "2024"). Anything else non-string stays
+        // put for validation to reject — dropping it would be a silent data loss.
+        const slugs = v
+          .map((x) => (typeof x === "string" || typeof x === "number" ? slugifyValue(String(x)) : x))
+          .filter((x) => x !== "");
         return [...new Set(slugs)];
       }
       return typeof v === "string" ? slugifyValue(v) : v;
@@ -1192,7 +1295,10 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
       // next write instead of failing validation, and an agent that sends
       // "https://…" for a link field gets the obvious meaning rather than a
       // rejection. Meaning-preserving, so it belongs here (rule #3).
-      const unwrapped = unwrapTextCarrier(value);
+      //
+      // An object that already carries a LinkValue key ({text:"Read more"}) IS a
+      // partial link — `text` is its label, not a carrier for the destination.
+      const unwrapped = hasLinkKey(value) ? value : unwrapTextCarrier(value);
       if (typeof unwrapped === "string") {
         const trimmed = unwrapped.trim();
         return trimmed === "" ? null : { href: trimmed };
@@ -1223,7 +1329,6 @@ export function coerceFieldValue(f: FieldDef, value: unknown, locale?: string): 
  */
 export type BlockTypeResolver = (name: string) => ContentTypeDef | undefined;
 
-/** Guards against a block type that (transitively) allows itself. */
 /** How deep a content area may nest inline blocks. Coercion, schema validation
  *  and the db layer's placement guard all read THIS constant, so the three
  *  cannot disagree about what a legal document looks like. */
@@ -1236,38 +1341,34 @@ export const MAX_INLINE_DEPTH = 10;
  * coercing against the wrong schema would be exactly the meaning-destroying
  * transform rule #1 forbids.
  */
-function coerceInlineBlock(
-  value: unknown,
-  locale: string | undefined,
-  blockTypes: BlockTypeResolver,
-  depth: number,
-): unknown {
+interface CoerceScope {
+  locale: string | undefined;
+  blockTypes: BlockTypeResolver | undefined;
+  /** The instance's locale codes; without them the locale-map unwrap falls back to a key-shape heuristic. */
+  knownLocales: readonly string[] | undefined;
+}
+
+function coerceInlineBlock(value: unknown, scope: CoerceScope, depth: number): unknown {
   if (!value || typeof value !== "object" || Array.isArray(value)) return value;
   const b = value as Record<string, unknown>;
   const inline = b.inline;
   if (!inline || typeof inline !== "object" || Array.isArray(inline)) return value;
-  const def = typeof b.blockType === "string" ? blockTypes(b.blockType) : undefined;
+  const def = typeof b.blockType === "string" ? scope.blockTypes?.(b.blockType) : undefined;
   if (!def) return value;
-  return { ...b, inline: coerceDataAtDepth(def, inline as Record<string, unknown>, locale, blockTypes, depth) };
+  return { ...b, inline: coerceDataAtDepth(def, inline as Record<string, unknown>, scope, depth) };
 }
 
-function coerceDataAtDepth(
-  type: ContentTypeDef,
-  data: Record<string, unknown>,
-  locale: string | undefined,
-  blockTypes: BlockTypeResolver | undefined,
-  depth: number,
-): Record<string, unknown> {
+function coerceDataAtDepth(type: ContentTypeDef, data: Record<string, unknown>, scope: CoerceScope, depth: number): Record<string, unknown> {
   const out: Record<string, unknown> = { ...data };
   for (const f of type.fields) {
     if (!(f.name in out)) continue;
-    out[f.name] = coerceFieldValue(f, out[f.name], locale);
+    out[f.name] = coerceFieldValue(f, out[f.name], scope.locale, scope.knownLocales);
     // Recurse into content areas so the chokepoint covers the WHOLE document, not
     // just its first level. Without this, a block's richtext field kept raw
     // Markdown (persisted, 200 OK, then rendered blank) while the identical
     // top-level field was correctly parsed — see shared-coerce-blocks.test.ts.
-    if (f.type === "contentArea" && blockTypes && depth < MAX_INLINE_DEPTH && Array.isArray(out[f.name])) {
-      out[f.name] = (out[f.name] as unknown[]).map((b) => coerceInlineBlock(b, locale, blockTypes, depth + 1));
+    if (f.type === "contentArea" && scope.blockTypes && depth < MAX_INLINE_DEPTH && Array.isArray(out[f.name])) {
+      out[f.name] = (out[f.name] as unknown[]).map((b) => coerceInlineBlock(b, scope, depth + 1));
     }
   }
   return out;
@@ -1277,16 +1378,18 @@ function coerceDataAtDepth(
  * The tolerant-coercion chokepoint (agent-API rule #3): every write path funnels
  * through here so an agent mistake is absorbed in ONE place, or rejected.
  *
- * Pass `blockTypes` to also coerce content-area INLINE block data. It is optional
- * only so existing callers keep compiling; every real write path should supply it.
+ * Pass `blockTypes` to also coerce content-area INLINE block data, and
+ * `knownLocales` so only a REAL locale key is unwrapped. Both are optional only
+ * so pure callers keep compiling; every real write path should supply both.
  */
 export function coerceData(
   type: ContentTypeDef,
   data: Record<string, unknown>,
   locale?: string,
   blockTypes?: BlockTypeResolver,
+  knownLocales?: readonly string[],
 ): Record<string, unknown> {
-  return coerceDataAtDepth(type, data, locale, blockTypes, 0);
+  return coerceDataAtDepth(type, data, { locale, blockTypes, knownLocales }, 0);
 }
 
 function applyStringValidation(base: z.ZodString, f: FieldDef, strict: boolean): z.ZodTypeAny {
@@ -1314,5 +1417,3 @@ function applyNumberValidation(base: z.ZodNumber, f: FieldDef, strict: boolean):
   if (f.validation.max != null) s = s.max(f.validation.max);
   return s;
 }
-
-export const LOCALE_FALLBACK_MARKER = "__fallback__" as const;

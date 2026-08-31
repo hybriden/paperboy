@@ -21,6 +21,7 @@ import * as Ctx from "@radix-ui/react-context-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { ContentTypeDef, TreeNode } from "@paperboy/shared";
+import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { localeIndicator } from "../lib/locale-indicator.js";
@@ -28,7 +29,6 @@ import { TypeIcon, useTypeIconName } from "../lib/typeIcons.js";
 import { useConfirm } from "./ui/confirm.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Skeleton } from "./ui/skeleton.js";
-import { Surface } from "./ui/surface.js";
 import { useToast } from "./ui/toast.js";
 
 const EXPAND_KEY = "paperboy-tree-expanded";
@@ -60,6 +60,12 @@ function dropFromEvent(e: DragEndEvent | DragOverEvent): { id: string; mode: Dro
   const over = e.over;
   const activeRect = e.active.rect.current.translated;
   if (!over || !activeRect || String(over.id) === String(e.active.id)) return null;
+  // Keyboard sensor: the active rect lands exactly on the target row (ratio
+  // 0.5), so the arrow direction — not the geometry — says which side. Nesting
+  // stays a pointer gesture; "Move to…" re-parents from the keyboard.
+  if (e.activatorEvent instanceof KeyboardEvent) {
+    return { id: String(over.id), mode: e.delta.y < 0 ? "before" : "after" };
+  }
   const center = activeRect.top + activeRect.height / 2;
   const ratio = (center - over.rect.top) / over.rect.height;
   // Nest ONLY on a clear rightward drag AND while over the row's body (middle
@@ -464,11 +470,13 @@ function Row(props: LevelProps & { node: TreeNode }) {
   // a status dot that would be meaningless for a locale it has no version in.
   const ind = localeIndicator(node.locales, locale, props.localeOrder);
   const loc = node.locales[locale];
+  const statusLabel = loc?.status === "published" ? (loc.hasUnpublishedChanges ? "Published · unpublished changes" : "Published") : "Draft";
 
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: node.documentId, disabled: !dragEnabled });
   const style = { transform: CSS.Transform.toString(transform), transition };
 
   function onRowKey(e: React.KeyboardEvent) {
+    if (e.target !== e.currentTarget) return; // keys on the grip belong to dnd-kit
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onSelect(node.documentId); }
     else if (e.key === "ArrowRight" && node.hasChildren && !isOpen) { e.preventDefault(); toggle(node.documentId); }
     else if (e.key === "ArrowLeft" && isOpen) { e.preventDefault(); toggle(node.documentId); }
@@ -499,12 +507,12 @@ function Row(props: LevelProps & { node: TreeNode }) {
             // there is suppressed so the two can't fight over the gesture.
             draggable={node.kind === "page"}
             onDragStart={(e) => {
-              if ((e.target as HTMLElement).closest('[aria-label="Drag to reorder or nest"]')) {
+              if ((e.target as HTMLElement).closest('[aria-label^="Drag to reorder"]')) {
                 e.preventDefault();
                 return;
               }
               e.dataTransfer.setData(
-                "application/x-paperboy",
+                DRAG_MIME,
                 JSON.stringify({ kind: "page", documentId: node.documentId, blockType: node.type, name: node.name }),
               );
               e.dataTransfer.effectAllowed = "copy";
@@ -536,19 +544,21 @@ function Row(props: LevelProps & { node: TreeNode }) {
               <button
                 {...attributes}
                 {...listeners}
-                tabIndex={-1}
-                aria-label="Drag to reorder or nest"
-                title="Drag to reorder, or drop onto a page to nest inside it"
+                tabIndex={0}
+                aria-label={`Drag to reorder ${node.name}`}
+                title="Drag to reorder (Space, then arrow keys), or drop onto a page to nest inside it"
                 onClick={(e) => e.stopPropagation()}
-                className="ml-auto cursor-grab text-muted opacity-0 group-hover:opacity-100 active:cursor-grabbing"
+                className="ml-auto cursor-grab text-muted opacity-0 group-hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing"
               >
                 <Icon.Grip width={14} height={14} />
               </button>
             )}
             {ind.translated ? (
               <span
+                role="img"
+                aria-label={statusLabel}
+                title={statusLabel}
                 className={`${dragEnabled ? "" : "ml-auto"} h-2 w-2 shrink-0 rounded-full ${loc?.status === "published" ? "bg-published" : "bg-draft"}`}
-                title={loc?.status === "published" ? (loc.hasUnpublishedChanges ? "Published · unpublished changes" : "Published") : "Draft"}
               />
             ) : (
               <span
@@ -573,7 +583,16 @@ function Row(props: LevelProps & { node: TreeNode }) {
                 same Editor/Admin roles as content.publish in the default RBAC. */}
             {canDelete && node.kind === "page" && !isStartPage && <CtxItem onSelect={() => setStart.mutate(node.documentId)}>Set as start page</CtxItem>}
             {canDelete && node.kind === "page" && isStartPage && <CtxItem onSelect={() => setStart.mutate(null)}>Unset start page</CtxItem>}
-            <CtxItem onSelect={() => { void navigator.clipboard?.writeText(node.documentId); toast.success("Copied document ID"); }}>Copy document ID</CtxItem>
+            <CtxItem
+              onSelect={() => {
+                void navigator.clipboard?.writeText(node.documentId).then(
+                  () => toast.success("Copied document ID"),
+                  () => toast.error("Couldn’t copy the document ID"),
+                );
+              }}
+            >
+              Copy document ID
+            </CtxItem>
             {/* Delete just the active-language version — only when another
                 language remains (deleting the last one is "Move to trash"). */}
             {canDelete && ind.translated && Object.keys(node.locales).length > 1 && (
@@ -823,9 +842,8 @@ function CreateDialog(props: {
   });
 
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 backdrop-blur-[1px] animate-fade-in" role="dialog" aria-modal aria-label="Create content">
-      <Surface elevation={2} radius="lg" padding="lg" className="w-[min(400px,94vw)] animate-scale-in">
-        <h3 className="mb-3 text-base font-bold text-fg">{props.parentId ? "Create child content" : "Create content"}</h3>
+    <Dialog open onOpenChange={(o) => !o && props.onClose()}>
+      <DialogContent title="Create content" description={props.parentId ? "As a child of the selected page." : undefined} size="sm">
         <label className="field-label" htmlFor="ctype">Content type</label>
         <select id="ctype" className="field-input mb-3" value={type} onChange={(e) => setChosenType(e.target.value)}>
           {props.types.map((t) => <option key={t.name} value={t.name}>{t.displayName} ({t.kind})</option>)}
@@ -839,7 +857,7 @@ function CreateDialog(props: {
             {create.isPending ? "Creating…" : "Create"}
           </button>
         </div>
-      </Surface>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

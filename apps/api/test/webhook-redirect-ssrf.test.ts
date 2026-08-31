@@ -87,6 +87,23 @@ describe("webhook dispatch — redirects are re-validated per hop", () => {
     }
   });
 
+  it("connects to the address the guard VETTED, not to a second DNS answer (rebinding)", async () => {
+    // `pinned.example` does not resolve. If the request lands on the local server
+    // — with the Host header still naming pinned.example — the connect used the
+    // vetted address the guard returned, so a TTL-0 host cannot answer public to
+    // the check and 169.254.169.254 to the connect.
+    const port = (server.address() as AddressInfo).port;
+    const hosts: string[] = [];
+    server.prependListener("request", (req) => hosts.push(req.headers.host ?? ""));
+    const res = await postFollowingRedirectsSafely(
+      `http://pinned.example:${port}/hook`,
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+      async () => ["127.0.0.1"],
+    );
+    expect(res.status).toBe(200);
+    expect(hosts).toContain(`pinned.example:${port}`);
+  });
+
   it("rejects a 3xx with no Location rather than treating it as success", async () => {
     const bare = createServer((_req, res) => {
       res.writeHead(302);

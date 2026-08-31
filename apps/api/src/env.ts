@@ -1,8 +1,15 @@
 import { z } from "zod";
 
+/** "" counts as unset: compose passes every variable through, empty when the host has none. */
+const emptyToUndefined = (v: unknown): unknown => (v === "" ? undefined : v);
+
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   DATABASE_URL: z.string(),
+  /** Connections in the Postgres pool. Reads inside a transaction reuse its
+   *  connection (see Queryable in @paperboy/db), so this bounds concurrency, not
+   *  correctness; size it below the server's max_connections across replicas. */
+  DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
   API_PORT: z.coerce.number().default(8091),
   SESSION_SECRET: z.string().min(16).default("dev-session-secret-change-me-min-32-chars"),
   CSRF_SECRET: z.string().min(16).default("dev-csrf-secret-change-me-min-32-chars-long"),
@@ -11,19 +18,31 @@ const EnvSchema = z.object({
   // falls back to SESSION_SECRET. But it must go through the SAME placeholder
   // guard as the other two — TOTP login is passwordless, so a shipped-constant
   // MFA_SECRET turns one leaked `users` row into a full account takeover.
-  // Empty string counts as unset: compose ships `MFA_SECRET: ${MFA_SECRET:-}`.
-  MFA_SECRET: z.preprocess((v) => (v === "" ? undefined : v), z.string().min(16).optional()),
+  MFA_SECRET: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
   // Shared with the frontend (apps/web): the API SIGNS short-lived preview tokens
   // with it and the frontend verifies them. Must be the same value on both, and it
   // must never reach the browser — that is the whole point of the token indirection
   // (the admin used to ship this secret itself, inlined into its public JS bundle).
   // Unset ⇒ the mint route reports 503 and in-editor preview is unavailable.
-  PREVIEW_SECRET: z.preprocess((v) => (v === "" ? undefined : v), z.string().min(16).optional()),
+  PREVIEW_SECRET: z.preprocess(emptyToUndefined, z.string().min(16).optional()),
   COOKIE_SECURE: z
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
-  CORS_ORIGIN: z.string().default("http://localhost:8090"),
+  // Normalised to an ORIGIN (scheme://host[:port]): the CSRF check compares it
+  // to the browser's Origin header byte-for-byte, and a configured trailing slash
+  // or path would refuse every mutation from the admin.
+  CORS_ORIGIN: z
+    .string()
+    .default("http://localhost:8090")
+    .transform((v, ctx) => {
+      try {
+        return new URL(v).origin;
+      } catch {
+        ctx.addIssue({ code: "custom", message: `CORS_ORIGIN must be a full URL such as https://cms.example.com (got "${v}")` });
+        return z.NEVER;
+      }
+    }),
   // Browser-reachable base for media URLs. Default "" = RELATIVE URLs
   // (/api/v1/media/…), which resolve same-origin via each app's proxy and so
   // work on any host (localhost, LAN IP, domain). Set an absolute base only if
@@ -47,8 +66,7 @@ const EnvSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_BASE_URL: z.string().optional(),
-  // "" = unset (compose passes the var through even when the host has none).
-  AI_PROVIDER: z.preprocess((v) => (v === "" ? undefined : v), z.enum(["anthropic", "openai"]).optional()),
+  AI_PROVIDER: z.preprocess(emptyToUndefined, z.enum(["anthropic", "openai"]).optional()),
   AI_MODEL: z.string().optional(),
   // Stock images (Settings → Stock images). Env fallback for the Unsplash
   // access key; a key stored in the CMS takes precedence.
@@ -86,8 +104,8 @@ const EnvSchema = z.object({
   // Defaults to "false" (trust NO hops) so an unconfigured deploy fails safe: with
   // "true", anyone who can reach the API directly sets their own X-Forwarded-For and
   // every per-IP rate limit and audit IP becomes attacker-chosen. The shipped compose
-  // and .env.example opt in with "uniquelocal" — an ADDRESS-VALIDATING value. They
-  // used to say "1"; see parseTrustProxy for why a hop count is now refused.
+  // and .env.example opt in with "uniquelocal" — an ADDRESS-VALIDATING value; a hop
+  // count is refused (see parseTrustProxy).
   TRUST_PROXY: z.string().default("false"),
 });
 

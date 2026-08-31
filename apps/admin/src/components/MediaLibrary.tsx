@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Asset, StockSearchResult } from "@paperboy/shared";
+import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
 import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
@@ -67,7 +68,7 @@ function AssetThumb({ asset, selected, onClick }: { asset: Asset; selected?: boo
       type="button"
       draggable
       onDragStart={(e) => {
-        e.dataTransfer.setData("application/x-paperboy", JSON.stringify({ kind: "media", documentId: asset.documentId, url: asset.url, alt: asset.alt }));
+        e.dataTransfer.setData(DRAG_MIME, JSON.stringify({ kind: "media", documentId: asset.documentId, url: asset.url, alt: asset.alt }));
         e.dataTransfer.effectAllowed = "copy";
       }}
       onClick={onClick}
@@ -97,16 +98,17 @@ export function MediaTab() {
     mutationFn: (v: { id: string; alt: string }) => api.updateAssetAlt(v.id, v.alt),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["assets"] });
-      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // alt text drives the dashboard missingAlt count (S3-L5)
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // alt text drives the dashboard missingAlt count
       setEditing(null);
       toast.success("Alt text saved");
     },
+    onError: (e) => toast.error("Couldn’t save alt text", (e as Error).message),
   });
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteAsset(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["assets"] });
-      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // a deleted image changes the missingAlt count (S3-L5)
+      void qc.invalidateQueries({ queryKey: ["dashboard"] }); // a deleted image changes the missingAlt count
       setEditing(null);
       toast.success("Image deleted");
     },
@@ -333,7 +335,7 @@ export function ImageField({ id, value, disabled, onChange }: { id: string; valu
     // image along in dataTransfer.files too, and taking that file path would
     // RE-UPLOAD a duplicate of an asset that already exists (the reported bug —
     // import a stock photo, drag it into an image field, end up with two).
-    const raw = e.dataTransfer.getData("application/x-paperboy");
+    const raw = e.dataTransfer.getData(DRAG_MIME);
     if (raw) {
       try {
         const p = JSON.parse(raw) as { kind?: string; documentId?: string };
@@ -373,7 +375,7 @@ export function ImageField({ id, value, disabled, onChange }: { id: string; valu
     <div
       id={id}
       className={`flex items-center gap-3 rounded-(--radius) ${dropOver ? "ring-2 ring-accent ring-offset-2" : ""}`}
-      onDragOver={(e) => { if (!disabled && (e.dataTransfer.types.includes("application/x-paperboy") || e.dataTransfer.types.includes("Files"))) { e.preventDefault(); setDropOver(true); } }}
+      onDragOver={(e) => { if (!disabled && (e.dataTransfer.types.includes(DRAG_MIME) || e.dataTransfer.types.includes("Files"))) { e.preventDefault(); setDropOver(true); } }}
       onDragLeave={() => setDropOver(false)}
       onDrop={disabled ? undefined : onDrop}
     >

@@ -20,7 +20,7 @@ export function App() {
     setUnauthorizedHandler(() => {
       setCsrf(null);
       setUser(null);
-      qc.clear(); // drop one principal's RBAC/site-scoped cache at the auth boundary (S3-M4)
+      qc.clear(); // drop one principal's RBAC/site-scoped cache at the auth boundary
     });
     api
       .me()
@@ -39,7 +39,7 @@ export function App() {
     } finally {
       setCsrf(null);
       setUser(null);
-      qc.clear(); // no previous-session data survives into the next login (S3-M4)
+      qc.clear(); // no previous-session data survives into the next login
     }
   }
 

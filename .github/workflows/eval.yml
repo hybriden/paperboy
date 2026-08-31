@@ -24,9 +24,10 @@ on:
   workflow_dispatch:
 
 # A scheduled run must never block or accumulate behind a newer one (e.g. a
-# hung real-model run holding the ref while Monday 06:00 fires again).
+# hung real-model run holding the ref while Monday 06:00 fires again). Keyed by
+# event as well: a push to main must not cancel the Monday real-model run.
 concurrency:
-  group: eval-${{ github.ref }}
+  group: eval-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 # Least privilege: the eval only reads the repo (it drives the MCP server, asserts

@@ -1,6 +1,7 @@
-import type { DeliveryContent } from "@paperboy/shared";
-import { blockData, contentAreas, pbAreaAttrs, renderRichText, type AreaBlock } from "@paperboycms/client";
+import { blockData, contentAreas, pbAreaAttrs, renderRichText, type AreaBlock, type DeliveryContent } from "@paperboycms/client";
+import { ATTR } from "@paperboycms/preview/protocol";
 import { standaloneAreaBlock } from "../lib/standalone-block";
+import { DEFAULT_LOCALE } from "../lib/locale";
 import { submitFormAction } from "../actions/submit-form";
 import { Form } from "./Form";
 import DOMPurify from "isomorphic-dompurify";
@@ -15,6 +16,19 @@ function asText(v: unknown): string {
   if (typeof v === "string") return v;
   if (typeof v === "number" || typeof v === "boolean" || typeof v === "bigint") return String(v);
   return "";
+}
+
+/** The on-page-editing field marker, spelled through the published ATTR
+ *  contract so the attribute name can't drift from the bridge that reads it. */
+const pbField = (name: string) => ({ [ATTR.field]: name });
+
+/** A CTA from a plain text field never met the write-time link guard, and React
+ *  blocks javascript: but lets data:/vbscript: through — allow only safe schemes
+ *  and relative paths (a single leading slash: `//host` is protocol-relative,
+ *  i.e. an off-site link in disguise); anything else drops the link. */
+function safeHref(raw: string): string | null {
+  const h = raw.trim();
+  return /^(https?:|mailto:|tel:|\/(?!\/)|[#?.])/i.test(h) ? h : null;
 }
 
 /**
@@ -61,7 +75,7 @@ function EditableRich({ field, label, value, className, preview, applies }: { fi
     if (!preview || !applies) return null;
     return (
       <div
-        data-pb-field={field}
+        {...pbField(field)}
         style={{ border: "1.5px dashed var(--pb-edit, #c8362f)", borderRadius: 8, padding: "1rem", opacity: 0.7, cursor: "pointer" }}
       >
         <span className="post-meta" style={{ margin: 0 }}>Empty {label} — click to write.</span>
@@ -69,7 +83,7 @@ function EditableRich({ field, label, value, className, preview, applies }: { fi
     );
   }
   return (
-    <div data-pb-field={field}>
+    <div {...pbField(field)}>
       <Rich doc={value} className={className} />
     </div>
   );
@@ -79,21 +93,15 @@ function EditableRich({ field, label, value, className, preview, applies }: { fi
 // AreaBlock / blockData / contentAreas come from @paperboycms/client (shared,
 // DOM-free delivery-consumption helpers).
 
-/** Newest-first by publishDate (fallback name) — the teaser/list ordering. */
-function newestFirst(items: DeliveryContent[]): DeliveryContent[] {
-  return [...items].sort((a, b) =>
-    asText((b.data as Record<string, unknown>).publishDate).localeCompare(
-      asText((a.data as Record<string, unknown>).publishDate),
-    ) || a.name.localeCompare(b.name),
-  );
-}
-
-/** ListBlock: a teaser list of a referenced page's newest children (async RSC). */
+/** ListBlock: a teaser list of a referenced page's children (async RSC), in the
+ *  order delivery already applies — the container's declared child_sort. A
+ *  child with no public path (unpublished ancestor) is not listed: a teaser
+ *  always links, and there is nothing to link to. */
 async function ListBlockTeasers({ d, locale, preview, edit }: { d: Record<string, unknown>; locale: string; preview: boolean; edit: Record<string, unknown> }) {
   const source = d.source as { documentId?: string } | null | undefined;
   const count = typeof d.count === "number" && d.count > 0 ? d.count : 3;
   const items = source?.documentId
-    ? newestFirst(await fetchList(null, locale, preview, source.documentId)).slice(0, count)
+    ? (await fetchList(null, locale, preview, source.documentId)).filter((p) => p.urlPath).slice(0, count)
     : [];
   return (
     <section className="block block--narrow" data-block="ListBlock" {...edit}>
@@ -107,7 +115,7 @@ async function ListBlockTeasers({ d, locale, preview, edit }: { d: Record<string
             const date = fmtDate(pd.publishDate);
             return (
               <li key={p.documentId} className="card post-card">
-                <a className="post-link" href={p.urlPath ? `/${locale}${p.urlPath}` : "#"}>
+                <a className="post-link" href={`/${locale}${p.urlPath}`}>
                   <h3>{asText(pd.title) || p.name}</h3>
                 </a>
                 {date ? <p className="post-meta">{date}</p> : null}
@@ -123,31 +131,35 @@ async function ListBlockTeasers({ d, locale, preview, edit }: { d: Record<string
 
 function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; locale: string; preview: boolean }) {
   const d = blockData(b);
-  // data-pb-* markers let the editor's preview map a click back to this block.
-  // Only the attributes declared in @paperboycms/preview's ATTR contract — the
-  // former data-pb-shared was undeclared and read by nothing (L5).
-  const edit = { "data-pb-block-index": index, "data-pb-block-type": b.blockType };
+  // ATTR markers let the editor's preview map a click back to this block. Only
+  // the attributes declared in @paperboycms/preview's ATTR contract — a former
+  // "shared" marker was undeclared and read by nothing (L5).
+  const edit = { [ATTR.blockIndex]: index, [ATTR.blockType]: b.blockType };
   if (b.blockType === "HeroBlock") {
     const img = d.heroImage as { url?: string; alt?: string } | null | undefined;
-    const cta = asText(d.ctaUrl);
-    const href = cta.startsWith("/") ? `/${locale}${cta}` : cta;
+    // Two HeroBlock shapes exist: the seed's (title/subtitle/ctaUrl/heroImage) and
+    // the built-in template's (heading/image/primaryLink). This follows the seed
+    // and honours the template's primaryLink — a delivery-resolved {href, text}.
+    const link = d.primaryLink as { href?: unknown; text?: unknown } | null | undefined;
+    const cta = safeHref(asText(d.ctaUrl) || asText(link?.href));
+    const href = cta?.startsWith("/") ? `/${locale}${cta}` : cta;
     return (
       <section className={`block block--full block--${b.display}`} data-block="HeroBlock" {...edit}>
         {img?.url ? <img className="hero-image" src={img.url} alt={img.alt ?? ""} loading="lazy" /> : null}
-        {/* data-pb-field INSIDE a block: the preview bridge posts the field name
+        {/* ATTR.field INSIDE a block: the preview bridge posts the field name
             plus the enclosing block index, and the editor opens its on-page
             overlay scoped to this block instance. */}
-        <h2 data-pb-field="title">{asText(d.title)}</h2>
-        {d.subtitle ? <p data-pb-field="subtitle">{asText(d.subtitle)}</p> : null}
-        {cta ? <a href={href}>Learn more</a> : null}
+        <h2 {...pbField("title")}>{asText(d.title)}</h2>
+        {d.subtitle ? <p {...pbField("subtitle")}>{asText(d.subtitle)}</p> : null}
+        {href ? <a href={href}>{asText(link?.text) || "Learn more"}</a> : null}
       </section>
     );
   }
   if (b.blockType === "CardBlock") {
     return (
       <div className={`block card card--${b.display}`} data-block="CardBlock" {...edit}>
-        <h3 data-pb-field="title">{asText(d.title)}</h3>
-        <div data-pb-field="body">
+        <h3 {...pbField("title")}>{asText(d.title)}</h3>
+        <div {...pbField("body")}>
           <Rich doc={d.body} className="richtext" />
         </div>
       </div>
@@ -160,9 +172,11 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
   // is posted against the form's own documentId, which only a document has.
   // The delivered `form` spec carries everything needed to draw it.
   if (b.shared && b.content?.type === "Form" && b.content.form && b.content.documentId) {
+    // Read server-side per request, not in the client component: the image is
+    // built without this NEXT_PUBLIC_ var (see .env.example), so Next never inlines it.
     return (
       <div className={`block block--${b.display}`} data-block="Form" {...edit}>
-        <Form spec={b.content.form} formId={b.content.documentId} action={submitFormAction} />
+        <Form spec={b.content.form} formId={b.content.documentId} action={submitFormAction} turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY} />
       </div>
     );
   }
@@ -213,10 +227,10 @@ function BlogPostView({ content }: { content: DeliveryContent }) {
   return (
     <main className="wrap" data-document-id={content.documentId}>
       <article className="post">
-        <h1 className="page-heading" data-pb-field="title">{asText(d.title) || content.name}</h1>
+        <h1 className="page-heading" {...pbField("title")}>{asText(d.title) || content.name}</h1>
         {date ? <p className="post-meta">{date}</p> : null}
-        {d.summary ? <p className="post-summary" data-pb-field="summary">{asText(d.summary)}</p> : null}
-        <div data-pb-field="body"><Rich doc={d.body} className="richtext post-body" /></div>
+        {d.summary ? <p className="post-summary" {...pbField("summary")}>{asText(d.summary)}</p> : null}
+        <div {...pbField("body")}><Rich doc={d.body} className="richtext post-body" /></div>
       </article>
     </main>
   );
@@ -244,7 +258,7 @@ function PostList({ posts, locale, basePath }: { posts: DeliveryContent[]; local
   );
 }
 
-export function Renderer({ content, posts, locale = "en", basePath = "", preview = false }: { content: DeliveryContent; posts?: DeliveryContent[]; locale?: string; basePath?: string; preview?: boolean }) {
+export function Renderer({ content, posts, locale = DEFAULT_LOCALE, basePath = "", preview = false }: { content: DeliveryContent; posts?: DeliveryContent[]; locale?: string; basePath?: string; preview?: boolean }) {
   if (content.type === "BlogPost") return <BlogPostView content={content} />;
 
   const data = content.data as Record<string, unknown>;
@@ -261,13 +275,14 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
   const area = picked.blocks;
   return (
     <main className="wrap" data-document-id={content.documentId}>
-      <h1 className="page-heading" data-pb-field="heading">{asText(data.heading) || content.name}</h1>
       {/* "applies" comes from the SCHEMA (fieldTypes), not value presence: a
-          field belongs to this type even when its value is empty/absent. */}
+          field belongs to this type even when its value is empty/absent — and a
+          type WITHOUT a heading field gets no heading marker at all. */}
+      <h1 className="page-heading" {...("heading" in content.fieldTypes ? pbField("heading") : {})}>{asText(data.heading) || content.name}</h1>
       <EditableRich field="intro" label="intro" value={data.intro} className="intro richtext" preview={preview} applies={"intro" in content.fieldTypes} />
       <EditableRich field="body" label="body" value={data.body} className="richtext" preview={preview} applies={"body" in content.fieldTypes} />
       {area.length > 0 ? (
-        // In preview the area gets a data-pb-area wrapper (via pbAreaAttrs) so
+        // In preview the area gets an ATTR.area wrapper (via pbAreaAttrs) so
         // shared blocks / pages dragged from the admin can be dropped anywhere
         // on it; outside preview the helper emits nothing and the wrapper is a
         // plain div with no editor markers.
@@ -280,12 +295,12 @@ export function Renderer({ content, posts, locale = "en", basePath = "", preview
         )
       ) : preview && areas.length > 0 ? (
         // Empty content area: render a visible, clickable target ONLY in preview
-        // so on-page editing has somewhere to land. The data-pb-field marker lets
+        // so on-page editing has somewhere to land. The ATTR.field marker lets
         // the bridge outline it and route the click to this field in the form
         // (where blocks are added / dropped). Never shown on the public page.
         <div
           {...pbAreaAttrs(areaField, preview)}
-          data-pb-field={areaField}
+          {...pbField(areaField)}
           style={{ border: "2px dashed var(--pb-edit, #c8362f)", borderRadius: 8, padding: "2.5rem 1rem", textAlign: "center", opacity: 0.7, cursor: "pointer" }}
         >
           <p className="post-meta" style={{ margin: 0 }}>This area is empty — click to open the block palette.</p>

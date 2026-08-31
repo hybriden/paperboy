@@ -1,20 +1,14 @@
 import { useEffect, useRef } from "react";
-import { QUERY_ERROR_EVENT } from "../main.js";
 import { useToast } from "./ui/toast.js";
 
-/**
- * Makes failed queries VISIBLE.
- *
- * Every query error now reaches the cache-level onError in main.tsx, which
- * announces it as a DOM event; this component (inside ToastProvider, so it can use
- * the toast API) turns it into one toast. Without it a dropped request was silent
- * and terminal — panels went blank, or reported false state, with nothing to tell
- * the editor their screen no longer reflects the server.
- *
- * Deliberately COALESCED: one failed navigation can fan out to a dozen queries, and
- * a dozen identical toasts is its own bug. Identical messages inside a short window
- * collapse into one.
- */
+/** DOM event the query cache in main.tsx dispatches for every failed query
+ *  (detail = message). Declared here, not in main.tsx, so the entry module
+ *  isn't imported back by a component it renders. */
+export const QUERY_ERROR_EVENT = "pb:queryerror";
+
+/** One toast per failed query — a dropped request must never be silent. Identical
+ *  messages inside a short window collapse into one: a failed navigation fans out
+ *  to a dozen queries, and a dozen identical toasts is its own bug. */
 const COALESCE_MS = 3000;
 
 export function QueryErrorToaster() {

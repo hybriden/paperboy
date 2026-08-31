@@ -33,6 +33,24 @@ describe("Content-type editor (Admin-only, schema writes)", () => {
     expect(made.statusCode).toBe(200);
   });
 
+  // A typo'd key on a field or type definition must be REFUSED, not stripped: a
+  // stripped `deliver: "public"` created the field private (and `localised:
+  // true` non-localized) with a 200 — the editor learned only when delivery
+  // omitted it (agent-API rule #2).
+  it("refuses an unknown key in a field definition (422 naming the key) instead of silently stripping it", async () => {
+    const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const typo = { ...memo, name: "Typo", fields: [{ name: "heading", displayName: "Heading", type: "text", deliver: "public" }] };
+    const res = await s.app.inject({ method: "POST", url: "/api/v1/manage/content-types", headers: authHeaders(admin), payload: typo });
+    expect(res.statusCode, res.body).toBe(422);
+    expect(res.json().message).toContain("deliver");
+    const list = await s.app.inject({ method: "GET", url: "/api/v1/manage/content-types", headers: { cookie: admin.cookie } });
+    expect((list.json() as Array<{ name: string }>).some((t) => t.name === "Typo")).toBe(false);
+
+    const typeLevel = await s.app.inject({ method: "POST", url: "/api/v1/manage/content-types", headers: authHeaders(admin), payload: { ...memo, name: "Typo2", nestedonly: true } });
+    expect(typeLevel.statusCode, typeLevel.body).toBe(422);
+    expect(typeLevel.json().message).toContain("nestedonly");
+  });
+
   it("rejects non-Admins (Editor 403) and missing CSRF (403)", async () => {
     const editor = await login(s.app, "editor@paperboy.test", "Editor!Passw0rd");
     const denied = await s.app.inject({ method: "POST", url: "/api/v1/manage/content-types", headers: authHeaders(editor), payload: { ...memo, name: "Nope" } });

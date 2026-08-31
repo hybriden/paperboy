@@ -14,7 +14,8 @@ export interface ShellOutlet {
 }
 
 /** Show the native modifier in the shortcut hint (⌘ on macOS, Ctrl elsewhere). */
-const IS_MAC = /Mac|iP(hone|ad|od)/.test(navigator.platform);
+const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform;
+const IS_MAC = /mac|iP(hone|ad|od)/i.test(platform);
 
 const RAIL = [
   { to: "/dashboard", icon: Icon.Dashboard, label: "Dashboard" },

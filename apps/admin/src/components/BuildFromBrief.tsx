@@ -43,6 +43,7 @@ export function BuildFromBriefDialog({
   const [phase, setPhase] = useState<Phase>("idle");
   const [rows, setRows] = useState<ActivityRow[]>([]);
   const [created, setCreated] = useState<Array<{ documentId: string; name: string; type: string }>>([]);
+  const [touched, setTouched] = useState<Array<{ documentId: string; name: string; locale: string }>>([]);
   const [error, setError] = useState<string | null>(null);
   const rowId = useRef(0);
   const listRef = useRef<HTMLDivElement>(null);
@@ -64,9 +65,11 @@ export function BuildFromBriefDialog({
       });
     } else if (ev.type === "done") {
       setCreated(ev.created ?? []);
+      setTouched(ev.touched ?? []);
       setPhase("done");
     } else if (ev.type === "error") {
       if (ev.created?.length) setCreated(ev.created);
+      if (ev.touched?.length) setTouched(ev.touched);
       setError(ev.text ?? "Agent failed");
       setPhase("error");
     }
@@ -76,6 +79,7 @@ export function BuildFromBriefDialog({
     setPhase("running");
     setRows([]);
     setCreated([]);
+    setTouched([]);
     setError(null);
     try {
       await api.aiAgent({ brief, parentId: target === "here" ? parentId : null, locale }, onEvent);
@@ -159,6 +163,30 @@ export function BuildFromBriefDialog({
                         <span className="font-medium">{c.name}</span>
                         <span className="text-xs text-muted">{c.type}</span>
                         <Badge tone="caution" className="ml-auto">Draft</Badge>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {touched.length > 0 && (
+              <div>
+                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Existing content edited</div>
+                <ul className="space-y-1">
+                  {touched.map((t) => (
+                    <li key={`${t.documentId}:${t.locale}`}>
+                      <button
+                        className="flex w-full items-center gap-2 rounded-(--radius) border border-line px-2.5 py-1.5 text-left text-sm hover:bg-line/40"
+                        onClick={() => {
+                          onOpenChange(false);
+                          void navigate(`/edit/${t.documentId}${t.locale !== "en" ? `?lang=${t.locale}` : ""}`);
+                        }}
+                      >
+                        <TypeIcon name={undefined} fallback="file" width={15} height={15} className="shrink-0 text-muted" />
+                        <span className="font-medium">{t.name}</span>
+                        <span className="font-mono text-xs text-muted">{t.locale}</span>
+                        <Badge tone="caution" className="ml-auto">Review</Badge>
                       </button>
                     </li>
                   ))}

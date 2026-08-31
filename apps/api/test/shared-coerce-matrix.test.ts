@@ -127,12 +127,13 @@ describe("coerceFieldValue: locale-map unwrap edges", () => {
     expect(coerceFieldValue(f("text"), { href: "x" })).toEqual({ href: "x" });
   });
 
-  it("NOTE garbage-in: a 3-char-keyed junk object {foo:1} is locale-unwrapped to its inner value", () => {
-    // NOTE: `foo` matches the locale regex (3 lowercase letters), so {foo:1} is
-    // treated as a locale map and unwrapped to the number 1. For a text field
-    // this 1 then fails downstream string validation (→ helpful 422), so it is
-    // not silently persisted — but the coercion itself is lossy. Pinned as-is.
+  it("a 3-char-keyed junk object {foo:1} unwraps only under the regex FALLBACK (no knownLocales)", () => {
+    // `foo` matches the locale regex (3 lowercase letters). Without the
+    // instance's locale codes the heuristic is all there is, so {foo:1} still
+    // collapses to 1 (which then fails string validation → 422). Every db write
+    // path supplies knownLocales, and then it is left alone for Zod to name.
     expect(coerceFieldValue(f("text"), { foo: 1 })).toBe(1);
+    expect(coerceFieldValue(f("text"), { foo: 1 }, "en", ["en", "nb"])).toEqual({ foo: 1 });
   });
 
   it("unwraps a locale-region key like {en-US: v} (single key)", () => {
@@ -198,11 +199,11 @@ describe("coerceFieldValue: arrays / objects sent to scalar fields", () => {
     expect(coerceFieldValue(f("text"), { a1: 1, b2: 2 })).toEqual({ a1: 1, b2: 2 });
   });
 
-  it("NOTE garbage-in: a plain object whose only key is locale-shaped collapses to its value on a text field", () => {
-    // NOTE: {ab:"junk"} → "junk". A real non-locale object that happens to have a
-    // single 2-3 char key is indistinguishable from a locale map here. The value
-    // it collapses to must still satisfy the field's Zod schema downstream.
+  it("a single locale-shaped key collapses under the regex fallback, but not against knownLocales", () => {
+    // {ab:"junk"} → "junk" only while the heuristic has no locale list to check
+    // against; with the instance's codes the object is untouched and Zod rejects it.
     expect(coerceFieldValue(f("text"), { ab: "junk" })).toBe("junk");
+    expect(coerceFieldValue(f("text"), { ab: "junk" }, "en", ["en", "nb"])).toEqual({ ab: "junk" });
   });
 });
 
@@ -300,10 +301,12 @@ describe("coerceFieldValue: contentArea shapes", () => {
     expect(coerceFieldValue(f("contentArea"), arr)).toEqual(arr);
   });
 
-  it("NOTE garbage-in: a non-block object with a single locale-shaped key collapses to its inner value", () => {
-    // NOTE: {foo:1} → 1 (locale-unwrap). It is NOT a block (no blockType) so it is
-    // not array-wrapped. The scalar 1 then fails the ContentArea array schema → 422.
+  it("a non-block object with a single locale-shaped key collapses only under the regex fallback", () => {
+    // {foo:1} → 1 without knownLocales (not a block, so not array-wrapped; the
+    // scalar then fails the ContentArea schema → 422). With the instance's locale
+    // codes it stays an object and fails validation as itself.
     expect(coerceFieldValue(f("contentArea"), { foo: 1 })).toBe(1);
+    expect(coerceFieldValue(f("contentArea"), { foo: 1 }, "en", ["en", "nb"])).toEqual({ foo: 1 });
   });
 
   it("does NOT wrap a plain object lacking blockType (multi-key, no locale collapse)", () => {
@@ -409,6 +412,18 @@ describe("coerceData: applies per-field coercion across a content type, only to 
     expect(out.hero).toBe("a1");
   });
 
+  // A 2–3-letter key heuristic cannot tell {id:"abc"} from {en:"abc"} — and `no`
+  // IS a real locale, so no denylist can. With the instance's locale codes
+  // supplied (what every db write path does), only those keys unwrap.
+  it("with knownLocales, only a real locale key unwraps — {id:'abc'} is left for validation to reject", () => {
+    const out = coerceData(ct, { heading: { id: "abc" } }, "en", undefined, ["en", "nb"]);
+    expect(out.heading).toEqual({ id: "abc" });
+    const unwrapped = coerceData(ct, { heading: { en: "x" } }, "en", undefined, ["en", "nb"]);
+    expect(unwrapped.heading).toBe("x");
+    const picked = coerceData(ct, { heading: { en: "x", nb: "y" } }, "nb", undefined, ["en", "nb"]);
+    expect(picked.heading).toBe("y");
+  });
+
   it("does not touch keys that are not declared fields of the type", () => {
     const out = coerceData(ct, { heading: "H", notAField: { en: "leftAlone" } }, "en");
     expect(out.heading).toBe("H");
@@ -436,8 +451,17 @@ describe("select slugifyValues — tag normalization at the write chokepoint", (
     ]);
   });
 
-  it("drops values that slugify to nothing, and non-strings", () => {
-    expect(coerceFieldValue(tags, ["  ", "!!!", 42, "ok"])).toEqual(["ok"]);
+  it("drops values that slugify to nothing; a number is a tag too (2024 → '2024')", () => {
+    // `[2024, "ai"]` used to come back as `["ai"]` with a 200 — a year tag
+    // silently gone (rule #1). Stringifying a number is meaning-preserving.
+    expect(coerceFieldValue(tags, ["  ", "!!!", 42, "ok"])).toEqual(["42", "ok"]);
+    expect(coerceFieldValue(tags, [2024, "ai"])).toEqual(["2024", "ai"]);
+  });
+
+  it("leaves other non-strings IN PLACE so validation rejects them, instead of dropping them", () => {
+    expect(coerceFieldValue(tags, [true, "ok"])).toEqual([true, "ok"]);
+    expect(coerceFieldValue(tags, [{ tag: "ai" }, "ok"])).toEqual([{ tag: "ai" }, "ok"]);
+    expect(coerceFieldValue(tags, [null, "ok"])).toEqual([null, "ok"]);
   });
 
   it("slugifies a single (non-multiple) select value too", () => {
@@ -451,6 +475,24 @@ describe("select slugifyValues — tag normalization at the write chokepoint", (
   it("slugifyValue itself: deterministic, idempotent", () => {
     expect(slugifyValue("  Épinard & Ål  ")).toBe("epinard-al");
     expect(slugifyValue(slugifyValue("Llama.CPP"))).toBe(slugifyValue("Llama.CPP"));
+  });
+});
+
+describe("coerceFieldValue: link field keeps a partial LinkValue", () => {
+  it("does NOT unwrap {text:'Read more'} into {href:'Read more'} — `text` is a link key, not a carrier", () => {
+    // The text-carrier unwrap ran before the link branch saw the object, so a
+    // valid partial link became a link whose DESTINATION was its label (rule #1).
+    expect(coerceFieldValue(f("link"), { text: "Read more" })).toEqual({ text: "Read more" });
+  });
+
+  it("the same for every other LinkValue key on its own", () => {
+    expect(coerceFieldValue(f("link"), { title: "Tooltip" })).toEqual({ title: "Tooltip" });
+    expect(coerceFieldValue(f("link"), { anchor: "faq" })).toEqual({ anchor: "faq" });
+    expect(coerceFieldValue(f("link"), { documentId: "doc1" })).toEqual({ documentId: "doc1", href: "" });
+  });
+
+  it("still unwraps a genuine carrier ({value:'https://…'}) into a destination", () => {
+    expect(coerceFieldValue(f("link"), { value: "https://example.com" })).toEqual({ href: "https://example.com" });
   });
 });
 
