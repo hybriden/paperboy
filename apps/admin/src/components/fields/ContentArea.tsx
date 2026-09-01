@@ -22,8 +22,9 @@ import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { allowedBlockTypesFor } from "../../lib/area-add.js";
 import { newBlock } from "../../lib/block-drop.js";
 import { blockSummary, type BlockPath } from "../../lib/block-path.js";
+import { referenceBadge, type ReferenceBadge } from "../../lib/reference-badge.js";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "../ui/menu.js";
-import type { BlockDisplayOption, BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
+import type { BlockDisplayOption, BlockInstance, BlockSummary, ContentTypeDef, FieldDef, PageSummary } from "@paperboy/shared";
 import { api } from "../../lib/api.js";
 import { fieldWidthClass } from "../../lib/field-width.js";
 import { Icon } from "../../lib/icons.js";
@@ -38,7 +39,7 @@ interface Props {
   value: BlockInstance[];
   onChange: (next: BlockInstance[]) => void;
   types: ContentTypeDef[];
-  sharedBlocks: { documentId: string; name: string; type: string }[];
+  sharedBlocks: BlockSummary[];
   /**
    * Which block row is open, as a path from the document down, and how to change
    * it. A row in THIS area is open when the path's step for this depth names it;
@@ -94,6 +95,14 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   const isQuestionArea = allowed.length > 0 && allowed.every((t) => isFormFieldType(t.name));
   // Page names for teaser entries (same key/cache as ReferenceField).
   const pages = useQuery({ queryKey: ["pages"], queryFn: ({ signal }) => api.pages(signal) });
+
+  // The document a reference row points at — a shared block or, for a teaser, a
+  // page. One lookup: the row's NAME and its publish badge must describe the
+  // same target. undefined when it is not in scope (or no longer exists).
+  const refTarget = (ref: string | null): BlockSummary | PageSummary | undefined =>
+    ref === null
+      ? undefined
+      : (sharedBlocks.find((s) => s.documentId === ref) ?? pages.data?.find((p) => p.documentId === ref));
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -303,10 +312,8 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
                   index={i}
                   block={b}
                   type={types.find((t) => t.name === b.blockType)}
-                  sharedName={
-                    sharedBlocks.find((s) => s.documentId === b.ref)?.name ??
-                    pages.data?.find((p) => p.documentId === b.ref)?.name
-                  }
+                  sharedName={refTarget(b.ref)?.name}
+                  refBadge={referenceBadge(refTarget(b.ref))}
                   onUpdate={(patch) => updateBlock(b.key, patch)}
                   onRemove={() => removeBlock(b.key)}
                   onMove={(d) => move(b.key, d)}
@@ -493,6 +500,7 @@ function SortableBlock({
   index,
   type,
   sharedName,
+  refBadge,
   onUpdate,
   onRemove,
   onMove,
@@ -510,6 +518,8 @@ function SortableBlock({
   index: number;
   type?: ContentTypeDef;
   sharedName?: string;
+  /** Publish state of a reference's target — see referenceBadge. */
+  refBadge?: ReferenceBadge;
   onUpdate: (patch: Partial<BlockInstance>) => void;
   onRemove: () => void;
   onMove: (d: -1 | 1) => void;
@@ -519,7 +529,7 @@ function SortableBlock({
   onOpenPath?: (next: BlockPath) => void;
   disabled?: boolean;
   types: ContentTypeDef[];
-  sharedBlocks: { documentId: string; name: string; type: string }[];
+  sharedBlocks: BlockSummary[];
   depth: number;
   duplicateKeys: Set<string>;
 }) {
@@ -633,6 +643,19 @@ function SortableBlock({
             <TypeIcon name={type?.icon} fallback={isTeaser ? "file" : "blocks"} width={15} height={15} className="shrink-0 text-muted" />
             <span className="shrink-0 text-[13px] font-medium text-fg">{rowName}</span>
             {summary && <span className="min-w-0 flex-1 truncate text-xs text-muted">{summary}</span>}
+          </span>
+        )}
+
+        {/* A reference to something that has never been published. The block is
+            here and it renders in preview, but delivery drops it from the live
+            page — without this the only way to find that out is to look at the
+            published site and notice something missing. */}
+        {refBadge === "draft" && (
+          <span
+            className="shrink-0 rounded bg-draft/15 px-1.5 py-0.5 text-[11px] font-medium text-draft"
+            title={`"${rowName}" has never been published, so this block is missing from the live site. It still shows here and in preview. Open it from the tree${isTeaser ? "" : " or the Assets pane"} and publish it.`}
+          >
+            Draft
           </span>
         )}
 
@@ -752,7 +775,7 @@ function BlockField({ field, fieldId, value, onChange, onCommit, disabled = fals
   onCommit?: (v: string) => void;
   disabled?: boolean;
   types: ContentTypeDef[];
-  sharedBlocks: { documentId: string; name: string; type: string }[];
+  sharedBlocks: BlockSummary[];
   depth: number;
   openPath?: BlockPath;
   onOpenPath?: (next: BlockPath) => void;

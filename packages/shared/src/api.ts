@@ -29,6 +29,21 @@ export const ChildSort = z.string().regex(/^(manual|-?(name|createdAt|data\.[A-Z
 });
 export type ChildSort = z.infer<typeof ChildSort>;
 
+/**
+ * Per-locale publish state of one document, keyed by locale code — what every
+ * management LIST endpoint reports so its rows can carry a status badge.
+ * `status` is "published" when that locale has a current published version;
+ * `hasUnpublishedChanges` says the working version is a newer draft.
+ */
+export const VariantStates = z.record(
+  z.string(),
+  z.object({
+    status: ContentStatus,
+    hasUnpublishedChanges: z.boolean(),
+  }),
+);
+export type VariantStates = z.infer<typeof VariantStates>;
+
 /** A node in the content tree (management). */
 export const TreeNode = z.object({
   documentId: z.string(),
@@ -40,13 +55,7 @@ export const TreeNode = z.object({
   childSort: ChildSort,
   name: z.string(),
   /** Per-locale status summary for the badges in the tree. */
-  locales: z.record(
-    z.string(),
-    z.object({
-      status: ContentStatus,
-      hasUnpublishedChanges: z.boolean(),
-    }),
-  ),
+  locales: VariantStates,
   hasChildren: z.boolean(),
 });
 export type TreeNode = z.infer<typeof TreeNode>;
@@ -90,11 +99,28 @@ export const BlockSummary = z.object({
   documentId: z.string(),
   type: z.string(),
   name: z.string(),
-  locales: z.record(z.string(), z.object({ status: ContentStatus, hasUnpublishedChanges: z.boolean() })),
+  locales: VariantStates,
   // Asset-pane folder (null = root/unfiled).
   folderId: z.string().nullable(),
 });
 export type BlockSummary = z.infer<typeof BlockSummary>;
+
+/**
+ * A page in the flat pickers (move target, reference field, content-area teaser).
+ *
+ * `locales` is here for the same reason BlockSummary carries it: a page placed
+ * in a content area renders as a teaser, and delivery DROPS a reference whose
+ * target is not published — so a row that cannot see the target's publish state
+ * cannot warn that the block will be missing from the live site.
+ */
+export const PageSummary = z.object({
+  documentId: z.string(),
+  name: z.string(),
+  parentId: z.string().nullable(),
+  type: z.string(),
+  locales: VariantStates,
+});
+export type PageSummary = z.infer<typeof PageSummary>;
 
 /** A media asset (image) in the asset pane. */
 export const Asset = z.object({

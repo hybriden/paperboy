@@ -7,6 +7,7 @@ import type {
   Folder,
   FolderKind,
   Locale,
+  PageSummary,
   RoleName,
   SessionUser,
   StockSearchResult,
@@ -273,7 +274,7 @@ export const api = {
   search: (q: string, signal?: AbortSignal) =>
     request<SearchResult[]>("GET", `/manage/content/search?q=${encodeURIComponent(q)}`, undefined, signal),
   pages: (signal?: AbortSignal, siteOverride?: string) =>
-    request<{ documentId: string; name: string; parentId: string | null; type: string }[]>("GET", "/manage/pages", undefined, signal, siteOverride),
+    request<PageSummary[]>("GET", "/manage/pages", undefined, signal, siteOverride),
 
   // site config (start page)
   site: (signal?: AbortSignal) => request<{ startPageId: string | null; previewBaseUrl: string }>("GET", "/manage/site", undefined, signal),

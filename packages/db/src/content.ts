@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { ChildSort, coerceData, dataSchemaFor, detectContentLanguage, duplicateFieldKeys, expectedLanguageForLocale, fieldFormatHint, generalBlockTypes, isFormType, MAX_INLINE_DEPTH, parseStoredContentTypeDef, sortByRule, stripSeoGroup, tiptapToPlainText, type BlockSummary, type BlockTypeResolver, type ContentDetail, type ContentTypeDef, type CreateContentRequest, type TreeNode, type UpdateContentRequest, withSeoGroup } from "@paperboy/shared";
+import { ChildSort, coerceData, dataSchemaFor, detectContentLanguage, duplicateFieldKeys, expectedLanguageForLocale, fieldFormatHint, generalBlockTypes, isFormType, MAX_INLINE_DEPTH, parseStoredContentTypeDef, sortByRule, stripSeoGroup, tiptapToPlainText, type BlockSummary, type BlockTypeResolver, type ContentDetail, type ContentTypeDef, type CreateContentRequest, type PageSummary, type TreeNode, type UpdateContentRequest, withSeoGroup } from "@paperboy/shared";
 import type { Database, Queryable, Transaction } from "./client.js";
 import { Errors, PG_UNIQUE_VIOLATION, pgErrorCode } from "./errors.js";
 import {
@@ -2563,10 +2563,7 @@ export async function setChildSort(
 }
 
 /** Flat list of all pages in scope (id, name, parentId) — powers the "Move to" picker. */
-export async function listPages(
-  db: Database,
-  ctx: AccessContext,
-): Promise<{ documentId: string; name: string; parentId: string | null; type: string }[]> {
+export async function listPages(db: Database, ctx: AccessContext): Promise<PageSummary[]> {
   requirePermission(ctx, "content.read");
   const items = await db
     .select()
@@ -2575,10 +2572,20 @@ export async function listPages(
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
   const visible = items.filter((i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
   const pageStates = await variantStatesBatch(db, visible.map((i) => i.documentId));
-  const out: { documentId: string; name: string; parentId: string | null; type: string }[] = [];
+  const out: PageSummary[] = [];
   for (const item of visible) {
     const states = pageStates.get(item.documentId) ?? {};
-    out.push({ documentId: item.documentId, name: Object.values(states)[0]?.name ?? item.documentId, parentId: item.parentId, type: item.type });
+    const locales: PageSummary["locales"] = {};
+    for (const [code, s] of Object.entries(states)) {
+      locales[code] = { status: s.status, hasUnpublishedChanges: s.hasUnpublishedChanges };
+    }
+    out.push({
+      documentId: item.documentId,
+      name: Object.values(states)[0]?.name ?? item.documentId,
+      parentId: item.parentId,
+      type: item.type,
+      locales,
+    });
   }
   return out;
 }

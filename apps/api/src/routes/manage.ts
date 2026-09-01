@@ -115,6 +115,7 @@ import {
   Folder,
   FolderKind,
   Locale,
+  PageSummary,
   RoleName,
   STOCK_PROVIDERS,
   SeoFilesConfig,
@@ -588,7 +589,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   /* --------------------------- pages (move picker) ---------------------- */
   app.get(
     "/pages",
-    { schema: { tags: ["manage"], response: { 200: z.array(z.object({ documentId: z.string(), name: z.string(), parentId: z.string().nullable(), type: z.string() })) } } },
+    { schema: { tags: ["manage"], response: { 200: z.array(PageSummary) } } },
     async (req) => listPages(app.db, req.accessCtx!),
   );
 

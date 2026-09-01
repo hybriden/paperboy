@@ -2,6 +2,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/rea
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type BlockInstance,
+  type BlockSummary,
   type ContentDetail,
   type ContentTypeDef,
   type FieldDef,
@@ -521,6 +522,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["blocks"] });
       void qc.invalidateQueries({ queryKey: ["dashboard"] }); // publish changes WIP/scheduled/review counts
+      // Content areas badge a teaser whose target page is unpublished — publishing
+      // THIS page clears that badge wherever it is placed.
+      void qc.invalidateQueries({ queryKey: ["pages"] });
       setFieldErrors({});
       toast.success("Published", `“${updated.name}” is live in ${locale.toUpperCase()}.`);
     },
@@ -539,6 +543,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["blocks"] });
       void qc.invalidateQueries({ queryKey: ["dashboard"] }); // unpublish changes WIP/published counts
+      void qc.invalidateQueries({ queryKey: ["pages"] }); // …and re-badges every teaser pointing here
       toast.success("Unpublished", `Removed from the public delivery API.`);
     },
     onError: (e) => toast.error("Couldn’t unpublish", (e as Error).message),
@@ -2430,7 +2435,7 @@ function Field({
   onChange: (v: unknown) => void;
   disabled: boolean;
   types: ContentTypeDef[];
-  sharedBlocks: { documentId: string; name: string; type: string }[];
+  sharedBlocks: BlockSummary[];
   error?: string;
   /** Which block row is open, and how to change it — see Editor's `blockPath`. */
   openPath?: BlockPath;
