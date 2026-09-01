@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { DRAG_MIME, dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage, pingMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
+import { overlayAnchor } from "../lib/overlay-anchor.js";
 import { isPreviewActivity, previewOrigin, previewTokenUsable } from "../lib/preview-origin.js";
 import { Surface } from "./ui/surface.js";
 
@@ -246,6 +247,24 @@ export function PreviewPane({
     (control ?? card)?.focus();
   }, [overlayN]);
 
+  // The card's height is content-driven (the "Add block" palette lists every type
+  // an area allows), so placement has to measure it rather than assume. Layout
+  // effect + ResizeObserver: measured before paint, and re-measured when the
+  // content changes size — a picker opening inside it, or the pane resizing.
+  const [cardH, setCardH] = useState(0);
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    if (!card) {
+      setCardH(0);
+      return;
+    }
+    const measure = () => setCardH(card.getBoundingClientRect().height);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(card);
+    return () => ro.disconnect();
+  }, [overlayN]);
+
   // Esc closes the on-page overlay (when focus is on the admin side).
   useEffect(() => {
     if (!overlay) return;
@@ -334,28 +353,11 @@ export function PreviewPane({
   // Desktop fills the pane height (scroll inside); tablet/mobile keep their real height.
   const innerH = device === "desktop" && scale ? box.h / scale : vh;
 
-  // On-page overlay placement: transform the bridge-reported (pre-scale) rect
-  // into pane coordinates. The ring outlines the whole element; the card is
-  // anchored at the CLICK POINT inside it (ox/oy, preserved across rect
-  // updates while the page scrolls), clamped so it always fits the pane.
+  // On-page overlay placement — the math lives in lib/overlay-anchor, keyed off
+  // the card's MEASURED height (see cardH below).
   const CARD_W = 380;
-  const CARD_H_EST = 340; // clamp allowance so the card's body stays visible
   const anchor = overlay
-    ? (() => {
-        const sx = tx + overlay.rect.x * scale;
-        const sy = overlay.rect.y * scale;
-        const sw = overlay.rect.w * scale;
-        const sh = overlay.rect.h * scale;
-        const clickX = tx + (overlay.rect.x + overlay.ox) * scale;
-        const clickY = (overlay.rect.y + overlay.oy) * scale;
-        return {
-          ring: { left: sx, top: sy, width: sw, height: sh },
-          card: {
-            left: Math.max(8, Math.min(clickX - 40, Math.max(8, box.w - CARD_W - 8))),
-            top: Math.max(8, Math.min(clickY + 14, Math.max(8, box.h - CARD_H_EST))),
-          },
-        };
-      })()
+    ? overlayAnchor({ rect: overlay.rect, ox: overlay.ox, oy: overlay.oy, scale, tx, pane: box, cardW: CARD_W, cardH })
     : null;
 
   return (
@@ -548,7 +550,10 @@ export function PreviewPane({
               tabIndex={-1}
               elevation={2}
               radius="lg"
-              className="absolute z-20"
+              // flex column + overflow-hidden so the maxHeight actually binds:
+              // whatever the card holds gives up its own height and scrolls
+              // inside, rather than running off the bottom of the pane.
+              className="absolute z-20 flex flex-col overflow-hidden"
               style={{ ...anchor.card, width: CARD_W }}
               role="dialog"
               aria-label={overlay.label ?? "Edit property"}

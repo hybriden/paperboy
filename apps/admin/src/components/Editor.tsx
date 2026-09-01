@@ -1727,13 +1727,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 n: ope.n,
                 onClose: closeOpe,
                 content: (
-                  <div>
-                    <div className="flex items-center gap-2 border-b border-line px-3 py-1.5">
+                  <div className="flex min-h-0 flex-col">
+                    <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5">
                       <span className="text-xs font-semibold text-fg">Edit on page</span>
                       <SaveIndicator state={saveState} />
                       <button className="ml-auto rounded p-1 text-muted hover:bg-line hover:text-fg" aria-label="Close" onClick={closeOpe}>✕</button>
                     </div>
-                    <div className="max-h-[55vh] overflow-y-auto p-3">
+                    <div className="min-h-0 flex-1 overflow-y-auto p-3">
                       {isName ? (
                         <div>
                           <label className="field-label" htmlFor="ope-name">Name</label>
@@ -2502,13 +2502,17 @@ function AddBlockCard({
   };
   const isQuestionArea = allowed.length > 0 && allowed.every((t) => isFormFieldType(t.name));
   return (
-    <div>
-      <div className="flex items-center gap-2 border-b border-line px-3 py-1.5">
+    // min-h-0 all the way down, or the list refuses to shrink below its content
+    // and the card grows past the pane the placement just sized it to. The list
+    // scrolls; the header stays put (shrink-0) so "Add block · to <area>" and
+    // the close button are always reachable.
+    <div className="flex min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-1.5">
         <span className="text-xs font-semibold text-fg">{isQuestionArea ? "Add question" : "Add block"}</span>
         <span className="truncate text-xs text-muted">to {def.displayName || def.name}</span>
         <button className="ml-auto rounded p-1 text-muted hover:bg-line hover:text-fg" aria-label="Close" onClick={onClose}>✕</button>
       </div>
-      <div className="max-h-[45vh] overflow-y-auto p-1.5">
+      <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
         {allowed.map((t) => (
           <button
             key={t.name}
