@@ -17,12 +17,13 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { duplicateFieldKeys, fieldKeyFromLabel, isFormFieldType } from "@paperboy/shared";
 import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { allowedBlockTypesFor } from "../../lib/area-add.js";
 import { newBlock } from "../../lib/block-drop.js";
 import { blockSummary, type BlockPath } from "../../lib/block-path.js";
-import { referenceBadge, type ReferenceBadge } from "../../lib/reference-badge.js";
+import { referenceBadge } from "../../lib/reference-badge.js";
 import { Menu, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuTrigger } from "../ui/menu.js";
 import type { BlockDisplayOption, BlockInstance, BlockSummary, ContentTypeDef, FieldDef, PageSummary } from "@paperboy/shared";
 import { api } from "../../lib/api.js";
@@ -312,8 +313,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
                   index={i}
                   block={b}
                   type={types.find((t) => t.name === b.blockType)}
-                  sharedName={refTarget(b.ref)?.name}
-                  refBadge={referenceBadge(refTarget(b.ref))}
+                  refTarget={refTarget(b.ref)}
                   onUpdate={(patch) => updateBlock(b.key, patch)}
                   onRemove={() => removeBlock(b.key)}
                   onMove={(d) => move(b.key, d)}
@@ -499,8 +499,7 @@ function SortableBlock({
   block,
   index,
   type,
-  sharedName,
-  refBadge,
+  refTarget,
   onUpdate,
   onRemove,
   onMove,
@@ -517,9 +516,10 @@ function SortableBlock({
   block: BlockInstance;
   index: number;
   type?: ContentTypeDef;
-  sharedName?: string;
-  /** Publish state of a reference's target — see referenceBadge. */
-  refBadge?: ReferenceBadge;
+  /** The document a reference row points at. Undefined for an inline block, and
+   *  for a target outside the editor's scope — the row's name, its publish badge
+   *  and its "open the target" action all key off this one lookup. */
+  refTarget?: BlockSummary | PageSummary;
   onUpdate: (patch: Partial<BlockInstance>) => void;
   onRemove: () => void;
   onMove: (d: -1 | 1) => void;
@@ -536,6 +536,10 @@ function SortableBlock({
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: block.key, disabled });
   // Own ref alongside dnd-kit's, so opening a row can bring it into view.
   const rowRef = useRef<HTMLLIElement | null>(null);
+  const navigate = useNavigate();
+  // The editor's locale IS the URL's ?lang (EditView reads it there), so the row
+  // can carry it to the target without threading a prop through every nesting.
+  const lang = useSearchParams()[0].get("lang");
   const toggleRef = useRef<HTMLButtonElement | null>(null);
   const style = { transform: CSS.Transform.toString(transform), transition };
   const isShared = block.ref !== null;
@@ -554,10 +558,20 @@ function SortableBlock({
   // its type name repeated down the list. For a reference row that value is the
   // TARGET's name, so it leads and the type demotes to the summary — otherwise
   // three teasers all read "Section page" and the list carries no information.
-  const rowName = isShared ? (sharedName ?? type?.displayName ?? block.blockType) : (type?.displayName ?? block.blockType);
+  const rowName = isShared ? (refTarget?.name ?? type?.displayName ?? block.blockType) : (type?.displayName ?? block.blockType);
   const summary = isShared
     ? `${type?.displayName ?? (isTeaser ? "page" : "block")} · ${isTeaser ? "teaser" : "shared"}`
     : blockSummary(block, type);
+  const refBadge = referenceBadge(refTarget);
+
+  // Where a reference's content actually lives. The area's note has always said
+  // "edit it from the tree" — an instruction where a link belongs, and the only
+  // route to a shared block placed on a page you did not author. `lang` is
+  // carried over VERBATIM (absent = the configured default locale), so the
+  // target opens in the language being edited. Only offered for a target the
+  // editor can see: navigating a section-scoped editor to a document their own
+  // page list omits would just 404 at them.
+  const refHref = refTarget ? `/edit/${block.ref}${lang ? `?lang=${encodeURIComponent(lang)}` : ""}` : null;
 
   // A shared block's fields live on its own document, and a page dropped in an
   // area renders as a teaser — neither has anything to open here.
@@ -680,13 +694,24 @@ function SortableBlock({
             <button
               type="button"
               className="shrink-0 rounded p-1 text-muted hover:bg-line"
-              aria-label={`Actions for ${type?.displayName ?? block.blockType}`}
+              // rowName, not the type: on a reference row the menu now offers
+              // "Edit page", and "Actions for Landing Page" does not say WHICH.
+              // Identical to the old label for an inline block.
+              aria-label={`Actions for ${rowName}`}
             >
               <Icon.Dots width={16} height={16} />
             </button>
           </MenuTrigger>
           <MenuContent>
             {canOpen && <MenuItem onSelect={onToggle}>{isOpen ? "Close" : "Edit"}</MenuItem>}
+            {/* A reference has nothing to edit HERE, which used to mean the menu
+                offered no way to edit it at all. Same first slot as an inline
+                block's "Edit": whatever the row is, the first item opens it. */}
+            {refHref && (
+              <MenuItem onSelect={() => void navigate(refHref)}>
+                {isTeaser ? "Edit page" : "Edit block"}
+              </MenuItem>
+            )}
             <MenuItem onSelect={() => onMove(-1)} disabled={disabled}>Move up</MenuItem>
             <MenuItem onSelect={() => onMove(1)} disabled={disabled}>Move down</MenuItem>
             <MenuSeparator />

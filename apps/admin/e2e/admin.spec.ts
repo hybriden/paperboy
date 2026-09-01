@@ -505,6 +505,69 @@ test("drag a shared block from the Assets pane into a content area", async ({ pa
   await page.getByRole("menuitem", { name: "Move to trash" }).click();
 });
 
+test("a reference row's menu opens its target — a page teaser and a shared block", async ({ page }) => {
+  // A reference has nothing to edit in the area: its content lives in another
+  // document. The row's menu therefore offered no way to edit it AT ALL, and the
+  // area's note ("edit it from the tree") asked the editor to go hunt for it —
+  // impossible to follow for a shared block placed on a page someone else owns.
+  await login(page);
+  const me = await page.request.get("/api/v1/auth/me");
+  const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+  await page.goto("/edit");
+  const headers = { "x-csrf-token": csrf, origin: new URL(page.url()).origin };
+  const stamp = Date.now().toString(36);
+
+  const make = async (type: string, name: string) => {
+    const res = await page.request.post("/api/v1/manage/content", { headers, data: { type, parentId: null, locale: "en", name } });
+    expect(res.ok(), `create ${type}: ${res.status()} ${await res.text()}`).toBe(true);
+    return ((await res.json()) as { documentId: string }).documentId;
+  };
+  const teaserName = `RefMenu page ${stamp}`;
+  const blockName = `RefMenu block ${stamp}`;
+  const targetPage = await make("LandingPage", teaserName);
+  const targetBlock = await make("CardBlock", blockName);
+  const host = await make("LandingPage", `RefMenu host ${stamp}`);
+
+  // One area, one of each reference kind. A page is placeable in any area (it
+  // renders as a teaser); the CardBlock is in mainArea's allowedBlocks.
+  const put = await page.request.put(`/api/v1/manage/content/${host}?locale=en`, {
+    headers,
+    data: {
+      data: {
+        heading: "Ref menu host",
+        mainArea: [
+          { key: "t", blockType: "LandingPage", ref: targetPage, display: "automatic" },
+          { key: "s", blockType: "CardBlock", ref: targetBlock, display: "automatic" },
+        ],
+      },
+    },
+  });
+  expect(put.ok(), `place refs: ${put.status()} ${await put.text()}`).toBe(true);
+
+  await page.goto(`/edit/${host}`);
+  await expect(page.getByTestId("content-area-mainArea")).toBeVisible({ timeout: 20_000 });
+
+  // The teaser row → "Edit page". The menu is labelled by the TARGET's name, so
+  // two references of different types are tellable apart without opening them.
+  await page.getByRole("button", { name: `Actions for ${teaserName}` }).click();
+  await page.getByRole("menuitem", { name: "Edit page" }).click();
+  await expect(page).toHaveURL(new RegExp(`/edit/${targetPage}`), { timeout: 10_000 });
+  await expect(editorName(page)).toHaveValue(teaserName, { timeout: 10_000 });
+
+  // ...and the shared-block row → "Edit block" (a block is not a page; saying
+  // "page" there would send the editor looking in the content tree).
+  await page.goto(`/edit/${host}`);
+  await expect(page.getByTestId("content-area-mainArea")).toBeVisible({ timeout: 20_000 });
+  await page.getByRole("button", { name: `Actions for ${blockName}` }).click();
+  await page.getByRole("menuitem", { name: "Edit block" }).click();
+  await expect(page).toHaveURL(new RegExp(`/edit/${targetBlock}`), { timeout: 10_000 });
+  await expect(editorName(page)).toHaveValue(blockName, { timeout: 10_000 });
+
+  for (const id of [host, targetPage, targetBlock]) {
+    await page.request.delete(`/api/v1/manage/content/${id}`, { headers });
+  }
+});
+
 test("an open block's end cap collapses it and hands focus back; area notes appear once", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
@@ -1790,13 +1853,17 @@ test.describe("forms builder", () => {
     const kindFilter = page.getByRole("group", { name: "Block kind" });
     await expect(kindFilter).toBeVisible({ timeout: 20_000 });
 
+    // Scoped to the pane (the file's idiom): the claim is about what the pane
+    // LISTS. A page-wide search also matches the open page's content area, whose
+    // reference rows are labelled by their target — "Actions for Featured Card".
+    const assets = page.getByRole("complementary").filter({ hasText: "Assets" });
     await kindFilter.getByRole("button", { name: "Forms" }).click();
     // The seeded non-form shared block disappears; the form stays.
-    await expect(page.getByRole("button", { name: /Featured Card/ })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: /^Builder-/ }).first()).toBeVisible();
+    await expect(assets.getByRole("button", { name: /Featured Card/ })).toHaveCount(0);
+    await expect(assets.getByRole("button", { name: /^Builder-/ }).first()).toBeVisible();
 
     await kindFilter.getByRole("button", { name: "All" }).click();
-    await expect(page.getByRole("button", { name: /Featured Card/ }).first()).toBeVisible();
+    await expect(assets.getByRole("button", { name: /Featured Card/ }).first()).toBeVisible();
 
     await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
   });
