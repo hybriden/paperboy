@@ -23,11 +23,11 @@
     "@fastify/swagger-ui": "^6.1.1",
     "@paperboy/db": "workspace:*",
     "@paperboy/shared": "workspace:*",
-    "fastify": "^5.12.1",
+    "fastify": "^5.12.3",
     "fastify-type-provider-zod": "^7.0.0",
     "nanoid": "^6.0.0",
-    "sharp": "^0.35.3",
-    "zod": "^4.4.3"
+    "sharp": "^0.35.4",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@paperboycms/client": "workspace:^",
