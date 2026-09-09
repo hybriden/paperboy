@@ -146,7 +146,16 @@ jobs:
         # apt inside --with-deps is the classic CI stall (a held dpkg lock or a
         # wedged mirror can hang it indefinitely); bound it hard.
         timeout-minutes: 20
-        run: pnpm --filter @paperboy/admin exec playwright install --with-deps chromium
+        # The runner image ships Google's Chrome apt repo, which we do not need
+        # to install chromium's SYSTEM LIBRARIES — and when that repo serves a
+        # Packages.gz whose hash disagrees with its own Release file, apt-get
+        # update exits 100 and takes --with-deps down with it. Seen 2026-09-09,
+        # twice in a row: every dependency of this step was fine, the job just
+        # could not read a third-party index it has no use for. Drop the list
+        # first so an outage there cannot gate our e2e run.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          pnpm --filter @paperboy/admin exec playwright install --with-deps chromium
 
       - name: Start the full stack (db → migrate+seed → api → web → admin)
         # --wait blocks until every healthcheck passes; a crash-looping service
