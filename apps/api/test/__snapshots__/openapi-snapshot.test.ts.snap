@@ -731,6 +731,21 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "GET /api/v1/manage/globals": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]documentId",
+      "[]folderId",
+      "[]locales",
+      "[]name",
+      "[]type",
+    ],
+    "summary": null,
+    "tags": [
+      "manage",
+    ],
+  },
   "GET /api/v1/manage/locales": {
     "requestBodyRequired": [],
     "requiredParams": [],

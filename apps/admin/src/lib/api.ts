@@ -271,6 +271,7 @@ export const api = {
   tree: (parentId?: string, signal?: AbortSignal) =>
     request<TreeNode[]>("GET", `/manage/content/tree${parentId ? `?parentId=${parentId}` : ""}`, undefined, signal),
   blocks: (signal?: AbortSignal) => request<BlockSummary[]>("GET", "/manage/blocks", undefined, signal),
+  globals: (signal?: AbortSignal) => request<BlockSummary[]>("GET", "/manage/globals", undefined, signal),
   search: (q: string, signal?: AbortSignal) =>
     request<SearchResult[]>("GET", `/manage/content/search?q=${encodeURIComponent(q)}`, undefined, signal),
   pages: (signal?: AbortSignal, siteOverride?: string) =>

@@ -14,8 +14,13 @@ import { Skeleton } from "./ui/skeleton.js";
 import { useToast } from "./ui/toast.js";
 
 /**
- * Assets pane: Shared Blocks (reusable, own lifecycle) + Media.
+ * Assets pane: Shared Blocks (reusable, own lifecycle) + Globals + Media.
  * Local/inline blocks are NOT here — they live inside their page's content area.
+ *
+ * Globals sit here because they are per-site singletons kept out of the page
+ * tree ("config, not content structure"). Before this tab nothing in the admin
+ * listed them at all, so a site's header/footer/settings were editable only by
+ * typing a name you already knew into the command palette.
  */
 export function AssetPane({
   blockTypes,
@@ -31,7 +36,7 @@ export function AssetPane({
   /** Optional controls (e.g. the pin/auto-hide toggle) rendered in the header. */
   headerActions?: React.ReactNode;
 }) {
-  const [tab, setTab] = useState<"blocks" | "media">("blocks");
+  const [tab, setTab] = useState<"blocks" | "globals" | "media">("blocks");
   const [creating, setCreating] = useState(false);
   const [folderId, setFolderId] = useState<string | null>(null);
   // Forms are shared blocks technically, but editors look for "my form", not
@@ -40,6 +45,7 @@ export function AssetPane({
   const qc = useQueryClient();
   const toast = useToast();
   const blocks = useQuery({ queryKey: ["blocks"], queryFn: ({ signal }) => api.blocks(signal) });
+  const globals = useQuery({ queryKey: ["globals"], queryFn: ({ signal }) => api.globals(signal), enabled: tab === "globals" });
 
   const move = useMutation({
     mutationFn: (v: { id: string; folderId: string | null }) => api.setBlockFolder(v.id, v.folderId),
@@ -81,11 +87,11 @@ export function AssetPane({
         </div>
       </div>
       <div className="flex gap-1 border-b border-line px-2 pt-2" role="tablist" aria-label="Asset type">
-        {(["blocks", "media"] as const).map((t) => (
+        {(["blocks", "globals", "media"] as const).map((t) => (
           <button key={t} role="tab" aria-selected={tab === t}
             className={`border-b-2 px-2.5 py-1.5 text-xs font-medium capitalize ${tab === t ? "border-accent text-accent-700" : "border-transparent text-muted hover:text-fg"}`}
             onClick={() => setTab(t)}>
-            {t === "blocks" ? "Shared blocks" : "Media"}
+            {t === "blocks" ? "Shared blocks" : t === "globals" ? "Globals" : "Media"}
           </button>
         ))}
       </div>
@@ -165,6 +171,35 @@ export function AssetPane({
                       <Icon.Trash width={13} height={13} />
                     </button>
                   )}
+                </div>
+              );
+            })}
+          </>
+        )}
+        {tab === "globals" && (
+          <>
+            {globals.isLoading && [0, 1].map((i) => <Skeleton key={i} className="mb-1 h-9" />)}
+            {globals.data?.length === 0 && (
+              <EmptyState className="py-6">
+                No globals in this site. They are created from a global-kind content type.
+              </EmptyState>
+            )}
+            {globals.data?.map((g) => {
+              const loc = Object.values(g.locales)[0];
+              const selected = selectedId === g.documentId;
+              return (
+                <div
+                  key={g.documentId}
+                  className={`group flex w-full items-center gap-2 rounded-(--radius) px-2 py-1.5 text-left text-sm ${selected ? "bg-accent/15 font-medium text-fg" : "text-fg hover:bg-line/50"}`}
+                  title={`${g.name} · ${g.type} — one per site`}
+                >
+                  <TypeIcon name={blockTypes.find((t) => t.name === g.type)?.icon} fallback="settings" width={15} height={15} className="shrink-0 text-muted" />
+                  <button type="button" className="min-w-0 flex-1 truncate text-left" onClick={() => onSelect(g.documentId)}>{g.name}</button>
+                  <span
+                    role="img"
+                    aria-label={loc?.status === "published" ? "Published" : "Draft"}
+                    className={`h-2 w-2 shrink-0 rounded-full ${loc?.status === "published" ? "bg-published" : "bg-draft"}`}
+                  />
                 </div>
               );
             })}

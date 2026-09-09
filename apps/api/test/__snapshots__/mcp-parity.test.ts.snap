@@ -42,6 +42,7 @@ exports[`MCP parity: real stdio server vs the API > locks the tool surface (any 
   "list_delivery_keys",
   "list_form_submissions",
   "list_forms",
+  "list_globals",
   "list_locales",
   "list_pages",
   "list_sites",

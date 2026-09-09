@@ -52,6 +52,7 @@ import {
   listSubmissions,
   listAudit,
   listBlocks,
+  listGlobals,
    listContentTypes,
    listTypeTemplates,
    instantiateTypeTemplate,
@@ -565,6 +566,12 @@ tool("restore_version", "Restore a historical version into a new draft.", { docu
     return restored;
   });
 tool("list_blocks", "List shared blocks (the assets pane).", {}, () => listBlocks(db, ctx()));
+tool(
+  "list_globals",
+  "List this site's global singletons (header, footer, site settings…). Globals are NOT in the page tree and are not blocks, so this is the only way to enumerate them; edit one with get_content/update_content/set_field on its documentId, like any other document.",
+  {},
+  () => listGlobals(db, ctx()),
+);
 tool("list_pages", "Flat list of all pages in scope (for move/parent pickers).", {}, () => listPages(db, ctx()));
 
 /* ----------------------------- content model --------------------------- */

@@ -492,12 +492,28 @@ export async function getTree(
 /* ------------------------------ asset pane -------------------------------- */
 
 /** Shared blocks (kind=block) for the assets pane — flat list with per-locale status. */
+/** Shared blocks — the asset pane's library. */
 export async function listBlocks(db: Database, ctx: AccessContext): Promise<BlockSummary[]> {
+  return listOfKind(db, ctx, "block");
+}
+
+/**
+ * Globals — the per-site config singletons (header, footer, site settings).
+ *
+ * They are deliberately outside the page tree, which left them reachable only by
+ * searching for a name you already knew: nothing listed them, so an editor with
+ * three globals in the database saw none of them.
+ */
+export async function listGlobals(db: Database, ctx: AccessContext): Promise<BlockSummary[]> {
+  return listOfKind(db, ctx, "global");
+}
+
+async function listOfKind(db: Database, ctx: AccessContext, kind: "block" | "global"): Promise<BlockSummary[]> {
   requirePermission(ctx, "content.read");
   const items = await db
     .select()
     .from(contentItem)
-    .where(and(eq(contentItem.kind, "block"), isNull(contentItem.deletedAt), eq(contentItem.siteId, ctx.siteId)))
+    .where(and(eq(contentItem.kind, kind), isNull(contentItem.deletedAt), eq(contentItem.siteId, ctx.siteId)))
     .orderBy(asc(contentItem.id));
   const visible = items.filter((i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId));
   const blockStates = await variantStatesBatch(db, visible.map((i) => i.documentId));

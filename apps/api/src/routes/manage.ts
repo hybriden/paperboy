@@ -56,6 +56,7 @@ import {
   insertAsset,
   listAssets,
   listBlocks,
+  listGlobals,
   listFolders,
   createFolder,
   renameFolder,
@@ -412,6 +413,14 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     "/blocks",
     { schema: { tags: ["manage"], response: { 200: z.array(BlockSummary) } } },
     async (req) => listBlocks(app.db, req.accessCtx!),
+  );
+
+  // Globals are config singletons, so they are not in the page tree — without
+  // this they were reachable only by searching for a name you already knew.
+  app.get(
+    "/globals",
+    { schema: { tags: ["manage"], response: { 200: z.array(BlockSummary) } } },
+    async (req) => listGlobals(app.db, req.accessCtx!),
   );
 
   // "Used on": documents that reference this one (reference field or shared

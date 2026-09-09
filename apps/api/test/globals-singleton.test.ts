@@ -20,6 +20,43 @@ describe("globals are per-site singletons", () => {
     await s.app.close();
   });
 
+  it("GET /manage/globals lists them — nothing else in the admin does", async () => {
+    // Globals are kept out of the page tree and are not blocks, so before this
+    // route no listing in the product showed them: a site with a header, footer
+    // and settings global appeared to have none, and the only way in was to
+    // search the command palette for a name you already knew.
+    const res = await s.app.inject({ method: "GET", url: "/api/v1/manage/globals", headers: { cookie: admin.cookie } });
+    expect(res.statusCode, res.body).toBe(200);
+    const rows = res.json() as Array<{ documentId: string; type: string; name: string }>;
+    expect(rows.some((r) => r.type === "SiteSettings")).toBe(true);
+
+    // And only globals — the tree and the block library keep their own kinds.
+    const tree = (await s.app.inject({ method: "GET", url: "/api/v1/manage/content/tree", headers: { cookie: admin.cookie } })).json() as Array<{ documentId: string }>;
+    const blocks = (await s.app.inject({ method: "GET", url: "/api/v1/manage/blocks", headers: { cookie: admin.cookie } })).json() as Array<{ documentId: string }>;
+    const ids = new Set(rows.map((r) => r.documentId));
+    expect(tree.filter((t) => ids.has(t.documentId))).toEqual([]);
+    expect(blocks.filter((b) => ids.has(b.documentId))).toEqual([]);
+  });
+
+  it("the globals listing is partitioned per site", async () => {
+    const site = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/sites",
+      headers: authHeaders(admin),
+      payload: { slug: "globlist", name: "Glob list", defaultLocale: "en" },
+    });
+    expect(site.statusCode, site.body).toBe(200);
+    const siteId = site.json().id as string;
+    const other = await s.app.inject({
+      method: "GET",
+      url: "/api/v1/manage/globals",
+      headers: { cookie: admin.cookie, "x-paperboy-site": siteId },
+    });
+    expect(other.statusCode).toBe(200);
+    // A fresh site has its own (empty) set — the Default site's must not leak in.
+    expect(other.json()).toEqual([]);
+  });
+
   it("refuses a SECOND SiteSettings in the same site with a self-teaching 409", async () => {
     const res = await s.app.inject({
       method: "POST",
