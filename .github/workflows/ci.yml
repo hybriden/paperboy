@@ -154,7 +154,11 @@ jobs:
         # could not read a third-party index it has no use for. Drop the list
         # first so an outage there cannot gate our e2e run.
         run: |
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          # Both forms: the runner image has moved this between a .list and a
+          # deb822 .sources file, and removing only the .list left the repo
+          # configured and apt still failing on it.
+          sudo find /etc/apt/sources.list.d -iname '*google*' -delete || true
+          sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list || true
           pnpm --filter @paperboy/admin exec playwright install --with-deps chromium
 
       - name: Start the full stack (db → migrate+seed → api → web → admin)
