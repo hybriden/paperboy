@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer as createHttpServer, type IncomingMessage } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -36,7 +37,10 @@ import {
   resolveRequestedLocale,
    getContentType,
    getTypeTemplate,
-   getSiteConfig,
+  getSiteById,
+  getSiteBySlug,
+  getSiteConfig,
+  listSites,
   getTree,
   importStockImage,
   deleteSubmission,
@@ -107,6 +111,14 @@ if (!MCP_TOKEN && !MCP_LOGIN) {
   console.error("[paperboy-mcp] No credentials: set MCP_TOKEN (mint one in Settings → MCP), or MCP_EMAIL and MCP_PASSWORD");
   process.exit(1);
 }
+// Multisite: this process acts in ONE site, given as a site id or slug. Unset
+// means the Default site — which is why an agent pointed at an instance with a
+// second site read nothing but the Default's content. A per-REQUEST site is
+// deliberately not offered: `ctx` is a single module-level identity that HTTP
+// mode reassigns per request, and that is only safe while every request resolves
+// to the same one. One server, one site.
+const PAPERBOY_SITE = process.env.PAPERBOY_SITE || undefined;
+
 // AI config resolves PER CALL through the same chokepoint as the API: a config
 // stored in the CMS (Settings → AI) wins over these env fallbacks, and each
 // env key is bound to its own provider (ANTHROPIC_API_KEY → anthropic,
@@ -159,6 +171,12 @@ async function bearerOk(req: IncomingMessage, bootUserId: string): Promise<boole
   if (found.state === "revoked") return false;
   if (found.state === "active") {
     if (found.userId !== bootUserId) return false;
+    // Same USER is not enough: the same user may hold a site-scoped AND a
+    // cross-site token, and adopting the presented one per request would be a
+    // module-level write that concurrent requests race on — a narrow token
+    // could execute with a wide one's reach. HTTP mode is already one identity
+    // per process; make it one SCOPE per process too and refuse the mismatch.
+    if (found.siteId !== tokenSiteId) return false;
     await verifyMcpToken(db, presented); // stamp last-used
     return true;
   }
@@ -169,18 +187,70 @@ async function bearerOk(req: IncomingMessage, bootUserId: string): Promise<boole
   if (MCP_TOKEN) {
     const got = Buffer.from(presented);
     const want = Buffer.from(MCP_TOKEN);
+    // An env-only token has no row and so no site cap; it can only match the
+    // boot token, whose scope is already what tokenSiteId holds.
     if (got.length === want.length && timingSafeEqual(got, want)) return true;
   }
   return false;
 }
 
 const { db } = createDb(DATABASE_URL);
-let ctx: AccessContext;
+/**
+ * The AccessContext for the tool call in flight.
+ *
+ * Module-level so the ~40 tool handlers can read it without threading a
+ * parameter, and AsyncLocalStorage-backed so two OVERLAPPING calls that name
+ * different sites can never see each other's — a plain mutable `ctx` would let
+ * a concurrent call write into the wrong site, which is the exact class of bug
+ * multisite partitioning exists to prevent.
+ */
+const callCtx = new AsyncLocalStorage<AccessContext>();
+/** This server's own site (PAPERBOY_SITE, else Default) — the default per call. */
+let baseCtx: AccessContext;
+/**
+ * The site the presenting TOKEN is confined to, or null for a cross-site token.
+ * A credential-level cap: it bounds `PAPERBOY_SITE` and every per-call `site`,
+ * so a narrow token cannot reach wider by asking. Fixed for the life of the
+ * process — HTTP mode refuses a bearer whose scope differs from the boot
+ * token's, because adopting it per request would be a shared write that
+ * concurrent requests race on.
+ */
+let tokenSiteId: string | null = null;
+const ctx = (): AccessContext => callCtx.getStore() ?? baseCtx;
+
+/**
+ * Resolve a tool call's `site` (slug or id) to the AccessContext to run it in.
+ *
+ * Deliberately NOT cached: HTTP mode re-resolves the identity per request so a
+ * demotion applies live, and a cached per-site context would outlive it.
+ */
+async function ctxForSite(site: string): Promise<AccessContext> {
+  const found = (await getSiteById(db, site)) ?? (await getSiteBySlug(db, site));
+  if (found && tokenSiteId && found.id !== tokenSiteId) {
+    const mine = await getSiteById(db, tokenSiteId);
+    throw new Error(
+      `This MCP token is scoped to the ${mine ? `'${mine.slug}'` : tokenSiteId} site and cannot act in '${site}'. Mint a token for that site in Settings → MCP, or one for every site.`,
+    );
+  }
+  if (!found) {
+    // Self-teaching (agent-API rule #2): name the sites that exist, so the agent
+    // fixes this in one step instead of guessing slugs.
+    const known = (await reachableSites()).map((x) => `${x.slug} (${x.id})`).join(", ");
+    throw new Error(`Unknown site "${site}". This token can act in: ${known || "none"}. Call list_sites to see them.`);
+  }
+  return { ...(await getAccessContext(db, baseCtx.userId, found.id)), via: "mcp" };
+}
+
+/** The sites this token may act in — every site, or just the one it is scoped to. */
+async function reachableSites() {
+  const all = await listSites(db, baseCtx);
+  return tokenSiteId ? all.filter((x) => x.id === tokenSiteId) : all;
+}
 
 /** Some data-layer reads don't self-check RBAC (the REST routes gate them); the
  *  MCP enforces the same verb here. */
 function need(perm: Permission): void {
-  if (!ctx.permissions.includes(perm)) throw new Error(`Missing permission: ${perm}`);
+  if (!ctx().permissions.includes(perm)) throw new Error(`Missing permission: ${perm}`);
 }
 const persp = (preview?: boolean): "preview" | "published" => (preview ? "preview" : "published");
 
@@ -199,7 +269,7 @@ const persp = (preview?: boolean): "preview" | "published" => (preview ? "previe
  */
 function needDelivery(preview?: boolean): void {
   need("content.read");
-  if (preview && !ctx.readSiteWide) {
+  if (preview && !ctx().readSiteWide) {
     throw new Error(
       "The preview perspective (unpublished drafts) requires site-wide read access, and your account is limited to specific sections. Use list_content / get_content instead — they enforce your section scope. Omit `preview` (or set it to false) to read published content through delivery_*.",
     );
@@ -209,13 +279,13 @@ function needDelivery(preview?: boolean): void {
 /** Omitted locale → the document's safe locale (default-locale variant, else
  *  its sole locale, else a self-teaching error) — never a silent fork of a
  *  phantom 'en' branch on a nb-only document (rule 5; 2026-06-07 incident). */
-const locFor = (documentId: string, locale?: string) => resolveRequestedLocale(db, documentId, locale, ctx);
+const locFor = (documentId: string, locale?: string) => resolveRequestedLocale(db, documentId, locale, ctx());
 
 /** Audit entry for an MCP write — the same trail as the API routes. Every tool
  *  AWAITS it so a failed insert lands in that tool's stderr trail (rule #6); it
  *  is logged rather than thrown because the write itself already succeeded. */
 function mcpAudit(action: string, documentId?: string | null, locale?: string | null, detail?: object): Promise<void> {
-  return audit(db, { actorUserId: ctx.userId, action, documentId: documentId ?? null, locale: locale ?? null, ip: "mcp", detail }).catch((err: unknown) =>
+  return audit(db, { actorUserId: ctx().userId, action, documentId: documentId ?? null, locale: locale ?? null, ip: "mcp", detail }).catch((err: unknown) =>
     console.error(`[paperboy-mcp] audit failed for ${action}:`, err),
   );
 }
@@ -227,6 +297,13 @@ type ToolRegistration = (server: McpServer) => void;
 const registrations: ToolRegistration[] = [];
 
 /** Register a tool whose handler returns any JSON-serialisable value. */
+const SITE_ARG = z
+  .string()
+  .optional()
+  .describe(
+    "Site slug or id to act in (multisite). Omit to use this server's default site. Call list_sites to see what exists — an empty tree or search usually means the wrong site, not missing content.",
+  );
+
 function tool<S extends z.ZodRawShape>(
   name: string,
   description: string,
@@ -234,22 +311,30 @@ function tool<S extends z.ZodRawShape>(
   run: (args: z.infer<z.ZodObject<S>>) => Promise<unknown>,
 ): void {
   registrations.push((server) => {
-    const cb = async (args: z.infer<z.ZodObject<S>>) => {
+    const cb = async (raw: z.infer<z.ZodObject<S>> & { site?: string }) => {
       try {
-        const result = await run(args);
+        // `site` is ours, not the handler's: strip it before the args reach a
+        // data-layer schema that would reject the unknown key.
+        const { site, ...args } = (raw ?? {}) as { site?: string };
+        const result = await callCtx.run(
+          site ? await ctxForSite(site) : baseCtx,
+          () => run(args as z.infer<z.ZodObject<S>>),
+        );
         return { content: [{ type: "text" as const, text: JSON.stringify(result ?? { ok: true }, null, 2) }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // The error travels back in-band, but agents (and their loop guards)
         // routinely swallow it — ALSO leave a trail in docker logs, with the
-        // args, so a failed agent run is diagnosable after the fact.
-        console.error(`[paperboy-mcp] tool ${name} failed: ${msg}\n  args: ${JSON.stringify(redactForLog(args))?.slice(0, 4000)}`);
+        // args (the raw ones, so the `site` the call named is in the trail).
+        console.error(`[paperboy-mcp] tool ${name} failed: ${msg}\n  args: ${JSON.stringify(redactForLog(raw))?.slice(0, 4000)}`);
         return { content: [{ type: "text" as const, text: `Error: ${msg}` }], isError: true as const };
       }
     };
     // The SDK's tool callback type is heavily generic; the wrapper above keeps each
     // tool's `run` strongly typed against its Zod shape, so cast only at this boundary.
-    server.tool(name, description, shape, cb as never);
+    // Multisite: EVERY tool takes an optional `site`, so one server reaches every
+    // site in the instance. Omitted, it acts in PAPERBOY_SITE (else the Default).
+    server.tool(name, description, { ...shape, site: SITE_ARG }, cb as never);
   });
 }
 
@@ -271,9 +356,9 @@ const isoInstant = (field: string) =>
 
 /* ------------------------------- content ------------------------------- */
 tool("tree", "List the page tree under a parent (omit parentId for top level).", { parentId: z.string().optional() },
-  ({ parentId }) => getTree(db, ctx, parentId ?? null));
+  ({ parentId }) => getTree(db, ctx(), parentId ?? null));
 tool("get_content", "Get a content item's working version (draft else published) for a locale.", { documentId: docId, locale: loc },
-  async ({ documentId, locale }) => getContent(db, ctx, documentId, await locFor(documentId, locale)));
+  async ({ documentId, locale }) => getContent(db, ctx(), documentId, await locFor(documentId, locale)));
 tool(
   "create_content",
   [
@@ -307,10 +392,10 @@ tool(
     // (rule #3), inside createContent's own transaction — a body the caller sent
     // is never dropped (rule #1) and a refused one leaves no shell behind.
     const hasData = Boolean(data && Object.keys(data).length > 0);
-    const created = await createContent(db, ctx, {
+    const created = await createContent(db, ctx(), {
       type,
       parentId: parentId ?? null,
-      locale: locale ?? (await resolveDefaultLocale(db, ctx.siteId)),
+      locale: locale ?? (await resolveDefaultLocale(db, ctx().siteId)),
       name,
       allowTypeMismatch,
       allowLanguageMismatch,
@@ -363,7 +448,7 @@ tool(
   // an agent can hit. Replace semantics stay available via merge:false.
   async ({ documentId, locale, name, slug, displayInNav, data, merge, revision, allowLanguageMismatch }) => {
     const l = await locFor(documentId, locale);
-    const updated = await updateContent(db, ctx, documentId, l, { name, slug, displayInNav, data, merge: merge ?? true, revision, allowLanguageMismatch });
+    const updated = await updateContent(db, ctx(), documentId, l, { name, slug, displayInNav, data, merge: merge ?? true, revision, allowLanguageMismatch });
     await mcpAudit("content.update", documentId, l);
     return updated;
   });
@@ -381,8 +466,8 @@ tool(
     const l = await locFor(documentId, locale);
     const updated =
       field === "name"
-        ? await updateContent(db, ctx, documentId, l, { name: value, data: {}, merge: true, allowLanguageMismatch })
-        : await updateContent(db, ctx, documentId, l, { data: { [field]: value }, merge: true, allowLanguageMismatch });
+        ? await updateContent(db, ctx(), documentId, l, { name: value, data: {}, merge: true, allowLanguageMismatch })
+        : await updateContent(db, ctx(), documentId, l, { data: { [field]: value }, merge: true, allowLanguageMismatch });
     await mcpAudit("content.update", documentId, l, { field });
     return updated;
   });
@@ -410,14 +495,14 @@ tool(
       // Same chokepoint as the manage /schedule route. expireAt alone means
       // "publish now, expire then" — schedulePublish treats a now/past publishAt
       // as an immediate publish carrying the expiry.
-      const scheduled = await schedulePublish(db, ctx, documentId, l, {
+      const scheduled = await schedulePublish(db, ctx(), documentId, l, {
         publishAt: publishAt ? new Date(publishAt) : new Date(),
         expireAt: expireAt ? new Date(expireAt) : null,
       });
       await mcpAudit("content.schedule", documentId, l, { publishAt: publishAt ?? null, expireAt: expireAt ?? null });
       return scheduled;
     }
-    const published = await publishContent(db, ctx, documentId, l, { allowLanguageMismatch });
+    const published = await publishContent(db, ctx(), documentId, l, { allowLanguageMismatch });
     await mcpAudit("content.publish", documentId, l);
     return published;
   });
@@ -432,44 +517,44 @@ tool(
   ].join(" "),
   { documentId: docId, fromLocale: z.string().describe("Locale to copy FROM"), toLocale: z.string().describe("Locale to copy TO") },
   async ({ documentId, fromLocale, toLocale }) => {
-    const copied = await copyVariant(db, ctx, documentId, fromLocale, toLocale);
+    const copied = await copyVariant(db, ctx(), documentId, fromLocale, toLocale);
     await mcpAudit("content.copy_variant", documentId, toLocale, { fromLocale });
     return copied;
   });
 tool("unpublish", "Unpublish (take down) a content item for a locale.", { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {
     const l = await locFor(documentId, locale);
-    const result = await unpublishContent(db, ctx, documentId, l);
+    const result = await unpublishContent(db, ctx(), documentId, l);
     await mcpAudit("content.unpublish", documentId, l);
     return result;
   });
 tool("discard_draft", "Discard unpublished draft changes for a locale.", { documentId: docId, locale: loc },
-  async ({ documentId, locale }) => { const l = await locFor(documentId, locale); await discardDraft(db, ctx, documentId, l); await mcpAudit("content.discard_draft", documentId, l); return { ok: true }; });
+  async ({ documentId, locale }) => { const l = await locFor(documentId, locale); await discardDraft(db, ctx(), documentId, l); await mcpAudit("content.discard_draft", documentId, l); return { ok: true }; });
 tool("move_content", "Reorder (beforeId/afterId) or re-parent (parentId) a page.",
   { documentId: docId, parentId: z.string().nullable().optional(), beforeId: z.string().nullable().optional(), afterId: z.string().nullable().optional() },
-  async ({ documentId, parentId, beforeId, afterId }) => { await moveContent(db, ctx, documentId, { parentId, beforeId, afterId }); await mcpAudit("content.move", documentId); return { ok: true }; });
+  async ({ documentId, parentId, beforeId, afterId }) => { await moveContent(db, ctx(), documentId, { parentId, beforeId, afterId }); await mcpAudit("content.move", documentId); return { ok: true }; });
 tool("duplicate_content", "Duplicate a content item as a new draft sibling.", { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {
-    const copy = await cloneContent(db, ctx, documentId, await locFor(documentId, locale));
+    const copy = await cloneContent(db, ctx(), documentId, await locFor(documentId, locale));
     await mcpAudit("content.duplicate", copy.documentId, copy.locale, { source: documentId });
     return copy;
   });
 tool("trash_content", "Soft-delete a content item (and its subtree) to the trash.", { documentId: docId },
-  async ({ documentId }) => { const r = await softDelete(db, ctx, documentId); await mcpAudit("content.trash", documentId); return r; });
+  async ({ documentId }) => { const r = await softDelete(db, ctx(), documentId); await mcpAudit("content.trash", documentId); return r; });
 tool("restore_content", "Restore a content item from the trash.", { documentId: docId },
-  async ({ documentId }) => { const r = await restoreContent(db, ctx, documentId); await mcpAudit("content.restore", documentId); return r; });
-tool("list_trash", "List soft-deleted content in scope.", {}, () => listTrash(db, ctx));
+  async ({ documentId }) => { const r = await restoreContent(db, ctx(), documentId); await mcpAudit("content.restore", documentId); return r; });
+tool("list_trash", "List soft-deleted content in scope.", {}, () => listTrash(db, ctx()));
 tool("list_versions", "List the version history of a content item for a locale.", { documentId: docId, locale: loc },
-  async ({ documentId, locale }) => listVersions(db, ctx, documentId, await locFor(documentId, locale)));
+  async ({ documentId, locale }) => listVersions(db, ctx(), documentId, await locFor(documentId, locale)));
 tool("restore_version", "Restore a historical version into a new draft.", { documentId: docId, locale: loc, versionId: z.number() },
   async ({ documentId, locale, versionId }) => {
     const l = await locFor(documentId, locale);
-    const restored = await restoreVersion(db, ctx, documentId, l, versionId);
+    const restored = await restoreVersion(db, ctx(), documentId, l, versionId);
     await mcpAudit("content.version_restore", documentId, l, { versionId });
     return restored;
   });
-tool("list_blocks", "List shared blocks (the assets pane).", {}, () => listBlocks(db, ctx));
-tool("list_pages", "Flat list of all pages in scope (for move/parent pickers).", {}, () => listPages(db, ctx));
+tool("list_blocks", "List shared blocks (the assets pane).", {}, () => listBlocks(db, ctx()));
+tool("list_pages", "Flat list of all pages in scope (for move/parent pickers).", {}, () => listPages(db, ctx()));
 
 /* ----------------------------- content model --------------------------- */
 // Annotate each field with the JSON shape update_content expects for it, so an
@@ -503,9 +588,9 @@ tool("list_content_types", "List all content types (fields annotated with the va
 tool("get_content_type", "Get a content type definition by name. Each field includes valueFormat + valueExample — the exact JSON shape update_content expects.", { name: z.string() },
   async ({ name }) => { need("content.read"); const def = await getContentType(db, name); return def ? withFieldFormats(def) : def; });
 tool("create_content_type", "Create a content type from a full ContentTypeDef object.", { definition: z.record(z.string(), z.unknown()) },
-  async ({ definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createContentType(db, ctx, def); await mcpAudit("contenttype.create", null, null, { name: def.name, kind: def.kind }); return r; });
+  async ({ definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createContentType(db, ctx(), def); await mcpAudit("contenttype.create", null, null, { name: def.name, kind: def.kind }); return r; });
 tool("update_content_type", "Update a content type (name and kind are immutable).", { name: z.string(), definition: z.record(z.string(), z.unknown()) },
-  async ({ name, definition }) => { const r = await updateContentType(db, ctx, name, ContentTypeDef.parse(withoutFieldFormats(definition))); await mcpAudit("contenttype.update", null, null, { name }); return r.next; });
+  async ({ name, definition }) => { const r = await updateContentType(db, ctx(), name, ContentTypeDef.parse(withoutFieldFormats(definition))); await mcpAudit("contenttype.update", null, null, { name }); return r.next; });
 
 /* --------------------- content-type template collection ------------------ */
 // Named, reusable ContentTypeDef recipes: save a type as a template, then
@@ -515,11 +600,11 @@ tool("list_type_templates", "List all content-type templates — named ContentTy
 tool("get_type_template", "Get a type template definition by name (stored or built-in). Each field includes valueFormat + valueExample.", { name: z.string() },
   async ({ name }) => { need("content.read"); return withFieldFormats(await getTypeTemplate(db, name)); });
 tool("create_type_template", "Save a content type definition as a reusable template (a starter/backup recipe). The template's name is the content type name instantiate materialises by default — use a name no existing template takes (built-in template names are reserved).", { definition: z.record(z.string(), z.unknown()).describe("Full ContentTypeDef, same shape as create_content_type") },
-  async ({ definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createTypeTemplate(db, ctx, def); await mcpAudit("type_template.create", null, null, { name: def.name, kind: def.kind }); return r; });
+  async ({ definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createTypeTemplate(db, ctx(), def); await mcpAudit("type_template.create", null, null, { name: def.name, kind: def.kind }); return r; });
 tool("update_type_template", "Update a stored type template in place (name and kind are immutable; built-in templates are read-only — copy one under a new name instead).", { name: z.string(), definition: z.record(z.string(), z.unknown()) },
-  async ({ name, definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await updateTypeTemplate(db, ctx, name, def); await mcpAudit("type_template.update", null, null, { name }); return r.next; });
+  async ({ name, definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await updateTypeTemplate(db, ctx(), name, def); await mcpAudit("type_template.update", null, null, { name }); return r.next; });
 tool("delete_type_template", "Delete a stored type template (built-ins can't be deleted). Types instantiated from it are NOT affected.", { name: z.string() },
-  async ({ name }) => { await deleteTypeTemplate(db, ctx, name); await mcpAudit("type_template.delete", null, null, { name }); return { ok: true }; });
+  async ({ name }) => { await deleteTypeTemplate(db, ctx(), name); await mcpAudit("type_template.delete", null, null, { name }); return { ok: true }; });
 tool(
   "instantiate_type_template",
   "Materialise a type template into a real content type. Default: creates the type under the template's own name. " +
@@ -533,7 +618,7 @@ tool(
     withBlocks: z.boolean().optional().describe("Also create the block types this template's content areas allow-list (default false)"),
   },
   async ({ name, updateExisting, asName, withBlocks }) => {
-    const r = await instantiateTypeTemplate(db, ctx, name, { updateExisting, asName, withBlocks });
+    const r = await instantiateTypeTemplate(db, ctx(), name, { updateExisting, asName, withBlocks });
     await mcpAudit("type_template.instantiate", null, null, { template: name, type: r.name, action: r.action, ...(r.blocks ? { blocks: r.blocks } : {}) });
     return r;
   },
@@ -557,7 +642,7 @@ tool(
   },
   async ({ templates, overwrite }) => {
     const defs = templates.map((t) => ContentTypeDef.parse(t));
-    const r = await importTypeTemplates(db, ctx, defs, overwrite ?? false);
+    const r = await importTypeTemplates(db, ctx(), defs, overwrite ?? false);
     await mcpAudit("type_template.import", null, null, { created: r.created, updated: r.updated, skipped: r.skipped.map((s) => s.name), overwrite: overwrite ?? false });
     return r;
   },
@@ -575,28 +660,28 @@ tool(
  * here, exactly as over HTTP.
  */
 tool("list_forms", "List the forms in the active site with their submission counts. Submissions are visitor personal data and require the submission.read permission.", {},
-  () => listForms(db, ctx));
+  () => listForms(db, ctx()));
 tool(
   "list_form_submissions",
   "List form submissions (newest first). Answers come with a snapshot of the field labels as they were when submitted, so a later edit to the form does not rewrite history.",
   { formId: z.string().optional().describe("Limit to one form's submissions (documentId of the Form)."), limit: z.number().optional(), offset: z.number().optional() },
-  ({ formId, limit, offset }) => listSubmissions(db, ctx, { formId, limit, offset }),
+  ({ formId, limit, offset }) => listSubmissions(db, ctx(), { formId, limit, offset }),
 );
 tool("get_form_submission", "Get one submission by its id.", { submissionId: z.string() },
-  ({ submissionId }) => getSubmission(db, ctx, submissionId));
+  ({ submissionId }) => getSubmission(db, ctx(), submissionId));
 tool(
   "export_form_submissions",
   "Export submissions as CSV text. This is a copy of personal data — the export is audit-logged.",
   { formId: z.string().optional() },
   async ({ formId }) => {
-    const res = await exportSubmissions(db, ctx, formId);
+    const res = await exportSubmissions(db, ctx(), formId);
     await mcpAudit("form.submissions_exported", formId ?? null, null, { rows: res.rows });
     return res;
   },
 );
 tool("delete_form_submission", "Delete one submission permanently.", { submissionId: z.string() },
   async ({ submissionId }) => {
-    const ok = await deleteSubmission(db, ctx, submissionId);
+    const ok = await deleteSubmission(db, ctx(), submissionId);
     await mcpAudit("form.submission_deleted", null, null, { submissionId, found: ok });
     return { ok };
   });
@@ -605,7 +690,7 @@ tool(
   "Data-subject erasure: delete EVERY submission in the active site whose answers contain this email address, in any field. Irreversible.",
   { email: z.string().describe("The address to erase, matched case-insensitively across all answers.") },
   async ({ email }) => {
-    const res = await eraseSubmissionsByEmail(db, ctx, email);
+    const res = await eraseSubmissionsByEmail(db, ctx(), email);
     // The address is the subject of an erasure request — log that one happened
     // and how much it removed, never the address itself.
     await mcpAudit("form.submissions_erased", null, null, { deleted: res.deleted });
@@ -614,16 +699,16 @@ tool(
 );
 
 /* -------------------------------- media -------------------------------- */
-tool("list_assets", "List uploaded media assets.", {}, () => listAssets(db, ctx));
+tool("list_assets", "List uploaded media assets.", {}, () => listAssets(db, ctx()));
 tool("update_asset_alt", "Set an asset's alt text.", { documentId: docId, alt: z.string() },
-  async ({ documentId, alt }) => { const r = await updateAssetAlt(db, ctx, documentId, alt); await mcpAudit("asset.alt", documentId); return r; });
+  async ({ documentId, alt }) => { const r = await updateAssetAlt(db, ctx(), documentId, alt); await mcpAudit("asset.alt", documentId); return r; });
 tool("delete_asset", "Delete a media asset.", { documentId: docId },
-  async ({ documentId }) => { await deleteAsset(db, ctx, documentId, UPLOADS_DIR); await mcpAudit("asset.delete", documentId); return { ok: true }; });
+  async ({ documentId }) => { await deleteAsset(db, ctx(), documentId, UPLOADS_DIR); await mcpAudit("asset.delete", documentId); return { ok: true }; });
 tool(
   "search_stock_images",
   "Search the configured stock photo provider (Settings → Stock images; Unsplash). Returns photo candidates with id, description and attribution. To USE a photo: call import_stock_image with its id, then set_field the returned asset documentId on an image field.",
   { query: z.string().min(1).max(200).describe("What the photo should show, e.g. 'mountain lake sunrise'") },
-  ({ query }) => searchStockImages(db, ctx, query, UNSPLASH_ACCESS_KEY),
+  ({ query }) => searchStockImages(db, ctx(), query, UNSPLASH_ACCESS_KEY),
 );
 tool(
   "import_stock_image",
@@ -633,7 +718,7 @@ tool(
     alt: z.string().max(300).optional().describe("Alt text override (defaults to the provider's description)"),
   },
   async ({ providerId, alt }) => {
-    const rec = await importStockImage(db, ctx, { providerId, alt }, {
+    const rec = await importStockImage(db, ctx(), { providerId, alt }, {
       envKey: UNSPLASH_ACCESS_KEY,
       save: async (fileName, buf) => {
         await mkdir(UPLOADS_DIR, { recursive: true });
@@ -649,11 +734,11 @@ tool(
 /* ------------------------------ delivery (read) ------------------------ */
 const delv = { locale: loc, populate: z.number().min(0).max(4).optional(), preview: z.boolean().optional().describe("Use the preview perspective (drafts)") };
 tool("delivery_get_by_id", "Read delivered content by documentId (no-leak chokepoint).", { documentId: docId, ...delv },
-  async ({ documentId, locale, populate, preview }) => { needDelivery(preview); return deliveryGetById(db, persp(preview), ctx.siteId, documentId, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate); });
+  async ({ documentId, locale, populate, preview }) => { needDelivery(preview); return deliveryGetById(db, persp(preview), ctx().siteId, documentId, (locale ?? (await resolveDefaultLocale(db, ctx().siteId))), populate); });
 tool("delivery_get_by_slug", "Read delivered content by slug.", { slug: z.string(), ...delv },
-  async ({ slug, locale, populate, preview }) => { needDelivery(preview); return deliveryGetBySlug(db, persp(preview), ctx.siteId, slug, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate); });
+  async ({ slug, locale, populate, preview }) => { needDelivery(preview); return deliveryGetBySlug(db, persp(preview), ctx().siteId, slug, (locale ?? (await resolveDefaultLocale(db, ctx().siteId))), populate); });
 tool("delivery_get_by_path", "Read delivered content by hierarchical URL path (e.g. /home/about).", { path: z.string(), ...delv },
-  async ({ path, locale, populate, preview }) => { needDelivery(preview); return deliveryGetByPath(db, persp(preview), ctx.siteId, path.split("/").filter(Boolean), (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate); });
+  async ({ path, locale, populate, preview }) => { needDelivery(preview); return deliveryGetByPath(db, persp(preview), ctx().siteId, path.split("/").filter(Boolean), (locale ?? (await resolveDefaultLocale(db, ctx().siteId))), populate); });
 tool(
   "delivery_list",
   "List delivered content of a type. Supports pagination (limit/offset), sorting (sort: 'name' | 'createdAt' | 'data.<field>', prefix '-' for descending) and equality filters on data fields. Returns { items, total }.",
@@ -665,45 +750,55 @@ tool(
     sort: z.string().optional().describe("name | createdAt | data.<field>; prefix - for descending"),
     filter: z.record(z.string(), z.string()).optional().describe("Equality filters on data fields, e.g. {\"author\": \"Jane\"}"),
   },
-  async ({ type, locale, populate, preview, limit, offset, sort, filter }) => { needDelivery(preview); return deliveryList(db, persp(preview), ctx.siteId, type, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate, undefined, { limit, offset, sort, filter }); });
+  async ({ type, locale, populate, preview, limit, offset, sort, filter }) => { needDelivery(preview); return deliveryList(db, persp(preview), ctx().siteId, type, (locale ?? (await resolveDefaultLocale(db, ctx().siteId))), populate, undefined, { limit, offset, sort, filter }); });
 tool(
   "delivery_search",
   "Full-text search over delivered content (name + field text). Returns { items, total } resolved through the same no-leak chokepoint.",
   { query: z.string().min(1).max(200), type: z.string().optional(), locale: loc, limit: z.number().int().min(1).max(100).optional(), preview: z.boolean().optional() },
-  async ({ query, type, locale, limit, preview }) => { needDelivery(preview); return deliverySearch(db, persp(preview), ctx.siteId, query, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), type, limit); });
+  async ({ query, type, locale, limit, preview }) => { needDelivery(preview); return deliverySearch(db, persp(preview), ctx().siteId, query, (locale ?? (await resolveDefaultLocale(db, ctx().siteId))), type, limit); });
 tool("delivery_global", "Read a delivered global singleton by type.", { type: z.string(), locale: loc, preview: z.boolean().optional() },
-  async ({ type, locale, preview }) => { needDelivery(preview); return deliveryGlobal(db, persp(preview), ctx.siteId, type, (locale ?? (await resolveDefaultLocale(db, ctx.siteId)))); });
+  async ({ type, locale, preview }) => { needDelivery(preview); return deliveryGlobal(db, persp(preview), ctx().siteId, type, (locale ?? (await resolveDefaultLocale(db, ctx().siteId)))); });
 tool("delivery_start", "Read the configured start page (served at /).", { locale: loc, populate: z.number().min(0).max(4).optional(), preview: z.boolean().optional() },
-  async ({ locale, populate, preview }) => { needDelivery(preview); return deliveryStartPage(db, persp(preview), ctx.siteId, (locale ?? (await resolveDefaultLocale(db, ctx.siteId))), populate); });
+  async ({ locale, populate, preview }) => { needDelivery(preview); return deliveryStartPage(db, persp(preview), ctx().siteId, (locale ?? (await resolveDefaultLocale(db, ctx().siteId))), populate); });
 
 /* --------------------------------- site -------------------------------- */
-tool("get_site_config", "Get site config (current start page).", {}, () => getSiteConfig(db, ctx));
+tool(
+  "list_sites",
+  "List the sites in this instance and say which one this server acts in. This server is pinned to ONE site (PAPERBOY_SITE, a slug or id); content in another site is invisible to every tool here, so an empty tree or search may mean the wrong site, not missing content.",
+  {},
+  async () => ({
+    activeSiteId: ctx().siteId,
+    tokenScopedTo: tokenSiteId,
+    sites: (await reachableSites()).map((x) => ({ id: x.id, slug: x.slug, name: x.name })),
+  }),
+);
+tool("get_site_config", "Get site config (current start page).", {}, () => getSiteConfig(db, ctx()));
 tool("set_start_page", "Set (or clear with null) the page served at /.", { documentId: z.string().nullable() },
-  async ({ documentId }) => { await setStartPage(db, ctx, documentId); await mcpAudit("site.start_page", documentId); return { ok: true }; });
+  async ({ documentId }) => { await setStartPage(db, ctx(), documentId); await mcpAudit("site.start_page", documentId); return { ok: true }; });
 
 /* ---------------------------- platform admin --------------------------- */
-tool("list_users", "List users with roles and section scopes (admin).", {}, () => listUsers(db, ctx));
+tool("list_users", "List users with roles and section scopes (admin).", {}, () => listUsers(db, ctx()));
 tool("create_user", "Create a user (admin).", { email: z.string().email(), name: z.string(), password: z.string().min(10), roles: z.array(RoleName).min(1), sections: z.array(z.string()).optional() },
-  async (a) => { const id = await adminCreateUser(db, ctx, a); await mcpAudit("user.create", null, null, { email: a.email, roles: a.roles }); return { id }; });
+  async (a) => { const id = await adminCreateUser(db, ctx(), a); await mcpAudit("user.create", null, null, { email: a.email, roles: a.roles }); return { id }; });
 tool("update_user", "Update a user's name/roles/sections (admin).", { id: z.string(), name: z.string().optional(), roles: z.array(RoleName).optional(), sections: z.array(z.string()).optional() },
-  async ({ id, ...rest }) => { await adminUpdateUser(db, ctx, id, rest); await mcpAudit("user.update", null, null, { id }); return { ok: true }; });
+  async ({ id, ...rest }) => { await adminUpdateUser(db, ctx(), id, rest); await mcpAudit("user.update", null, null, { id }); return { ok: true }; });
 tool("delete_user", "Delete a user (admin).", { id: z.string() },
-  async ({ id }) => { await adminDeleteUser(db, ctx, id); await mcpAudit("user.delete", null, null, { id }); return { ok: true }; });
-tool("list_delivery_keys", "List delivery API keys (admin).", {}, () => listDeliveryKeys(db, ctx));
+  async ({ id }) => { await adminDeleteUser(db, ctx(), id); await mcpAudit("user.delete", null, null, { id }); return { ok: true }; });
+tool("list_delivery_keys", "List delivery API keys (admin).", {}, () => listDeliveryKeys(db, ctx()));
 tool("create_delivery_key", "Create a delivery API key (admin). Returns the secret once.", { name: z.string(), type: z.enum(["public", "preview"]) },
-  async ({ name, type }) => { const r = await createDeliveryKey(db, ctx, name, type); await mcpAudit("deliverykey.create", null, null, { name, type }); return r; });
+  async ({ name, type }) => { const r = await createDeliveryKey(db, ctx(), name, type); await mcpAudit("deliverykey.create", null, null, { name, type }); return r; });
 tool("rename_delivery_key", "Rename a delivery API key (admin).", { id: z.number(), name: z.string().min(1) },
-  async ({ id, name }) => { await renameDeliveryKey(db, ctx, id, name); await mcpAudit("deliverykey.rename", null, null, { id, name }); return { ok: true }; });
+  async ({ id, name }) => { await renameDeliveryKey(db, ctx(), id, name); await mcpAudit("deliverykey.rename", null, null, { id, name }); return { ok: true }; });
 tool("revoke_delivery_key", "Revoke a delivery API key by id (admin).", { id: z.number() },
-  async ({ id }) => { await revokeDeliveryKey(db, ctx, id); await mcpAudit("deliverykey.revoke", null, null, { id }); return { ok: true }; });
-tool("list_webhooks", "List webhook subscriptions (admin).", {}, () => listWebhooks(db, ctx));
+  async ({ id }) => { await revokeDeliveryKey(db, ctx(), id); await mcpAudit("deliverykey.revoke", null, null, { id }); return { ok: true }; });
+tool("list_webhooks", "List webhook subscriptions (admin).", {}, () => listWebhooks(db, ctx()));
 tool("create_webhook", "Create a webhook (admin). Returns the signing secret once.", { name: z.string(), url: z.string(), events: z.array(z.string()).optional() },
-  async (a) => { const r = await createWebhook(db, ctx, a); await mcpAudit("webhook.create", null, null, { name: a.name }); return r; });
+  async (a) => { const r = await createWebhook(db, ctx(), a); await mcpAudit("webhook.create", null, null, { name: a.name }); return r; });
 tool("delete_webhook", "Delete a webhook by id (admin).", { id: z.number() },
-  async ({ id }) => { await deleteWebhook(db, ctx, id); await mcpAudit("webhook.delete", null, null, { id }); return { ok: true }; });
+  async ({ id }) => { await deleteWebhook(db, ctx(), id); await mcpAudit("webhook.delete", null, null, { id }); return { ok: true }; });
 tool("list_audit", "Read the append-only audit log (admin). Filter by action prefix (e.g. 'content.'), actor user id, documentId, or ISO time range.",
   { limit: z.number().optional(), before: z.number().optional(), action: z.string().optional(), actorUserId: z.string().optional(), documentId: z.string().optional(), from: z.string().optional(), to: z.string().optional() },
-  (a) => listAudit(db, ctx, a));
+  (a) => listAudit(db, ctx(), a));
 tool("list_locales", "List enabled locales.", {}, async () => { need("content.read"); return listLocales(db); });
 
 /* ---------------------------------- AI --------------------------------- */
@@ -712,23 +807,57 @@ tool("ai_assist", "AI editorial help: meta_title, meta_description, summarize, i
   async (a) => { need("content.update"); return aiAssist(a, await resolveAiRuntimeConfig(db, AI_ENV)); });
 
 /* --------------------------------- boot -------------------------------- */
+/**
+ * Resolve PAPERBOY_SITE (a site id or slug) to a site id. Unset → undefined,
+ * which leaves getAccessContext on the Default site. A miss is fatal rather
+ * than a silent fall back to Default: booting into the wrong site is exactly
+ * the failure this exists to prevent.
+ */
+async function resolveActiveSiteId(userId: string): Promise<string | undefined> {
+  if (!PAPERBOY_SITE) return tokenSiteId ?? undefined;
+  const found = (await getSiteById(db, PAPERBOY_SITE)) ?? (await getSiteBySlug(db, PAPERBOY_SITE));
+  if (found && tokenSiteId && found.id !== tokenSiteId) {
+    // Fail loudly rather than quietly narrowing: the operator asked for a site
+    // this credential cannot reach, and booting into a different one would look
+    // like the config took effect.
+    console.error(
+      `[paperboy-mcp] PAPERBOY_SITE "${PAPERBOY_SITE}" conflicts with this token, which is scoped to site ${tokenSiteId}.`,
+    );
+    process.exit(1);
+  }
+  if (found) return found.id;
+  // Self-teaching (agent-API rule #2): name what exists, so this is fixable
+  // from the message alone without going to the database for slugs.
+  const known = (await listSites(db, await getAccessContext(db, userId)))
+    .map((x) => `${x.slug} (${x.id})`)
+    .join(", ");
+  console.error(
+    `[paperboy-mcp] PAPERBOY_SITE "${PAPERBOY_SITE}" is not a site in this instance. Set it to one of these slugs or ids: ${known || "none"}`,
+  );
+  process.exit(1);
+}
+
 async function main(): Promise<void> {
   // Prefer a Paperboy-issued MCP token (Settings → MCP); fall back to email+password.
   let userId: string;
   if (MCP_TOKEN) {
-    const id = await verifyMcpToken(db, MCP_TOKEN);
-    if (!id) {
+    const verified = await verifyMcpToken(db, MCP_TOKEN);
+    if (!verified) {
       console.error("[paperboy-mcp] MCP_TOKEN is invalid or revoked");
       process.exit(1);
     }
-    userId = id;
+    userId = verified.userId;
+    tokenSiteId = verified.siteId;
   } else {
     userId = await verifyLogin(db, MCP_LOGIN!.email, MCP_LOGIN!.password);
   }
+  const activeSiteId = await resolveActiveSiteId(userId);
   // via:"mcp" — every write through this server is agent provenance: versions
   // record created_via='mcp' and drafts carry the needs-review flag.
-  ctx = { ...(await getAccessContext(db, userId)), via: "mcp" };
-  console.error(`[paperboy-mcp] authenticated (${userId}) via ${MCP_TOKEN ? "token" : "password"} — ${ctx.permissions.length} permissions`);
+  baseCtx = { ...(await getAccessContext(db, userId, activeSiteId)), via: "mcp" };
+  console.error(
+    `[paperboy-mcp] authenticated (${userId}) via ${MCP_TOKEN ? "token" : "password"} — ${ctx().permissions.length} permissions, site ${ctx().siteId}`,
+  );
 
   if (MCP_HTTP_PORT) {
     // HTTP mode is a remote, multi-request surface — it must be gated. The
@@ -760,7 +889,7 @@ async function main(): Promise<void> {
         // reassign: bearerOk has just proven this request belongs to the SAME user
         // the process authenticated as, so concurrent requests can only ever
         // install an identical identity — never another user's.
-        ctx = { ...(await getAccessContext(db, userId)), via: "mcp" };
+        baseCtx = { ...(await getAccessContext(db, userId, activeSiteId)), via: "mcp" };
         return true;
       },
       buildServer,
