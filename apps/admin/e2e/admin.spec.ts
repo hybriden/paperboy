@@ -3,6 +3,19 @@ import { dirname, join } from "node:path";
 import AxeBuilder from "@axe-core/playwright";
 import { type Locator, type Page, expect, test } from "@playwright/test";
 
+/**
+ * Choose a content/block type in a create dialog.
+ *
+ * The picker is a listbox in a popover, not a native <select> — an <option>
+ * cannot render the type's icon. It is the same Menu the block palette uses, so
+ * options are menuitems; the menu portals to <body>, so they are looked up on
+ * the page, and by data-type because the readable name is the displayName.
+ */
+async function pickType(dlg: Locator, typeName: string): Promise<void> {
+  await dlg.getByLabel(/^(Content|Block) type$/).click();
+  await dlg.page().locator(`[role="menuitem"]:has([data-type="${typeName}"])`).click();
+}
+
 const SHOT = "../../proof/screenshots";
 // Playwright runs from apps/admin (the config's directory).
 const TEST_RESULTS = join(process.cwd(), "test-results");
@@ -176,7 +189,15 @@ test("create → edit → add block → translate → publish (with toast)", asy
   await page.getByRole("button", { name: "Create new content" }).click();
   // Scope to the dialog: the editor behind it has its own "Name" input.
   const createDlg = page.getByRole("dialog", { name: "Create content" });
-  await createDlg.getByLabel("Content type").selectOption("ArticlePage");
+
+  // Every type option carries its OWN icon — the page tree shows one beside each
+  // page, and the dialog that creates them used to show none (a native <option>
+  // cannot render one). Assert before choosing, while the menu is open.
+  await createDlg.getByLabel("Content type").click();
+  const option = page.locator('[role="menuitem"]:has([data-type="ArticlePage"])');
+  await expect(option).toBeVisible();
+  await expect(option.locator("svg")).toBeVisible();
+  await option.click();
   await createDlg.getByLabel("Name").fill(pageName);
   await createDlg.getByRole("button", { name: "Create", exact: true }).click();
   // Wait for navigation to the NEW page before touching fields — the editor
@@ -219,7 +240,7 @@ test("translate offer is directionless: content authored only in nb offers trans
   const pageName = `Rev ${Date.now().toString().slice(-5)}`;
   await page.getByRole("button", { name: "Create new content" }).click();
   const dlg = page.getByRole("dialog", { name: "Create content" });
-  await dlg.getByLabel("Content type").selectOption("ArticlePage");
+  await pickType(dlg, "ArticlePage");
   await dlg.getByLabel("Name").fill(pageName);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
   await expect(editorName(page)).toHaveValue(pageName, { timeout: 15_000 });

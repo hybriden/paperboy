@@ -30,6 +30,7 @@ import { useConfirm } from "./ui/confirm.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { Skeleton } from "./ui/skeleton.js";
 import { useToast } from "./ui/toast.js";
+import { TypePicker } from "./TypePicker.js";
 
 const EXPAND_KEY = "paperboy-tree-expanded";
 const ONLY_LOCALE_KEY = "paperboy-tree-only-locale";
@@ -845,9 +846,7 @@ function CreateDialog(props: {
     <Dialog open onOpenChange={(o) => !o && props.onClose()}>
       <DialogContent title="Create content" description={props.parentId ? "As a child of the selected page." : undefined} size="sm">
         <label className="field-label" htmlFor="ctype">Content type</label>
-        <select id="ctype" className="field-input mb-3" value={type} onChange={(e) => setChosenType(e.target.value)}>
-          {props.types.map((t) => <option key={t.name} value={t.name}>{t.displayName} ({t.kind})</option>)}
-        </select>
+        <TypePicker id="ctype" label="Content type" types={props.types} value={type} onChange={setChosenType} />
         <label className="field-label" htmlFor="cname">Name</label>
         <input ref={nameRef} id="cname" aria-label="Name" className="field-input mb-4" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. About us" />
         {create.isError && <p role="alert" className="mb-3 text-sm text-danger">{(create.error as Error).message}</p>}

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { SEL, login, uniqueName } from "./helpers.js";
+import { login, pickType, SEL, uniqueName } from "./helpers.js";
 
 /**
  * CONTENT TYPES — the Settings → Content types editor: build a new BLOCK type
@@ -97,7 +97,7 @@ test("delete is blocked while the type is in use, allowed once usage is removed"
   await page.getByRole("link", { name: "Edit" }).click();
   await page.getByRole("button", { name: "Create new content" }).click();
   const createDlg = page.getByRole("dialog", { name: "Create content" });
-  await createDlg.getByLabel("Content type").selectOption(code);
+  await pickType(createDlg, code);
   const pageName = uniqueName("usedtype");
   await createDlg.getByLabel("Name").fill(pageName);
   await createDlg.getByRole("button", { name: "Create", exact: true }).click();

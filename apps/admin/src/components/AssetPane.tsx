@@ -12,6 +12,7 @@ import { Dialog, DialogContent } from "./ui/dialog.js";
 import { EmptyState } from "./ui/empty-state.js";
 import { Skeleton } from "./ui/skeleton.js";
 import { useToast } from "./ui/toast.js";
+import { TypePicker } from "./TypePicker.js";
 
 /**
  * Assets pane: Shared Blocks (reusable, own lifecycle) + Globals + Media.
@@ -246,18 +247,19 @@ function CreateBlockDialog({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent title="New shared block" description="A reusable block with its own publishing lifecycle." size="sm">
         <label className="field-label" htmlFor="nb-type">Block type</label>
-        <select id="nb-type" className="field-input mb-3" value={type} onChange={(e) => setType(e.target.value)}>
-          {/* Parts (a form's field blocks) CAN be shared deliberately — one
-              consent checkbox reused across forms — but they are the rare case,
-              so they go last under their own heading instead of burying the
-              four everyday block types among ten of them. */}
-          {blockTypes.filter((t) => !t.nestedOnly).map((t) => <option key={t.name} value={t.name}>{t.displayName}</option>)}
-          {blockTypes.some((t) => t.nestedOnly) && (
-            <optgroup label="Parts (used inside another type)">
-              {blockTypes.filter((t) => t.nestedOnly).map((t) => <option key={t.name} value={t.name}>{t.displayName}</option>)}
-            </optgroup>
-          )}
-        </select>
+        {/* Parts (a form's field blocks) CAN be shared deliberately — one
+            consent checkbox reused across forms — but they are the rare case,
+            so they go last under their own heading instead of burying the
+            four everyday block types among ten of them. */}
+        <TypePicker
+          id="nb-type"
+          label="Block type"
+          types={blockTypes.filter((t) => !t.nestedOnly)}
+          secondary={blockTypes.filter((t) => t.nestedOnly)}
+          secondaryLabel="Parts (used inside another type)"
+          value={type}
+          onChange={setType}
+        />
         <label className="field-label" htmlFor="nb-name">Name</label>
         <input id="nb-name" ref={nameRef} aria-label="Name" className="field-input mb-4" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Campaign banner" />
         {create.isError && <p role="alert" className="mb-3 text-sm text-danger">{(create.error as Error).message}</p>}

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { SEL, createPage, login, openContentActions, openHome, openPublishMenu, trashFromTree, uniqueName, waitForSaved } from "./helpers.js";
+import { createPage, login, openContentActions, openHome, openPublishMenu, pickType, SEL, trashFromTree, uniqueName, waitForSaved } from "./helpers.js";
 
 /**
  * CONTENT LIFECYCLE — the full editorial workflow on a BlogPost created under
@@ -20,7 +20,7 @@ test("create a BlogPost under Blog and edit every offered field type", async ({ 
   await SEL.treeItem(page, "Blog").first().click({ button: "right" });
   await page.getByRole("menuitem", { name: /New child page/ }).click();
   const dlg = page.getByRole("dialog", { name: "Create content" });
-  await dlg.getByLabel("Content type").selectOption("BlogPost");
+  await pickType(dlg, "BlogPost");
   const name = uniqueName("post");
   await dlg.getByLabel("Name").fill(name);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();

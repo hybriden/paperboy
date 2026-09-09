@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { PNG_1x1, SEL, createPage, login, trashFromTree, uniqueName, waitForSaved } from "./helpers.js";
+import { createPage, login, pickType, PNG_1x1, SEL, trashFromTree, uniqueName, waitForSaved } from "./helpers.js";
 
 /**
  * RICHTEXT + MARKDOWN editors.
@@ -147,7 +147,7 @@ test("Markdown editor: toolbar buttons insert syntax + Write/Preview toggle rend
   await SEL.treeItem(page, "Blog").first().click({ button: "right" });
   await page.getByRole("menuitem", { name: /New child page/ }).click();
   const dlg = page.getByRole("dialog", { name: "Create content" });
-  await dlg.getByLabel("Content type").selectOption("BlogPost");
+  await pickType(dlg, "BlogPost");
   const name = uniqueName("md");
   await dlg.getByLabel("Name").fill(name);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();

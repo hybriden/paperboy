@@ -1,9 +1,23 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Page, expect } from "@playwright/test";
+import { type Locator, type Page, expect } from "@playwright/test";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Choose a content/block type in a create dialog.
+ *
+ * The picker is a listbox in a popover, not a native <select> — an <option>
+ * cannot render the type's icon. It is the same Menu the block palette uses, so
+ * options are menuitems; the menu portals to <body>, so they are looked up on
+ * the page, and by data-type because the readable name is the displayName.
+ */
+export async function pickType(dlg: Locator, typeName: string): Promise<void> {
+  await dlg.getByLabel(/^(Content|Block) type$/).click();
+  await dlg.page().locator(`[role="menuitem"]:has([data-type="${typeName}"])`).click();
+}
+
 const COOKIE_DIR = join(__dirname, ".auth");
 
 /**
@@ -139,7 +153,7 @@ export async function createPageViaDialog(
   await page.getByRole("button", { name: "Create new content" }).click();
   const dlg = page.getByRole("dialog", { name: "Create content" });
   await expect(dlg).toBeVisible();
-  if (opts.type) await dlg.getByLabel("Content type").selectOption(opts.type);
+  if (opts.type) await pickType(dlg, opts.type);
   await dlg.getByLabel("Name").fill(name);
   await dlg.getByRole("button", { name: "Create", exact: true }).click();
   await expect(SEL.nameInput(page)).toHaveValue(name, { timeout: 15_000 });
