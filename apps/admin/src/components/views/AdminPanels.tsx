@@ -1716,11 +1716,14 @@ export function McpTokensPanel() {
   const toast = useToast();
   const { user } = useUser();
   const tokens = useQuery({ queryKey: ["mcp-tokens"], queryFn: ({ signal }) => api.mcpTokens(signal) });
+  const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites() });
+  const activeSite = sites.data?.sites.find((x) => x.id === sites.data?.activeSiteId);
   const [created, setCreated] = useState<string | null>(null);
   const [name, setName] = useState("");
+  const [allSites, setAllSites] = useState(false);
 
   const create = useMutation({
-    mutationFn: () => api.createMcpToken(name || "MCP token"),
+    mutationFn: () => api.createMcpToken(name || "MCP token", allSites),
     onSuccess: (r) => { setCreated(r.token); setName(""); void qc.invalidateQueries({ queryKey: ["mcp-tokens"] }); },
     onError: (e) => toast.error("Couldn’t create token", (e as Error).message),
   });
@@ -1743,10 +1746,14 @@ export function McpTokensPanel() {
   return (
     <PanelShell
       title="MCP tokens"
-      hint={`Tokens the MCP server presents instead of a password. A new token acts as YOU (${user.email}) — an agent using it inherits your roles and section scopes, and can do nothing you couldn’t. For a narrower agent, sign in as that account and mint the token there. Tokens don’t expire; the secret is shown once.`}
+      hint={`Tokens the MCP server presents instead of a password. A new token acts as YOU (${user.email}) and is scoped to ${activeSite ? `the ${activeSite.name} site` : "the active site"} — an agent using it inherits your roles and section scopes there, and can do nothing you couldn’t. For a narrower agent, sign in as that account and mint the token there. Tokens don’t expire; the secret is shown once.`}
       action={
         <div className="flex items-center gap-1.5">
           <input className="field-input" placeholder="Token name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Token name" />
+          <label className="flex items-center gap-1 text-xs text-muted">
+            <input type="checkbox" checked={allSites} onChange={(e) => setAllSites(e.target.checked)} aria-label="Every site" />
+            Every site
+          </label>
           <button className="btn-subtle px-2 py-1 text-xs" disabled={create.isPending} onClick={() => create.mutate()}>
             <Icon.Plus width={14} height={14} /> Create
           </button>
@@ -1767,6 +1774,9 @@ export function McpTokensPanel() {
           <span className="font-medium text-fg">{t.name}</span>
           <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">mcp_…</code>
           <span className="text-xs text-muted">acts as {t.email}</span>
+          <Badge tone={t.siteId ? "default" : "caution"}>
+            {t.siteId ? (sites.data?.sites.find((x) => x.id === t.siteId)?.name ?? t.siteId) : "every site"}
+          </Badge>
           <span className="text-[11px] text-muted">{t.lastUsedAt ? `last used ${new Date(t.lastUsedAt).toLocaleDateString()}` : "never used"}</span>
           {t.revokedAt ? <span className="rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">revoked</span> : null}
           {!t.revokedAt && (

@@ -771,6 +771,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "[]lastUsedAt",
       "[]name",
       "[]revokedAt",
+      "[]siteId",
       "[]userId",
     ],
     "summary": null,

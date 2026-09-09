@@ -819,7 +819,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
 
   /* ------------------------------ MCP tokens ----------------------------- */
   const McpTokenRow = z.object({
-    id: z.number(), name: z.string(), userId: z.string(), email: z.string(),
+    id: z.number(), name: z.string(), userId: z.string(), siteId: z.string().nullable(), email: z.string(),
     createdAt: z.string(), lastUsedAt: z.string().nullable(), revokedAt: z.string().nullable(),
   });
   app.get(
@@ -829,14 +829,22 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   );
   app.post(
     "/mcp-tokens",
-    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], body: z.object({ name: z.string().min(1).max(80), userId: z.string().optional() }), response: { 200: z.object({ token: z.string() }) } } },
+    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], body: z.object({ name: z.string().min(1).max(80), userId: z.string().optional(), allSites: z.boolean().optional() }), response: { 200: z.object({ token: z.string() }) } } },
     async (req) => {
       // A token is PERSONAL by default: it acts as whoever minted it. An explicit
       // userId provisions one for another account (a service user) — no extra gate,
       // because user.manage can already set that account's password and roles.
-      const input = { name: req.body.name, userId: req.body.userId ?? req.user!.id };
+      //
+      // And it is SITE-SCOPED by default, to the site it was minted in — the same
+      // rule delivery keys follow. `allSites` is the deliberate opt-out for a
+      // cross-site agent; createMcpToken reads undefined as "the active site".
+      const input = {
+        name: req.body.name,
+        userId: req.body.userId ?? req.user!.id,
+        ...(req.body.allSites ? { siteId: null } : {}),
+      };
       const r = await createMcpToken(app.db, req.accessCtx!, input);
-      await audit(app.db, { actorUserId: req.user!.id, action: "mcptoken.create", ip: req.ip, detail: { name: input.name, userId: input.userId } });
+      await audit(app.db, { actorUserId: req.user!.id, action: "mcptoken.create", ip: req.ip, detail: { name: input.name, userId: input.userId, siteId: req.body.allSites ? null : req.accessCtx!.siteId } });
       return r;
     },
   );

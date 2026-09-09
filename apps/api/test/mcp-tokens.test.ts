@@ -93,7 +93,7 @@ describe("MCP token routes", () => {
     expect(row).toBeTruthy();
     // Exact metadata shape — no token/tokenHash/hash keys.
     expect(Object.keys(row).sort()).toEqual(
-      ["createdAt", "email", "id", "lastUsedAt", "name", "revokedAt", "userId"].sort(),
+      ["createdAt", "email", "id", "lastUsedAt", "name", "revokedAt", "siteId", "userId"].sort(),
     );
     expect(row.email).toBe("admin@paperboy.test");
     expect(row.revokedAt).toBeNull();
@@ -117,8 +117,11 @@ describe("MCP token routes", () => {
       payload: { name: "Verifiable token", userId: adminUserId },
     });
     const token = created.json().token as string;
-    const userId = await verifyMcpToken(s.app.db, token);
-    expect(userId).toBe(adminUserId);
+    const verified = await verifyMcpToken(s.app.db, token);
+    expect(verified?.userId).toBe(adminUserId);
+    // Minted with no site header → scoped to the active (Default) site, like a
+    // delivery key. `null` would mean a deliberate cross-site token.
+    expect(verified?.siteId).toBe("site_default");
   });
 
   it("revoke works and a revoked token's verifyMcpToken returns null", async () => {
@@ -129,7 +132,7 @@ describe("MCP token routes", () => {
       payload: { name: "Revokable token", userId: adminUserId },
     });
     const token = created.json().token as string;
-    expect(await verifyMcpToken(s.app.db, token)).toBe(adminUserId);
+    expect((await verifyMcpToken(s.app.db, token))?.userId).toBe(adminUserId);
 
     // Find its id from the list.
     const list = await s.app.inject({ method: "GET", url: "/api/v1/manage/mcp-tokens", headers: { cookie: admin.cookie } });

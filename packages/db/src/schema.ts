@@ -285,6 +285,9 @@ export const mcpToken = pgTable("mcp_token", {
   tokenHash: text("token_hash").notNull().unique(), // sha-256 of the token
   tokenPrefix: text("token_prefix").notNull().default("mcp_"),
   userId: text("user_id").notNull(), // -> users.id; the token authenticates AS this user
+  // NULL = every site. A value confines the token — and any agent holding it —
+  // to that one site, mirroring delivery_key.site_id (D1).
+  siteId: text("site_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
