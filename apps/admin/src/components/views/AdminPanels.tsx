@@ -1775,7 +1775,7 @@ export function McpTokensPanel() {
           <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">mcp_…</code>
           <span className="text-xs text-muted">acts as {t.email}</span>
           <Badge tone={t.siteId ? "default" : "caution"}>
-            {t.siteId ? (sites.data?.sites.find((x) => x.id === t.siteId)?.name ?? t.siteId) : "every site"}
+            {t.siteId ? `site: ${sites.data?.sites.find((x) => x.id === t.siteId)?.name ?? t.siteId}` : "all sites"}
           </Badge>
           <span className="text-[11px] text-muted">{t.lastUsedAt ? `last used ${new Date(t.lastUsedAt).toLocaleDateString()}` : "never used"}</span>
           {t.revokedAt ? <span className="rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">revoked</span> : null}
