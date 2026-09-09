@@ -160,25 +160,27 @@ function bearerOf(req: IncomingMessage): string | null {
  * DIFFERENT user is rejected — this process carries one identity; impersonating
  * another user through it would bypass that user's own RBAC trail.
  */
-async function bearerOk(req: IncomingMessage, bootUserId: string): Promise<boolean> {
+type BearerCheck = { ok: false } | { ok: true; siteId: string | null };
+const DENIED: BearerCheck = { ok: false };
+
+/**
+ * Authorize one HTTP request and report the site cap of the token IT presented
+ * — which need not be the boot token's. Two tokens of the same user may carry
+ * different scopes; each request runs under its own, in a per-request scope.
+ */
+async function bearerOk(req: IncomingMessage, bootUserId: string): Promise<BearerCheck> {
   const presented = bearerOf(req);
-  if (!presented) return false;
+  if (!presented) return DENIED;
 
   // The DATABASE IS CONSULTED FIRST, so revocation always wins: a compare against
   // the in-memory boot token before the lookup would keep a token revoked in
   // Settings → MCP working until the container restarts.
   const found = await mcpTokenState(db, presented);
-  if (found.state === "revoked") return false;
+  if (found.state === "revoked") return DENIED;
   if (found.state === "active") {
-    if (found.userId !== bootUserId) return false;
-    // Same USER is not enough: the same user may hold a site-scoped AND a
-    // cross-site token, and adopting the presented one per request would be a
-    // module-level write that concurrent requests race on — a narrow token
-    // could execute with a wide one's reach. HTTP mode is already one identity
-    // per process; make it one SCOPE per process too and refuse the mismatch.
-    if (found.siteId !== tokenSiteId) return false;
+    if (found.userId !== bootUserId) return DENIED;
     await verifyMcpToken(db, presented); // stamp last-used
-    return true;
+    return { ok: true, siteId: found.siteId };
   }
 
   // Unknown to the database: an env-only MCP_TOKEN with no row. Legitimate (it is
@@ -187,11 +189,10 @@ async function bearerOk(req: IncomingMessage, bootUserId: string): Promise<boole
   if (MCP_TOKEN) {
     const got = Buffer.from(presented);
     const want = Buffer.from(MCP_TOKEN);
-    // An env-only token has no row and so no site cap; it can only match the
-    // boot token, whose scope is already what tokenSiteId holds.
-    if (got.length === want.length && timingSafeEqual(got, want)) return true;
+    // An env-only token has no row, so it carries the boot token's cap.
+    if (got.length === want.length && timingSafeEqual(got, want)) return { ok: true, siteId: bootTokenSiteId };
   }
-  return false;
+  return DENIED;
 }
 
 const { db } = createDb(DATABASE_URL);
@@ -204,19 +205,27 @@ const { db } = createDb(DATABASE_URL);
  * a concurrent call write into the wrong site, which is the exact class of bug
  * multisite partitioning exists to prevent.
  */
-const callCtx = new AsyncLocalStorage<AccessContext>();
-/** This server's own site (PAPERBOY_SITE, else Default) — the default per call. */
-let baseCtx: AccessContext;
+interface Scope {
+  /** The AccessContext tools run under. */
+  ctx: AccessContext;
+  /** The site the PRESENTING token is confined to; null = every site. */
+  tokenSiteId: string | null;
+}
+const scope = new AsyncLocalStorage<Scope>();
+/** The process's own scope: stdio's only one, and the seed for each HTTP request. */
+let bootScope: Scope;
+const cur = (): Scope => scope.getStore() ?? bootScope;
 /**
  * The site the presenting TOKEN is confined to, or null for a cross-site token.
  * A credential-level cap: it bounds `PAPERBOY_SITE` and every per-call `site`,
- * so a narrow token cannot reach wider by asking. Fixed for the life of the
- * process — HTTP mode refuses a bearer whose scope differs from the boot
- * token's, because adopting it per request would be a shared write that
- * concurrent requests race on.
+ * so a narrow token cannot reach wider by asking. It lives in the per-request
+ * scope, not a module variable, so one HTTP server can serve a site-scoped and
+ * a cross-site token at once without either inheriting the other's reach.
  */
-let tokenSiteId: string | null = null;
-const ctx = (): AccessContext => callCtx.getStore() ?? baseCtx;
+const tokenSite = (): string | null => cur().tokenSiteId;
+/** The BOOT token's cap — what PAPERBOY_SITE is checked against at startup. */
+let bootTokenSiteId: string | null = null;
+const ctx = (): AccessContext => cur().ctx;
 
 /**
  * Resolve a tool call's `site` (slug or id) to the AccessContext to run it in.
@@ -226,10 +235,11 @@ const ctx = (): AccessContext => callCtx.getStore() ?? baseCtx;
  */
 async function ctxForSite(site: string): Promise<AccessContext> {
   const found = (await getSiteById(db, site)) ?? (await getSiteBySlug(db, site));
-  if (found && tokenSiteId && found.id !== tokenSiteId) {
-    const mine = await getSiteById(db, tokenSiteId);
+  const cap = tokenSite();
+  if (found && cap && found.id !== cap) {
+    const mine = await getSiteById(db, cap);
     throw new Error(
-      `This MCP token is scoped to the ${mine ? `'${mine.slug}'` : tokenSiteId} site and cannot act in '${site}'. Mint a token for that site in Settings → MCP, or one for every site.`,
+      `This MCP token is scoped to the ${mine ? `'${mine.slug}'` : cap} site and cannot act in '${site}'. Mint a token for that site in Settings → MCP, or one for every site.`,
     );
   }
   if (!found) {
@@ -238,13 +248,14 @@ async function ctxForSite(site: string): Promise<AccessContext> {
     const known = (await reachableSites()).map((x) => `${x.slug} (${x.id})`).join(", ");
     throw new Error(`Unknown site "${site}". This token can act in: ${known || "none"}. Call list_sites to see them.`);
   }
-  return { ...(await getAccessContext(db, baseCtx.userId, found.id)), via: "mcp" };
+  return { ...(await getAccessContext(db, ctx().userId, found.id)), via: "mcp" };
 }
 
 /** The sites this token may act in — every site, or just the one it is scoped to. */
 async function reachableSites() {
-  const all = await listSites(db, baseCtx);
-  return tokenSiteId ? all.filter((x) => x.id === tokenSiteId) : all;
+  const all = await listSites(db, ctx());
+  const cap = tokenSite();
+  return cap ? all.filter((x) => x.id === cap) : all;
 }
 
 /** Some data-layer reads don't self-check RBAC (the REST routes gate them); the
@@ -316,8 +327,8 @@ function tool<S extends z.ZodRawShape>(
         // `site` is ours, not the handler's: strip it before the args reach a
         // data-layer schema that would reject the unknown key.
         const { site, ...args } = (raw ?? {}) as { site?: string };
-        const result = await callCtx.run(
-          site ? await ctxForSite(site) : baseCtx,
+        const result = await scope.run(
+          site ? { ...cur(), ctx: await ctxForSite(site) } : cur(),
           () => run(args as z.infer<z.ZodObject<S>>),
         );
         return { content: [{ type: "text" as const, text: JSON.stringify(result ?? { ok: true }, null, 2) }] };
@@ -768,7 +779,7 @@ tool(
   {},
   async () => ({
     activeSiteId: ctx().siteId,
-    tokenScopedTo: tokenSiteId,
+    tokenScopedTo: tokenSite(),
     sites: (await reachableSites()).map((x) => ({ id: x.id, slug: x.slug, name: x.name })),
   }),
 );
@@ -814,14 +825,14 @@ tool("ai_assist", "AI editorial help: meta_title, meta_description, summarize, i
  * the failure this exists to prevent.
  */
 async function resolveActiveSiteId(userId: string): Promise<string | undefined> {
-  if (!PAPERBOY_SITE) return tokenSiteId ?? undefined;
+  if (!PAPERBOY_SITE) return bootTokenSiteId ?? undefined;
   const found = (await getSiteById(db, PAPERBOY_SITE)) ?? (await getSiteBySlug(db, PAPERBOY_SITE));
-  if (found && tokenSiteId && found.id !== tokenSiteId) {
+  if (found && bootTokenSiteId && found.id !== bootTokenSiteId) {
     // Fail loudly rather than quietly narrowing: the operator asked for a site
     // this credential cannot reach, and booting into a different one would look
     // like the config took effect.
     console.error(
-      `[paperboy-mcp] PAPERBOY_SITE "${PAPERBOY_SITE}" conflicts with this token, which is scoped to site ${tokenSiteId}.`,
+      `[paperboy-mcp] PAPERBOY_SITE "${PAPERBOY_SITE}" conflicts with this token, which is scoped to site ${bootTokenSiteId}.`,
     );
     process.exit(1);
   }
@@ -847,14 +858,14 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     userId = verified.userId;
-    tokenSiteId = verified.siteId;
+    bootTokenSiteId = verified.siteId;
   } else {
     userId = await verifyLogin(db, MCP_LOGIN!.email, MCP_LOGIN!.password);
   }
   const activeSiteId = await resolveActiveSiteId(userId);
   // via:"mcp" — every write through this server is agent provenance: versions
   // record created_via='mcp' and drafts carry the needs-review flag.
-  baseCtx = { ...(await getAccessContext(db, userId, activeSiteId)), via: "mcp" };
+  bootScope = { ctx: { ...(await getAccessContext(db, userId, activeSiteId)), via: "mcp" }, tokenSiteId: bootTokenSiteId };
   console.error(
     `[paperboy-mcp] authenticated (${userId}) via ${MCP_TOKEN ? "token" : "password"} — ${ctx().permissions.length} permissions, site ${ctx().siteId}`,
   );
@@ -883,13 +894,17 @@ async function main(): Promise<void> {
     const handle = makeMcpHttpHandler({
       httpPath: MCP_HTTP_PATH,
       bearerOk: async (req) => {
-        if (!(await bearerOk(req, userId))) return false;
+        const check = await bearerOk(req, userId);
+        if (!check.ok) return false;
         // Roles/scopes are re-resolved per request so demoting the MCP user or
-        // narrowing its sections applies live, not at the next restart. Safe to
-        // reassign: bearerOk has just proven this request belongs to the SAME user
-        // the process authenticated as, so concurrent requests can only ever
-        // install an identical identity — never another user's.
-        baseCtx = { ...(await getAccessContext(db, userId, activeSiteId)), via: "mcp" };
+        // narrowing its sections applies live, not at the next restart. It lands
+        // in THIS request's scope, never a module variable, so a site-scoped and
+        // a cross-site token can be in flight at once without trading reach.
+        const store = scope.getStore();
+        if (store) {
+          store.tokenSiteId = check.siteId;
+          store.ctx = { ...(await getAccessContext(db, userId, check.siteId ?? activeSiteId)), via: "mcp" };
+        }
         return true;
       },
       buildServer,
@@ -897,9 +912,14 @@ async function main(): Promise<void> {
       lastSeen,
     });
     const http = createHttpServer((req, res) => {
+      // Every request gets its OWN scope object, seeded from the process's and
+      // then filled in by bearerOk from the token it presented. The tool call
+      // downstream reads it through the same AsyncLocalStorage, so concurrent
+      // requests never see each other's site.
+      const store: Scope = { ...bootScope };
       // The handler contains its own try/catch; this .catch is a last-resort
       // backstop so a stray rejection can never become an unhandledRejection.
-      void handle(req, res).catch((err) => {
+      void scope.run(store, () => handle(req, res)).catch((err) => {
         console.error("[paperboy-mcp] unhandled request error:", err);
         if (!res.headersSent) {
           res.writeHead(500, { "content-type": "application/json" });

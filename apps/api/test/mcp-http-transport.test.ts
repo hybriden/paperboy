@@ -193,6 +193,52 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     expect((await c.call("list_locales")).isError).toBe(false);
   });
 
+  it("a SITE-SCOPED token works against a server booted with a cross-site one", async () => {
+    // One HTTP server serves both: a site-scoped token must not need its own
+    // process, and must not inherit the boot token's wider reach. Each request
+    // runs under the cap of the token IT presented.
+    const site = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/sites",
+      headers: authHeaders(admin),
+      payload: { slug: "httpscoped", name: "HTTP scoped", defaultLocale: "en" },
+    });
+    expect(site.statusCode, site.body).toBe(200);
+    const siteId = site.json().id as string;
+    await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/content",
+      headers: { ...authHeaders(admin), "x-paperboy-site": siteId },
+      payload: { type: "ArticlePage", locale: "en", name: "Scoped Only Page" },
+    });
+    const minted = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/mcp-tokens",
+      headers: { ...authHeaders(admin), "x-paperboy-site": siteId },
+      payload: { name: "http-site-scoped", userId: adminId },
+    });
+    expect(minted.statusCode, minted.body).toBe(200);
+
+    const c = new HttpMcp(minted.json().token as string);
+    expect((await c.initialize()).status).toBe(200);
+
+    // Accepted, and defaulted to ITS site without any per-call argument.
+    const pages = await c.call("list_pages");
+    expect(pages.isError, pages.text).toBe(false);
+    expect((pages.json as Array<{ name: string }>).map((x) => x.name)).toContain("Scoped Only Page");
+
+    // Still capped: it cannot borrow the boot token's reach.
+    const denied = await c.call("list_pages", { site: "default" });
+    expect(denied.isError).toBe(true);
+    expect(denied.text).toContain("scoped");
+
+    // And the boot (cross-site) token is unaffected on the same server.
+    const boot = new HttpMcp(envToken);
+    await boot.initialize();
+    const bootPages = await boot.call("list_pages");
+    expect((bootPages.json as Array<{ name: string }>).map((x) => x.name)).not.toContain("Scoped Only Page");
+  }, 60_000);
+
   it("a minted token for a DIFFERENT user is refused — one process, one identity", async () => {
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     const editorId = users.find((u) => u.email === "editor@paperboy.test")!.id;
