@@ -25,7 +25,7 @@ describe("MCP parity: real stdio server vs the API", () => {
     // Mint a real MCP token via the API — the spawn below authenticates with it.
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     const adminId = users.find((u) => u.email === "admin@paperboy.test")!.id;
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "parity-suite", userId: adminId, password: "Admin!Passw0rd" } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "parity-suite", userId: adminId } });
     expect(minted.statusCode).toBe(200);
     token = minted.json().token as string;
     const rows = (await s.app.inject({ method: "GET", url: "/api/v1/manage/mcp-tokens", headers: { cookie: admin.cookie } })).json() as Array<{ id: number; name: string }>;

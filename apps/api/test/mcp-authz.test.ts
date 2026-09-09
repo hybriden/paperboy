@@ -40,7 +40,7 @@ describe("MCP authorization — delivery tools and token revocation", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "authz-suite-author", userId: authorId, password: "Admin!Passw0rd" },
+      payload: { name: "authz-suite-author", userId: authorId },
     });
     expect(minted.statusCode, minted.body).toBe(200);
     authorToken = minted.json().token as string;

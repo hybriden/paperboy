@@ -1714,16 +1714,14 @@ export function DeliveryKeysPanel() {
 export function McpTokensPanel() {
   const qc = useQueryClient();
   const toast = useToast();
+  const { user } = useUser();
   const tokens = useQuery({ queryKey: ["mcp-tokens"], queryFn: ({ signal }) => api.mcpTokens(signal) });
-  const users = useQuery({ queryKey: ["users"], queryFn: ({ signal }) => api.users(signal) });
   const [created, setCreated] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [userId, setUserId] = useState("");
-  const [password, setPassword] = useState("");
 
   const create = useMutation({
-    mutationFn: () => api.createMcpToken(name || "MCP token", userId || users.data?.[0]?.id || "", password),
-    onSuccess: (r) => { setCreated(r.token); setName(""); setPassword(""); void qc.invalidateQueries({ queryKey: ["mcp-tokens"] }); },
+    mutationFn: () => api.createMcpToken(name || "MCP token"),
+    onSuccess: (r) => { setCreated(r.token); setName(""); void qc.invalidateQueries({ queryKey: ["mcp-tokens"] }); },
     onError: (e) => toast.error("Couldn’t create token", (e as Error).message),
   });
   const revoke = useMutation({
@@ -1745,15 +1743,11 @@ export function McpTokensPanel() {
   return (
     <PanelShell
       title="MCP tokens"
-      hint="Tokens the MCP server presents instead of a password. A token acts AS the chosen user (inherits its roles) indefinitely, so creating one asks you to confirm your own password. Run the MCP with MCP_TOKEN=… — the secret is shown once."
+      hint={`Tokens the MCP server presents instead of a password. A new token acts as YOU (${user.email}) — an agent using it inherits your roles and section scopes, and can do nothing you couldn’t. For a narrower agent, sign in as that account and mint the token there. Tokens don’t expire; the secret is shown once.`}
       action={
         <div className="flex items-center gap-1.5">
           <input className="field-input" placeholder="Token name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Token name" />
-          <select className="field-input" value={userId} onChange={(e) => setUserId(e.target.value)} aria-label="Acts as user">
-            {(users.data ?? []).map((u) => <option key={u.id} value={u.id}>{u.email}</option>)}
-          </select>
-          <input className="field-input" type="password" autoComplete="current-password" placeholder="Your password" value={password} onChange={(e) => setPassword(e.target.value)} aria-label="Your password" />
-          <button className="btn-subtle px-2 py-1 text-xs" disabled={create.isPending || !(users.data?.length) || !password} onClick={() => create.mutate()}>
+          <button className="btn-subtle px-2 py-1 text-xs" disabled={create.isPending} onClick={() => create.mutate()}>
             <Icon.Plus width={14} height={14} /> Create
           </button>
         </div>

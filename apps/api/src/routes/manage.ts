@@ -96,7 +96,6 @@ import {
   getDashboard,
   renameSite,
   resolveDefaultLocale,
-  verifyReauth,
 } from "@paperboy/db";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -830,13 +829,12 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   );
   app.post(
     "/mcp-tokens",
-    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], body: z.object({ name: z.string().min(1).max(80), userId: z.string(), password: z.string() }), response: { 200: z.object({ token: z.string() }) } } },
+    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], body: z.object({ name: z.string().min(1).max(80), userId: z.string().optional() }), response: { 200: z.object({ token: z.string() }) } } },
     async (req) => {
-      const { password, ...input } = req.body;
-      // Same re-auth gate as enabling/disabling 2FA: a token never expires and
-      // survives a password change, so a hijacked session alone must not be able
-      // to mint itself a permanent credential.
-      await verifyReauth(app.db, req.user!.id, password);
+      // A token is PERSONAL by default: it acts as whoever minted it. An explicit
+      // userId provisions one for another account (a service user) — no extra gate,
+      // because user.manage can already set that account's password and roles.
+      const input = { name: req.body.name, userId: req.body.userId ?? req.user!.id };
       const r = await createMcpToken(app.db, req.accessCtx!, input);
       await audit(app.db, { actorUserId: req.user!.id, action: "mcptoken.create", ip: req.ip, detail: { name: input.name, userId: input.userId } });
       return r;

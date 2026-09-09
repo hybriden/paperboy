@@ -420,10 +420,9 @@ export const api = {
   // MCP tokens
   mcpTokens: (signal?: AbortSignal) =>
     request<{ id: number; name: string; userId: string; email: string; createdAt: string; lastUsedAt: string | null; revokedAt: string | null }[]>("GET", "/manage/mcp-tokens", undefined, signal),
-  // `password` is the SIGNED-IN admin's own — the same reauth gate as enabling
-  // 2FA, because a token acts as a user indefinitely.
-  createMcpToken: (name: string, userId: string, password: string) =>
-    request<{ token: string }>("POST", "/manage/mcp-tokens", { name, userId, password }),
+  // No `userId`: the token acts as the signed-in user. (The route accepts one to
+  // provision a token for a service account; the panel doesn't offer it.)
+  createMcpToken: (name: string) => request<{ token: string }>("POST", "/manage/mcp-tokens", { name }),
   revokeMcpToken: (id: number) => request<{ ok: boolean }>("POST", `/manage/mcp-tokens/${id}/revoke`),
 
   webhooks: (signal?: AbortSignal) => request<WebhookRow[]>("GET", "/manage/webhooks", undefined, signal),

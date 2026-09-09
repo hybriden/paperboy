@@ -1637,8 +1637,6 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
   "POST /api/v1/manage/mcp-tokens": {
     "requestBodyRequired": [
       "name",
-      "password",
-      "userId",
     ],
     "requiredParams": [],
     "response200Props": [

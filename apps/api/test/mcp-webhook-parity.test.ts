@@ -57,7 +57,7 @@ describe("MCP publish/unpublish fire the same webhooks as the manage routes", ()
 
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     const adminId = users.find((u) => u.email === "admin@paperboy.test")!.id;
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "hook-suite", userId: adminId, password: "Admin!Passw0rd" } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "hook-suite", userId: adminId } });
     expect(minted.statusCode, minted.body).toBe(200);
     // The MCP process must deliver to the loopback stub too.
     mcp = new McpClient({ DATABASE_URL: TEST_DB, MCP_TOKEN: minted.json().token as string, MCP_HTTP_PORT: "", PAPERBOY_WEBHOOK_ALLOW_PRIVATE: "true" });

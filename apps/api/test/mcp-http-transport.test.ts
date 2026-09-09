@@ -112,7 +112,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     adminId = users.find((u) => u.email === "admin@paperboy.test")!.id;
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-boot", userId: adminId, password: "Admin!Passw0rd" } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-boot", userId: adminId } });
     envToken = minted.json().token as string;
     proc = await spawnHttpMcp(envToken, PORT);
   }, 90_000);
@@ -185,7 +185,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
   });
 
   it("a separately minted admin token for the SAME boot user is accepted (token rotation works)", async () => {
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-rotated", userId: adminId, password: "Admin!Passw0rd" } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-rotated", userId: adminId } });
     const rotated = minted.json().token as string;
     const c = new HttpMcp(rotated);
     const init = await c.initialize();
@@ -196,7 +196,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
   it("a minted token for a DIFFERENT user is refused — one process, one identity", async () => {
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     const editorId = users.find((u) => u.email === "editor@paperboy.test")!.id;
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-foreign", userId: editorId, password: "Admin!Passw0rd" } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-foreign", userId: editorId } });
     const foreign = minted.json().token as string;
     const c = new HttpMcp(foreign);
     const res = await c.post({ jsonrpc: "2.0", id: 1, method: "ping" });
@@ -204,7 +204,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
   });
 
   it("a revoked minted token is refused on the next request", async () => {
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-revoke-me", userId: adminId, password: "Admin!Passw0rd" } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-revoke-me", userId: adminId } });
     const token = minted.json().token as string;
     const c = new HttpMcp(token);
     expect((await c.initialize()).status).toBe(200);
@@ -229,7 +229,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     });
     expect(created.statusCode, created.body).toBe(200);
     const editorId = created.json().id as string;
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-live-editor", userId: editorId, password: "Admin!Passw0rd" } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-live-editor", userId: editorId } });
     const token = minted.json().token as string;
 
     const port = PORT + 1;

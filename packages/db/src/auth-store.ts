@@ -256,7 +256,7 @@ export async function adminDeleteUser(db: Database, ctx: AccessContext, userId: 
 
 /**
  * Re-verify the account password for a sensitive action (change-password,
- * enable/disable-2FA, minting an MCP token) WITH the same per-account lockout as
+ * enable/disable-2FA) WITH the same per-account lockout as
  * login (S3-L3) — otherwise a session holder could brute-force the password on
  * these unguarded reauth paths. Throws a generic unauthorized on any failure
  * (locked, wrong, or unknown).

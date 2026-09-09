@@ -4,9 +4,10 @@ import { ORIGIN, type Suite, authHeaders, login, setupApi } from "./helpers.js";
 
 /**
  * CONTRACT FREEZE — MCP token management routes (previously ZERO coverage).
- * Pins: token shown exactly once + format/prefix, list NEVER exposes the secret
- * or its hash, revoke makes verifyMcpToken fail, permission gating (user.manage),
- * and CSRF on mutations.
+ * Pins: token shown exactly once + format/prefix, a token minted with no userId
+ * acts as the SIGNED-IN user, list NEVER exposes the secret or its hash, revoke
+ * makes verifyMcpToken fail, permission gating (user.manage), CSRF on mutations,
+ * and that every mint leaves an audit trail.
  */
 
 describe("MCP token routes", () => {
@@ -33,7 +34,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "CI token", userId: adminUserId, password: "Admin!Passw0rd" },
+      payload: { name: "CI token", userId: adminUserId },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json() as Record<string, unknown>;
@@ -45,12 +46,31 @@ describe("MCP token routes", () => {
     expect((body.token as string).length).toBeGreaterThan(40);
   });
 
+  it("mints as the SIGNED-IN user when no userId is given, and audit-logs it", async () => {
+    const res = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/mcp-tokens",
+      headers: authHeaders(admin),
+      payload: { name: "acts-as-me" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+
+    const list = (await s.app.inject({ method: "GET", url: "/api/v1/manage/mcp-tokens", headers: { cookie: admin.cookie } })).json() as Array<{ name: string; userId: string; email: string }>;
+    const row = list.find((r) => r.name === "acts-as-me")!;
+    expect(row.userId).toBe(adminUserId);
+    expect(row.email).toBe("admin@paperboy.test");
+
+    // Minting a credential that never expires must be traceable to who minted it.
+    const trail = await s.app.inject({ method: "GET", url: "/api/v1/manage/audit?action=mcptoken.create", headers: { cookie: admin.cookie } });
+    expect((trail.json() as Array<{ action: string }>).some((r) => r.action === "mcptoken.create")).toBe(true);
+  });
+
   it("create with an unknown userId is rejected (400)", async () => {
     const res = await s.app.inject({
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "bad", userId: "doesnotexist000000000000", password: "Admin!Passw0rd" },
+      payload: { name: "bad", userId: "doesnotexist000000000000" },
     });
     expect(res.statusCode).toBe(400);
   });
@@ -60,7 +80,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "Listable token", userId: adminUserId, password: "Admin!Passw0rd" },
+      payload: { name: "Listable token", userId: adminUserId },
     });
     const secret = created.json().token as string;
 
@@ -94,7 +114,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "Verifiable token", userId: adminUserId, password: "Admin!Passw0rd" },
+      payload: { name: "Verifiable token", userId: adminUserId },
     });
     const token = created.json().token as string;
     const userId = await verifyMcpToken(s.app.db, token);
@@ -106,7 +126,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(admin),
-      payload: { name: "Revokable token", userId: adminUserId, password: "Admin!Passw0rd" },
+      payload: { name: "Revokable token", userId: adminUserId },
     });
     const token = created.json().token as string;
     expect(await verifyMcpToken(s.app.db, token)).toBe(adminUserId);
@@ -149,7 +169,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: authHeaders(editor),
-      payload: { name: "nope", userId: adminUserId, password: "Admin!Passw0rd" },
+      payload: { name: "nope", userId: adminUserId },
     });
     expect(create.statusCode).toBe(403);
 
@@ -166,7 +186,7 @@ describe("MCP token routes", () => {
       method: "POST",
       url: "/api/v1/manage/mcp-tokens",
       headers: { cookie: admin.cookie, origin: ORIGIN },
-      payload: { name: "no csrf", userId: adminUserId, password: "Admin!Passw0rd" },
+      payload: { name: "no csrf", userId: adminUserId },
     });
     expect(create.statusCode).toBe(403);
 
