@@ -10,12 +10,14 @@ location, and everything else defaults to a path under `$HOME`:
 | `PAPERBOY_NTFY_TOPIC_FILE` | `~/.config/paperboy/ntfy-topic` | both. The private ntfy.sh topic name (NOT in this repo — the repo is public) |
 | `PAPERBOY_BACKUP_DIR` | `~/paperboy-backups` | both |
 | `PAPERBOY_MONITOR_STATE_DIR` | `~/.local/state/paperboy/monitor` | `monitor.sh` (per-check alert cooldowns) |
+| `PAPERBOY_API_URL` | `http://localhost:8091` | `monitor.sh` |
+| `PAPERBOY_SITE_URL`, `PAPERBOY_ADMIN_URL` | unset = check skipped | `monitor.sh` (public front page / admin, through the front door) |
 | `PAPERBOY_DIR` | the checkout `ops/` lives in | `backup.sh` (resolves the uploads volume name) |
 | `PAPERBOY_UPLOADS_VOLUME` | resolved via `docker compose config` | `backup.sh` |
 
 ```
 30 3 * * *  <checkout>/ops/backup.sh  >> $HOME/.local/state/paperboy/backup.log 2>&1
-*/5 * * * * <checkout>/ops/monitor.sh >> $HOME/.local/state/paperboy/monitor.log 2>&1
+*/5 * * * * PAPERBOY_SITE_URL=https://www.example.com/ PAPERBOY_ADMIN_URL=https://cms.example.com/ <checkout>/ops/monitor.sh >> $HOME/.local/state/paperboy/monitor.log 2>&1
 ```
 
 ## What runs
@@ -23,7 +25,7 @@ location, and everything else defaults to a path under `$HOME`:
 | Cron | Script | Does |
 |---|---|---|
 | `30 3 * * *` | `backup.sh` | `pg_dump -Fc` of the `paperboy` DB + tar of the uploads volume → `~/paperboy-backups/`, 14-day rotation, `pg_restore --list` sanity check, ntfy ping (OK daily / FAILED high-priority) |
-| `*/5 * * * *` | `monitor.sh` | API `/health` (local), `www.neoteric.no` + `cms.neoteric.no` front-door 200s, disk ≥90%, backup-freshness (<48h). Alerts via ntfy with a 1h per-check cooldown |
+| `*/5 * * * *` | `monitor.sh` | API `/health/ready` (local), public site + admin front-door 200s (when their URLs are set), disk ≥90%, backup-freshness (<48h). Alerts via ntfy with a 1h per-check cooldown |
 
 ## Backups now contain visitor personal data
 
