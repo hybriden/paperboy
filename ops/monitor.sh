@@ -2,8 +2,10 @@
 # Paperboy 5-minute monitor: api health, public site, admin, disk. Alerts via
 # ntfy with a 1h per-check cooldown so a sustained outage doesn't spam.
 set -u
-TOPIC=$(cat /home/hanschr/paperboy-ops/.ntfy-topic)
-STATE=/home/hanschr/paperboy-ops/.monitor-state
+TOPIC_FILE=${PAPERBOY_NTFY_TOPIC_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/paperboy/ntfy-topic}
+BACKUP_DIR=${PAPERBOY_BACKUP_DIR:-$HOME/paperboy-backups}
+STATE=${PAPERBOY_MONITOR_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/paperboy/monitor}
+TOPIC=$(cat "$TOPIC_FILE")
 mkdir -p "$STATE"
 
 alert() { # key, title, body
@@ -39,9 +41,9 @@ else clear_state disk; fi
 # Yesterday's backup must exist (catches a silently-removed cron). BOTH halves of
 # the backup are required for a full restore, so monitor each independently — a
 # silently-failing uploads tar must not hide behind a healthy pg dump.
-if ! find /home/hanschr/paperboy-backups -name "paperboy-*.dump" -mtime -2 2>/dev/null | grep -q .; then
+if ! find "$BACKUP_DIR" -name "paperboy-*.dump" -mtime -2 2>/dev/null | grep -q .; then
   alert backup "Paperboy backup is stale" "No pg dump newer than 48h in paperboy-backups/"
 else clear_state backup; fi
-if ! find /home/hanschr/paperboy-backups -name "uploads-*.tar.gz" -mtime -2 2>/dev/null | grep -q .; then
+if ! find "$BACKUP_DIR" -name "uploads-*.tar.gz" -mtime -2 2>/dev/null | grep -q .; then
   alert backup_uploads "Paperboy uploads backup is stale" "No uploads tarball newer than 48h in paperboy-backups/"
 else clear_state backup_uploads; fi

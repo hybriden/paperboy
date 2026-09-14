@@ -264,13 +264,15 @@ login rate limit.
 
 Nothing backs itself up. `ops/backup.sh` is a working reference: nightly `pg_dump -Fc`
 of the database **plus** a tar of the uploads volume, 14-day rotation, and an alert on
-failure. Install it on the host and cron it:
+failure. Cron it straight from the checkout (below assumed to be `~/paperboy`; every
+path is overridable, see `ops/README.md`):
 
 ```bash
-cp ops/backup.sh ops/monitor.sh ~/paperboy-ops/
-echo "https://ntfy.sh/<your-private-topic>" | sed 's#.*/##' > ~/paperboy-ops/.ntfy-topic
-crontab -e   # 30 3 * * * /home/you/paperboy-ops/backup.sh >> /home/you/paperboy-ops/backup.log 2>&1
-             # */5 * * * * /home/you/paperboy-ops/monitor.sh >> /home/you/paperboy-ops/monitor.log 2>&1
+mkdir -p ~/.config/paperboy ~/.local/state/paperboy
+echo "https://ntfy.sh/<your-private-topic>" | sed 's#.*/##' > ~/.config/paperboy/ntfy-topic
+chmod 600 ~/.config/paperboy/ntfy-topic
+crontab -e   # 30 3 * * * $HOME/paperboy/ops/backup.sh >> $HOME/.local/state/paperboy/backup.log 2>&1
+             # */5 * * * * $HOME/paperboy/ops/monitor.sh >> $HOME/.local/state/paperboy/monitor.log 2>&1
 ```
 
 Two things it deliberately refuses to do quietly:

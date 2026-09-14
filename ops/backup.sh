@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # Paperboy nightly backup: Postgres (custom format) + uploads volume, 14-day
-# rotation, ntfy alert on failure + daily OK ping. Installed by ops automation.
+# rotation, ntfy alert on failure + daily OK ping. Cron runs it straight from the
+# checkout — see ops/README.md for the (overridable) paths.
 set -euo pipefail
 # Backups are a full credential dump (argon2id hashes, encrypted TOTP secrets,
 # session/MCP tokens, delivery keys). Lock them down: owner-only files + dir.
 umask 077
-DIR=/home/hanschr/paperboy-backups
+SCRIPT_DIR=$(dirname "$(readlink -f "$0")")
+PAPERBOY_DIR=${PAPERBOY_DIR:-$(dirname "$SCRIPT_DIR")}  # the checkout this script ships in
+DIR=${PAPERBOY_BACKUP_DIR:-$HOME/paperboy-backups}
+TOPIC_FILE=${PAPERBOY_NTFY_TOPIC_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/paperboy/ntfy-topic}
 STAMP=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$DIR"
 chmod 700 "$DIR"
@@ -21,7 +25,7 @@ fail() {
 }
 # Read AFTER fail exists: under set -e a missing topic file used to kill the
 # script right here, before anything could report it.
-TOPIC=$(cat /home/hanschr/paperboy-ops/.ntfy-topic) || fail "cannot read /home/hanschr/paperboy-ops/.ntfy-topic"
+TOPIC=$(cat "$TOPIC_FILE") || fail "cannot read $TOPIC_FILE"
 
 # 1. Database — custom format (pg_restore-able, compressed). The host-side
 #    redirect creates the file under our umask 077 (mode 600); make it explicit.
@@ -47,7 +51,7 @@ if [ -z "$VOLUME" ]; then
   # service's `volumes[].source` is the UNprefixed key ("paperboy-uploads"), so it
   # must be looked up in the top-level `volumes` block, whose `.name` carries the
   # real one ("paperboycms_paperboy-uploads").
-  VOLUME=$(cd /home/hanschr/paperboycms 2>/dev/null && docker compose config --format json 2>/dev/null \
+  VOLUME=$(cd "$PAPERBOY_DIR" 2>/dev/null && docker compose config --format json 2>/dev/null \
     | python3 -c 'import json,sys
 try:
     cfg = json.load(sys.stdin)
@@ -60,7 +64,7 @@ for v in cfg.get("services", {}).get("api", {}).get("volumes", []) or []:
 if src:
     print((cfg.get("volumes", {}).get(src) or {}).get("name") or src)' 2>/dev/null) || VOLUME=""
 fi
-[ -n "$VOLUME" ] || fail "could not determine the uploads volume name (set PAPERBOY_UPLOADS_VOLUME)"
+[ -n "$VOLUME" ] || fail "could not determine the uploads volume name from $PAPERBOY_DIR (set PAPERBOY_DIR or PAPERBOY_UPLOADS_VOLUME)"
 # MUST already exist — a missing volume means we resolved the wrong name, and letting
 # docker create it would silently back up an empty directory.
 docker volume inspect "$VOLUME" >/dev/null 2>&1 || fail "uploads volume '$VOLUME' does not exist (wrong Compose project name?)"

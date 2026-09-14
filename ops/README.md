@@ -1,9 +1,22 @@
-# Production ops (reference copies)
+# Production ops
 
-These are reference copies of the scripts installed on the production box at
-`/home/hanschr/paperboy-ops/` — committed here so a dead box doesn't take the
-runbook with it. The alert channel is a private ntfy.sh topic read from
-`/home/hanschr/paperboy-ops/.ntfy-topic` (NOT in this repo — the repo is public).
+`backup.sh` and `monitor.sh` run from cron straight out of the production
+checkout, so there are no installed copies to drift from what is committed here.
+Nothing in them is tied to one host: `backup.sh` finds the checkout from its own
+location, and everything else defaults to a path under `$HOME`:
+
+| Variable | Default | Used by |
+|---|---|---|
+| `PAPERBOY_NTFY_TOPIC_FILE` | `~/.config/paperboy/ntfy-topic` | both. The private ntfy.sh topic name (NOT in this repo — the repo is public) |
+| `PAPERBOY_BACKUP_DIR` | `~/paperboy-backups` | both |
+| `PAPERBOY_MONITOR_STATE_DIR` | `~/.local/state/paperboy/monitor` | `monitor.sh` (per-check alert cooldowns) |
+| `PAPERBOY_DIR` | the checkout `ops/` lives in | `backup.sh` (resolves the uploads volume name) |
+| `PAPERBOY_UPLOADS_VOLUME` | resolved via `docker compose config` | `backup.sh` |
+
+```
+30 3 * * *  <checkout>/ops/backup.sh  >> $HOME/.local/state/paperboy/backup.log 2>&1
+*/5 * * * * <checkout>/ops/monitor.sh >> $HOME/.local/state/paperboy/monitor.log 2>&1
+```
 
 ## What runs
 
