@@ -381,7 +381,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 data: p.data,
                 revision: formRef.current?.revision ?? p.revision,
               }),
-          );
+          )
+          // Keep the cached copy authoritative, as a normal save does: coming
+          // straight back re-seeds the editor from this cache, and a stale copy
+          // put the old text on screen with the old revision — so the next edit
+          // was refused as a conflict with this very save.
+          .then((updated) => qc.setQueryData(["content", documentId, locale], updated));
         pendingRef.current = null;
       }
       if (unsaved) landed.then(() => clearUnsaved(user.id, documentId, locale), () => undefined);
