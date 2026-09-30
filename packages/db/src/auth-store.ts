@@ -1,6 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
-import { and, asc, desc, eq, gte, like, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNull, like, lte, ne, or, sql } from "drizzle-orm";
 import {
   type Permission,
   ROLE_PERMISSIONS,
@@ -38,15 +38,30 @@ const LOCK_MINUTES = 15;
  * reset on lock, so each attempt past the threshold renews the 15-minute window
  * rather than handing back a fresh set of tries.
  */
-async function recordFailedAuth(db: Database, userId: string): Promise<void> {
-  await db
+/**
+ * Reserve one guess BEFORE checking it: count it and lock the account on the
+ * MAX_FAILED-th, in one atomic UPDATE that only matches an unlocked row. A
+ * gate that read `locked_until`, checked the guess and only then counted the
+ * failure let every request already in flight be checked — a parallel burst
+ * got far more than MAX_FAILED guesses. Returns false when the account is
+ * locked (the guess must then be refused unchecked). A correct guess resets
+ * the counter via clearFailedAuth.
+ */
+async function reserveAuthAttempt(db: Database, userId: string): Promise<boolean> {
+  const reserved = await db
     .update(users)
     .set({
       failedAttempts: sql`${users.failedAttempts} + 1`,
       lockedUntil: sql`case when ${users.failedAttempts} + 1 >= ${MAX_FAILED}
         then now() + (${LOCK_MINUTES} * interval '1 minute') else ${users.lockedUntil} end`,
     })
-    .where(eq(users.id, userId));
+    .where(and(eq(users.id, userId), or(isNull(users.lockedUntil), lte(users.lockedUntil, sql`now()`))))
+    .returning({ id: users.id });
+  return reserved.length > 0;
+}
+
+async function clearFailedAuth(db: Database, userId: string): Promise<void> {
+  await db.update(users).set({ failedAttempts: 0, lockedUntil: null }).where(eq(users.id, userId));
 }
 // Absolute session lifetime: a login is valid for this long regardless of
 // activity. Exported so the api can pin the session COOKIE's Max-Age to the
@@ -124,7 +139,7 @@ export async function verifyLogin(db: Database, email: string, password: string)
     await argon2.hash(password, ARGON2_OPTS).catch(() => undefined);
     throw generic;
   }
-  if (user.lockedUntil && user.lockedUntil > new Date()) {
+  if (!(await reserveAuthAttempt(db, user.id))) {
     // SECURITY: do not reveal lock state (enumeration); spend time to match the
     // verify path, then return the SAME generic error as a wrong password.
     await argon2.verify(user.passwordHash, password).catch(() => false);
@@ -132,14 +147,9 @@ export async function verifyLogin(db: Database, email: string, password: string)
   }
 
   const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
-  if (!ok) {
-    await recordFailedAuth(db, user.id);
-    throw generic;
-  }
+  if (!ok) throw generic; // already counted by the reservation
 
-  if (user.failedAttempts > 0 || user.lockedUntil) {
-    await db.update(users).set({ failedAttempts: 0, lockedUntil: null }).where(eq(users.id, user.id));
-  }
+  await clearFailedAuth(db, user.id);
   return user.id;
 }
 
@@ -266,18 +276,13 @@ export async function verifyReauth(db: Database, userId: string, password: strin
   const user = rows[0];
   const generic = Errors.unauthorized("Current password is incorrect");
   if (!user) throw generic;
-  if (user.lockedUntil && user.lockedUntil > new Date()) {
+  if (!(await reserveAuthAttempt(db, user.id))) {
     await argon2.verify(user.passwordHash, password).catch(() => false); // match the verify path's timing
     throw generic;
   }
   const ok = await argon2.verify(user.passwordHash, password).catch(() => false);
-  if (!ok) {
-    await recordFailedAuth(db, user.id);
-    throw generic;
-  }
-  if (user.failedAttempts > 0 || user.lockedUntil) {
-    await db.update(users).set({ failedAttempts: 0, lockedUntil: null }).where(eq(users.id, user.id));
-  }
+  if (!ok) throw generic; // already counted by the reservation
+  await clearFailedAuth(db, user.id);
 }
 
 /** Self-service password change: verify the current password, then re-hash. */
@@ -429,13 +434,15 @@ export async function verifySecondFactor(db: Database, userId: string, code: str
   const user = rows[0];
   if (!user?.totpEnabled || !user.totpSecret) return false;
   // Locked: refuse even a correct code (matches verifyLogin), no enumeration.
-  if (user.lockedUntil && user.lockedUntil > new Date()) return false;
+  // The reservation counts this guess up front, so a parallel burst can't
+  // outrun the lockout.
+  if (!(await reserveAuthAttempt(db, userId))) return false;
 
   const clearLock = { failedAttempts: 0, lockedUntil: null as Date | null };
   const step = matchTotpStep(decryptSecret(user.totpSecret, "totp"), code);
   if (step !== null) {
-    // Replay of an already-consumed (or older) step — reject without counting it
-    // as a brute-force guess (a legitimate double-submit shouldn't lock the user).
+    // Replay of an already-consumed (or older) step — refused, and counted like
+    // any other failed attempt (one double-submit is far below the lock threshold).
     if (user.lastTotpStep != null && step <= user.lastTotpStep) return false;
     await db.update(users).set({ ...clearLock, lastTotpStep: step }).where(eq(users.id, userId));
     return true;
@@ -447,8 +454,7 @@ export async function verifySecondFactor(db: Database, userId: string, code: str
     await db.update(users).set({ ...clearLock, backupCodes: hashes.filter((h) => h !== used) }).where(eq(users.id, userId));
     return true;
   }
-  // Wrong code → count toward the per-account lockout (same policy as passwords).
-  await recordFailedAuth(db, userId);
+  // Wrong code: already counted toward the per-account lockout by the reservation.
   return false;
 }
 
