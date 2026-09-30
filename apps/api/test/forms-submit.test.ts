@@ -795,8 +795,52 @@ describe("CORS for a frontend on the site's own origin", () => {
     expect(foreign.headers["access-control-allow-origin"]).toBeUndefined();
   });
 
+  // Audit 2026-09-30: ACAO was set only on a SUCCESSFUL submission, so a
+  // browser on the site's origin could not read a 422 (the per-field messages
+  // WCAG 3.3.1 relies on) and saw a spam drop as a network error.
+  it("a 422 from the site's origin carries ACAO, so the browser can read the field errors", async () => {
+    const res = await submit(good({ fullName: "", email: "not-an-email", consent: true }), { headers: { origin: SITE_ORIGIN } });
+    expect(res.statusCode, res.body).toBe(422);
+    expect(res.headers["access-control-allow-origin"]).toBe(SITE_ORIGIN);
+  });
+
+  it("a spam drop from the site's origin carries ACAO like a success", async () => {
+    const res = await submit({ values: {}, honeypot: "bot" }, { headers: { origin: SITE_ORIGIN } });
+    expect(res.statusCode).toBe(202);
+    expect(res.headers["access-control-allow-origin"]).toBe(SITE_ORIGIN);
+  });
+
   it("array answers count toward the total-size guard (413), not only strings", async () => {
     const res = await submit(good({ fullName: "Big", email: "b@example.com", consent: true, topic: Array.from({ length: 300 }, () => "x".repeat(400)) }));
     expect(res.statusCode, res.body).toBe(413);
+  });
+});
+
+/**
+ * Audit 2026-09-30: the submit limiter was keyed on `${ip}:${documentId}` and
+ * documentId is attacker-chosen — a fresh random id per request got a fresh
+ * bucket, and every honeypot drop still wrote an audit row, so one IP had
+ * unbounded audit-log growth. The limit is per IP.
+ */
+describe("the submit rate limit cannot be dodged with random form ids", () => {
+  it("returns 429 once one IP exceeds the limit, whatever ids it uses", async () => {
+    const before = s.app.formConfig.submitRateMax;
+    s.app.formConfig.submitRateMax = 3;
+    try {
+      const codes: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        const res = await s.app.inject({
+          method: "POST",
+          url: `/api/v1/delivery/forms/random-id-${i}/submissions`,
+          headers: { authorization: `Bearer ${PUBLIC_KEY}` },
+          remoteAddress: "203.0.113.77",
+          payload: { values: {}, honeypot: "bot" },
+        });
+        codes.push(res.statusCode);
+      }
+      expect(codes).toContain(429);
+    } finally {
+      s.app.formConfig.submitRateMax = before;
+    }
   });
 });
