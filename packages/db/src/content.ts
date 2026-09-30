@@ -1132,15 +1132,27 @@ function formatDataValidation(
 }
 
 /** The current working data for a variant: the draft's, else the published version's, else {}. */
-async function workingData(db: Database, documentId: string, loc: string): Promise<Record<string, unknown>> {
+/** The working data a merge patches, plus the draft revision it was read at (0 = no draft). */
+async function workingData(
+  db: Database,
+  documentId: string,
+  loc: string,
+): Promise<{ data: Record<string, unknown>; draftRevision: number }> {
   const rows = await db
     .select()
     .from(contentVersion)
     .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)));
   const draft = rows.find((r) => r.status === "draft");
   const published = rows.find((r) => r.isCurrentPublished);
-  return ((draft ?? published)?.data as Record<string, unknown> | undefined) ?? {};
+  return {
+    data: ((draft ?? published)?.data as Record<string, unknown> | undefined) ?? {},
+    draftRevision: draft?.revision ?? 0,
+  };
 }
+
+/** Internal: the draft a revision-less merge was based on moved before its write landed. */
+class MergeBaseMoved extends Error {}
+const MERGE_ATTEMPTS = 5;
 
 /**
  * Every content type installed, read ONCE per write: the walks below visit
@@ -1534,6 +1546,33 @@ export async function updateContent(
   loc: string,
   req: UpdateContentRequest,
 ): Promise<ContentDetail> {
+  // A merge without an explicit revision means "apply my patch over whatever is
+  // current". It pins the revision it merged onto, so a write that lands in
+  // between is detected instead of overwritten, and re-merges over the fresh
+  // draft. Without the pin, two overlapping set_field calls both returned 200
+  // and one field was silently lost.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await updateContentOnce(db, ctx, documentId, loc, req);
+    } catch (err) {
+      if (!(err instanceof MergeBaseMoved)) throw err;
+      if (attempt >= MERGE_ATTEMPTS) {
+        throw Errors.conflict(
+          "This content kept changing while your merge was being applied (other writes landed in between). " +
+            "Nothing was saved. Retry the same update — merge: true re-reads the current draft each time.",
+        );
+      }
+    }
+  }
+}
+
+async function updateContentOnce(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  loc: string,
+  req: UpdateContentRequest,
+): Promise<ContentDetail> {
   requirePermission(ctx, "content.update");
   const item = await loadAuthorized(db, ctx, documentId);
   const reg = await loadTypeRegistry(db);
@@ -1541,7 +1580,10 @@ export async function updateContent(
 
   // Merge mode: shallow-merge the patch over the current working data so a
   // caller can change one field without round-tripping the whole map.
-  const merged = req.merge ? { ...(await workingData(db, documentId, loc)), ...req.data } : req.data;
+  const base = req.merge ? await workingData(db, documentId, loc) : null;
+  const merged = base ? { ...base.data, ...req.data } : req.data;
+  const pinnedRevision = base && req.revision === undefined ? base.draftRevision : undefined;
+  const expectedRevision = req.revision ?? pinnedRevision;
   const data = await prepareDraftData(db, ctx, type, reg, item.siteId, loc, merged, req.allowLanguageMismatch);
 
   // Forensic trail (2026-06-08): a richtext "body" that arrives as a Markdown
@@ -1605,11 +1647,12 @@ export async function updateContent(
         .where(
           and(
             eq(contentVersion.id, existing[0].id),
-            req.revision === undefined ? undefined : eq(contentVersion.revision, req.revision),
+            expectedRevision === undefined ? undefined : eq(contentVersion.revision, expectedRevision),
           ),
         )
         .returning({ id: contentVersion.id });
       if (!updated[0]) {
+        if (pinnedRevision !== undefined) throw new MergeBaseMoved();
         // Self-teaching (rule #2): name the cause, the surface that moved it, and
         // the one-step recovery. This message is what an editor and an agent both
         // read to recover, so it has to carry the whole recipe.
@@ -1628,6 +1671,7 @@ export async function updateContent(
       // re-insert it, regressing the live page on the next publish. `revision: 0` is
       // the honest "I know there is no draft" and is still accepted (getContent
       // reports 0 for a draft-less document), as is omitting it entirely.
+      if (pinnedRevision !== undefined && pinnedRevision !== 0) throw new MergeBaseMoved();
       if (req.revision !== undefined && req.revision !== 0) {
         throw Errors.conflict(
           `The draft you were editing no longer exists — it was published or discarded since you loaded it (revision ${req.revision} is gone). ` +
@@ -1686,6 +1730,7 @@ export async function updateContent(
         // content_version_one_draft partial unique index held the invariant). Turn
         // the raw 23505 into a self-teaching 409 instead of an opaque 500 (S2-L5).
         if (isUniqueViolation(err)) {
+          if (pinnedRevision !== undefined) throw new MergeBaseMoved();
           throw Errors.conflict("A draft for this locale was just created by a concurrent edit — re-read the content and retry your update.");
         }
         throw err;
