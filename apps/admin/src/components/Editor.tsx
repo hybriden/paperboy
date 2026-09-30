@@ -18,6 +18,7 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask } from "../lib/api.js";
 import { fieldWidthClass } from "../lib/field-width.js";
 import { blockAtPath, type BlockPath } from "../lib/block-path.js";
+import { clearUnsaved, readUnsaved, stashUnsaved, type UnsavedEdits } from "../lib/unsaved-stash.js";
 import { filterFields } from "../lib/field-filter.js";
 import { opeAction } from "../lib/ope-target.js";
 import { postCaret } from "../lib/caret.js";
@@ -221,6 +222,14 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // retrying and would otherwise flash a toast the editor never connects to
   // "nothing I type is being stored any more".
   const [conflict, setConflict] = useState(false);
+  // Edits kept from an editor that was torn down mid-save (a sign-out in another
+  // tab) — offered back when this variant opens again.
+  const [stashed, setStashed] = useState<UnsavedEdits | null>(null);
+  // saveState for the unmount cleanup, whose closure is from the first render.
+  const saveStateRef = useRef<SaveState>("idle");
+  useEffect(() => {
+    saveStateRef.current = saveState;
+  }, [saveState]);
   const [tab, setTab] = useState("Content");
   // Editor view — the Episerver-style trio. Persisted so it survives
   // re-renders/remounts (e.g. toggling a side pane remounts the editor):
@@ -340,14 +349,24 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
   // On unmount (e.g. switching language/page): cancel the debounce and FLUSH any
   // pending edits with a fire-and-forget save, so unsaved work is never lost.
+  // Until that save (or the one already in flight) lands, the edits are also
+  // kept in this tab's sessionStorage: when the unmount is the app falling back
+  // to the Login screen (a sign-out in another tab), every save fails with 401
+  // and the stash is the only copy left.
   useEffect(() => {
     return () => {
       if (timer.current) clearTimeout(timer.current);
       const p = pendingRef.current;
+      const latest = formRef.current;
+      const unsaved = saveStateRef.current === "dirty" || saveStateRef.current === "saving";
+      if (unsaved && latest) {
+        stashUnsaved(user.id, documentId, locale, { name: latest.name, slug: latest.slug, displayInNav: latest.displayInNav, data: latest.data });
+      }
+      let landed: Promise<unknown> = saveChain.current ?? Promise.resolve();
       if (p) {
         // After any save still in flight, so it carries the revision that save
         // advanced to (read from formRef when it actually runs).
-        void (saveChain.current ?? Promise.resolve())
+        landed = landed
           .catch(() => undefined)
           .then(() =>
             api
@@ -362,10 +381,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 data: p.data,
                 revision: formRef.current?.revision ?? p.revision,
               }),
-          )
-          .catch(() => undefined);
+          );
         pendingRef.current = null;
       }
+      if (unsaved) landed.then(() => clearUnsaved(user.id, documentId, locale), () => undefined);
     };
     // documentId/locale are constant for this mount (Shell remounts on change).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -377,12 +396,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   useEffect(() => {
     if (detail.data && loadedKey.current !== variantKey) {
       loadedKey.current = variantKey;
+      setStashed(readUnsaved(user.id, documentId, locale));
       setForm(detail.data);
       formRef.current = detail.data;
       setSaveState("idle");
       setHideTranslateOffer(false);
     }
-  }, [detail.data, variantKey]);
+  }, [detail.data, variantKey, user.id, documentId, locale]);
 
   // Report the document name up for the breadcrumb / tab title.
   useEffect(() => {
@@ -1492,6 +1512,40 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           )}
         </div>
       </div>
+
+      {/* Edits that were on screen when this editor was torn down mid-save (a
+          sign-out in another tab) — the editor chooses whether to put them back. */}
+      {stashed && (
+        <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-accent/10 px-4 py-2 text-sm">
+          <span className="text-fg">
+            <strong>You have unsaved changes from before you were signed out.</strong> Restore them to keep editing, or discard them.
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              className="btn-primary px-3 py-1 text-xs"
+              onClick={() => {
+                const edits = stashed;
+                setStashed(null);
+                clearUnsaved(user.id, documentId, locale);
+                patch((prev) => ({ ...prev, name: edits.name, slug: edits.slug, displayInNav: edits.displayInNav, data: edits.data }));
+              }}
+            >
+              Restore my changes
+            </button>
+            <button
+              type="button"
+              className="btn-subtle px-3 py-1 text-xs"
+              onClick={() => {
+                setStashed(null);
+                clearUnsaved(user.id, documentId, locale);
+              }}
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Concurrent-edit conflict. Deliberately NOT auto-reloading: the editor's
           own unsaved text is still on screen and reloading would destroy it. They
