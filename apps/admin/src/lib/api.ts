@@ -168,6 +168,7 @@ async function request<T>(
   // Override the active site for THIS call only (lets Settings → Site read/write
   // any site's config without switching the whole admin's working context).
   siteOverride?: string,
+  retried = false,
 ): Promise<T> {
   const headers: Record<string, string> = {};
   const isMutation = method !== "GET" && method !== "HEAD";
@@ -185,8 +186,28 @@ async function request<T>(
   if (res.status === 401 && path !== "/auth/login" && path !== "/auth/me") {
     onUnauthorized?.();
   }
+  // The CSRF token is bound to the session it was issued with. Signing in again
+  // in another tab replaces the shared session cookie, so this tab's token goes
+  // stale while its GETs keep working — every save then failed until a reload
+  // that threw the unsaved edits away. Re-read the token for the CURRENT
+  // session and retry the mutation once.
+  if (res.status === 403 && isMutation && !retried && (await isCsrfFailure(res.clone()))) {
+    const me = await fetch(`${BASE}/auth/me`, { credentials: "include", signal });
+    if (me.ok) {
+      csrfToken = ((await me.json()) as { csrfToken?: string }).csrfToken ?? csrfToken;
+      return request<T>(method, path, body, signal, siteOverride, true);
+    }
+  }
   if (res.status === 204) return undefined as T;
   return parseResponse<T>(res);
+}
+
+async function isCsrfFailure(res: Response): Promise<boolean> {
+  try {
+    return ((await res.json()) as { error?: string }).error === "csrf_failed";
+  } catch {
+    return false;
+  }
 }
 
 /** Parse a JSON response, but degrade gracefully if a proxy returns HTML/text
