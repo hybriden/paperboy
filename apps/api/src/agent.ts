@@ -4,6 +4,7 @@ import {
   type Database,
   createContent,
   getContent,
+  audit,
   resolveDefaultLocale,
   resolveRequestedLocale,
   getContentType,
@@ -55,6 +56,18 @@ interface AgentDeps {
   emit: (ev: AgentEvent) => void;
   /** Aborted when the editor's SSE connection closes: stops before the next model call or tool run. */
   signal?: AbortSignal;
+  /** Where a failure that ended the run is logged (the editor only gets a safe summary). */
+  onError?: (err: unknown) => void;
+}
+
+/**
+ * Audit one agent write like the REST/MCP wrappers do — the data layer does not
+ * audit by itself, so without this a brief's writes (including edits to
+ * EXISTING documents, the prompt-injection target) left no trail. `ip: "agent"`
+ * marks them the way MCP writes carry `ip: "mcp"`.
+ */
+function agentAudit(d: { db: Database; ctx: AccessContext }, action: string, documentId: string, locale?: string | null, detail?: unknown): Promise<void> {
+  return audit(d.db, { actorUserId: d.ctx.userId, action, documentId, locale, ip: "agent", detail });
 }
 
 /** What one run has created and which existing documents it has edited. */
@@ -139,6 +152,7 @@ export const TOOLS: AgentTool[] = [
         locale: (a.locale as string | undefined) ?? (await resolveDefaultLocale(d.db, d.ctx.siteId)),
         name: a.name as string,
       });
+      await agentAudit(d, "content.create", created.documentId, created.locale, { type: created.type });
       return created;
     },
   },
@@ -166,6 +180,7 @@ export const TOOLS: AgentTool[] = [
         // update_content default.
         merge: true,
       });
+      await agentAudit(d, "content.update", documentId, locale);
       // Editing a document this run did NOT create is legitimate (a translation
       // brief) but is exactly what a content-borne instruction would aim for —
       // so it is recorded for the reviewer, not merely allowed.
@@ -199,6 +214,7 @@ export const TOOLS: AgentTool[] = [
         beforeId: a.beforeId as string | null | undefined,
         afterId: a.afterId as string | null | undefined,
       });
+      await agentAudit(d, "content.move", a.documentId as string, null, { parentId: a.parentId });
       return { ok: true };
     },
   },
@@ -412,7 +428,15 @@ export async function runContentAgent(
         });
         return;
       }
-      throw err;
+      // Any other provider failure (429, 5xx, a bad response) ends the run —
+      // but the reviewer must still learn what it already wrote (rule #6).
+      deps.onError?.(err);
+      emit({
+        type: "error",
+        text: "The AI provider returned an error and the run stopped. The drafts below were created — review them, then run the brief again to continue.",
+        ...outcome(),
+      });
+      return;
     }
 
     if (resp.text) emit({ type: "status", text: resp.text });
