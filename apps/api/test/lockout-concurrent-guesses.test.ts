@@ -32,22 +32,34 @@ describe("the lockout caps CONCURRENT guesses, not only the counter", () => {
     await raw.sql.end();
   });
 
-  it("with one attempt left, a burst of wrong 2FA codes cannot be followed by a correct one in the same burst", async () => {
-    // Clear the step the enrolment consumed so the current code is acceptable.
-    await raw.sql`UPDATE users SET failed_attempts = 4, locked_until = NULL, last_totp_step = NULL WHERE id = ${editorId}`;
-    const guesses = [...Array.from({ length: 5 }, () => "000000"), currentCode(secret)];
-    const results = await Promise.all(guesses.map((code) => verifySecondFactor(s.app.db, editorId, code)));
-    // Only ONE attempt was left: the correct code arrived after it was spent.
+  // Which guess of a parallel burst gets the last attempt is a race, so these
+  // assert what the fix guarantees regardless of order: with ONE attempt left,
+  // exactly one guess is checked (and counted) and every other one is refused
+  // unchecked. The old read-then-check gate checked — and counted — them all.
+  const failedAttempts = async (where: { id?: string; email?: string }) =>
+    ((where.id
+      ? await raw.sql`SELECT failed_attempts FROM users WHERE id = ${where.id}`
+      : await raw.sql`SELECT failed_attempts FROM users WHERE email = ${where.email!}`) as Array<{ failed_attempts: number }>)[0]!.failed_attempts;
+
+  it("with one attempt left, a burst of wrong 2FA codes gets exactly one checked", async () => {
+    await raw.sql`UPDATE users SET failed_attempts = 4, locked_until = NULL WHERE id = ${editorId}`;
+    const results = await Promise.all(Array.from({ length: 6 }, () => verifySecondFactor(s.app.db, editorId, "000000")));
     expect(results.filter(Boolean)).toEqual([]);
+    expect(await failedAttempts({ id: editorId })).toBe(5);
   });
 
-  it("with one attempt left, a burst of wrong passwords cannot be followed by the right one", async () => {
+  it("with one attempt left, a burst of wrong passwords gets exactly one checked", async () => {
     await raw.sql`UPDATE users SET failed_attempts = 4, locked_until = NULL WHERE email = ${pwEmail}`;
-    const guesses = [...Array.from({ length: 5 }, () => "wrong-password"), "Correct!Passw0rd"];
     const results = await Promise.all(
-      guesses.map((pw) => verifyLogin(s.app.db, pwEmail, pw).then(() => true, () => false)),
+      Array.from({ length: 6 }, () => verifyLogin(s.app.db, pwEmail, "wrong-password").then(() => true, () => false)),
     );
     expect(results.filter(Boolean)).toEqual([]);
+    expect(await failedAttempts({ email: pwEmail })).toBe(5);
+  });
+
+  it("once the burst has spent the last attempt, even the right password is refused", async () => {
+    // Locked by the previous burst (failed_attempts = 5, locked_until set).
+    await expect(verifyLogin(s.app.db, pwEmail, "Correct!Passw0rd")).rejects.toThrow();
   });
 
   it("a correct attempt still resets the counter", async () => {
