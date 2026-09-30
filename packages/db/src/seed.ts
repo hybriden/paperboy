@@ -3,6 +3,7 @@ import { pathToFileURL } from "node:url";
 import { ContentTypeDef } from "@paperboy/shared";
 import { nanoid } from "nanoid";
 import { createDb } from "./client.js";
+import { pgErrorCode } from "./errors.js";
 import { migrate } from "./migrate.js";
 import { createUser } from "./auth-store.js";
 import {
@@ -393,6 +394,8 @@ export async function seed(connectionString?: string): Promise<SeedResult> {
  * delivery keys, sites, etc., and silently wiping those is the data-loss class the
  * guard exists to prevent. A fresh DB (tables absent) is safe to seed.
  */
+const PG_UNDEFINED_TABLE = "42P01";
+
 export async function databaseHoldsData(sql: ReturnType<typeof createDb>["sql"]): Promise<boolean> {
   try {
     const rows = await sql`SELECT (
@@ -401,8 +404,13 @@ export async function databaseHoldsData(sql: ReturnType<typeof createDb>["sql"])
       (SELECT count(*) FROM delivery_key)
     )::int AS n`;
     return (((rows[0] as { n?: number })?.n) ?? 0) > 0;
-  } catch {
-    return false; // a table doesn't exist yet → fresh database → safe to seed
+  } catch (err) {
+    // ONLY "a table doesn't exist yet" means a fresh database. Anything else
+    // (statement/lock timeout, permissions, a recovery conflict) says nothing
+    // about emptiness — answering "fresh" there sent a populated database
+    // straight into the TRUNCATE.
+    if (pgErrorCode(err) === PG_UNDEFINED_TABLE) return false;
+    throw err;
   }
 }
 
