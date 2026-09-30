@@ -292,9 +292,12 @@ describe("richtext sanitizer: content-model structural fixes", () => {
     expect(out.content[0]!.content).toEqual([]);
   });
 
-  it("preserves unrelated top-level doc keys", () => {
-    const out = san({ type: "doc", content: [], foo: "bar" }) as unknown as { foo: string };
-    expect(out.foo).toBe("bar");
+  // Was "preserves unrelated top-level doc keys": that pass-through is how
+  // arbitrary keys reached public delivery (audit 2026-09-30). A doc is
+  // {type, content} only.
+  it("drops unrelated top-level doc keys", () => {
+    const out = san({ type: "doc", content: [], foo: "bar" }) as unknown as { foo?: string };
+    expect(out.foo).toBeUndefined();
   });
 });
 
@@ -454,5 +457,35 @@ describe("richtext sanitizer: property — never throws, fixpoint (idempotent)",
     const wrapped = san({ type: "doc", content: [{ type: "listItem", content: [{ type: "paragraph", content: [{ type: "text", text: "hi" }] }] }] }) as { content: Array<{ type: string }> };
     expect(wrapped.content[0]!.type).toBe("bulletList");
     expect(san(wrapped)).toEqual(wrapped);
+  });
+});
+
+/**
+ * Audit 2026-09-30: the sanitizer allowlisted marks and attrs, but copied every
+ * OTHER key of a node (and of the doc) through verbatim — `{type:"paragraph",
+ * html:"<img onerror=…>"}` survived write-time sanitisation and was delivered
+ * publicly, one naive renderer away from executing. Nodes are rebuilt from the
+ * TipTap node shape only.
+ */
+describe("unknown node keys are dropped, not passed through", () => {
+  it("drops arbitrary keys on nodes and on the doc", () => {
+    const out = coerceFieldValue(RT, {
+      type: "doc",
+      html: "<script>doc()</script>",
+      content: [
+        {
+          type: "paragraph",
+          html: "<img src=x onerror=alert(1)>",
+          onclick: "alert(2)",
+          content: [{ type: "text", text: "hi", raw: "<b>x</b>" }],
+        },
+      ],
+    }) as { content: Array<Record<string, unknown>> } & Record<string, unknown>;
+    const json = JSON.stringify(out);
+    expect(json).not.toContain("onerror");
+    expect(json).not.toContain("alert(2)");
+    expect(json).not.toContain("<b>x</b>");
+    expect(json).not.toContain("doc()");
+    expect(out.content[0]).toMatchObject({ type: "paragraph", content: [{ type: "text", text: "hi" }] });
   });
 });
