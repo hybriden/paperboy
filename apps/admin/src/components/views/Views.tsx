@@ -12,7 +12,8 @@ import { Badge } from "../ui/badge.js";
 import { SkeletonRows } from "../ui/skeleton.js";
 import { Surface } from "../ui/surface.js";
 import { useToast } from "../ui/toast.js";
-import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, FormSubmissionsPanel, LanguagesPanel, McpTokensPanel, PasswordPanel, SitePanel, StockImagesPanel, TrashPanel, TypeTemplatesPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
+import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, FormSubmissionsPanel, LanguagesPanel, McpConnectionsPanel,
+  McpTokensPanel, PasswordPanel, SitePanel, StockImagesPanel, TrashPanel, TypeTemplatesPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
@@ -365,6 +366,7 @@ export function SettingsView() {
     { key: "audit", label: "Audit log", group: "Administration", show: has("audit.read"), render: () => <AuditPanel /> },
     { key: "trash", label: "Trash", group: "Administration", show: true, render: () => <TrashPanel /> },
     { key: "account", label: "Your account", group: "Account", show: true, render: () => (<><TwoFactorPanel /><PasswordPanel /></>) },
+    { key: "connections", label: "Connected apps", group: "Account", show: true, render: () => <McpConnectionsPanel /> },
   ];
   const tabs = allTabs.filter((t) => t.show);
 

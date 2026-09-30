@@ -15,6 +15,9 @@ export default defineConfig({
     host: true,
     proxy: {
       "/api": { target: API_URL, changeOrigin: true },
+      // Same routes nginx proxies in production, so MCP OAuth works in dev too.
+      "/.well-known/oauth-": { target: API_URL, changeOrigin: true },
+      "/mcp": { target: process.env.VITE_MCP_URL ?? "http://localhost:8093", changeOrigin: true },
     },
   },
   preview: { port: 8090, host: true },

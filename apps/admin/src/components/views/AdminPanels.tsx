@@ -1821,6 +1821,56 @@ export function McpTokensPanel() {
   );
 }
 
+/* ---------------------------- MCP connections ----------------------------- */
+/**
+ * Connections made by signing an MCP client in with OAuth. Everyone sees their
+ * own (and can cut them off); a user manager sees everyone's. Revoking is
+ * immediate: the MCP server checks the connection on every request.
+ */
+export function McpConnectionsPanel() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const { user } = useUser();
+  const grants = useQuery({ queryKey: ["oauth-grants"], queryFn: ({ signal }) => api.oauthGrants(signal) });
+  const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites() });
+  const revoke = useMutation({
+    mutationFn: (id: number) => api.revokeOAuthGrant(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["oauth-grants"] });
+      toast.success("Disconnected");
+    },
+    onError: (e) => toast.error("Couldn’t disconnect", (e as Error).message),
+  });
+  const active = (grants.data ?? []).filter((g) => !g.revokedAt);
+  return (
+    <PanelShell
+      title="Connected apps"
+      hint={`AI apps you connected to Paperboy’s MCP server by signing in (Claude, Cursor, …). Each acts as the person who connected it, only in the site chosen then.${user.permissions.includes("user.manage") ? " As a user manager you see everyone’s connections." : ""}`}
+    >
+      {active.map((g) => (
+        <div key={g.id} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
+          <Icon.Api width={15} height={15} className="shrink-0 text-muted" />
+          <span className="font-medium text-fg">{g.clientName}</span>
+          <span className="text-xs text-muted">acts as {g.email}</span>
+          <Badge tone={g.siteId ? "default" : "caution"}>
+            {g.siteId ? `site: ${sites.data?.sites.find((x) => x.id === g.siteId)?.name ?? g.siteId}` : "all sites"}
+          </Badge>
+          <span className="text-[11px] text-muted">{g.lastUsedAt ? `last used ${new Date(g.lastUsedAt).toLocaleDateString()}` : "never used"}</span>
+          <button
+            className="ml-auto rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10"
+            onClick={() => {
+              if (confirm(`Disconnect “${g.clientName}”? It stops working immediately.`)) revoke.mutate(g.id);
+            }}
+          >
+            Disconnect
+          </button>
+        </div>
+      ))}
+      {grants.data && active.length === 0 && <p className="p-4 text-sm text-muted">No connected apps.</p>}
+    </PanelShell>
+  );
+}
+
 /* -------------------------------- Webhooks -------------------------------- */
 export function WebhooksPanel() {
   const qc = useQueryClient();

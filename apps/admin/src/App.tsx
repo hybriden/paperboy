@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import type { SessionUser } from "@paperboy/shared";
 import { Login } from "./components/Login.js";
+import { OAuthConsent } from "./components/OAuthConsent.js";
 import { Shell } from "./components/Shell.js";
 import { DashboardView, SettingsView } from "./components/views/Views.js";
 import { EditView } from "./components/views/EditView.js";
@@ -62,6 +63,8 @@ export function App() {
   return (
     <UserContext.Provider value={{ user, logout }}>
       <Routes>
+        {/* MCP OAuth consent — its own full page, after the normal sign-in. */}
+        <Route path="oauth/authorize" element={<OAuthConsent />} />
         <Route element={<Shell />}>
           <Route index element={<Navigate to="/edit" replace />} />
           <Route path="edit" element={<EditView />} />

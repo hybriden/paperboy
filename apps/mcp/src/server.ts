@@ -135,10 +135,10 @@ const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY;
 const UPLOADS_DIR = process.env.UPLOADS_DIR ?? "/app/uploads";
 
 // Set MCP_HTTP_PORT to serve over Streamable HTTP (for remote clients like
-// harmonix) instead of stdio. The process acts as a single user (its boot
-// identity); a request may authenticate with the boot MCP_TOKEN itself OR any
-// unrevoked admin-minted token belonging to the SAME user — so "mint a token
-// in Settings → MCP, paste it into the client" works with no server restart.
+// harmonix) instead of stdio. Each request acts as the user its credential
+// belongs to — an OAuth access token, any unrevoked minted token, or the boot
+// MCP_TOKEN — so one server serves many people, and "mint a token in Settings →
+// MCP, paste it into the client" works with no server restart.
 const MCP_HTTP_PORT = process.env.MCP_HTTP_PORT ? Number(process.env.MCP_HTTP_PORT) : undefined;
 if (MCP_HTTP_PORT !== undefined && !(Number.isInteger(MCP_HTTP_PORT) && MCP_HTTP_PORT > 0 && MCP_HTTP_PORT < 65536)) {
   console.error(`[paperboy-mcp] MCP_HTTP_PORT must be a TCP port (1–65535), got "${process.env.MCP_HTTP_PORT}"`);

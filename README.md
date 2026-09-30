@@ -235,6 +235,33 @@ MCP_TOKEN=mcp_… docker compose --profile mcp up -d --no-deps mcp              
 ```
 The MCP authenticates as a Paperboy user (token or email+password) and inherits its RBAC. The default transport is stdio; set `MCP_HTTP_PORT` (or use the compose `mcp` profile) to expose it over HTTP for remote clients.
 
+### Connecting a remote AI client (OAuth)
+
+Over HTTP, clients such as Claude or Cursor can connect by **signing in** instead of pasting a token.
+Start the `mcp` profile and add `https://<your-domain>/mcp` as a connector in the client:
+
+```bash
+docker compose --profile mcp up -d --no-deps mcp     # no MCP_TOKEN needed
+```
+
+The client registers itself and sends you to Paperboy's own login (with 2FA if enabled). A consent
+screen then asks **which site the connection may work in**. It offers one of the sites you can see, or
+**every site** if you can see them all (Admin, Editor and Viewer can; an Author only gets the sites
+they hold a section in). The connection acts as you, with your roles, only in that site. Revoke it
+any time in Settings → Connected apps.
+
+Everything lives on one domain by default. The admin's nginx routes `/mcp` to the MCP server and
+`/.well-known/oauth-*` to the API; the consent page is the admin at `/oauth/authorize`. Two settings
+cover other layouts. Set both on the `api` and `mcp` services:
+
+| Variable | Default | What it is |
+|---|---|---|
+| `PUBLIC_URL` | `CORS_ORIGIN` | The origin people reach Paperboy at, e.g. `https://cms.example.com`. It is the OAuth issuer. |
+| `MCP_PUBLIC_URL` | `{PUBLIC_URL}/mcp` | The MCP endpoint's public URL (the OAuth "resource"). Change it if `/mcp` lives on its own host. |
+
+Minted tokens (`MCP_TOKEN`, Settings → MCP) keep working alongside OAuth. In HTTP mode every request
+acts as the user its token belongs to.
+
 ### Agent-ready by design
 The MCP surface is hardened against the ways LLM agents actually fail — every one of these came out of running real agent workloads against it:
 
