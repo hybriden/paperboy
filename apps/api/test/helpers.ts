@@ -17,7 +17,7 @@ export interface Suite {
 }
 
 /** Fresh migrate+seed + a ready Fastify app. Call in beforeAll. */
-export async function setupApi(): Promise<Suite> {
+export async function setupApi(envOverrides: Record<string, string> = {}): Promise<Suite> {
   process.env.DATABASE_URL = TEST_DB;
   process.env.SEED_ADMIN_EMAIL = "admin@paperboy.test";
   process.env.SEED_ADMIN_PASSWORD = "Admin!Passw0rd";
@@ -31,6 +31,7 @@ export async function setupApi(): Promise<Suite> {
     COOKIE_SECURE: "false",
     MEDIA_PUBLIC_BASE: "http://localhost:8091",
     UPLOADS_DIR: `${process.env.TMPDIR ?? "/tmp"}/paperboy-uploads-test`,
+    ...envOverrides,
   });
   const app = await buildApp({ env });
   await app.ready();

@@ -239,14 +239,20 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     expect((bootPages.json as Array<{ name: string }>).map((x) => x.name)).not.toContain("Scoped Only Page");
   }, 60_000);
 
-  it("a minted token for a DIFFERENT user is refused — one process, one identity", async () => {
+  // Was "one process, one identity" (a different user's token was refused). With
+  // OAuth, one server serves many people, so every request acts as the user its
+  // token belongs to — never as the process's boot user.
+  it("a minted token for a DIFFERENT user acts as THAT user, not the boot user", async () => {
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     const editorId = users.find((u) => u.email === "editor@paperboy.test")!.id;
     const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-foreign", userId: editorId } });
     const foreign = minted.json().token as string;
     const c = new HttpMcp(foreign);
-    const res = await c.post({ jsonrpc: "2.0", id: 1, method: "ping" });
-    expect(res.status).toBe(401);
+    expect((await c.initialize()).status).toBe(200);
+    // The boot user is an Admin; the Editor may not list users.
+    const res = await c.call("list_users");
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/permission/i);
   });
 
   it("a revoked minted token is refused on the next request", async () => {

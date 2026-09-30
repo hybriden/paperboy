@@ -18,3 +18,4 @@ export * from "./mcp-tokens.js";
 export { migrate } from "./migrate.js";
 export { seed, databaseHoldsData, type SeedResult } from "./seed.js";
 export * as schemaTables from "./schema.js";
+export * from "./oauth.js";

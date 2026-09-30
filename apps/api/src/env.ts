@@ -43,6 +43,14 @@ const EnvSchema = z.object({
         return z.NEVER;
       }
     }),
+  // The public origin people reach Paperboy at (e.g. https://cms.example.com).
+  // It is the OAuth issuer for the remote MCP server, and the base of its
+  // authorization/token endpoints. Unset = CORS_ORIGIN (the admin's origin),
+  // which is right whenever the admin, the API and /mcp share one domain.
+  PUBLIC_URL: z.preprocess(emptyToUndefined, z.string().optional()),
+  // The public URL of the MCP endpoint — the OAuth "resource" tokens are issued
+  // for. Unset = {PUBLIC_URL}/mcp (the nginx route in apps/admin/nginx.conf).
+  MCP_PUBLIC_URL: z.preprocess(emptyToUndefined, z.string().optional()),
   // Browser-reachable base for media URLs. Default "" = RELATIVE URLs
   // (/api/v1/media/…), which resolve same-origin via each app's proxy and so
   // work on any host (localhost, LAN IP, domain). Set an absolute base only if

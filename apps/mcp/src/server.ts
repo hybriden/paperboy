@@ -86,6 +86,8 @@ import {
   mcpTokenState,
   resolveDefaultLocale,
   verifyMcpToken,
+  verifyOAuthAccessToken,
+  schemaTables,
 } from "@paperboy/db";
 import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, RoleName, TYPE_TEMPLATE_EXPORT_FORMAT, TYPE_TEMPLATE_EXPORT_VERSION, aiAssist, fieldFormatHint, redactForLog } from "@paperboy/shared";
 import { z } from "zod";
@@ -106,12 +108,6 @@ if (!DATABASE_URL) {
 const MCP_TOKEN = process.env.MCP_TOKEN || undefined; // a Paperboy-issued MCP token (preferred)
 const MCP_LOGIN =
   process.env.MCP_EMAIL && process.env.MCP_PASSWORD ? { email: process.env.MCP_EMAIL, password: process.env.MCP_PASSWORD } : undefined;
-// No fallback identity: the seeded demo login is a published constant in this
-// public repo, so defaulting to it booted an unconfigured server as admin.
-if (!MCP_TOKEN && !MCP_LOGIN) {
-  console.error("[paperboy-mcp] No credentials: set MCP_TOKEN (mint one in Settings → MCP), or MCP_EMAIL and MCP_PASSWORD");
-  process.exit(1);
-}
 // Multisite: this process acts in ONE site, given as a site id or slug. Unset
 // means the Default site — which is why an agent pointed at an instance with a
 // second site read nothing but the Default's content. A per-REQUEST site is
@@ -148,6 +144,36 @@ if (MCP_HTTP_PORT !== undefined && !(Number.isInteger(MCP_HTTP_PORT) && MCP_HTTP
   console.error(`[paperboy-mcp] MCP_HTTP_PORT must be a TCP port (1–65535), got "${process.env.MCP_HTTP_PORT}"`);
   process.exit(1);
 }
+
+/**
+ * OAuth (HTTP mode): the public URL of this MCP endpoint — the resource OAuth
+ * tokens are issued for, and what a 401 points clients at. Unset =
+ * {PUBLIC_URL}/mcp, the same default the API uses; both unset = OAuth off.
+ * With OAuth on, the process needs no identity of its own: each request acts as
+ * the user whose token it presents.
+ */
+function publicUrl(name: string, value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+  } catch {
+    console.error(`[paperboy-mcp] ${name} must be a full URL such as https://cms.example.com (got "${value}")`);
+    process.exit(1);
+  }
+}
+const PUBLIC_URL = publicUrl("PUBLIC_URL", process.env.PUBLIC_URL);
+const MCP_PUBLIC_URL = publicUrl("MCP_PUBLIC_URL", process.env.MCP_PUBLIC_URL) ?? (PUBLIC_URL ? `${PUBLIC_URL}/mcp` : undefined);
+const OAUTH = Boolean(MCP_HTTP_PORT && MCP_PUBLIC_URL);
+
+// No fallback identity: the seeded demo login is a published constant in this
+// public repo, so defaulting to it booted an unconfigured server as admin.
+if (!MCP_TOKEN && !MCP_LOGIN && !OAUTH) {
+  console.error(
+    "[paperboy-mcp] No credentials: set MCP_TOKEN (mint one in Settings → MCP), or MCP_EMAIL and MCP_PASSWORD — or, in HTTP mode, PUBLIC_URL so clients sign in with OAuth",
+  );
+  process.exit(1);
+}
 const MCP_HTTP_PATH = process.env.MCP_HTTP_PATH ?? "/mcp";
 
 function bearerOf(req: IncomingMessage): string | null {
@@ -156,22 +182,23 @@ function bearerOf(req: IncomingMessage): string | null {
 }
 
 /**
- * Accept the boot token (constant-time compare) or any valid mcp_token row
- * resolving to the SAME user the process authenticated as. A token for a
- * DIFFERENT user is rejected — this process carries one identity; impersonating
- * another user through it would bypass that user's own RBAC trail.
+ * Authenticate one HTTP request → the user it acts as and the site cap of the
+ * credential IT presented. Every request carries its own identity: an OAuth
+ * access token, or an mcp_token row, acts as the user it was issued to — with
+ * that user's roles and section scopes, re-resolved per request — so one server
+ * serves many people without any of them borrowing another's reach.
  */
-type BearerCheck = { ok: false } | { ok: true; siteId: string | null };
+type BearerCheck = { ok: false } | { ok: true; userId: string; siteId: string | null };
 const DENIED: BearerCheck = { ok: false };
 
-/**
- * Authorize one HTTP request and report the site cap of the token IT presented
- * — which need not be the boot token's. Two tokens of the same user may carry
- * different scopes; each request runs under its own, in a per-request scope.
- */
-async function bearerOk(req: IncomingMessage, bootUserId: string): Promise<BearerCheck> {
+async function bearerOk(req: IncomingMessage, bootUserId: string | null): Promise<BearerCheck> {
   const presented = bearerOf(req);
   if (!presented) return DENIED;
+
+  if (OAUTH && presented.startsWith("mcpa_")) {
+    const grant = await verifyOAuthAccessToken(db, presented, MCP_PUBLIC_URL!);
+    return grant ? { ok: true, userId: grant.userId, siteId: grant.siteId } : DENIED;
+  }
 
   // The DATABASE IS CONSULTED FIRST, so revocation always wins: a compare against
   // the in-memory boot token before the lookup would keep a token revoked in
@@ -179,19 +206,18 @@ async function bearerOk(req: IncomingMessage, bootUserId: string): Promise<Beare
   const found = await mcpTokenState(db, presented);
   if (found.state === "revoked") return DENIED;
   if (found.state === "active") {
-    if (found.userId !== bootUserId) return DENIED;
     await verifyMcpToken(db, presented); // stamp last-used
-    return { ok: true, siteId: found.siteId };
+    return { ok: true, userId: found.userId, siteId: found.siteId };
   }
 
   // Unknown to the database: an env-only MCP_TOKEN with no row. Legitimate (it is
   // how a bare `MCP_TOKEN=… docker compose up mcp` works), and rotated by
   // restarting with a new value rather than by revoking a row.
-  if (MCP_TOKEN) {
+  if (MCP_TOKEN && bootUserId) {
     const got = Buffer.from(presented);
     const want = Buffer.from(MCP_TOKEN);
     // An env-only token has no row, so it carries the boot token's cap.
-    if (got.length === want.length && timingSafeEqual(got, want)) return { ok: true, siteId: bootTokenSiteId };
+    if (got.length === want.length && timingSafeEqual(got, want)) return { ok: true, userId: bootUserId, siteId: bootTokenSiteId };
   }
   return DENIED;
 }
@@ -847,7 +873,7 @@ tool("ai_assist", "AI editorial help: meta_title, meta_description, summarize, i
  * than a silent fall back to Default: booting into the wrong site is exactly
  * the failure this exists to prevent.
  */
-async function resolveActiveSiteId(userId: string): Promise<string | undefined> {
+async function resolveActiveSiteId(): Promise<string | undefined> {
   if (!PAPERBOY_SITE) return bootTokenSiteId ?? undefined;
   const found = (await getSiteById(db, PAPERBOY_SITE)) ?? (await getSiteBySlug(db, PAPERBOY_SITE));
   if (found && bootTokenSiteId && found.id !== bootTokenSiteId) {
@@ -862,7 +888,7 @@ async function resolveActiveSiteId(userId: string): Promise<string | undefined> 
   if (found) return found.id;
   // Self-teaching (agent-API rule #2): name what exists, so this is fixable
   // from the message alone without going to the database for slugs.
-  const known = (await listSites(db, await getAccessContext(db, userId)))
+  const known = (await db.select({ id: schemaTables.site.id, slug: schemaTables.site.slug }).from(schemaTables.site))
     .map((x) => `${x.slug} (${x.id})`)
     .join(", ");
   console.error(
@@ -871,9 +897,36 @@ async function resolveActiveSiteId(userId: string): Promise<string | undefined> 
   process.exit(1);
 }
 
+/**
+ * This server as an OAuth protected resource (RFC 9728): a 401 names where the
+ * resource metadata lives, which is how an MCP client finds the authorization
+ * server. The metadata is also served here — the API serves the same document
+ * at the public origin, but a deployment giving /mcp its own host needs this one.
+ */
+function oauthResourceServer(resource: string, httpPath: string) {
+  const url = new URL(resource);
+  const issuer = PUBLIC_URL ?? url.origin;
+  const metadataUrl = `${url.origin}/.well-known/oauth-protected-resource${url.pathname === "/" ? "" : url.pathname}`;
+  return {
+    challenge: `Bearer resource_metadata="${metadataUrl}"`,
+    resourceMetadata: {
+      paths: ["/.well-known/oauth-protected-resource", `/.well-known/oauth-protected-resource${httpPath}`, `/.well-known/oauth-protected-resource${url.pathname}`],
+      body: {
+        resource,
+        authorization_servers: [issuer],
+        bearer_methods_supported: ["header"],
+        scopes_supported: ["mcp"],
+        resource_name: "Paperboy MCP",
+      },
+    },
+  };
+}
+
 async function main(): Promise<void> {
-  // Prefer a Paperboy-issued MCP token (Settings → MCP); fall back to email+password.
-  let userId: string;
+  // Prefer a Paperboy-issued MCP token (Settings → MCP); fall back to
+  // email+password. With OAuth in HTTP mode there may be neither: the process
+  // then has no identity of its own, and every request brings its user.
+  let userId: string | null = null;
   if (MCP_TOKEN) {
     const verified = await verifyMcpToken(db, MCP_TOKEN);
     if (!verified) {
@@ -882,22 +935,28 @@ async function main(): Promise<void> {
     }
     userId = verified.userId;
     bootTokenSiteId = verified.siteId;
-  } else {
-    userId = await verifyLogin(db, MCP_LOGIN!.email, MCP_LOGIN!.password);
+  } else if (MCP_LOGIN) {
+    userId = await verifyLogin(db, MCP_LOGIN.email, MCP_LOGIN.password);
   }
-  const activeSiteId = await resolveActiveSiteId(userId);
+  const activeSiteId = await resolveActiveSiteId();
   // via:"mcp" — every write through this server is agent provenance: versions
   // record created_via='mcp' and drafts carry the needs-review flag.
-  bootScope = { ctx: { ...(await getAccessContext(db, userId, activeSiteId)), via: "mcp" }, tokenSiteId: bootTokenSiteId };
+  bootScope = userId
+    ? { ctx: { ...(await getAccessContext(db, userId, activeSiteId)), via: "mcp" }, tokenSiteId: bootTokenSiteId }
+    : // No process identity (OAuth only): a scope that can do nothing. Every
+      // HTTP request replaces it with its own user's before any tool runs.
+      { ctx: { userId: "", permissions: [], siteId: activeSiteId ?? "site_default", siteWide: false, readSiteWide: false, sections: [], via: "mcp" }, tokenSiteId: null };
   console.error(
-    `[paperboy-mcp] authenticated (${userId}) via ${MCP_TOKEN ? "token" : "password"} — ${ctx().permissions.length} permissions, site ${ctx().siteId}`,
+    userId
+      ? `[paperboy-mcp] authenticated (${userId}) via ${MCP_TOKEN ? "token" : "password"} — ${ctx().permissions.length} permissions, site ${ctx().siteId}`
+      : `[paperboy-mcp] no process identity — every request signs in with OAuth (${MCP_PUBLIC_URL})`,
   );
 
   if (MCP_HTTP_PORT) {
-    // HTTP mode is a remote, multi-request surface — it must be gated. The
-    // process acts as the MCP_TOKEN user, so we require that exact token.
-    if (!MCP_TOKEN) {
-      console.error("[paperboy-mcp] MCP_HTTP_PORT requires MCP_TOKEN (used as the Bearer credential)");
+    // HTTP mode is a remote, multi-request surface — it must be gated: by
+    // OAuth, or by minted tokens (MCP_TOKEN proves the operator configured one).
+    if (!MCP_TOKEN && !OAUTH) {
+      console.error("[paperboy-mcp] MCP_HTTP_PORT requires MCP_TOKEN (used as the Bearer credential), or PUBLIC_URL for OAuth sign-in");
       process.exit(1);
     }
     // One transport+server per MCP session. The client gets a session id on
@@ -916,20 +975,21 @@ async function main(): Promise<void> {
     if (typeof reaper.unref === "function") reaper.unref();
     const handle = makeMcpHttpHandler({
       httpPath: MCP_HTTP_PATH,
-      bearerOk: async (req) => {
+      authorize: async (req) => {
         const check = await bearerOk(req, userId);
-        if (!check.ok) return false;
-        // Roles/scopes are re-resolved per request so demoting the MCP user or
+        if (!check.ok) return null;
+        // Roles/scopes are re-resolved per request so demoting the user or
         // narrowing its sections applies live, not at the next restart. It lands
-        // in THIS request's scope, never a module variable, so a site-scoped and
-        // a cross-site token can be in flight at once without trading reach.
+        // in THIS request's scope, never a module variable, so requests from
+        // different users and sites can be in flight at once without trading reach.
         const store = scope.getStore();
         if (store) {
           store.tokenSiteId = check.siteId;
-          store.ctx = { ...(await getAccessContext(db, userId, check.siteId ?? activeSiteId)), via: "mcp" };
+          store.ctx = { ...(await getAccessContext(db, check.userId, check.siteId ?? activeSiteId)), via: "mcp" };
         }
-        return true;
+        return check.userId;
       },
+      ...(OAUTH ? oauthResourceServer(MCP_PUBLIC_URL!, MCP_HTTP_PATH) : {}),
       buildServer,
       sessions,
       lastSeen,

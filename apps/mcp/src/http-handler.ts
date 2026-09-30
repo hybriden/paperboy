@@ -5,8 +5,15 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 
 export interface McpHttpDeps {
   httpPath: string;
-  /** Resolve true if the request is authorized. May reject (e.g. a DB error). */
-  bearerOk: (req: IncomingMessage) => Promise<boolean>;
+  /**
+   * Authenticate the request → the id of the user it acts as, or null to refuse.
+   * May reject (e.g. a DB error).
+   */
+  authorize: (req: IncomingMessage) => Promise<string | null>;
+  /** The WWW-Authenticate value on a 401. With OAuth it names the resource metadata. */
+  challenge?: string;
+  /** OAuth protected-resource metadata (RFC 9728), served at these paths. */
+  resourceMetadata?: { paths: string[]; body: unknown };
   buildServer: () => McpServer;
   sessions: Map<string, StreamableHTTPServerTransport>;
   /** Last-touched timestamp per session id, for the idle sweep. */
@@ -27,10 +34,17 @@ const json = (res: ServerResponse, code: number, body: unknown, extra: Record<st
  * long-lived remote process, can hang the client socket or tear the process down).
  */
 export function makeMcpHttpHandler(deps: McpHttpDeps) {
+  // Which user opened each session. A session id is not a credential: another
+  // user's valid token must not be able to drive it.
+  const owners = new Map<string, string>();
   return async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const path = (req.url ?? "/").split("?")[0];
     if (path === "/health") {
       json(res, 200, { ok: true });
+      return;
+    }
+    if (deps.resourceMetadata?.paths.includes(path ?? "")) {
+      json(res, 200, deps.resourceMetadata.body, { "access-control-allow-origin": "*" });
       return;
     }
     if (path !== deps.httpPath) {
@@ -38,12 +52,18 @@ export function makeMcpHttpHandler(deps: McpHttpDeps) {
       return;
     }
     try {
-      if (!(await deps.bearerOk(req))) {
-        json(res, 401, { error: "unauthorized" }, { "www-authenticate": "Bearer" });
+      const principal = await deps.authorize(req);
+      if (!principal) {
+        json(res, 401, { error: "unauthorized" }, { "www-authenticate": deps.challenge ?? "Bearer" });
         return;
       }
       const sid = req.headers["mcp-session-id"];
       const existing = typeof sid === "string" ? deps.sessions.get(sid) : undefined;
+      if (typeof sid === "string" && !existing) owners.delete(sid);
+      if (existing && owners.get(sid as string) !== principal) {
+        json(res, 403, { error: "This session belongs to another user — initialize a new one" });
+        return;
+      }
       if (existing) {
         deps.lastSeen.set(sid as string, Date.now());
         await existing.handleRequest(req, res);
@@ -55,12 +75,14 @@ export function makeMcpHttpHandler(deps: McpHttpDeps) {
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
         onsessioninitialized: (id) => {
+          owners.set(id, principal);
           deps.sessions.set(id, transport);
           deps.lastSeen.set(id, Date.now());
         },
       });
       transport.onclose = () => {
         if (transport.sessionId) {
+          owners.delete(transport.sessionId);
           deps.sessions.delete(transport.sessionId);
           deps.lastSeen.delete(transport.sessionId);
         }
