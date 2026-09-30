@@ -508,6 +508,7 @@ tool(
       // "publish now, expire then" — schedulePublish treats a now/past publishAt
       // as an immediate publish carrying the expiry.
       const scheduled = await schedulePublish(db, ctx(), documentId, l, {
+        allowLanguageMismatch,
         publishAt: publishAt ? new Date(publishAt) : new Date(),
         expireAt: expireAt ? new Date(expireAt) : null,
       });
