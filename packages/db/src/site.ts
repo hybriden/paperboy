@@ -181,7 +181,8 @@ export async function getStoredAiConfig(db: Database): Promise<StoredAiConfig> {
  * Set or clear the AI provider config (Admin only). For each field: `undefined`
  * leaves it unchanged; null/"" clears it. The key is encrypted at rest and
  * SAVED BOUND to the active provider; switching provider therefore CLEARS a
- * key bound to the old one — a key must never be sent to a different vendor's
+ * key bound to the old one, and so does changing the base URL without
+ * re-entering the key — a key must never be sent to a different
  * endpoint than it was entered for (an admin-set baseUrl would otherwise be a
  * key-exfiltration channel for the previous provider's key).
  */
@@ -213,6 +214,12 @@ export async function setAiConfig(
     const url = input.baseUrl?.trim().replace(/\/+$/, "");
     if (url && !/^https?:\/\/[^\s]+$/i.test(url)) {
       throw Errors.badRequest('AI base URL must be a full http(s):// URL, e.g. "https://api.openai.com/v1" or "http://localhost:11434/v1"');
+    }
+    // The key is bound to its ENDPOINT as well as its provider: moving the
+    // base URL without re-entering the key clears it, or the next Test / model
+    // list would send the stored key to whatever host was just typed in.
+    if ((url || null) !== stored.baseUrl && stored.apiKey && input.apiKey === undefined) {
+      await db.delete(siteSetting).where(eq(siteSetting.key, AI_API_KEY));
     }
     if (url) await putSetting(db, AI_BASE_URL_KEY, { url });
     else await db.delete(siteSetting).where(eq(siteSetting.key, AI_BASE_URL_KEY));
