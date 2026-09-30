@@ -717,7 +717,24 @@ async function siblingSlugs(
       ),
     )
     .orderBy(contentVersion.documentId, ...workingVersionFirst);
-  return new Set(rows.map((r) => r.slug).filter((slug): slug is string => slug != null));
+  // A sibling's LIVE segment is taken too, even when its draft has moved on:
+  // it still serves that URL until the draft is published.
+  const live = await db
+    .select({ slug: contentVersion.slug })
+    .from(contentVersion)
+    .innerJoin(contentItem, eq(contentItem.documentId, contentVersion.documentId))
+    .where(
+      and(
+        parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
+        eq(contentItem.kind, "page"),
+        isNull(contentItem.deletedAt),
+        siteId ? eq(contentItem.siteId, siteId) : undefined,
+        ne(contentItem.documentId, documentId),
+        eq(contentVersion.locale, loc),
+        eq(contentVersion.isCurrentPublished, true),
+      ),
+    );
+  return new Set([...rows, ...live].map((r) => r.slug).filter((slug): slug is string => slug != null));
 }
 
 /** True when a page sibling (same parent + locale) already uses this segment. */
@@ -2626,7 +2643,8 @@ export async function moveContent(
               // be impossible — belt-and-braces so a stray row can never have its
               // section rewritten from another tenant's move.
               eq(contentItem.siteId, item.siteId),
-              isNull(contentItem.deletedAt),
+              // Trashed descendants too: they come back under this page on
+              // restore, and must come back in the section it now belongs to.
             ),
           );
         const next = kids.map((k) => k.documentId).filter((id) => !visited.has(id));
@@ -3156,6 +3174,10 @@ export async function restoreContent(
   // asked back. Scope both the walk and the update to the parent's sweep timestamp.
   const ts = item.deletedAt;
   return db.transaction(async (tx) => {
+    // The restored page comes back at its old URL segments; a live sibling may
+    // have taken one meanwhile (trashed pages don't hold their slug). Check
+    // under the same lock every slug writer takes.
+    if (item.kind === "page") await assertRestoredSlugsFree(tx, item);
     const ids = [documentId];
     const visited = new Set<string>([documentId]);
     let frontier = [documentId];
@@ -3171,6 +3193,30 @@ export async function restoreContent(
     await tx.update(contentItem).set({ deletedAt: null }).where(and(inArray(contentItem.documentId, ids), eq(contentItem.deletedAt, ts)));
     return { restored: ids.length };
   });
+}
+
+/** Refuse a restore that would put two live sibling pages on one URL segment. */
+async function assertRestoredSlugsFree(tx: Transaction, item: typeof contentItem.$inferSelect): Promise<void> {
+  const own = await tx
+    .select({ locale: contentVersion.locale, slug: contentVersion.slug })
+    .from(contentVersion)
+    .where(
+      and(
+        eq(contentVersion.documentId, item.documentId),
+        or(eq(contentVersion.status, "draft"), eq(contentVersion.isCurrentPublished, true)),
+      ),
+    );
+  for (const loc of new Set(own.map((r) => r.locale))) {
+    await lockSiblingSlugs(tx, item.siteId, item.parentId, loc);
+    const taken = await siblingSlugs(tx, item.documentId, item.parentId, loc, item.siteId);
+    const clash = own.find((r) => r.locale === loc && r.slug && taken.has(r.slug));
+    if (clash) {
+      throw Errors.conflict(
+        `Can't restore: another page here now uses the URL segment "${clash.slug}" (${loc}). ` +
+          "Change that page's slug (or move it), then restore this one.",
+      );
+    }
+  }
 }
 
 /** List trashed items in scope (each with its display name) — powers the Trash view. */
