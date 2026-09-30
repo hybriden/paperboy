@@ -23,9 +23,11 @@ describe("MCP parity: real stdio server vs the API", () => {
     s = await setupApi();
     admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
     // Mint a real MCP token via the API — the spawn below authenticates with it.
+    // Every site: the parity cases include instance-wide tools (type templates,
+    // content types), which a site-scoped token is refused.
     const users = (await s.app.inject({ method: "GET", url: "/api/v1/manage/users", headers: { cookie: admin.cookie } })).json() as Array<{ id: string; email: string }>;
     const adminId = users.find((u) => u.email === "admin@paperboy.test")!.id;
-    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "parity-suite", userId: adminId } });
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "parity-suite", userId: adminId, allSites: true } });
     expect(minted.statusCode).toBe(200);
     token = minted.json().token as string;
     const rows = (await s.app.inject({ method: "GET", url: "/api/v1/manage/mcp-tokens", headers: { cookie: admin.cookie } })).json() as Array<{ id: number; name: string }>;
