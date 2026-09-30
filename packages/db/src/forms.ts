@@ -16,7 +16,7 @@ import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { resolveDefaultLocale } from "./content.js";
 import { publishWindowOpen } from "./delivery.js";
-import { contentItem, contentVersion, formSubmission, siteSetting } from "./schema.js";
+import { contentItem, contentVersion, formSubmission, locale as localeTable, siteSetting } from "./schema.js";
 
 /**
  * Form submissions: the WRITE chokepoint for public form posts, plus the
@@ -117,7 +117,9 @@ export async function loadPublishedForm(
   // An unrecognised locale must not select a variant by accident: a caller
   // sending a locale this form has never published in falls back to the site's
   // default, not to whichever row the database happened to return first.
-  const known = rows.some((r) => r.locale === locale);
+  // A DISABLED locale counts as unrecognised: it is withdrawn from delivery.
+  const enabled = await db.select({ code: localeTable.code }).from(localeTable).where(eq(localeTable.enabled, true));
+  const known = rows.some((r) => r.locale === locale) && enabled.some((l) => l.code === locale);
   if (!known) locale = await resolveDefaultLocale(db, siteId);
 
   // The LABELS come from the requested locale (that is what the visitor read).

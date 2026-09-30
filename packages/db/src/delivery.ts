@@ -179,9 +179,18 @@ class DeliveryCtx {
     return row;
   }
 
-  async localeChain(code: string): Promise<string[]> {
+  /**
+   * The fallback chain for `code`. Published reads skip DISABLED locales (an
+   * editor disables one to withdraw it; the request then falls back as for an
+   * untranslated locale). Preview keeps them, so a locale can be prepared
+   * before it is switched on.
+   */
+  async localeChain(code: string, perspective: Perspective): Promise<string[]> {
     if (!this.locales) this.locales = await this.db.select().from(locale);
-    return localeChainFrom(this.locales, code);
+    const chain = localeChainFrom(this.locales, code);
+    if (perspective === "preview") return chain;
+    const disabled = new Set(this.locales.filter((l) => !l.enabled).map((l) => l.code));
+    return chain.filter((c) => !disabled.has(c));
   }
 
   /** Every enabled locale code in stable (sortIndex) order. */
@@ -247,7 +256,7 @@ async function variantRow(
   loc: string,
 ): Promise<{ row: typeof contentVersion.$inferSelect; usedLocale: string } | null> {
   const all = await ctx.docVersions(documentId, perspective);
-  for (const code of await ctx.localeChain(loc)) {
+  for (const code of await ctx.localeChain(loc, perspective)) {
     const row = rowForLocale(all, perspective, code, ctx.now);
     if (row) {
       // Every resolved row bumps the request's cache version — see ctx.maxCv.
@@ -283,7 +292,7 @@ async function fillNonLocalizedFields(
   // Priority: the rest of the fallback chain first, then every other enabled
   // locale (stable order) — sharing is bidirectional (an en request must also
   // see a value published only in nb), the chain just decides precedence.
-  const chain = await ctx.localeChain(loc);
+  const chain = await ctx.localeChain(loc, perspective);
   const others = (await ctx.enabledLocaleCodes()).filter((c) => !chain.includes(c));
   const rest = [...chain.slice(chain.indexOf(usedLocale) + 1), ...others];
   if (!rest.length) return data;
@@ -1158,7 +1167,7 @@ export async function deliverySearch(
       .join(" "),
   );
   const ctx = new DeliveryCtx(db, siteId);
-  const chain = await ctx.localeChain(loc);
+  const chain = await ctx.localeChain(loc, perspective);
   const max = Math.min(Math.max(limit, 1), 100);
   // The SQL prefilter scans the WHOLE version row (incl. delivery:"private" field
   // text), so it only OVER-approximates the candidate set for ranking. We widen
