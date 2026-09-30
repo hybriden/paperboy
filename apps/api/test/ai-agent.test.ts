@@ -111,6 +111,38 @@ describe("AI content agent (build from brief)", () => {
       expect(await draftExists("Survived the timeout")).toBe(true);
     });
 
+    // Audit 2026-09-30: a provider failure mid-run (429, 500) was rethrown to
+    // the route, which sent a bare "Agent failed" — the reviewer never learned
+    // which drafts were created or which existing pages were edited (rule #6).
+    it("a provider FAILURE mid-run still reports the drafts created so far", async () => {
+      let calls = 0;
+      globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (!(url instanceof Request ? url.url : String(url)).includes("api.anthropic.com")) return realFetch(url as never, init as never);
+        calls++;
+        if (calls === 1) return new Response(JSON.stringify(createTurn("Survived the 429")), { status: 200, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ type: "error", error: { type: "rate_limit_error", message: "slow down" } }), { status: 429, headers: { "content-type": "application/json" } });
+      }) as typeof fetch;
+      const events: AgentEvent[] = [];
+      await runContentAgent({ db: s.app.db, ctx: await editorCtx(), cfg, emit: (e) => events.push(e) }, "Create one article page called Survived the 429.", { parentId: null, locale: "en" });
+      const last = events.at(-1)!;
+      expect(last.type).toBe("error");
+      expect(last.created?.map((c) => c.name)).toContain("Survived the 429");
+    });
+
+    // Audit 2026-09-30: the file header promised "the audit log applies per
+    // call", but auditing lived only in the REST/MCP wrappers — agent writes,
+    // including edits to EXISTING documents, left no audit row at all.
+    it("every agent write leaves an audit row marked as the agent's", async () => {
+      countingScript([createTurn("Audited agent draft"), { content: [{ type: "text", text: "done" }], stop_reason: "end_turn" }]);
+      const events: AgentEvent[] = [];
+      await runContentAgent({ db: s.app.db, ctx: await editorCtx(), cfg, emit: (e) => events.push(e) }, "Create one article page called Audited agent draft.", { parentId: null, locale: "en" });
+      const id = events.at(-1)!.created!.find((c) => c.name === "Audited agent draft")!.documentId;
+      const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+      const rows = (await s.app.inject({ method: "GET", url: `/api/v1/manage/audit?documentId=${id}`, headers: { cookie: admin.cookie } })).json() as { items?: Array<{ action: string; ip: string | null }> } | Array<{ action: string; ip: string | null }>;
+      const items = Array.isArray(rows) ? rows : (rows.items ?? []);
+      expect(items.some((r) => r.action === "content.create" && r.ip === "agent")).toBe(true);
+    });
+
     it("an already-aborted signal: the provider is never called and no draft is created", async () => {
       const calls = countingScript([createTurn("Aborted before start")]);
       const ac = new AbortController();
@@ -273,7 +305,11 @@ describe("AI content agent (build from brief)", () => {
 
     const res = await s.app.inject({ method: "POST", url: "/api/v1/ai/agent", headers: authHeaders(ed), payload: { brief: "Make me a page about spring", locale: "en" } });
     const err = sse(res.payload).find((e) => e.type === "error");
-    expect(err?.text).toBe("Agent failed");
+    // A provider-call failure now ends the run with the generic provider
+    // message (plus the drafts so far) instead of a bare "Agent failed" — the
+    // non-leak contract is unchanged.
+    expect(err?.text).toMatch(/^The AI provider returned an error/);
+    expect(err?.created).toEqual([]);
     expect(res.payload).not.toContain("SENSITIVE-INTERNAL-DETAIL");
   });
 

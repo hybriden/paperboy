@@ -259,6 +259,21 @@ async function reachableSites() {
   return cap ? all.filter((x) => x.id === cap) : all;
 }
 
+/**
+ * Users and their (global) roles, content types, type templates and the audit
+ * trail belong to EVERY site, so a token capped to one site must not touch
+ * them — an Admin token scoped to site A could otherwise create an Admin and
+ * sign in with access to every site, turning the cap into a suggestion.
+ */
+function requireCrossSiteToken(what: string): void {
+  if (tokenSite()) {
+    throw new Error(
+      `${what} is shared by every site, so a token scoped to one site cannot do this. ` +
+        `Mint a token for every site in Settings → MCP (tick "Every site") and use that one.`,
+    );
+  }
+}
+
 /** Some data-layer reads don't self-check RBAC (the REST routes gate them); the
  *  MCP enforces the same verb here. */
 function need(perm: Permission): void {
@@ -508,6 +523,7 @@ tool(
       // "publish now, expire then" — schedulePublish treats a now/past publishAt
       // as an immediate publish carrying the expiry.
       const scheduled = await schedulePublish(db, ctx(), documentId, l, {
+        allowLanguageMismatch,
         publishAt: publishAt ? new Date(publishAt) : new Date(),
         expireAt: expireAt ? new Date(expireAt) : null,
       });
@@ -606,9 +622,9 @@ tool("list_content_types", "List all content types (fields annotated with the va
 tool("get_content_type", "Get a content type definition by name. Each field includes valueFormat + valueExample — the exact JSON shape update_content expects.", { name: z.string() },
   async ({ name }) => { need("content.read"); const def = await getContentType(db, name); return def ? withFieldFormats(def) : def; });
 tool("create_content_type", "Create a content type from a full ContentTypeDef object.", { definition: z.record(z.string(), z.unknown()) },
-  async ({ definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createContentType(db, ctx(), def); await mcpAudit("contenttype.create", null, null, { name: def.name, kind: def.kind }); return r; });
+  async ({ definition }) => { requireCrossSiteToken("Content-type design"); const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createContentType(db, ctx(), def); await mcpAudit("contenttype.create", null, null, { name: def.name, kind: def.kind }); return r; });
 tool("update_content_type", "Update a content type (name and kind are immutable).", { name: z.string(), definition: z.record(z.string(), z.unknown()) },
-  async ({ name, definition }) => { const r = await updateContentType(db, ctx(), name, ContentTypeDef.parse(withoutFieldFormats(definition))); await mcpAudit("contenttype.update", null, null, { name }); return r.next; });
+  async ({ name, definition }) => { requireCrossSiteToken("Content-type design"); const r = await updateContentType(db, ctx(), name, ContentTypeDef.parse(withoutFieldFormats(definition))); await mcpAudit("contenttype.update", null, null, { name }); return r.next; });
 
 /* --------------------- content-type template collection ------------------ */
 // Named, reusable ContentTypeDef recipes: save a type as a template, then
@@ -618,11 +634,11 @@ tool("list_type_templates", "List all content-type templates — named ContentTy
 tool("get_type_template", "Get a type template definition by name (stored or built-in). Each field includes valueFormat + valueExample.", { name: z.string() },
   async ({ name }) => { need("content.read"); return withFieldFormats(await getTypeTemplate(db, name)); });
 tool("create_type_template", "Save a content type definition as a reusable template (a starter/backup recipe). The template's name is the content type name instantiate materialises by default — use a name no existing template takes (built-in template names are reserved).", { definition: z.record(z.string(), z.unknown()).describe("Full ContentTypeDef, same shape as create_content_type") },
-  async ({ definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createTypeTemplate(db, ctx(), def); await mcpAudit("type_template.create", null, null, { name: def.name, kind: def.kind }); return r; });
+  async ({ definition }) => { requireCrossSiteToken("The type-template library"); const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createTypeTemplate(db, ctx(), def); await mcpAudit("type_template.create", null, null, { name: def.name, kind: def.kind }); return r; });
 tool("update_type_template", "Update a stored type template in place (name and kind are immutable; built-in templates are read-only — copy one under a new name instead).", { name: z.string(), definition: z.record(z.string(), z.unknown()) },
-  async ({ name, definition }) => { const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await updateTypeTemplate(db, ctx(), name, def); await mcpAudit("type_template.update", null, null, { name }); return r.next; });
+  async ({ name, definition }) => { requireCrossSiteToken("The type-template library"); const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await updateTypeTemplate(db, ctx(), name, def); await mcpAudit("type_template.update", null, null, { name }); return r.next; });
 tool("delete_type_template", "Delete a stored type template (built-ins can't be deleted). Types instantiated from it are NOT affected.", { name: z.string() },
-  async ({ name }) => { await deleteTypeTemplate(db, ctx(), name); await mcpAudit("type_template.delete", null, null, { name }); return { ok: true }; });
+  async ({ name }) => { requireCrossSiteToken("The type-template library"); await deleteTypeTemplate(db, ctx(), name); await mcpAudit("type_template.delete", null, null, { name }); return { ok: true }; });
 tool(
   "instantiate_type_template",
   "Materialise a type template into a real content type. Default: creates the type under the template's own name. " +
@@ -635,7 +651,7 @@ tool(
     asName: z.string().optional().describe("Create the type under this name instead of the template's"),
     withBlocks: z.boolean().optional().describe("Also create the block types this template's content areas allow-list (default false)"),
   },
-  async ({ name, updateExisting, asName, withBlocks }) => {
+  async ({ name, updateExisting, asName, withBlocks }) => { requireCrossSiteToken("Content-type design");
     const r = await instantiateTypeTemplate(db, ctx(), name, { updateExisting, asName, withBlocks });
     await mcpAudit("type_template.instantiate", null, null, { template: name, type: r.name, action: r.action, ...(r.blocks ? { blocks: r.blocks } : {}) });
     return r;
@@ -658,7 +674,7 @@ tool(
     templates: z.array(z.record(z.string(), z.unknown())).min(1).max(200).describe("The export document's templates array (full ContentTypeDef objects)"),
     overwrite: z.boolean().optional().describe("Update existing stored templates from the import (default false)"),
   },
-  async ({ templates, overwrite }) => {
+  async ({ templates, overwrite }) => { requireCrossSiteToken("The type-template library");
     const defs = templates.map((t) => ContentTypeDef.parse(t));
     const r = await importTypeTemplates(db, ctx(), defs, overwrite ?? false);
     await mcpAudit("type_template.import", null, null, { created: r.created, updated: r.updated, skipped: r.skipped.map((s) => s.name), overwrite: overwrite ?? false });
@@ -797,11 +813,11 @@ tool("set_start_page", "Set (or clear with null) the page served at /.", { docum
 /* ---------------------------- platform admin --------------------------- */
 tool("list_users", "List users with roles and section scopes (admin).", {}, () => listUsers(db, ctx()));
 tool("create_user", "Create a user (admin).", { email: z.string().email(), name: z.string(), password: z.string().min(10), roles: z.array(RoleName).min(1), sections: z.array(z.string()).optional() },
-  async (a) => { const id = await adminCreateUser(db, ctx(), a); await mcpAudit("user.create", null, null, { email: a.email, roles: a.roles }); return { id }; });
+  async (a) => { requireCrossSiteToken("User management"); const id = await adminCreateUser(db, ctx(), a); await mcpAudit("user.create", null, null, { email: a.email, roles: a.roles }); return { id }; });
 tool("update_user", "Update a user's name/roles/sections (admin).", { id: z.string(), name: z.string().optional(), roles: z.array(RoleName).optional(), sections: z.array(z.string()).optional() },
-  async ({ id, ...rest }) => { await adminUpdateUser(db, ctx(), id, rest); await mcpAudit("user.update", null, null, { id }); return { ok: true }; });
+  async ({ id, ...rest }) => { requireCrossSiteToken("User management"); await adminUpdateUser(db, ctx(), id, rest); await mcpAudit("user.update", null, null, { id }); return { ok: true }; });
 tool("delete_user", "Delete a user (admin).", { id: z.string() },
-  async ({ id }) => { await adminDeleteUser(db, ctx(), id); await mcpAudit("user.delete", null, null, { id }); return { ok: true }; });
+  async ({ id }) => { requireCrossSiteToken("User management"); await adminDeleteUser(db, ctx(), id); await mcpAudit("user.delete", null, null, { id }); return { ok: true }; });
 tool("list_delivery_keys", "List delivery API keys (admin).", {}, () => listDeliveryKeys(db, ctx()));
 tool("create_delivery_key", "Create a delivery API key (admin). Returns the secret once.", { name: z.string(), type: z.enum(["public", "preview"]) },
   async ({ name, type }) => { const r = await createDeliveryKey(db, ctx(), name, type); await mcpAudit("deliverykey.create", null, null, { name, type }); return r; });
@@ -816,7 +832,7 @@ tool("delete_webhook", "Delete a webhook by id (admin).", { id: z.number() },
   async ({ id }) => { await deleteWebhook(db, ctx(), id); await mcpAudit("webhook.delete", null, null, { id }); return { ok: true }; });
 tool("list_audit", "Read the append-only audit log (admin). Filter by action prefix (e.g. 'content.'), actor user id, documentId, or ISO time range.",
   { limit: z.number().optional(), before: z.number().optional(), action: z.string().optional(), actorUserId: z.string().optional(), documentId: z.string().optional(), from: z.string().optional(), to: z.string().optional() },
-  (a) => listAudit(db, ctx(), a));
+  (a) => { requireCrossSiteToken("The audit log"); return listAudit(db, ctx(), a); });
 tool("list_locales", "List enabled locales.", {}, async () => { need("content.read"); return listLocales(db); });
 
 /* ---------------------------------- AI --------------------------------- */

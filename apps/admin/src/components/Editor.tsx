@@ -18,6 +18,7 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask } from "../lib/api.js";
 import { fieldWidthClass } from "../lib/field-width.js";
 import { blockAtPath, type BlockPath } from "../lib/block-path.js";
+import { clearUnsaved, readUnsaved, stashUnsaved, type UnsavedEdits } from "../lib/unsaved-stash.js";
 import { filterFields } from "../lib/field-filter.js";
 import { opeAction } from "../lib/ope-target.js";
 import { postCaret } from "../lib/caret.js";
@@ -221,6 +222,14 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // retrying and would otherwise flash a toast the editor never connects to
   // "nothing I type is being stored any more".
   const [conflict, setConflict] = useState(false);
+  // Edits kept from an editor that was torn down mid-save (a sign-out in another
+  // tab) — offered back when this variant opens again.
+  const [stashed, setStashed] = useState<UnsavedEdits | null>(null);
+  // saveState for the unmount cleanup, whose closure is from the first render.
+  const saveStateRef = useRef<SaveState>("idle");
+  useEffect(() => {
+    saveStateRef.current = saveState;
+  }, [saveState]);
   const [tab, setTab] = useState("Content");
   // Editor view — the Episerver-style trio. Persisted so it survives
   // re-renders/remounts (e.g. toggling a side pane remounts the editor):
@@ -322,6 +331,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   };
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formRef = useRef<ContentDetail | null>(null);
+  // The save chain: at most one save is in flight, and the next one starts from
+  // formRef AFTER the previous one's onSuccess advanced the revision. Two saves
+  // in flight at once both carried the pre-save revision, so the second was
+  // refused with a 409 against the editor's OWN first save.
+  const saveChain = useRef<Promise<unknown> | null>(null);
   // Holds not-yet-persisted edits; null once a save has been initiated for them.
   const pendingRef = useRef<ContentDetail | null>(null);
   // Tracks which (document, locale) the working copy belongs to, so we only
@@ -335,26 +349,47 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
   // On unmount (e.g. switching language/page): cancel the debounce and FLUSH any
   // pending edits with a fire-and-forget save, so unsaved work is never lost.
+  // Until that save (or the one already in flight) lands, the edits are also
+  // kept in this tab's sessionStorage: when the unmount is the app falling back
+  // to the Login screen (a sign-out in another tab), every save fails with 401
+  // and the stash is the only copy left.
   useEffect(() => {
     return () => {
       if (timer.current) clearTimeout(timer.current);
       const p = pendingRef.current;
+      const latest = formRef.current;
+      const unsaved = saveStateRef.current === "dirty" || saveStateRef.current === "saving";
+      if (unsaved && latest) {
+        stashUnsaved(user.id, documentId, locale, { name: latest.name, slug: latest.slug, displayInNav: latest.displayInNav, data: latest.data });
+      }
+      let landed: Promise<unknown> = saveChain.current ?? Promise.resolve();
       if (p) {
-        void api
-          // Revision-checked like every other save. Nobody is left to see a 409
-          // here, so this trades the departing editor's last sub-second of typing
-          // for not silently overwriting a colleague's whole save — the strictly
-          // smaller loss, and the only one of the two that is recoverable.
-          .update(documentId, locale, {
-            name: p.name,
-            slug: p.slug,
-            displayInNav: p.displayInNav,
-            data: p.data,
-            revision: p.revision,
-          })
-          .catch(() => undefined);
+        // After any save still in flight, so it carries the revision that save
+        // advanced to (read from formRef when it actually runs).
+        landed = landed
+          .catch(() => undefined)
+          .then(() =>
+            api
+              // Revision-checked like every other save. Nobody is left to see a 409
+              // here, so this trades the departing editor's last sub-second of typing
+              // for not silently overwriting a colleague's whole save — the strictly
+              // smaller loss, and the only one of the two that is recoverable.
+              .update(documentId, locale, {
+                name: p.name,
+                slug: p.slug,
+                displayInNav: p.displayInNav,
+                data: p.data,
+                revision: formRef.current?.revision ?? p.revision,
+              }),
+          )
+          // Keep the cached copy authoritative, as a normal save does: coming
+          // straight back re-seeds the editor from this cache, and a stale copy
+          // put the old text on screen with the old revision — so the next edit
+          // was refused as a conflict with this very save.
+          .then((updated) => qc.setQueryData(["content", documentId, locale], updated));
         pendingRef.current = null;
       }
+      if (unsaved) landed.then(() => clearUnsaved(user.id, documentId, locale), () => undefined);
     };
     // documentId/locale are constant for this mount (Shell remounts on change).
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -366,12 +401,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   useEffect(() => {
     if (detail.data && loadedKey.current !== variantKey) {
       loadedKey.current = variantKey;
+      setStashed(readUnsaved(user.id, documentId, locale));
       setForm(detail.data);
       formRef.current = detail.data;
       setSaveState("idle");
       setHideTranslateOffer(false);
     }
-  }, [detail.data, variantKey]);
+  }, [detail.data, variantKey, user.id, documentId, locale]);
 
   // Report the document name up for the breadcrumb / tab title.
   useEffect(() => {
@@ -423,7 +459,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         revision: f.revision,
       }),
     onSuccess: (updated) => {
-      setSaveState("saved");
+      // Edits typed while this save was in flight are still unsaved.
+      setSaveState(pendingRef.current ? "dirty" : "saved");
       setConflict(false);
       setFieldErrors({});
       // Keep the query cache authoritative so switching away and back shows the
@@ -472,6 +509,29 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     },
   });
 
+  /**
+   * Save the current working copy, queued behind any save still in flight.
+   * The payload is read from formRef when the save STARTS, so it carries both
+   * the latest edits and the revision the previous save advanced to.
+   * Resolves to whether this save went through (never rejects — the
+   * mutation's onError already reports a failure).
+   */
+  function queueSave(): Promise<boolean> {
+    const run = async () => {
+      const latest = formRef.current;
+      if (!latest) return;
+      pendingRef.current = null; // a save is now in flight for these edits
+      setSaveState("saving");
+      await save.mutateAsync(latest);
+    };
+    const next = (saveChain.current ?? Promise.resolve()).catch(() => undefined).then(run);
+    saveChain.current = next;
+    return next.then(
+      () => true,
+      () => false,
+    );
+  }
+
   // Debounced autosave. Uses functional state + a ref so rapid sequential edits
   // never clobber each other (the saved payload is always the merged latest).
   function patch(updater: (prev: ContentDetail) => ContentDetail) {
@@ -484,13 +544,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     setForm(next);
     setSaveState("dirty");
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      const latest = formRef.current;
-      if (!latest) return;
-      pendingRef.current = null; // a save is now in flight for these edits
-      setSaveState("saving");
-      save.mutate(latest);
-    }, 700);
+    timer.current = setTimeout(() => void queueSave(), 700);
   }
 
   // Warn on navigation with unsaved changes.
@@ -509,8 +563,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     mutationFn: async () => {
       if (timer.current) clearTimeout(timer.current);
       if ((saveState === "dirty" || saveState === "saving") && formRef.current) {
-        pendingRef.current = null;
-        await save.mutateAsync(formRef.current);
+        // A save that failed (409, validation) must not be followed by a publish
+        // of the older server draft.
+        if (!(await queueSave())) throw new Error("Your latest changes could not be saved, so nothing was published.");
       }
       return api.publish(documentId, locale);
     },
@@ -711,9 +766,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       const next = { ...base, name: res.name, slug: res.slug, data: res.data };
       setForm(next);
       formRef.current = next;
-      pendingRef.current = null;
-      setSaveState("saving");
-      save.mutate(next);
+      void queueSave();
       setHideTranslateOffer(true);
       toast.success(
         res.usedFallback ? "Draft seeded from source" : "Translated draft created",
@@ -992,12 +1045,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         if (timer.current) clearTimeout(timer.current);
-        const latest = formRef.current;
-        if (latest && (saveState === "dirty" || saveState === "saving")) {
-          pendingRef.current = null;
-          setSaveState("saving");
-          save.mutate(latest);
-        }
+        if (formRef.current && (saveState === "dirty" || saveState === "saving")) void queueSave();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1469,6 +1517,40 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           )}
         </div>
       </div>
+
+      {/* Edits that were on screen when this editor was torn down mid-save (a
+          sign-out in another tab) — the editor chooses whether to put them back. */}
+      {stashed && (
+        <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-accent/10 px-4 py-2 text-sm">
+          <span className="text-fg">
+            <strong>You have unsaved changes from before you were signed out.</strong> Restore them to keep editing, or discard them.
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              type="button"
+              className="btn-primary px-3 py-1 text-xs"
+              onClick={() => {
+                const edits = stashed;
+                setStashed(null);
+                clearUnsaved(user.id, documentId, locale);
+                patch((prev) => ({ ...prev, name: edits.name, slug: edits.slug, displayInNav: edits.displayInNav, data: edits.data }));
+              }}
+            >
+              Restore my changes
+            </button>
+            <button
+              type="button"
+              className="btn-subtle px-3 py-1 text-xs"
+              onClick={() => {
+                setStashed(null);
+                clearUnsaved(user.id, documentId, locale);
+              }}
+            >
+              Discard
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Concurrent-edit conflict. Deliberately NOT auto-reloading: the editor's
           own unsaved text is still on screen and reloading would destroy it. They

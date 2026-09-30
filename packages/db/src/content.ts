@@ -717,7 +717,24 @@ async function siblingSlugs(
       ),
     )
     .orderBy(contentVersion.documentId, ...workingVersionFirst);
-  return new Set(rows.map((r) => r.slug).filter((slug): slug is string => slug != null));
+  // A sibling's LIVE segment is taken too, even when its draft has moved on:
+  // it still serves that URL until the draft is published.
+  const live = await db
+    .select({ slug: contentVersion.slug })
+    .from(contentVersion)
+    .innerJoin(contentItem, eq(contentItem.documentId, contentVersion.documentId))
+    .where(
+      and(
+        parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
+        eq(contentItem.kind, "page"),
+        isNull(contentItem.deletedAt),
+        siteId ? eq(contentItem.siteId, siteId) : undefined,
+        ne(contentItem.documentId, documentId),
+        eq(contentVersion.locale, loc),
+        eq(contentVersion.isCurrentPublished, true),
+      ),
+    );
+  return new Set([...rows, ...live].map((r) => r.slug).filter((slug): slug is string => slug != null));
 }
 
 /** True when a page sibling (same parent + locale) already uses this segment. */
@@ -1132,15 +1149,27 @@ function formatDataValidation(
 }
 
 /** The current working data for a variant: the draft's, else the published version's, else {}. */
-async function workingData(db: Database, documentId: string, loc: string): Promise<Record<string, unknown>> {
+/** The working data a merge patches, plus the draft revision it was read at (0 = no draft). */
+async function workingData(
+  db: Database,
+  documentId: string,
+  loc: string,
+): Promise<{ data: Record<string, unknown>; draftRevision: number }> {
   const rows = await db
     .select()
     .from(contentVersion)
     .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)));
   const draft = rows.find((r) => r.status === "draft");
   const published = rows.find((r) => r.isCurrentPublished);
-  return ((draft ?? published)?.data as Record<string, unknown> | undefined) ?? {};
+  return {
+    data: ((draft ?? published)?.data as Record<string, unknown> | undefined) ?? {},
+    draftRevision: draft?.revision ?? 0,
+  };
 }
+
+/** Internal: the draft a revision-less merge was based on moved before its write landed. */
+class MergeBaseMoved extends Error {}
+const MERGE_ATTEMPTS = 5;
 
 /**
  * Every content type installed, read ONCE per write: the walks below visit
@@ -1534,6 +1563,33 @@ export async function updateContent(
   loc: string,
   req: UpdateContentRequest,
 ): Promise<ContentDetail> {
+  // A merge without an explicit revision means "apply my patch over whatever is
+  // current". It pins the revision it merged onto, so a write that lands in
+  // between is detected instead of overwritten, and re-merges over the fresh
+  // draft. Without the pin, two overlapping set_field calls both returned 200
+  // and one field was silently lost.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await updateContentOnce(db, ctx, documentId, loc, req);
+    } catch (err) {
+      if (!(err instanceof MergeBaseMoved)) throw err;
+      if (attempt >= MERGE_ATTEMPTS) {
+        throw Errors.conflict(
+          "This content kept changing while your merge was being applied (other writes landed in between). " +
+            "Nothing was saved. Retry the same update — merge: true re-reads the current draft each time.",
+        );
+      }
+    }
+  }
+}
+
+async function updateContentOnce(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  loc: string,
+  req: UpdateContentRequest,
+): Promise<ContentDetail> {
   requirePermission(ctx, "content.update");
   const item = await loadAuthorized(db, ctx, documentId);
   const reg = await loadTypeRegistry(db);
@@ -1541,7 +1597,10 @@ export async function updateContent(
 
   // Merge mode: shallow-merge the patch over the current working data so a
   // caller can change one field without round-tripping the whole map.
-  const merged = req.merge ? { ...(await workingData(db, documentId, loc)), ...req.data } : req.data;
+  const base = req.merge ? await workingData(db, documentId, loc) : null;
+  const merged = base ? { ...base.data, ...req.data } : req.data;
+  const pinnedRevision = base && req.revision === undefined ? base.draftRevision : undefined;
+  const expectedRevision = req.revision ?? pinnedRevision;
   const data = await prepareDraftData(db, ctx, type, reg, item.siteId, loc, merged, req.allowLanguageMismatch);
 
   // Forensic trail (2026-06-08): a richtext "body" that arrives as a Markdown
@@ -1600,15 +1659,17 @@ export async function updateContent(
           // human (web) write clears it — the human has seen the content.
           createdVia: ctx.via ?? null,
           needsReview: ctx.via === "mcp" || ctx.via === "agent",
+          ...(scheduleSurvivesEdit(ctx) ? {} : { publishAt: null }),
         })
         .where(
           and(
             eq(contentVersion.id, existing[0].id),
-            req.revision === undefined ? undefined : eq(contentVersion.revision, req.revision),
+            expectedRevision === undefined ? undefined : eq(contentVersion.revision, expectedRevision),
           ),
         )
         .returning({ id: contentVersion.id });
       if (!updated[0]) {
+        if (pinnedRevision !== undefined) throw new MergeBaseMoved();
         // Self-teaching (rule #2): name the cause, the surface that moved it, and
         // the one-step recovery. This message is what an editor and an agent both
         // read to recover, so it has to carry the whole recipe.
@@ -1627,6 +1688,7 @@ export async function updateContent(
       // re-insert it, regressing the live page on the next publish. `revision: 0` is
       // the honest "I know there is no draft" and is still accepted (getContent
       // reports 0 for a draft-less document), as is omitting it entirely.
+      if (pinnedRevision !== undefined && pinnedRevision !== 0) throw new MergeBaseMoved();
       if (req.revision !== undefined && req.revision !== 0) {
         throw Errors.conflict(
           `The draft you were editing no longer exists — it was published or discarded since you loaded it (revision ${req.revision} is gone). ` +
@@ -1685,6 +1747,7 @@ export async function updateContent(
         // content_version_one_draft partial unique index held the invariant). Turn
         // the raw 23505 into a self-teaching 409 instead of an opaque 500 (S2-L5).
         if (isUniqueViolation(err)) {
+          if (pinnedRevision !== undefined) throw new MergeBaseMoved();
           throw Errors.conflict("A draft for this locale was just created by a concurrent edit — re-read the content and retry your update.");
         }
         throw err;
@@ -1803,6 +1866,9 @@ async function assertDraftPublishable(
   }
 }
 
+/** Internal: promoteDraft found nothing to promote; its transaction rolls back. */
+class PromotionSkipped extends Error {}
+
 /**
  * Core publish promotion (NO RBAC — callers authorize). Demotes the prior
  * current-published row and promotes `draftId` to live, allocating a fresh cv
@@ -1818,6 +1884,7 @@ async function promoteDraft(
   loc: string,
   draftId: number,
   actorUserId: string | null,
+  opts: { scheduledBy?: Date } = {},
 ): Promise<void> {
   const { documentId } = item;
   try {
@@ -1841,12 +1908,26 @@ async function promoteDraft(
           ),
         );
       // Promote the draft to the live published version for this variant.
-      await tx
+      const promoted = await tx
         .update(contentVersion)
         .set({ status: "published", isCurrentPublished: true, cv, createdBy: actorUserId, publishAt: null })
-        .where(eq(contentVersion.id, draftId));
+        .where(
+          and(
+            eq(contentVersion.id, draftId),
+            opts.scheduledBy
+              ? and(eq(contentVersion.status, "draft"), lte(contentVersion.publishAt, opts.scheduledBy))
+              : undefined,
+          ),
+        )
+        .returning({ id: contentVersion.id });
+      // Zero rows: the row is gone (discarded) or no longer a due scheduled draft.
+      // Throwing rolls the demote back, so the live version stays live.
+      if (promoted.length === 0) throw new PromotionSkipped();
     });
   } catch (err) {
+    if (err instanceof PromotionSkipped) {
+      throw Errors.conflict("This draft changed while it was being published (discarded or unscheduled) — re-read it and retry.");
+    }
     // A concurrent publish promoted this variant first (content_version_one_published
     // held the single-published invariant). Self-teaching 409, not an opaque 500 (S2-L5).
     if (isUniqueViolation(err)) {
@@ -2054,17 +2135,7 @@ export async function publishContent(
     .limit(1);
   const draft = draftRows[0];
 
-  // Agent-review gate (opt-in via Settings → MCP): an agent cannot publish its
-  // own unreviewed draft — a human must approve it first (or edit it, which
-  // clears the flag). Self-teaching: the error tells the agent exactly what
-  // unblocks it. Human publishes are never gated (publishing IS reviewing).
-  if (ctx.via === "mcp" && draft?.needsReview && (await getAgentReviewRequired(db))) {
-    throw Errors.forbidden(
-      "This draft was written by an agent and the site requires human review before publishing " +
-        "(Settings → MCP → Agent review). Ask a human to approve it in the editor, or via " +
-        `POST /manage/content/${documentId}/review?locale=${loc}. The flag also clears when a human edits the draft.`,
-    );
-  }
+  await assertAgentReviewCleared(db, ctx, documentId, loc, draft);
 
   if (!draft) {
     // Unpublish → publish must round-trip. Unpublishing only demotes the live
@@ -2092,6 +2163,41 @@ export async function publishContent(
   return published;
 }
 
+/**
+ * Agent-review gate (opt-in via Settings → MCP): an agent cannot publish its
+ * own unreviewed draft — a human must approve it first (or edit it, which
+ * clears the flag). Self-teaching: the error tells the agent exactly what
+ * unblocks it. Human publishes are never gated (publishing IS reviewing).
+ * Every path that makes a draft live on an agent's behalf calls this.
+ */
+async function assertAgentReviewCleared(
+  db: Database,
+  ctx: AccessContext,
+  documentId: string,
+  loc: string,
+  draft: { needsReview: boolean } | undefined,
+): Promise<void> {
+  if (ctx.via === "mcp" && draft?.needsReview && (await getAgentReviewRequired(db))) {
+    throw Errors.forbidden(
+      "This draft was written by an agent and the site requires human review before publishing " +
+        "(Settings → MCP → Agent review). Ask a human to approve it in the editor, or via " +
+        `POST /manage/content/${documentId}/review?locale=${loc}. The flag also clears when a human edits the draft.`,
+    );
+  }
+}
+
+/**
+ * A pending scheduled publish belongs to the draft ROW, so the ticker publishes
+ * whatever the draft holds when it fires. The schedule may therefore survive an
+ * edit only when the editor could have published that text themselves: a human
+ * holding content.publish. An Author's or an agent's edit cancels it — otherwise
+ * it rides an Editor's schedule to production without anyone who may publish
+ * (or review) having seen it.
+ */
+function scheduleSurvivesEdit(ctx: AccessContext): boolean {
+  return ctx.via !== "mcp" && ctx.via !== "agent" && ctx.permissions.includes("content.publish");
+}
+
 /* ---------------------------- scheduled publish --------------------------- */
 
 /**
@@ -2108,7 +2214,7 @@ export async function schedulePublish(
   ctx: AccessContext,
   documentId: string,
   loc: string,
-  opts: { publishAt: Date | null; expireAt: Date | null },
+  opts: { publishAt: Date | null; expireAt: Date | null; allowLanguageMismatch?: boolean },
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.publish");
   const item = await loadAuthorized(db, ctx, documentId);
@@ -2135,7 +2241,7 @@ export async function schedulePublish(
   // Future scheduled publish of the working draft.
   if (opts.publishAt && opts.publishAt > now) {
     if (!draft) throw Errors.conflict("Nothing to schedule (no draft changes)");
-    await assertDraftPublishable(db, item, loc, draft);
+    await assertSchedulerMayPublish(db, ctx, item, loc, draft, opts.allowLanguageMismatch);
     await db
       .update(contentVersion)
       .set({ publishAt: opts.publishAt, expireAt: opts.expireAt ?? null })
@@ -2146,7 +2252,7 @@ export async function schedulePublish(
   // Immediate publish (publishAt now/past), carrying the requested expiry.
   if (opts.publishAt) {
     if (!draft) throw Errors.conflict("Nothing to publish (no draft changes)");
-    await assertDraftPublishable(db, item, loc, draft);
+    await assertSchedulerMayPublish(db, ctx, item, loc, draft, opts.allowLanguageMismatch);
     await db
       .update(contentVersion)
       .set({ publishAt: null, expireAt: opts.expireAt ?? null })
@@ -2172,6 +2278,22 @@ export async function schedulePublish(
   }
   if (!draft && !published) throw Errors.conflict("Nothing to schedule");
   return getContent(db, ctx, documentId, loc);
+}
+
+/** The publishContent gates, for the schedule paths (future AND immediate). */
+async function assertSchedulerMayPublish(
+  db: Database,
+  ctx: AccessContext,
+  item: typeof contentItem.$inferSelect,
+  loc: string,
+  draft: typeof contentVersion.$inferSelect,
+  allowLanguageMismatch: boolean | undefined,
+): Promise<void> {
+  await assertAgentReviewCleared(db, ctx, item.documentId, loc, draft);
+  await assertDraftPublishable(db, item, loc, draft);
+  if ((ctx.via === "mcp" || ctx.via === "agent") && !allowLanguageMismatch) {
+    await assertLanguageMatchesBranch(db, item, loc, draft);
+  }
 }
 
 /**
@@ -2213,22 +2335,26 @@ export async function runScheduledPublish(
         await db.update(contentVersion).set({ publishAt: null }).where(eq(contentVersion.id, d.id));
         continue;
       }
-      const reg = await loadTypeRegistry(db);
-      const parsed = dataSchemaFor(requireType(reg, item.type), true, reg.blockTypes).safeParse(d.data);
-      if (!parsed.success) {
-        // Re-validation failed (e.g. the type changed since scheduling). Leave as
-        // a draft, drop the schedule, and record why so the editor can see it.
+      try {
+        // The same strict checks a manual publish runs (validation, placement,
+        // placeholder name, form keys, sibling slug) — "save and publish are held
+        // to the same rules" must hold for the ticker too.
+        await assertDraftPublishable(db, item, d.locale, d);
+      } catch (err) {
+        // Leave as a draft, drop the schedule, and record why so the editor can see it.
         await db.update(contentVersion).set({ publishAt: null }).where(eq(contentVersion.id, d.id));
         await db.insert(auditLog).values({
           action: "content.schedule_failed",
           documentId: d.documentId,
           locale: d.locale,
-          detail: { reason: formatValidation(parsed.error) },
+          detail: { reason: err instanceof Error ? err.message : String(err) },
         });
         failed++;
         continue;
       }
-      await promoteDraft(db, item, d.locale, d.id, d.createdBy);
+      // `due` is a snapshot: the schedule may have been cancelled (or the draft
+      // discarded) since. Promote only if it is STILL a due scheduled draft.
+      await promoteDraft(db, item, d.locale, d.id, d.createdBy, { scheduledBy: now });
       const urlPath = item.kind === "page" ? await computePath(db, d.documentId, d.locale) : null;
       await dispatchWebhooks(db, {
         event: "content.published",
@@ -2517,7 +2643,8 @@ export async function moveContent(
               // be impossible — belt-and-braces so a stray row can never have its
               // section rewritten from another tenant's move.
               eq(contentItem.siteId, item.siteId),
-              isNull(contentItem.deletedAt),
+              // Trashed descendants too: they come back under this page on
+              // restore, and must come back in the section it now belongs to.
             ),
           );
         const next = kids.map((k) => k.documentId).filter((id) => !visited.has(id));
@@ -2826,7 +2953,21 @@ export async function restoreVersion(
         // revision: this is an in-place draft write like any other. Without the bump
         // an editor holding the pre-restore token saved straight over the restore —
         // 200, no conflict, and no history trace of what was lost.
-        .set({ name: src.name, slug: src.slug, displayInNav: src.displayInNav, data, revision: sql`${contentVersion.revision} + 1`, createdBy: ctx.userId, createdAt: new Date(), comment: `Restored from v${src.versionNumber}` })
+        .set({
+          name: src.name,
+          slug: src.slug,
+          displayInNav: src.displayInNav,
+          data,
+          revision: sql`${contentVersion.revision} + 1`,
+          createdBy: ctx.userId,
+          createdAt: new Date(),
+          comment: `Restored from v${src.versionNumber}`,
+          // A restore is a draft write like updateContent's: same provenance,
+          // review flag and schedule rules.
+          createdVia: ctx.via ?? null,
+          needsReview: ctx.via === "mcp" || ctx.via === "agent",
+          ...(scheduleSurvivesEdit(ctx) ? {} : { publishAt: null }),
+        })
         .where(eq(contentVersion.id, existingDraft[0].id));
     } else {
       await tx.insert(contentVersion).values({
@@ -2840,6 +2981,8 @@ export async function restoreVersion(
         displayInNav: src.displayInNav,
         data,
         createdBy: ctx.userId,
+        createdVia: ctx.via ?? null,
+        needsReview: ctx.via === "mcp" || ctx.via === "agent",
         comment: `Restored from v${src.versionNumber}`,
       });
     }
@@ -2923,6 +3066,9 @@ export async function cloneContent(
         displayInNav: row.displayInNav,
         data,
         createdBy: ctx.userId,
+        // A copy of unreviewed agent text is still unreviewed agent text.
+        createdVia: ctx.via ?? null,
+        needsReview: row.needsReview || ctx.via === "mcp" || ctx.via === "agent",
       });
       await rebuildReferences(tx, newId, code, type, data, reg.blockTypes);
     }
@@ -3028,6 +3174,10 @@ export async function restoreContent(
   // asked back. Scope both the walk and the update to the parent's sweep timestamp.
   const ts = item.deletedAt;
   return db.transaction(async (tx) => {
+    // The restored page comes back at its old URL segments; a live sibling may
+    // have taken one meanwhile (trashed pages don't hold their slug). Check
+    // under the same lock every slug writer takes.
+    if (item.kind === "page") await assertRestoredSlugsFree(tx, item);
     const ids = [documentId];
     const visited = new Set<string>([documentId]);
     let frontier = [documentId];
@@ -3043,6 +3193,30 @@ export async function restoreContent(
     await tx.update(contentItem).set({ deletedAt: null }).where(and(inArray(contentItem.documentId, ids), eq(contentItem.deletedAt, ts)));
     return { restored: ids.length };
   });
+}
+
+/** Refuse a restore that would put two live sibling pages on one URL segment. */
+async function assertRestoredSlugsFree(tx: Transaction, item: typeof contentItem.$inferSelect): Promise<void> {
+  const own = await tx
+    .select({ locale: contentVersion.locale, slug: contentVersion.slug })
+    .from(contentVersion)
+    .where(
+      and(
+        eq(contentVersion.documentId, item.documentId),
+        or(eq(contentVersion.status, "draft"), eq(contentVersion.isCurrentPublished, true)),
+      ),
+    );
+  for (const loc of new Set(own.map((r) => r.locale))) {
+    await lockSiblingSlugs(tx, item.siteId, item.parentId, loc);
+    const taken = await siblingSlugs(tx, item.documentId, item.parentId, loc, item.siteId);
+    const clash = own.find((r) => r.locale === loc && r.slug && taken.has(r.slug));
+    if (clash) {
+      throw Errors.conflict(
+        `Can't restore: another page here now uses the URL segment "${clash.slug}" (${loc}). ` +
+          "Change that page's slug (or move it), then restore this one.",
+      );
+    }
+  }
 }
 
 /** List trashed items in scope (each with its display name) — powers the Trash view. */

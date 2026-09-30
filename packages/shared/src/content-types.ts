@@ -1037,6 +1037,9 @@ function collectImages(children: unknown): RtNode[] {
   return out;
 }
 
+/** The keys a TipTap/ProseMirror node carries; everything else is dropped. */
+const RT_NODE_KEYS = new Set(["type", "text", "attrs", "marks", "content"]);
+
 /** Sanitize a node list against the parent's content model. Returns a clean list. */
 function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] {
   if (!Array.isArray(children)) return [];
@@ -1046,7 +1049,14 @@ function sanitizeRichTextNodes(children: unknown, parentType: string): RtNode[] 
   let nodes: RtNode[] = [];
   for (const raw of children) {
     if (!raw || typeof raw !== "object") continue;
-    const node: RtNode = { ...(raw as RtNode) };
+    // Rebuild from the TipTap node shape only: any other key (`html`, `onclick`,
+    // `raw`…) would otherwise ride through to the public delivery output.
+    // (Input key order is kept, as the old spread did, so sanitizing twice is
+    // byte-identical.)
+    const node: RtNode = {};
+    for (const [key, value] of Object.entries(raw as RtNode)) {
+      if (RT_NODE_KEYS.has(key)) node[key] = value;
+    }
     const rawType = typeof node.type === "string" ? node.type : "";
     const type = NODE_ALIASES[rawType] ?? rawType;
     node.type = type;
@@ -1153,12 +1163,11 @@ function isEmptyContainer(n: RtNode): boolean {
 
 /** Normalize a TipTap doc to the shape the admin editor can actually load. */
 function sanitizeRichTextDoc(doc: unknown): unknown {
-  const o = { ...(doc as RtNode) };
-  delete o.attrs;
-  const content = sanitizeRichTextNodes(o.content, "doc");
+  const content = sanitizeRichTextNodes((doc as RtNode).content, "doc");
   // The fallback paragraph carries content: [] like every sanitized paragraph,
   // so sanitize(sanitize(x)) === sanitize(x) exactly (single-pass fixpoint).
-  return { ...o, type: "doc", content: content.length ? content : [{ type: "paragraph", content: [] }] };
+  // Only type + content: any other doc-level key is dropped like a node's.
+  return { type: "doc", content: content.length ? content : [{ type: "paragraph", content: [] }] };
 }
 
 /** Looks like a BCP-47-ish locale code ("en", "nb", "en-US", "nb-NO"). */

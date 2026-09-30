@@ -32,8 +32,9 @@ import { z } from "zod";
  *    `req.user`/`req.accessCtx` or to share code with a session route.
  *  - **The delivery key pins the site.** A key for site A cannot submit to a
  *    form in site B; a cross-site form id reads as not-found.
- *  - **Heuristics before the database.** The honeypot and timing checks run
- *    before any query, so a naive bot costs us nothing but a JSON parse.
+ *  - **Heuristics before the form.** The honeypot and timing checks run
+ *    before the form is loaded, so a naive bot costs only the key and site
+ *    lookups — and the per-IP limit bounds even that.
  *  - **Turnstile server-side**, single-use token, when the form asks for it.
  *  - **Validation from the live definition** happens in the db chokepoint, not
  *    here — so no future caller can bypass it.
@@ -130,14 +131,16 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
         // @fastify/cors is configured for the ADMIN origin; this route grants
         // the SITE's own origins itself (below), so the plugin must stay out.
         cors: false,
-        // Tighter than the global per-IP ceiling, and per form as well as per
-        // IP: one scraped form endpoint must not be able to exhaust the budget
-        // every other site's forms share.
+        // Tighter than the global per-IP ceiling, with its own bucket so a
+        // scraped form endpoint can't exhaust the budget the rest of the API
+        // shares. Per IP only: the form id is attacker-chosen, so keying on it
+        // gave every random id a fresh bucket (and every honeypot drop still
+        // writes an audit row — unbounded growth from one IP). Read per request
+        // so the configured value is the one enforced.
         rateLimit: {
-          max: app.formConfig.submitRateMax,
+          max: () => app.formConfig.submitRateMax,
           timeWindow: "1 minute",
-          keyGenerator: (req: FastifyRequest) =>
-            `${req.ip}:${(req.params as { documentId?: string }).documentId ?? "?"}`,
+          keyGenerator: (req: FastifyRequest) => `form-submit:${req.ip}`,
         },
       },
       schema: {
@@ -164,6 +167,17 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
 
       const { documentId } = req.params;
       const body = req.body;
+
+      // Grant the site's own origins on EVERY answer from here on, not just a
+      // success: a browser that can't read the 422 shows the visitor "network
+      // error" instead of the per-field messages, and a spam drop must look
+      // exactly like a success on the wire.
+      const site = await getSiteById(app.db, resolved.siteId);
+      const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
+      if (origin && allowedOrigins(site).includes(origin)) {
+        reply.header("Access-Control-Allow-Origin", origin);
+        reply.header("Vary", "Origin");
+      }
 
       // Cheapest checks first: a bot should not reach the database.
       const spam = checkSpamHeuristics({ honeypot: body.honeypot, elapsedMs: body.elapsedMs });
@@ -197,7 +211,6 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
         return reply.code(413).send({ error: "payload_too_large", message: "The submission is too large." });
       }
 
-      const site = await getSiteById(app.db, resolved.siteId);
       const locale = body.locale ?? (await resolveDefaultLocale(app.db, resolved.siteId));
 
       const form = await loadPublishedForm(app.db, resolved.siteId, documentId, locale);
@@ -237,13 +250,6 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
 
       if (!result.ok) {
         return reply.code(422).send({ ok: false as const, error: "validation" as const, fields: result.fields });
-      }
-
-      const origins = allowedOrigins(site);
-      const origin = typeof req.headers.origin === "string" ? req.headers.origin : "";
-      if (origin && origins.includes(origin)) {
-        reply.header("Access-Control-Allow-Origin", origin);
-        reply.header("Vary", "Origin");
       }
 
       if (!result.replayed) {

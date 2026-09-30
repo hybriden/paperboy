@@ -208,7 +208,14 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
         await runContentAgent(
           // via:"agent" — drafts the brief-builder writes are agent provenance:
           // versions record created_via='agent' and carry the needs-review flag.
-          { db: app.db, ctx: { ...req.accessCtx!, via: "agent" }, cfg, emit: send, signal: abort.signal },
+          {
+            db: app.db,
+            ctx: { ...req.accessCtx!, via: "agent" },
+            cfg,
+            emit: send,
+            signal: abort.signal,
+            onError: (err) => req.log.error({ err }, "agent run stopped by a provider error"),
+          },
           req.body.brief,
           {
             parentId: req.body.parentId ?? null,

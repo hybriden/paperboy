@@ -1191,6 +1191,9 @@ export function AiPanel() {
   const providerChanged = provider !== null && provider !== status?.provider;
   const modelValue = model ?? (providerChanged ? "" : (status?.model ?? ""));
   const baseUrlValue = baseUrl ?? (providerChanged ? "" : (status?.baseUrl ?? ""));
+  // A stored key is bound to its base URL server-side: moving the URL without
+  // re-entering the key clears it (it must never reach a host it wasn't saved for).
+  const baseUrlChanged = baseUrl !== null && (baseUrl.trim().replace(/\/+$/, "") || null) !== (status?.baseUrl ?? null);
   const PROVIDER_LABELS: Record<AiProviderName, string> = { anthropic: "Anthropic (Claude)", openai: "OpenAI-compatible" };
 
   const save = useMutation({
@@ -1326,7 +1329,9 @@ export function AiPanel() {
                 type="password"
                 autoComplete="off"
                 placeholder={
-                  status?.configured && !providerChanged
+                  status?.configured && !providerChanged && baseUrlChanged
+                    ? "re-enter the key for the new base URL"
+                    : status?.configured && !providerChanged
                     ? "•••••••• (leave blank to keep)"
                     : activeProvider === "openai"
                       ? "sk-…"
