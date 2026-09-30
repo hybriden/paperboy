@@ -322,6 +322,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   };
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const formRef = useRef<ContentDetail | null>(null);
+  // The save chain: at most one save is in flight, and the next one starts from
+  // formRef AFTER the previous one's onSuccess advanced the revision. Two saves
+  // in flight at once both carried the pre-save revision, so the second was
+  // refused with a 409 against the editor's OWN first save.
+  const saveChain = useRef<Promise<unknown> | null>(null);
   // Holds not-yet-persisted edits; null once a save has been initiated for them.
   const pendingRef = useRef<ContentDetail | null>(null);
   // Tracks which (document, locale) the working copy belongs to, so we only
@@ -340,18 +345,24 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       if (timer.current) clearTimeout(timer.current);
       const p = pendingRef.current;
       if (p) {
-        void api
-          // Revision-checked like every other save. Nobody is left to see a 409
-          // here, so this trades the departing editor's last sub-second of typing
-          // for not silently overwriting a colleague's whole save — the strictly
-          // smaller loss, and the only one of the two that is recoverable.
-          .update(documentId, locale, {
-            name: p.name,
-            slug: p.slug,
-            displayInNav: p.displayInNav,
-            data: p.data,
-            revision: p.revision,
-          })
+        // After any save still in flight, so it carries the revision that save
+        // advanced to (read from formRef when it actually runs).
+        void (saveChain.current ?? Promise.resolve())
+          .catch(() => undefined)
+          .then(() =>
+            api
+              // Revision-checked like every other save. Nobody is left to see a 409
+              // here, so this trades the departing editor's last sub-second of typing
+              // for not silently overwriting a colleague's whole save — the strictly
+              // smaller loss, and the only one of the two that is recoverable.
+              .update(documentId, locale, {
+                name: p.name,
+                slug: p.slug,
+                displayInNav: p.displayInNav,
+                data: p.data,
+                revision: formRef.current?.revision ?? p.revision,
+              }),
+          )
           .catch(() => undefined);
         pendingRef.current = null;
       }
@@ -423,7 +434,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         revision: f.revision,
       }),
     onSuccess: (updated) => {
-      setSaveState("saved");
+      // Edits typed while this save was in flight are still unsaved.
+      setSaveState(pendingRef.current ? "dirty" : "saved");
       setConflict(false);
       setFieldErrors({});
       // Keep the query cache authoritative so switching away and back shows the
@@ -472,6 +484,29 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     },
   });
 
+  /**
+   * Save the current working copy, queued behind any save still in flight.
+   * The payload is read from formRef when the save STARTS, so it carries both
+   * the latest edits and the revision the previous save advanced to.
+   * Resolves to whether this save went through (never rejects — the
+   * mutation's onError already reports a failure).
+   */
+  function queueSave(): Promise<boolean> {
+    const run = async () => {
+      const latest = formRef.current;
+      if (!latest) return;
+      pendingRef.current = null; // a save is now in flight for these edits
+      setSaveState("saving");
+      await save.mutateAsync(latest);
+    };
+    const next = (saveChain.current ?? Promise.resolve()).catch(() => undefined).then(run);
+    saveChain.current = next;
+    return next.then(
+      () => true,
+      () => false,
+    );
+  }
+
   // Debounced autosave. Uses functional state + a ref so rapid sequential edits
   // never clobber each other (the saved payload is always the merged latest).
   function patch(updater: (prev: ContentDetail) => ContentDetail) {
@@ -484,13 +519,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     setForm(next);
     setSaveState("dirty");
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      const latest = formRef.current;
-      if (!latest) return;
-      pendingRef.current = null; // a save is now in flight for these edits
-      setSaveState("saving");
-      save.mutate(latest);
-    }, 700);
+    timer.current = setTimeout(() => void queueSave(), 700);
   }
 
   // Warn on navigation with unsaved changes.
@@ -509,8 +538,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
     mutationFn: async () => {
       if (timer.current) clearTimeout(timer.current);
       if ((saveState === "dirty" || saveState === "saving") && formRef.current) {
-        pendingRef.current = null;
-        await save.mutateAsync(formRef.current);
+        // A save that failed (409, validation) must not be followed by a publish
+        // of the older server draft.
+        if (!(await queueSave())) throw new Error("Your latest changes could not be saved, so nothing was published.");
       }
       return api.publish(documentId, locale);
     },
@@ -711,9 +741,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       const next = { ...base, name: res.name, slug: res.slug, data: res.data };
       setForm(next);
       formRef.current = next;
-      pendingRef.current = null;
-      setSaveState("saving");
-      save.mutate(next);
+      void queueSave();
       setHideTranslateOffer(true);
       toast.success(
         res.usedFallback ? "Draft seeded from source" : "Translated draft created",
@@ -992,12 +1020,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         if (timer.current) clearTimeout(timer.current);
-        const latest = formRef.current;
-        if (latest && (saveState === "dirty" || saveState === "saving")) {
-          pendingRef.current = null;
-          setSaveState("saving");
-          save.mutate(latest);
-        }
+        if (formRef.current && (saveState === "dirty" || saveState === "saving")) void queueSave();
       }
     };
     window.addEventListener("keydown", onKey);
