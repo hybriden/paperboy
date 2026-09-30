@@ -201,9 +201,15 @@ export async function deleteAsset(
   uploadsDir?: string,
 ): Promise<{ relativePath: string }> {
   requirePermission(ctx, "content.delete");
-  const res = await db.delete(asset).where(and(eq(asset.documentId, documentId), eq(asset.siteId, ctx.siteId))).returning({ url: asset.url });
-  if (!res[0]) throw Errors.notFound("Asset");
-  const relativePath = res[0].url;
-  if (uploadsDir) await removeAssetFiles(uploadsDir, relativePath);
-  return { relativePath };
+  // Files are removed INSIDE the row delete's transaction: if they can't be
+  // (UPLOADS_DIR missing, EACCES), the throw rolls the row back, so the erasure
+  // stays retryable instead of leaving downloadable bytes with no row to find
+  // them by.
+  return db.transaction(async (tx) => {
+    const res = await tx.delete(asset).where(and(eq(asset.documentId, documentId), eq(asset.siteId, ctx.siteId))).returning({ url: asset.url });
+    if (!res[0]) throw Errors.notFound("Asset");
+    const relativePath = res[0].url;
+    if (uploadsDir) await removeAssetFiles(uploadsDir, relativePath);
+    return { relativePath };
+  });
 }

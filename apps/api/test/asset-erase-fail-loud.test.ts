@@ -1,8 +1,10 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { removeAssetFiles } from "@paperboy/db";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { deleteAsset, getAccessContext, removeAssetFiles, schemaTables } from "@paperboy/db";
+import { eq } from "drizzle-orm";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { type Suite, setupApi } from "./helpers.js";
 
 /**
  * removeAssetFiles must FAIL LOUDLY on a real delete error, matching the comment
@@ -37,5 +39,33 @@ describe("removeAssetFiles fails loudly on a real delete error (P4)", () => {
     mkdirSync(join(dir, "stuck"));
     await expect(removeAssetFiles(dir, "/api/v1/media/stuck")).rejects.toThrow();
     expect(existsSync(join(dir, "stuck"))).toBe(true);
+  });
+});
+
+/**
+ * Audit 2026-09-30: deleteAsset committed the row delete FIRST and only then
+ * removed the files. When that failed (UPLOADS_DIR missing on a stdio MCP, an
+ * EACCES), the caller got an error, retried, and got 404 — while the file stayed
+ * publicly downloadable with no row left to find it by. The row must survive a
+ * failed file removal so the erasure can be retried.
+ */
+describe("deleteAsset keeps the row when the files can't be removed", () => {
+  let s: Suite;
+  beforeAll(async () => {
+    s = await setupApi();
+  });
+  afterAll(async () => {
+    await s.app.close();
+  });
+
+  it("a failed file removal leaves the asset in place (retryable), not orphaned bytes", async () => {
+    const [admin] = await s.app.db.select().from(schemaTables.users).where(eq(schemaTables.users.email, "admin@paperboy.test"));
+    const ctx = await getAccessContext(s.app.db, admin!.id);
+    const documentId = `asset_erase_${Date.now()}`;
+    await s.app.db.insert(schemaTables.asset).values({ documentId, filename: "x.png", mime: "image/png", size: 1, url: "/api/v1/media/erase-me.png", siteId: ctx.siteId });
+
+    await expect(deleteAsset(s.app.db, ctx, documentId, "/definitely/not/an/uploads/dir")).rejects.toThrow(/UPLOADS_DIR/);
+    const left = await s.app.db.select().from(schemaTables.asset).where(eq(schemaTables.asset.documentId, documentId));
+    expect(left).toHaveLength(1);
   });
 });
