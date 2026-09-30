@@ -201,9 +201,41 @@ describe("public files (robots/sitemap/llms/security) + /delivery/pages", () => 
     const first = await s.app.inject({ method: "GET", url: "/api/v1/delivery/sitemap.xml", headers: pub });
     expect(first.statusCode).toBe(200);
     const etag = first.headers.etag as string;
-    expect(etag).toMatch(/^W\/"cv-\d+"$/); // was absent — the two heaviest generated files had no conditional GET
+    expect(etag).toMatch(/^W\/".+"$/); // was absent — the two heaviest generated files had no conditional GET
     const again = await s.app.inject({ method: "GET", url: "/api/v1/delivery/sitemap.xml", headers: { ...pub, "if-none-match": etag } });
     expect(again.statusCode).toBe(304);
+  });
+
+  // Audit 2026-09-30: the ETag was max(cv) over the listed pages, so it did not
+  // change when the site config changed (canonical base URL, llms summary) or
+  // when a page that didn't hold the max cv was withdrawn — crawlers and CDNs
+  // kept getting 304 for a file whose bytes had changed.
+  it("a changed canonical base URL is never answered with a stale 304", async () => {
+    for (const file of ["sitemap.xml", "llms.txt"]) {
+      const first = await s.app.inject({ method: "GET", url: `/api/v1/delivery/${file}`, headers: pub });
+      expect(first.statusCode).toBe(200);
+      const etag = first.headers.etag as string;
+      await s.app.inject({ method: "POST", url: "/api/v1/manage/site/public-files", headers: authHeaders(admin), payload: { canonicalBaseUrl: "https://moved.example.com" } });
+      try {
+        const again = await s.app.inject({ method: "GET", url: `/api/v1/delivery/${file}`, headers: { ...pub, "if-none-match": etag } });
+        expect(again.statusCode, file).toBe(200);
+        expect(again.body).toContain("https://moved.example.com");
+      } finally {
+        await s.app.inject({ method: "POST", url: "/api/v1/manage/site/public-files", headers: authHeaders(admin), payload: { canonicalBaseUrl: "https://www.example.com" } });
+      }
+    }
+  });
+
+  it("withdrawing a listed page changes the sitemap's ETag", async () => {
+    const first = await s.app.inject({ method: "GET", url: "/api/v1/delivery/sitemap.xml", headers: pub });
+    const etag = first.headers.etag as string;
+    // A seeded (low-cv) page, so max(cv) over the remaining pages is unchanged.
+    expect(first.body).toContain("/blog/modelling-listings");
+    const unpub = await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${s.ids.postIds[1]}/unpublish?locale=en`, headers: authHeaders(admin) });
+    expect(unpub.statusCode, unpub.body).toBe(200);
+    const again = await s.app.inject({ method: "GET", url: "/api/v1/delivery/sitemap.xml", headers: { ...pub, "if-none-match": etag } });
+    expect(again.statusCode).toBe(200);
+    expect(again.body).not.toContain("/blog/modelling-listings");
   });
 
 });
