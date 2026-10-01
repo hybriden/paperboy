@@ -19,10 +19,10 @@ function fakeRes() {
 }
 
 describe("MCP HTTP handler — auth errors degrade to 500 (S2-H4)", () => {
-  it("a throwing bearerOk yields a 500 and never rejects", async () => {
+  it("a throwing authorize yields a 500 and never rejects", async () => {
     const handler = makeMcpHttpHandler({
       httpPath: "/mcp",
-      bearerOk: async () => {
+      authorize: async () => {
         throw new Error("DB connection refused");
       },
       buildServer: () => {
@@ -41,7 +41,7 @@ describe("MCP HTTP handler — auth errors degrade to 500 (S2-H4)", () => {
   it("a non-matching path still 404s without invoking auth", async () => {
     const handler = makeMcpHttpHandler({
       httpPath: "/mcp",
-      bearerOk: async () => {
+      authorize: async () => {
         throw new Error("auth should not run for the wrong path");
       },
       buildServer: () => {

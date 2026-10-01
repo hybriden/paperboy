@@ -122,6 +122,28 @@ export interface SearchResult {
   urlPath: string | null;
 }
 
+/** What the consent screen needs: who is asking, and which sites may be picked.
+ *  `errorRedirect` means the request is bad in a way the CLIENT should hear about. */
+export type OAuthConsentRequest =
+  | { errorRedirect: string }
+  | {
+      client: { name: string; redirectUri: string };
+      sites: { id: string; slug: string; name: string }[];
+      allSitesAllowed: boolean;
+      activeSiteId: string;
+    };
+
+export interface OAuthGrantRow {
+  id: number;
+  clientName: string;
+  userId: string;
+  email: string;
+  siteId: string | null;
+  createdAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
 const BASE = "/api/v1";
 
 let csrfToken: string | null = null;
@@ -215,7 +237,8 @@ async function isCsrfFailure(res: Response): Promise<boolean> {
  *  "Unexpected token <" JSON SyntaxError. */
 async function parseResponse<T>(res: Response): Promise<T> {
   const text = await res.text();
-  let data: { error?: string; message?: string; fields?: string[] } | undefined;
+  // `error_description` is the OAuth endpoints' wording (RFC 6749) for `message`.
+  let data: { error?: string; message?: string; error_description?: string; fields?: string[] } | undefined;
   try {
     data = text ? JSON.parse(text) : undefined;
   } catch {
@@ -226,7 +249,7 @@ async function parseResponse<T>(res: Response): Promise<T> {
       res.status === 413
         ? "File is too large (max 5 MB)."
         : res.statusText || `Request failed (${res.status})`;
-    throw new ApiError(res.status, data?.error ?? "error", data?.message ?? fallback, data?.fields);
+    throw new ApiError(res.status, data?.error ?? "error", data?.message ?? data?.error_description ?? fallback, data?.fields);
   }
   return data as T;
 }
@@ -448,6 +471,14 @@ export const api = {
   createMcpToken: (name: string, allSites = false) =>
     request<{ token: string }>("POST", "/manage/mcp-tokens", { name, allSites }),
   revokeMcpToken: (id: number) => request<{ ok: boolean }>("POST", `/manage/mcp-tokens/${id}/revoke`),
+
+  // MCP OAuth: the consent screen, and the connections it creates.
+  oauthRequest: (query: string, signal?: AbortSignal) =>
+    request<OAuthConsentRequest>("GET", `/oauth/authorize/request?${query}`, undefined, signal),
+  oauthDecide: (params: Record<string, string>, approve: boolean, siteId: string | null) =>
+    request<{ redirectTo: string }>("POST", "/oauth/authorize", { ...params, approve, siteId }),
+  oauthGrants: (signal?: AbortSignal) => request<OAuthGrantRow[]>("GET", "/manage/oauth-grants", undefined, signal),
+  revokeOAuthGrant: (id: number) => request<{ ok: boolean }>("POST", `/manage/oauth-grants/${id}/revoke`),
 
   webhooks: (signal?: AbortSignal) => request<WebhookRow[]>("GET", "/manage/webhooks", undefined, signal),
   createWebhook: (body: { name: string; url: string; events?: string[] }) =>

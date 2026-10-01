@@ -293,6 +293,46 @@ export const mcpToken = pgTable("mcp_token", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
 
+/**
+ * OAuth for the remote MCP server (migration 0029). A grant is one consented
+ * connection — a client acting AS a user, confined to one site or (NULL) every
+ * site, the same cap an mcp_token carries. Tokens are stored sha-256 hashed.
+ */
+export const oauthClient = pgTable("oauth_client", {
+  clientId: text("client_id").primaryKey(),
+  clientName: text("client_name").notNull(),
+  redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
+  clientSecretHash: text("client_secret_hash"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const oauthCode = pgTable("oauth_code", {
+  codeHash: text("code_hash").primaryKey(),
+  clientId: text("client_id").notNull(),
+  userId: text("user_id").notNull(),
+  siteId: text("site_id"),
+  redirectUri: text("redirect_uri").notNull(),
+  codeChallenge: text("code_challenge").notNull(),
+  resource: text("resource").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  grantId: integer("grant_id"),
+});
+
+export const oauthGrant = pgTable("oauth_grant", {
+  id: serial("id").primaryKey(),
+  clientId: text("client_id").notNull(),
+  userId: text("user_id").notNull(),
+  siteId: text("site_id"),
+  resource: text("resource").notNull(),
+  accessTokenHash: text("access_token_hash").notNull().unique(),
+  accessExpiresAt: timestamp("access_expires_at", { withTimezone: true }).notNull(),
+  refreshTokenHash: text("refresh_token_hash").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});
+
 export const auditLog = pgTable(
   "audit_log",
   {

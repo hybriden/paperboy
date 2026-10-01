@@ -794,6 +794,15 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "GET /api/v1/manage/oauth-grants": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": "List MCP connections made through OAuth (yours; everyone's with user.manage)",
+    "tags": [
+      "oauth",
+    ],
+  },
   "GET /api/v1/manage/pages": {
     "requestBodyRequired": [],
     "requiredParams": [],
@@ -1017,6 +1026,15 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "summary": null,
     "tags": [
       "delivery",
+    ],
+  },
+  "GET /api/v1/oauth/authorize/request": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": "Validate an MCP authorization request and list the sites the user may connect",
+    "tags": [
+      "oauth",
     ],
   },
   "GET /health": {
@@ -1676,6 +1694,17 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "POST /api/v1/manage/oauth-grants/{id}/revoke": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [],
+    "summary": "Revoke an MCP connection (takes effect immediately)",
+    "tags": [
+      "oauth",
+    ],
+  },
   "POST /api/v1/manage/site/agent-review": {
     "requestBodyRequired": [
       "required",
@@ -1899,6 +1928,18 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "summary": null,
     "tags": [
       "manage",
+    ],
+  },
+  "POST /api/v1/oauth/authorize": {
+    "requestBodyRequired": [
+      "approve",
+      "siteId",
+    ],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": "Approve or deny an MCP connection (consent); returns where to send the browser",
+    "tags": [
+      "oauth",
     ],
   },
   "PUT /api/v1/manage/assets/{documentId}": {

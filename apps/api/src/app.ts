@@ -38,6 +38,7 @@ import { registerAiRoutes } from "./routes/ai.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDeliveryRoutes } from "./routes/delivery.js";
 import { registerSubmitRoutes } from "./routes/submit.js";
+import { oauthConfigFrom, registerOAuthRoutes } from "./routes/oauth.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMediaRoutes } from "./routes/media.js";
 import { registerManageRoutes } from "./routes/manage.js";
@@ -237,6 +238,9 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   // Image transforms (?w=&format=&q=) — the :file param route also serves
   // originals; the static wildcard above remains as fallback for nested paths.
   await app.register(registerMediaRoutes);
+  // OAuth for the remote MCP server — registered unprefixed: its discovery
+  // documents live at the root (/.well-known/…), its endpoints under /api/v1.
+  await app.register(registerOAuthRoutes, { config: oauthConfigFrom(env) });
 
   // Scheduled-publish ticker: promotes due drafts and expires due content. Single
   // long-lived process (one container); the query uses no cross-request state.
