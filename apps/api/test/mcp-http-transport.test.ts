@@ -184,6 +184,23 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     expect(body.error).toBeTruthy();
   });
 
+  // Reported live 2026-10-01: after the mcp container was redeployed (and after
+  // the 30-minute idle reaper), Claude kept sending its old session id and got
+  // 400 "Server not initialized" on every call — a dead connector until it was
+  // re-added. The spec: a server MUST answer an unknown session id with 404,
+  // and a client MUST then start a new session. 404 is what makes it recover.
+  it("an unknown or expired session id gets 404, so the client starts a new session", async () => {
+    const c = new HttpMcp(envToken);
+    const res = await c.post({ jsonrpc: "2.0", id: 1, method: "tools/list" }, { session: "a-session-from-before-the-restart" });
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as { jsonrpc?: string; error?: { message?: string } };
+    expect(body.jsonrpc).toBe("2.0");
+    expect(body.error?.message).toMatch(/session/i);
+    // …and starting over works.
+    expect((await c.initialize()).status).toBe(200);
+    expect((await c.call("list_sites")).isError).toBe(false);
+  });
+
   it("a separately minted admin token for the SAME boot user is accepted (token rotation works)", async () => {
     const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-rotated", userId: adminId } });
     const rotated = minted.json().token as string;

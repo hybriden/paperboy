@@ -59,7 +59,16 @@ export function makeMcpHttpHandler(deps: McpHttpDeps) {
       }
       const sid = req.headers["mcp-session-id"];
       const existing = typeof sid === "string" ? deps.sessions.get(sid) : undefined;
-      if (typeof sid === "string" && !existing) owners.delete(sid);
+      if (typeof sid === "string" && !existing) {
+        // A session id we don't know: the process restarted, or the idle reaper
+        // closed it. The spec requires 404 here — it is the signal a client
+        // acts on to start a new session. Handing the request to a fresh
+        // transport instead answered 400 "Server not initialized", and clients
+        // (Claude among them) never recovered until the connector was re-added.
+        owners.delete(sid);
+        json(res, 404, { jsonrpc: "2.0", error: { code: -32001, message: "Session not found — initialize a new session" }, id: null });
+        return;
+      }
       if (existing && owners.get(sid as string) !== principal) {
         json(res, 403, { error: "This session belongs to another user — initialize a new one" });
         return;
