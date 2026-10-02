@@ -42,6 +42,7 @@ import { oauthConfigFrom, registerOAuthRoutes } from "./routes/oauth.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMediaRoutes } from "./routes/media.js";
 import { registerManageRoutes } from "./routes/manage.js";
+import { registerUploadRoutes } from "./routes/uploads.js";
 import "./types.js";
 
 export interface BuildOptions {
@@ -241,6 +242,8 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   // OAuth for the remote MCP server — registered unprefixed: its discovery
   // documents live at the root (/.well-known/…), its endpoints under /api/v1.
   await app.register(registerOAuthRoutes, { config: oauthConfigFrom(env) });
+  // Upload links (MCP create_upload_link): its own credential, never the session.
+  await app.register(registerUploadRoutes, { uploadsDir: env.UPLOADS_DIR });
 
   // Scheduled-publish ticker: promotes due drafts and expires due content. Single
   // long-lived process (one container); the query uses no cross-request state.

@@ -110,14 +110,32 @@ function isInternalAddress(ip: string): boolean {
  * and normal DNS then applies.
  */
 async function assertPublicWebhookUrl(rawUrl: string): Promise<string[] | undefined> {
+  if (process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE === "true") {
+    assertHttpUrl(rawUrl, "Webhook URL");
+    return undefined;
+  }
+  return assertPublicHttpUrl(rawUrl, "Webhook URL");
+}
+
+function assertHttpUrl(rawUrl: string, what: string): URL {
   let u: URL;
   try {
     u = new URL(rawUrl);
   } catch {
-    throw Errors.badRequest("Webhook URL must be a valid http(s) URL");
+    throw Errors.badRequest(`${what} must be a valid http(s) URL`);
   }
-  if (u.protocol !== "https:" && u.protocol !== "http:") throw Errors.badRequest("Webhook URL must be a valid http(s) URL");
-  if (process.env.PAPERBOY_WEBHOOK_ALLOW_PRIVATE === "true") return undefined;
+  if (u.protocol !== "https:" && u.protocol !== "http:") throw Errors.badRequest(`${what} must be a valid http(s) URL`);
+  return u;
+}
+
+/**
+ * The egress guard every server-side fetch of a caller-supplied URL goes through
+ * (webhooks, URL asset imports): http(s) only, and every address the host
+ * resolves to must be PUBLIC. Returns those addresses so the caller connects to
+ * exactly them (see postPinned) — no second DNS answer to rebind.
+ */
+export async function assertPublicHttpUrl(rawUrl: string, what: string): Promise<string[]> {
+  const u = assertHttpUrl(rawUrl, what);
   // `new URL("http://[::1]/").hostname` keeps the brackets; isIP wants them off.
   const host = u.hostname.replace(/^\[|\]$/g, "");
   let addrs: string[];
@@ -127,13 +145,20 @@ async function assertPublicWebhookUrl(rawUrl: string): Promise<string[] | undefi
     try {
       addrs = (await lookup(host, { all: true })).map((r) => r.address);
     } catch {
-      throw Errors.badRequest("Webhook URL host could not be resolved");
+      throw Errors.badRequest(`${what} host could not be resolved`);
     }
   }
   if (!addrs.length || addrs.some(isInternalAddress)) {
-    throw Errors.badRequest("Webhook URL must point to a public host (loopback/link-local/private addresses are not allowed)");
+    throw Errors.badRequest(`${what} must point to a public host (loopback/link-local/private addresses are not allowed)`);
   }
   return addrs;
+}
+
+/** The `lookup` override that makes a socket connect to vetted addresses only. */
+export function pinnedLookup(addresses: string[]) {
+  const found = addresses.map((address) => ({ address, family: isIP(address) }));
+  return (_host: string, opts: { all?: boolean }, cb: (err: Error | null, address: string | typeof found, family?: number) => void) =>
+    opts.all ? cb(null, found) : cb(null, found[0]!.address, found[0]!.family);
 }
 
 /** What a webhook POST needs from fetch's RequestInit — shared by the pinned
@@ -159,16 +184,12 @@ export interface WebhookResponse {
 function postPinned(url: string, init: WebhookPostInit, addresses?: string[]): Promise<WebhookResponse> {
   const u = new URL(url);
   const request = u.protocol === "https:" ? httpsRequest : httpRequest;
-  const found = addresses?.map((address) => ({ address, family: isIP(address) })) ?? [];
   const headers = { ...init.headers, ...(init.body !== undefined ? { "content-length": String(Buffer.byteLength(init.body)) } : {}) };
   const options = {
     method: init.method ?? "POST",
     headers,
     signal: init.signal,
-    lookup: found.length
-      ? (_host: string, opts: { all?: boolean }, cb: (err: Error | null, address: string | typeof found, family?: number) => void) =>
-          opts.all ? cb(null, found) : cb(null, found[0]!.address, found[0]!.family)
-      : undefined,
+    lookup: addresses?.length ? pinnedLookup(addresses) : undefined,
   };
   return new Promise((resolve, reject) => {
     const req = request(u, options, (res) => {

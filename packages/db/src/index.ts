@@ -13,6 +13,7 @@ export * from "./webhooks.js";
 export * from "./site.js";
 export * from "./sites.js";
 export * from "./stock.js";
+export * from "./uploads.js";
 export * from "./totp.js";
 export * from "./mcp-tokens.js";
 export { migrate } from "./migrate.js";

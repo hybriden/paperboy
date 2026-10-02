@@ -1,8 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createServer as createHttpServer, type IncomingMessage } from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -43,6 +41,10 @@ import {
   listSites,
   getTree,
   importStockImage,
+  createUploadLink,
+  importAssetFromUrl,
+  saveToUploadsDir,
+  storeUploadedAsset,
   deleteSubmission,
   eraseSubmissionsByEmail,
   exportSubmissions,
@@ -71,7 +73,6 @@ import {
   publishContent,
   schedulePublish,
   restoreContent,
-  MEDIA_PREFIX,
   searchStockImages,
   restoreVersion,
   revokeDeliveryKey,
@@ -780,16 +781,61 @@ tool(
   async ({ providerId, alt }) => {
     const rec = await importStockImage(db, ctx(), { providerId, alt }, {
       envKey: UNSPLASH_ACCESS_KEY,
-      save: async (fileName, buf) => {
-        await mkdir(UPLOADS_DIR, { recursive: true });
-        await writeFile(join(UPLOADS_DIR, fileName), buf); // safe: server-generated name
-        return { relativePath: `${MEDIA_PREFIX}/${fileName}` };
-      },
+      save: saveToUploadsDir(UPLOADS_DIR),
     });
     await mcpAudit("asset.import", rec.documentId, null, { provider: rec.sourceMeta?.provider, providerId, mime: rec.mime, size: rec.size });
     return rec;
   },
 );
+
+tool(
+  "create_upload_link",
+  "Get a short-lived link for uploading LOCAL files (images, PDFs) into the media library — the way to upload files on your own machine, which this server can't read. POST them as multipart/form-data with the returned header, e.g. with curl (several -F file=@… per request is fine). The response lists each stored asset's documentId: set it on an image field with set_field, and give it alt text with update_asset_alt. The link uploads as you, into this site, and expires after 15 minutes.",
+  {},
+  async () => {
+    if (!PUBLIC_URL) throw new Error("Upload links need PUBLIC_URL (the CMS's public origin, e.g. https://cms.example.com) set on the MCP server. Use upload_asset with a url or dataBase64 instead.");
+    const link = await createUploadLink(db, ctx());
+    await mcpAudit("upload_link.create", null, null, { expiresAt: link.expiresAt.toISOString() });
+    const uploadUrl = `${PUBLIC_URL}/api/v1/uploads`;
+    return {
+      uploadUrl,
+      headers: { Authorization: `Bearer ${link.token}` },
+      expiresAt: link.expiresAt.toISOString(),
+      example: `curl -H "Authorization: Bearer ${link.token}" -F file=@photo-1.jpg -F file=@photo-2.jpg ${uploadUrl}`,
+      limits: "PNG, JPEG, GIF, WEBP or PDF; max 5 MB per file; up to 20 files per request",
+    };
+  },
+);
+tool(
+  "upload_asset",
+  "Add a file (PNG, JPEG, GIF, WEBP or PDF, max 5 MB) to the media library from a public URL or from base64 bytes, and return the asset — set its documentId on an image field with set_field. For files on YOUR machine prefer create_upload_link: base64 through a tool call costs roughly 1 token per 2-3 bytes.",
+  {
+    url: z.string().url().optional().describe("Public http(s) URL of the file itself (not a web page showing it)"),
+    dataBase64: z.string().optional().describe("The file's bytes, base64-encoded (a data: URL prefix is accepted)"),
+    filename: z.string().max(255).optional().describe("Display name in the media library, e.g. 'hero.jpg'"),
+    alt: z.string().max(300).optional().describe("Alt text"),
+  },
+  async ({ url, dataBase64, filename, alt }) => {
+    if (Boolean(url) === Boolean(dataBase64)) {
+      throw new Error("Pass exactly one of url or dataBase64. Example: {\"url\": \"https://example.com/photo.jpg\", \"alt\": \"A calculator on a desk\"}");
+    }
+    const save = saveToUploadsDir(UPLOADS_DIR);
+    const rec = url
+      ? await importAssetFromUrl(db, ctx(), { url, filename, alt }, save)
+      : await storeUploadedAsset(db, ctx(), { buf: decodeBase64(dataBase64!), filename, alt }, save);
+    await mcpAudit("asset.upload", rec.documentId, null, { mime: rec.mime, size: rec.size, via: url ? "url" : "base64" });
+    return rec;
+  },
+);
+
+/** base64 → bytes, accepting a data: URL prefix and line breaks; refuses anything else. */
+function decodeBase64(data: string): Buffer {
+  const body = data.replace(/^data:[^;,]*;base64,/, "").replace(/\s+/g, "");
+  if (!body || !/^[A-Za-z0-9+/_-]+={0,2}$/.test(body)) {
+    throw new Error("dataBase64 is not valid base64. Send the file's bytes base64-encoded, optionally as a data: URL (data:image/jpeg;base64,/9j/4AAQ…).");
+  }
+  return Buffer.from(body, "base64");
+}
 
 /* ------------------------------ delivery (read) ------------------------ */
 const delv = { locale: loc, populate: z.number().min(0).max(4).optional(), preview: z.boolean().optional().describe("Use the preview perspective (drafts)") };

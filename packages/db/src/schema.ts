@@ -333,6 +333,15 @@ export const oauthGrant = pgTable("oauth_grant", {
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
 });
 
+/** A short-lived upload link (MCP `create_upload_link`): acts as its user, in its site. */
+export const uploadLink = pgTable("upload_link", {
+  tokenHash: text("token_hash").primaryKey(), // sha-256 of the token
+  userId: text("user_id").notNull(),
+  siteId: text("site_id").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const auditLog = pgTable(
   "audit_log",
   {
