@@ -262,6 +262,12 @@ cover other layouts. Set both on the `api` and `mcp` services:
 Minted tokens (`MCP_TOKEN`, Settings → MCP) keep working alongside OAuth. In HTTP mode every request
 acts as the user its token belongs to.
 
+**Files from the agent's own machine.** A remote MCP server can't read the agent's disk, so
+`create_upload_link` hands out a 15-minute upload link the agent `curl`s its files to
+(`POST /api/v1/uploads`, up to 20 files of 5 MB each per request). The link uploads as the user
+who created it, into that site. `upload_asset` covers a public URL (fetched behind the same
+egress guard as webhooks) or base64 bytes. Upload links are built from `PUBLIC_URL`.
+
 ### Agent-ready by design
 The MCP surface is hardened against the ways LLM agents actually fail — every one of these came out of running real agent workloads against it:
 

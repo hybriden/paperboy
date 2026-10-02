@@ -48,12 +48,12 @@ import {
   restoreVersion,
   revokeDeliveryKey,
   softDelete,
-  MEDIA_PREFIX,
   removeAssetFiles,
   deliveryFlagDelta,
   deleteVariant,
   discardDraft,
-  insertAsset,
+  saveToUploadsDir,
+  storeUploadedAsset,
   listAssets,
   listBlocks,
   listGlobals,
@@ -98,8 +98,6 @@ import {
   renameSite,
   resolveDefaultLocale,
 } from "@paperboy/db";
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import {
   AI_PROVIDERS,
   AI_REASONING_EFFORTS,
@@ -128,12 +126,10 @@ import {
   TypeTemplateExport,
   UpdateContentRequest,
   UpdateFolderRequest,
-  sniffUpload,
 } from "@paperboy/shared";
 import { mintPreviewToken } from "@paperboy/shared/preview-token";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
-import { nanoid } from "nanoid";
 import { z } from "zod";
 import { requireAuth, requireCsrf, requirePermission } from "../security.js";
 
@@ -625,21 +621,8 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         throw new AppError(413, "too_large", "Max file size is 5 MB");
       }
       if (data.file.truncated) throw new AppError(413, "too_large", "Max file size is 5 MB");
-      const sniff = sniffUpload(buf);
-      if (!sniff) throw new AppError(415, "unsupported_media", "Only PNG, JPEG, GIF, WEBP images or PDF documents are allowed");
-      const documentId = nanoid(24);
-      const fileName = `${documentId}.${sniff.ext}`;
-      await writeFile(join(app.uploadsDir, fileName), buf); // safe: server-generated name
-      const rec = await insertAsset(app.db, req.accessCtx!, {
-        documentId,
-        // Display metadata only (the served file uses the nanoid name above). Strip
-        // control chars + path separators and cap the length, so unbounded/untrusted
-        // text never reaches storage or any consumer (L8).
-        filename: (data.filename ?? "").replace(/[\p{Cc}/\\]/gu, "").slice(0, 255) || "file",
-        mime: sniff.mime,
-        size: buf.length,
-        relativePath: `${MEDIA_PREFIX}/${fileName}`,
-      });
+      const rec = await storeUploadedAsset(app.db, req.accessCtx!, { buf, filename: data.filename }, saveToUploadsDir(app.uploadsDir));
+      const documentId = rec.documentId;
       await audit(app.db, { actorUserId: req.user!.id, action: "asset.upload", documentId, ip: req.ip, detail: { mime: rec.mime, size: rec.size } });
       return rec;
     },
@@ -1257,10 +1240,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const rec = await importStockImage(app.db, req.accessCtx!, req.body, {
         envKey: app.stockConfig.unsplashKey,
-        save: async (fileName, buf) => {
-          await writeFile(join(app.uploadsDir, fileName), buf); // safe: server-generated name
-          return { relativePath: `${MEDIA_PREFIX}/${fileName}` };
-        },
+        save: saveToUploadsDir(app.uploadsDir),
       });
       await audit(app.db, {
         actorUserId: req.user!.id,

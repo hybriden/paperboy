@@ -8,6 +8,7 @@ exports[`MCP parity: real stdio server vs the API > locks the tool surface (any 
   "create_content_type",
   "create_delivery_key",
   "create_type_template",
+  "create_upload_link",
   "create_user",
   "create_webhook",
   "delete_asset",
@@ -68,5 +69,6 @@ exports[`MCP parity: real stdio server vs the API > locks the tool surface (any 
   "update_content_type",
   "update_type_template",
   "update_user",
+  "upload_asset",
 ]
 `;

@@ -1942,6 +1942,15 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "oauth",
     ],
   },
+  "POST /api/v1/uploads": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": "Upload files with an upload-link token (MCP create_upload_link); multipart/form-data, up to 20 files",
+    "tags": [
+      "uploads",
+    ],
+  },
   "PUT /api/v1/manage/assets/{documentId}": {
     "requestBodyRequired": [
       "alt",
