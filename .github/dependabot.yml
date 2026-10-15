@@ -4,11 +4,19 @@ version: 2
 # change what CI runs). A pin that nobody bumps rots into a stale, unpatched
 # action, so Dependabot owns the bumps — it rewrites both the SHA and the
 # trailing `# vX` comment.
+#
+# COOLDOWN: a release must have been public for a while before Dependabot
+# proposes it. A compromised or broken publish is usually yanked or patched
+# within days, and a hijacked package is the supply-chain attack a fresh-
+# release auto-bump walks straight into. Security updates IGNORE the cooldown
+# — they still arrive at once.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 7
     groups:
       actions:
         patterns: ["*"]
@@ -18,14 +26,23 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 14
+      semver-patch-days: 3
     # One PR per ecosystem-wide group keeps the pnpm workspace lockfile
     # consistent; security fixes still come through as their own PRs.
+    # Groups carry minor/patch only: a MAJOR bump gets its own PR, so one
+    # breaking release can't hold 30 safe ones hostage — and a red run names
+    # the package that broke it.
     groups:
       dev-dependencies:
         dependency-type: development
+        update-types: ["minor", "patch"]
         patterns: ["*"]
       production-dependencies:
         dependency-type: production
+        update-types: ["minor", "patch"]
         patterns: ["*"]
     ignore:
       # typescript-eslint supports TS <6.1 only (typescript-eslint#10940);
