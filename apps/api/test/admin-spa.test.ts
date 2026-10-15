@@ -30,6 +30,9 @@ function makeDist(): string {
   return dir;
 }
 
+/** buildApp creates UPLOADS_DIR; its /app/uploads default is not writable on a CI runner. */
+const scratchUploads = (): string => mkdtempSync(join(tmpdir(), "paperboy-uploads-"));
+
 let suite: Suite;
 beforeAll(async () => {
   suite = await setupApi({ ADMIN_DIST_DIR: makeDist() });
@@ -119,12 +122,12 @@ describe("admin SPA served by the API", () => {
 describe("admin SPA configuration", () => {
   it("refuses to boot when ADMIN_DIST_DIR has no index.html", async () => {
     const empty = mkdtempSync(join(tmpdir(), "paperboy-admin-empty-"));
-    const env = loadEnv({ DATABASE_URL: TEST_DB, NODE_ENV: "test", ADMIN_DIST_DIR: empty });
+    const env = loadEnv({ DATABASE_URL: TEST_DB, NODE_ENV: "test", UPLOADS_DIR: scratchUploads(), ADMIN_DIST_DIR: empty });
     await expect(buildApp({ env })).rejects.toThrow(/ADMIN_DIST_DIR.*index\.html/);
   });
 
   it("does not serve anything at / when ADMIN_DIST_DIR is unset", async () => {
-    const env = loadEnv({ DATABASE_URL: TEST_DB, NODE_ENV: "test" });
+    const env = loadEnv({ DATABASE_URL: TEST_DB, NODE_ENV: "test", UPLOADS_DIR: scratchUploads() });
     const app = await buildApp({ env });
     try {
       const res = await app.inject({ method: "GET", url: "/" });
