@@ -117,6 +117,7 @@ import {
   RoleName,
   STOCK_PROVIDERS,
   SeoFilesConfig,
+  LocalePrefix,
   SetFolderRequest,
   parseSeoFilesConfig,
   StockSearchResult,
@@ -988,6 +989,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         tags: ["manage"],
         body: z.object({
           canonicalBaseUrl: z.string().max(400).nullable().optional(),
+          localePrefix: LocalePrefix.optional(),
           robotsExtra: z.string().max(4000).nullable().optional(),
           llmsSummary: z.string().max(2000).nullable().optional(),
           llmsOverride: z.string().max(20000).nullable().optional(),
@@ -1526,12 +1528,14 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     previewBaseUrl: z.string().nullable(),
     startPageId: z.string().nullable(),
     canonicalBaseUrl: z.string().nullable(),
+    localePrefix: LocalePrefix,
     seoFiles: SeoFilesConfig,
   });
   type SiteRowDb = Awaited<ReturnType<typeof listSites>>[number];
   const siteOut = (s: SiteRowDb): z.infer<typeof SiteOut> => ({
     ...s,
     createdAt: s.createdAt.toISOString(),
+    localePrefix: LocalePrefix.catch("always").parse(s.localePrefix),
     seoFiles: parseSeoFilesConfig(s.seoFiles),
   });
 

@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { type AiConfig, type AiProvider, type AiReasoningEffort, AI_REASONING_EFFORTS, DEFAULT_AI_MODELS, DEFAULT_OPENAI_BASE_URL, SeoFilesConfig, parseSeoFilesConfig } from "@paperboy/shared";
+import { type AiConfig, type AiProvider, type AiReasoningEffort, AI_REASONING_EFFORTS, DEFAULT_AI_MODELS, DEFAULT_OPENAI_BASE_URL, LocalePrefix, SeoFilesConfig, parseSeoFilesConfig } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, loadAuthorized, requirePermission } from "./scope.js";
@@ -73,7 +73,7 @@ export async function setPreviewBaseUrl(db: Database, ctx: AccessContext, url: s
 export async function setSiteFilesConfig(
   db: Database,
   ctx: AccessContext,
-  input: { canonicalBaseUrl?: string | null } & { [K in keyof SeoFilesConfig]?: string | null },
+  input: { canonicalBaseUrl?: string | null; localePrefix?: LocalePrefix } & { [K in keyof SeoFilesConfig]?: string | null },
 ): Promise<void> {
   requirePermission(ctx, "content.publish");
   const rows = await db.select().from(site).where(eq(site.id, ctx.siteId)).limit(1);
@@ -86,6 +86,8 @@ export async function setSiteFilesConfig(
     }
     patch.canonicalBaseUrl = url || null;
   }
+  // How the frontend spells locales in URLs — sitemap/llms URLs and redirect paths follow it.
+  if (input.localePrefix !== undefined) patch.localePrefix = LocalePrefix.parse(input.localePrefix);
   const fileKeys = ["robotsExtra", "llmsSummary", "llmsOverride", "securityContact", "securityPolicyUrl", "securityLanguages"] as const;
   if (fileKeys.some((k) => input[k] !== undefined)) {
     const files: Record<string, string> = { ...parseSeoFilesConfig(rows[0].seoFiles) };

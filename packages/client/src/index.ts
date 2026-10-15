@@ -459,12 +459,117 @@ export function createClient(options: PaperboyClientOptions) {
       return { ok: true, submissionId: body.submissionId, confirmation: body.confirmation };
     },
 
+    /**
+     * The site's redirect rules (GET /delivery/redirects). Apply them ONLY
+     * where no published page answers — fetch the page first, and on a 404 run
+     * `matchRedirect(manifest, path)`. Cache the manifest briefly (the server
+     * sends max-age=60 and an ETag); pass `etagCache: true` to revalidate cheaply.
+     */
+    async redirects(): Promise<RedirectManifest> {
+      const r = await request<RedirectManifest>("/redirects", {});
+      return r.body ?? { version: 1, rules: [] };
+    },
+
+    /**
+     * Report what this frontend saw: rule ids it applied (hit counts) and paths
+     * that answered 404 (the 404 log in Settings → Redirects). Call it
+     * server-side with the PUBLIC key, fire-and-forget (e.g. a Worker's
+     * `ctx.waitUntil`). Paths only — the query string is stripped server-side.
+     */
+    async reportTraffic(events: { redirectHits?: number[]; notFound?: string[] }): Promise<void> {
+      const res = await doFetch(`${base}/api/v1/delivery/traffic`, {
+        ...options.fetchInit,
+        method: "POST",
+        headers: mergeHeaders(options.fetchInit?.headers, { authorization: `Bearer ${options.key}`, "content-type": "application/json" }),
+        body: JSON.stringify(events),
+      });
+      if (!res.ok) throw new PaperboyError(res.status, `Traffic report failed (${res.status})`);
+    },
+
     mediaUrl,
     mediaSrcset,
   };
 }
 
 export type PaperboyClient = ReturnType<typeof createClient>;
+
+/* =========================================================================
+ * Redirects — the matcher a frontend runs against GET /delivery/redirects.
+ * Mirrors @paperboy/shared's matchRedirect; client-redirects.test.ts pins the
+ * two together (this package is published and has no dependencies).
+ * ========================================================================= */
+
+export interface RedirectManifestRule {
+  id: number;
+  /** Normalized source path: lowercase, no trailing slash. */
+  from: string;
+  /** "prefix" also matches everything under `from` and carries the rest over. */
+  match: "exact" | "prefix";
+  /** The live destination (path or absolute URL); null = 410 Gone. */
+  to: string | null;
+  status: 301 | 302 | 307 | 308 | 410;
+  /** Append the request's query string to the destination. */
+  keepQuery: boolean;
+}
+
+export interface RedirectManifest {
+  version: 1;
+  rules: RedirectManifestRule[];
+}
+
+export interface RedirectMatch {
+  rule: RedirectManifestRule;
+  status: RedirectManifestRule["status"];
+  /** Where to send the visitor; null for 410 Gone. */
+  location: string | null;
+}
+
+/** Decoded, lowercase, one leading slash, no trailing slash, no query — how sources are stored. */
+export function normalizeRedirectPath(raw: string): string {
+  let path = raw.split(/[?#]/)[0] ?? "";
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    /* a malformed escape is matched as written */
+  }
+  path = `/${path}`.replace(/\/{2,}/g, "/").toLowerCase();
+  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+}
+
+/**
+ * The rule a request (path + optional query) hits, or null. Exact rules win,
+ * then the longest prefix. Run it only after the CMS answered 404 for the
+ * path, so a rule never hides a live page.
+ */
+export function matchRedirect(manifest: RedirectManifest, requestPath: string): RedirectMatch | null {
+  const [rawPath = "", ...q] = requestPath.split("?");
+  const query = q.join("?").split("#")[0] ?? "";
+  const path = normalizeRedirectPath(rawPath);
+  let hit: RedirectManifestRule | undefined;
+  let suffix = "";
+  for (const rule of manifest.rules) {
+    if (rule.match === "exact" && rule.from === path) {
+      hit = rule;
+      suffix = "";
+      break;
+    }
+  }
+  if (!hit) {
+    for (const rule of manifest.rules) {
+      if (rule.match !== "prefix") continue;
+      const base = rule.from === "/" ? "" : rule.from;
+      if ((path === rule.from || path.startsWith(`${base}/`)) && (!hit || rule.from.length > hit.from.length)) {
+        hit = rule;
+        suffix = path.slice(base.length);
+      }
+    }
+  }
+  if (!hit) return null;
+  if (hit.to === null) return { rule: hit, status: hit.status, location: null };
+  let location = suffix && suffix !== "/" ? `${hit.to.replace(/\/+$/, "")}${suffix}` : hit.to;
+  if (hit.keepQuery && query) location += `${location.includes("?") ? "&" : "?"}${query}`;
+  return { rule: hit, status: hit.status, location };
+}
 
 /* =========================================================================
  * Delivery-consumption render helpers — pure, DOM-free transforms for content

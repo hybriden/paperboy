@@ -327,7 +327,7 @@ export const api = {
   previewToken: (signal?: AbortSignal) => request<{ token: string; expiresAt: number }>("GET", "/manage/preview-token", undefined, signal),
   setStartPage: (documentId: string | null, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }, undefined, siteOverride),
-  setPublicFiles: (body: Partial<Record<"canonicalBaseUrl" | keyof SeoFilesConfig, string | null>>, siteOverride?: string) =>
+  setPublicFiles: (body: Partial<Record<"canonicalBaseUrl" | keyof SeoFilesConfig, string | null>> & { localePrefix?: "always" | "except-default" }, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/public-files", body, undefined, siteOverride),
   setPreviewUrl: (url: string, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/preview-url", { url }, undefined, siteOverride),
@@ -497,6 +497,22 @@ export const api = {
     request<SubmissionRow>("GET", `/manage/forms/submissions/${encodeURIComponent(submissionId)}`, undefined, signal),
   /** The CSV export, as raw text — `request` parses JSON and this response is
    *  text/csv. The caller turns it into a download. */
+  redirects: (signal?: AbortSignal) => request<RedirectRule[]>("GET", "/manage/redirects", undefined, signal),
+  createRedirect: (body: RedirectInput) => request<RedirectWriteResult>("POST", "/manage/redirects", body),
+  updateRedirect: (id: number, body: Partial<RedirectInput>) => request<RedirectWriteResult>("PATCH", `/manage/redirects/${id}`, body),
+  deleteRedirects: (ids: number[]) => request<{ deleted: number }>("POST", "/manage/redirects/delete", { ids }),
+  testRedirect: (url: string, signal?: AbortSignal) => request<RedirectTestResult>("GET", `/manage/redirects/test?url=${encodeURIComponent(url)}`, undefined, signal),
+  notFound: (signal?: AbortSignal) => request<NotFoundRow[]>("GET", "/manage/redirects/not-found", undefined, signal),
+  dismissNotFound: (paths: string[]) => request<{ deleted: number }>("POST", "/manage/redirects/not-found/delete", { paths }),
+  importRedirects: (csv: string, dryRun: boolean) => request<RedirectImportResult>("POST", "/manage/redirects/import", { csv, dryRun }),
+  redirectsCsv: async (): Promise<string> => {
+    const headers: Record<string, string> = {};
+    if (activeSiteId) headers["x-paperboy-site"] = activeSiteId;
+    const res = await fetch(`${BASE}/manage/redirects.csv`, { method: "GET", credentials: "include", headers });
+    if (res.status === 401) onUnauthorized?.();
+    if (!res.ok) return parseResponse<string>(res);
+    return res.text();
+  },
   submissionsCsv: async (formId?: string): Promise<string> => {
     const headers: Record<string, string> = {};
     if (activeSiteId) headers["x-paperboy-site"] = activeSiteId;
@@ -615,7 +631,63 @@ export interface SiteRow {
   previewBaseUrl: string | null;
   startPageId: string | null;
   canonicalBaseUrl: string | null;
+  /** How the frontend prefixes locales in URLs (redirect targets, sitemap). */
+  localePrefix: "always" | "except-default";
   seoFiles: SeoFilesConfig;
+}
+
+export type RedirectStatus = 301 | 302 | 307 | 308 | 410;
+export type RedirectTarget =
+  | { kind: "page"; documentId: string; locale: string; name: string | null; url: string | null }
+  | { kind: "path"; path: string }
+  | { kind: "url"; url: string }
+  | { kind: "gone" };
+export interface RedirectRule {
+  id: number;
+  source: string;
+  sourcePath: string;
+  match: "exact" | "prefix";
+  target: RedirectTarget;
+  status: RedirectStatus;
+  keepQuery: boolean;
+  origin: "manual" | "auto" | "import";
+  note: string | null;
+  hits: number;
+  lastHitAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  problems: { code: "target-missing" | "target-unpublished" | "shadowed" | "chain" | "loop"; message: string }[];
+}
+export interface RedirectInput {
+  source: string;
+  target?: string | null;
+  targetDocumentId?: string | null;
+  targetLocale?: string | null;
+  status?: RedirectStatus;
+  keepQuery?: boolean;
+  note?: string | null;
+}
+export interface RedirectWriteResult {
+  redirect: RedirectRule;
+  collapsed: boolean;
+  repointed: number;
+}
+export interface RedirectTestResult {
+  hops: number;
+  steps: { path: string; result: "page" | "redirect" | "gone" | "external" | "not-found" | "loop"; ruleId?: number; status?: RedirectStatus; location?: string | null; page?: { documentId: string; locale: string } }[];
+}
+export interface NotFoundRow {
+  path: string;
+  hits: number;
+  firstSeen: string;
+  lastSeen: string;
+  coveredBy: number | null;
+}
+export interface RedirectImportResult {
+  created: number;
+  updated: number;
+  errors: number;
+  rows: { line: number; source: string; target: string; action: "create" | "update" | "unchanged" | "error"; message?: string }[];
 }
 
 export interface AgentEvent {

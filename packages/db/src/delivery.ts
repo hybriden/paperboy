@@ -1070,6 +1070,37 @@ const PAGE_DESCRIPTION_FIELDS = ["teaserText", "metaDescription", "summary", "in
  * locale-FALLBACK variants are not listed (only real ones — no duplicate URLs),
  * and the description honours per-type field visibility.
  */
+/**
+ * The PUBLISHED urlPath of every genuine (page, locale) variant — of the given
+ * pages, or of every page in the site. The lean half of deliveryPages (no
+ * descriptions, no noIndex), for redirects: resolving a page target to its live
+ * URL, and noticing when publishing or moving a page changed its URL. Same
+ * chokepoint walk, so it agrees with what delivery actually serves.
+ */
+export async function publishedPagePaths(
+  db: Database,
+  siteId: string,
+  documentIds?: string[],
+): Promise<{ documentId: string; locale: string; urlPath: string }[]> {
+  if (documentIds && documentIds.length === 0) return [];
+  const ctx = new DeliveryCtx(db, siteId);
+  const locales = await db.select({ code: locale.code }).from(locale).where(eq(locale.enabled, true)).orderBy(asc(locale.sortIndex));
+  const conditions = [isNull(contentItem.deletedAt), eq(contentItem.siteId, siteId), eq(contentItem.kind, "page")];
+  if (documentIds) conditions.push(inArray(contentItem.documentId, documentIds));
+  const items = await db.select({ documentId: contentItem.documentId }).from(contentItem).where(and(...conditions));
+  await ctx.primeVersions(items.map((i) => i.documentId), "published");
+  const out: { documentId: string; locale: string; urlPath: string }[] = [];
+  for (const { code } of locales) {
+    for (const it of items) {
+      const variant = await variantRow(ctx, "published", it.documentId, code);
+      if (!variant || variant.usedLocale !== code) continue;
+      const urlPath = await urlPathOf(ctx, "published", it.documentId, code);
+      if (urlPath) out.push({ documentId: it.documentId, locale: code, urlPath });
+    }
+  }
+  return out;
+}
+
 export async function deliveryPages(
   db: Database,
   perspective: Perspective,

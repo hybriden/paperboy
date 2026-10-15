@@ -23,6 +23,7 @@ import {
   runAuditRetention,
   runScheduledPublish,
   runSessionRetention,
+  runRedirectRetention,
   runSubmissionRetention,
   runWebhookDeliveryRetention,
 } from "@paperboy/db";
@@ -41,6 +42,8 @@ import { registerAiRoutes } from "./routes/ai.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDeliveryRoutes } from "./routes/delivery.js";
 import { registerSubmitRoutes } from "./routes/submit.js";
+import { registerRedirectRoutes } from "./routes/redirects.js";
+import { registerTrafficRoutes } from "./routes/traffic.js";
 import { oauthConfigFrom, registerOAuthRoutes } from "./routes/oauth.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerMediaRoutes } from "./routes/media.js";
@@ -239,6 +242,7 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   await app.register(registerHealthRoutes);
   await app.register(registerAuthRoutes, { prefix: "/api/v1/auth" });
   await app.register(registerManageRoutes, { prefix: "/api/v1/manage" });
+  await app.register(registerRedirectRoutes, { prefix: "/api/v1/manage" });
   await app.register(registerAiRoutes, { prefix: "/api/v1/ai" });
   await app.register(registerDeliveryRoutes, { prefix: "/api/v1/delivery" });
   // Public form submissions. Registered SEPARATELY from the delivery routes
@@ -246,6 +250,9 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   // its preHandler resolves a read perspective, while this is the one anonymous
   // WRITE path and owns its own credential check, rate limit and CORS rules.
   await app.register(registerSubmitRoutes, { prefix: "/api/v1/delivery" });
+  // Frontend traffic reports (redirect hits, 404 paths): the second public
+  // write, with the same separation and its own credential check.
+  await app.register(registerTrafficRoutes, { prefix: "/api/v1/delivery" });
   // Image transforms (?w=&format=&q=) — the :file param route also serves
   // originals; the static wildcard above remains as fallback for nested paths.
   await app.register(registerMediaRoutes);
@@ -310,6 +317,8 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
         // Expired sessions are otherwise deleted only when their cookie is presented again.
         const se = await runSessionRetention(db);
         if (se.deleted > 0) app.log.info({ deleted: se.deleted }, "expired sessions pruned");
+        const nf = await runRedirectRetention(db);
+        if (nf.notFoundSwept > 0) app.log.info({ deleted: nf.notFoundSwept }, "404 log pruned");
       },
       3_600_000,
     );

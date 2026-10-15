@@ -316,6 +316,15 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "delivery",
     ],
   },
+  "GET /api/v1/delivery/redirects": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": "Redirect rules for this site (apply only where no page answers)",
+    "tags": [
+      "delivery",
+    ],
+  },
   "GET /api/v1/delivery/robots.txt": {
     "requestBodyRequired": [],
     "requiredParams": [],
@@ -830,6 +839,68 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "GET /api/v1/manage/redirects": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]createdAt",
+      "[]hits",
+      "[]id",
+      "[]keepQuery",
+      "[]lastHitAt",
+      "[]match",
+      "[]note",
+      "[]origin",
+      "[]problems",
+      "[]source",
+      "[]sourcePath",
+      "[]status",
+      "[]target",
+      "[]updatedAt",
+    ],
+    "summary": "List redirect rules (active site)",
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/redirects.csv": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": "Export redirect rules as CSV",
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/redirects/not-found": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [
+      "[]coveredBy",
+      "[]firstSeen",
+      "[]hits",
+      "[]lastSeen",
+      "[]path",
+    ],
+    "summary": "Paths that answered 404 on the frontend (aggregated)",
+    "tags": [
+      "manage",
+    ],
+  },
+  "GET /api/v1/manage/redirects/test": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "query:url",
+    ],
+    "response200Props": [
+      "hops",
+      "steps",
+    ],
+    "summary": "Follow a URL through pages and rules, hop by hop",
+    "tags": [
+      "manage",
+    ],
+  },
   "GET /api/v1/manage/site": {
     "requestBodyRequired": [],
     "requiredParams": [],
@@ -1073,6 +1144,21 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "PATCH /api/v1/manage/redirects/{id}": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [
+      "collapsed",
+      "redirect",
+      "repointed",
+    ],
+    "summary": "Update a redirect rule",
+    "tags": [
+      "manage",
+    ],
+  },
   "PATCH /api/v1/manage/sites/{id}": {
     "requestBodyRequired": [],
     "requiredParams": [
@@ -1084,6 +1170,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "createdAt",
       "defaultLocale",
       "id",
+      "localePrefix",
       "name",
       "previewBaseUrl",
       "seoFiles",
@@ -1247,6 +1334,15 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     ],
     "response200Props": [],
     "summary": "Submit a form (public)",
+    "tags": [
+      "delivery",
+    ],
+  },
+  "POST /api/v1/delivery/traffic": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": "Report applied redirects and 404 paths (server-side, public key)",
     "tags": [
       "delivery",
     ],
@@ -1705,6 +1801,63 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "oauth",
     ],
   },
+  "POST /api/v1/manage/redirects": {
+    "requestBodyRequired": [
+      "source",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "collapsed",
+      "redirect",
+      "repointed",
+    ],
+    "summary": "Create a redirect rule",
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/redirects/delete": {
+    "requestBodyRequired": [
+      "ids",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "deleted",
+    ],
+    "summary": "Delete redirect rules",
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/redirects/import": {
+    "requestBodyRequired": [
+      "csv",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "created",
+      "errors",
+      "rows",
+      "updated",
+    ],
+    "summary": "Import redirect rules from CSV (dryRun previews every row)",
+    "tags": [
+      "manage",
+    ],
+  },
+  "POST /api/v1/manage/redirects/not-found/delete": {
+    "requestBodyRequired": [
+      "paths",
+    ],
+    "requiredParams": [],
+    "response200Props": [
+      "deleted",
+    ],
+    "summary": "Dismiss 404 paths",
+    "tags": [
+      "manage",
+    ],
+  },
   "POST /api/v1/manage/site/agent-review": {
     "requestBodyRequired": [
       "required",
@@ -1799,6 +1952,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "createdAt",
       "defaultLocale",
       "id",
+      "localePrefix",
       "name",
       "previewBaseUrl",
       "seoFiles",
