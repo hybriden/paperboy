@@ -165,8 +165,9 @@ export function DashboardView() {
   const tidy = attention.length === 0 && altGaps.length === 0 && (hk?.unusedBlocks ?? 0) === 0 && (hk?.emptyTypes ?? 0) === 0;
 
   const skeleton = (n: number) => <SkeletonRows rows={n} />;
-  // Dateline for the masthead — a newspaper carries the date.
-  const today = new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  // Dateline for the masthead — a newspaper carries the date. Read once, on
+  // mount: reading the clock during render is impure (react/purity).
+  const [today] = useState(() => new Date().toLocaleDateString(undefined, { weekday: "long", year: "numeric", month: "long", day: "numeric" }));
 
   return (
     <div className="h-full overflow-auto">
