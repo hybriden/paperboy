@@ -307,7 +307,7 @@ export const api = {
   localesAll: (signal?: AbortSignal) => request<Locale[]>("GET", "/manage/locales/all", undefined, signal),
   createLocale: (body: { code: string; displayName: string; fallbackLocaleCode?: string | null }) =>
     request<{ ok: boolean }>("POST", "/manage/locales", body),
-  updateLocale: (code: string, body: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean }) =>
+  updateLocale: (code: string, body: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean; isDefault?: true }) =>
     request<{ ok: boolean }>("PATCH", `/manage/locales/${encodeURIComponent(code)}`, body),
   deleteLocale: (code: string) => request<{ ok: boolean }>("DELETE", `/manage/locales/${encodeURIComponent(code)}`),
 

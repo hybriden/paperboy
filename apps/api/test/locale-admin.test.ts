@@ -87,4 +87,24 @@ describe("Languages admin (locale CRUD, contenttype.manage)", () => {
     expect((all.json() as Loc[]).some((l) => l.code === "de")).toBe(false);
     expect((await s.app.inject({ method: "DELETE", url: "/api/v1/manage/locales/zz", headers: authHeaders(admin) })).statusCode).toBe(404);
   });
+  it("makes another language the default: exactly one default, and it is enabled", async () => {
+    const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
+    const setDefault = (code: string) =>
+      s.app.inject({ method: "PATCH", url: `/api/v1/manage/locales/${code}`, headers: authHeaders(admin), payload: { isDefault: true } });
+    const list = async () => (await s.app.inject({ method: "GET", url: "/api/v1/manage/locales/all", headers: { cookie: admin.cookie } })).json() as Loc[];
+
+    expect((await setDefault("nb")).statusCode).toBe(200);
+    expect((await list()).filter((l) => l.isDefault).map((l) => l.code)).toEqual(["nb"]);
+    // The old default is an ordinary language now: it can be disabled.
+    expect((await s.app.inject({ method: "PATCH", url: "/api/v1/manage/locales/en", headers: authHeaders(admin), payload: { enabled: false } })).statusCode).toBe(200);
+    // A disabled language can't become the default (editors would open in a language nobody sees).
+    expect((await setDefault("en")).statusCode).toBe(409);
+    // "Not default" isn't a thing you set — you pick the new default instead.
+    expect((await s.app.inject({ method: "PATCH", url: "/api/v1/manage/locales/nb", headers: authHeaders(admin), payload: { isDefault: false } })).statusCode).toBe(422);
+
+    expect((await s.app.inject({ method: "PATCH", url: "/api/v1/manage/locales/en", headers: authHeaders(admin), payload: { enabled: true } })).statusCode).toBe(200);
+    expect((await setDefault("en")).statusCode).toBe(200);
+    expect((await list()).filter((l) => l.isDefault).map((l) => l.code)).toEqual(["en"]);
+    expect((await setDefault("zz")).statusCode).toBe(404);
+  });
 });
