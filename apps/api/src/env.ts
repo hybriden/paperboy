@@ -10,7 +10,10 @@ const EnvSchema = z.object({
    *  connection (see Queryable in @paperboy/db), so this bounds concurrency, not
    *  correctness; size it below the server's max_connections across replicas. */
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(100).default(10),
-  API_PORT: z.coerce.number().default(8091),
+  // The port to listen on. Hosting platforms (App Service, Container Apps,
+  // Cloud Run, Render, Fly…) assign one through PORT; API_PORT wins when both
+  // are set (see loadEnv).
+  API_PORT: z.coerce.number().int().min(1).max(65535).default(8091),
   SESSION_SECRET: z.string().min(16).default("dev-session-secret-change-me-min-32-chars"),
   CSRF_SECRET: z.string().min(16).default("dev-csrf-secret-change-me-min-32-chars-long"),
   // Encryption key for TOTP secrets and the stored AI/stock keys at rest
@@ -49,7 +52,7 @@ const EnvSchema = z.object({
   // which is right whenever the admin, the API and /mcp share one domain.
   PUBLIC_URL: z.preprocess(emptyToUndefined, z.string().optional()),
   // The public URL of the MCP endpoint — the OAuth "resource" tokens are issued
-  // for. Unset = {PUBLIC_URL}/mcp (the nginx route in apps/admin/nginx.conf).
+  // for. Unset = {PUBLIC_URL}/mcp (forwarded to the MCP server by MCP_UPSTREAM_URL).
   MCP_PUBLIC_URL: z.preprocess(emptyToUndefined, z.string().optional()),
   // Browser-reachable base for media URLs. Default "" = RELATIVE URLs
   // (/api/v1/media/…), which resolve same-origin via each app's proxy and so
@@ -57,6 +60,20 @@ const EnvSchema = z.object({
   // media must be served from a different origin than the app.
   MEDIA_PUBLIC_BASE: z.string().default(""),
   UPLOADS_DIR: z.string().default("/app/uploads"),
+  // The built admin SPA (apps/admin/dist). Set = this process serves the admin
+  // too, so Paperboy is one container on one port; the image sets it. Unset =
+  // API only (tests, and `pnpm dev`, where Vite serves the admin).
+  ADMIN_DIST_DIR: z.preprocess(emptyToUndefined, z.string().optional()),
+  // Where the MCP server's Streamable HTTP endpoint listens (e.g. http://mcp:8093).
+  // Set = /mcp on this origin is forwarded there, so the remote MCP endpoint
+  // lives at {PUBLIC_URL}/mcp on the one domain. Unset = no /mcp route here.
+  MCP_UPSTREAM_URL: z.preprocess(
+    emptyToUndefined,
+    z
+      .string()
+      .refine((v) => /^https?:\/\//.test(v) && URL.canParse(v), { message: "MCP_UPSTREAM_URL must be an http(s) URL such as http://mcp:8093" })
+      .optional(),
+  ),
   // Escape hatch for non-TLS internal/demo deployments. Must be set explicitly.
   ALLOW_INSECURE_COOKIES: z
     .enum(["true", "false"])
@@ -164,7 +181,10 @@ function looksInsecure(secret: string): boolean {
 }
 
 export function loadEnv(overrides: Partial<NodeJS.ProcessEnv> = {}): Env {
-  const env = EnvSchema.parse({ ...process.env, ...overrides });
+  const raw = { ...process.env, ...overrides };
+  // PORT is the hosting platform's convention; API_PORT is ours and wins.
+  if (!raw.API_PORT && raw.PORT) raw.API_PORT = raw.PORT;
+  const env = EnvSchema.parse(raw);
   // Refuse to boot a production server with dev/placeholder secrets (fail fast).
   if (env.NODE_ENV === "production") {
     if (looksInsecure(env.SESSION_SECRET) || looksInsecure(env.CSRF_SECRET)) {

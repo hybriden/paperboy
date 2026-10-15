@@ -108,10 +108,13 @@ jobs:
       - name: Bring up the documented stack (no extra env)
         run: docker compose up -d --build --wait
 
-      - name: The documented URLs must answer (api + admin)
+      - name: The documented URLs must answer (api + the admin it serves)
         run: |
           curl --retry 20 --retry-delay 3 --retry-all-errors -fsS http://localhost:8091/health/ready
           curl --retry 20 --retry-delay 3 --retry-all-errors -fsS -o /dev/null http://localhost:8090/
+          # The api serves the admin itself now: the image must carry the built SPA,
+          # and the entry point must carry its CSP (no proxy adds it any more).
+          curl -fsS -D - -o /dev/null http://localhost:8090/ | grep -qi '^content-security-policy:.*frame-ancestors'
 
       # The reference frontend is opt-in now, so the OPT-IN has to be tested too:
       # a profile nobody exercises is a profile that quietly stops working.
@@ -161,7 +164,7 @@ jobs:
           sudo sed -i '/dl\.google\.com/d' /etc/apt/sources.list || true
           pnpm --filter @paperboy/admin exec playwright install --with-deps chromium
 
-      - name: Start the full stack (db → migrate+seed → api → web → admin)
+      - name: Start the full stack (db → migrate+seed → api, which serves the admin → web)
         # --wait blocks until every healthcheck passes; a crash-looping service
         # would otherwise spin it forever.
         timeout-minutes: 20
@@ -212,7 +215,7 @@ jobs:
 
       - name: Stack logs (on failure)
         if: failure()
-        run: docker compose logs --tail 200 api admin web
+        run: docker compose logs --tail 200 api web
 
       - name: Upload traces/screenshots (on failure)
         if: failure()

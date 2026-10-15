@@ -33,7 +33,9 @@ import {
   validatorCompiler,
 } from "fastify-type-provider-zod";
 import { ZodError } from "zod";
+import { isAdminSpaPath, registerAdminSpa } from "./admin-spa.js";
 import { type Env, parseTrustProxy } from "./env.js";
+import { registerMcpForward } from "./mcp-forward.js";
 import { registerAiRoutes } from "./routes/ai.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDeliveryRoutes } from "./routes/delivery.js";
@@ -144,6 +146,9 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     max: env.NODE_ENV === "test" ? 100_000 : env.RATE_LIMIT_MAX,
     timeWindow: "1 minute",
     // Delivery/preview keys and login have their own tighter limits per route.
+    // The admin's pages and assets are exempt: a cold load fetches dozens of
+    // chunks, and an office behind one IP must not lock itself out of the editor.
+    ...(env.ADMIN_DIST_DIR ? { allowList: (req: { url: string }) => isAdminSpaPath(req.url) } : {}),
   });
 
   await app.register(swagger, {
@@ -160,8 +165,8 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     },
     transform: jsonSchemaTransform,
   });
-  // Mounted under /api so it's reachable through the admin's nginx `/api/` proxy
-  // (which forwards the full path). The admin's "API docs" link points to /api/docs.
+  // Mounted under /api, beside everything else the API owns, so it never
+  // collides with an admin route. The admin's "API docs" link points to /api/docs.
   await app.register(swaggerUI, { routePrefix: "/api/docs" });
 
   // Per-request session loading (does not enforce auth; routes decide).
@@ -244,6 +249,10 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   await app.register(registerOAuthRoutes, { config: oauthConfigFrom(env) });
   // Upload links (MCP create_upload_link): its own credential, never the session.
   await app.register(registerUploadRoutes, { uploadsDir: env.UPLOADS_DIR });
+  // The remote MCP endpoint on this same origin, at /mcp.
+  if (env.MCP_UPSTREAM_URL) await registerMcpForward(app, env.MCP_UPSTREAM_URL);
+  // The admin SPA on this same origin — last, because it owns the not-found handler.
+  if (env.ADMIN_DIST_DIR) await registerAdminSpa(app, env.ADMIN_DIST_DIR);
 
   // Scheduled-publish ticker: promotes due drafts and expires due content. Single
   // long-lived process (one container); the query uses no cross-request state.

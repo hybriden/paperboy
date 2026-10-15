@@ -233,7 +233,7 @@ async function isCsrfFailure(res: Response): Promise<boolean> {
 }
 
 /** Parse a JSON response, but degrade gracefully if a proxy returns HTML/text
- *  (e.g. an nginx 413/502 page) so the user sees a real message, not a
+ *  (e.g. a reverse proxy's 413/502 page) so the user sees a real message, not a
  *  "Unexpected token <" JSON SyntaxError. */
 async function parseResponse<T>(res: Response): Promise<T> {
   const text = await res.text();

@@ -1,6 +1,6 @@
 name: Release images
 
-# Publish the two container images this stack is built from, so running Paperboy
+# Publish the container image this stack is built from, so running Paperboy
 # does not require building it from source.
 #
 # Why this exists: compose built `paperboy/app:latest` and `paperboy/admin:latest`
@@ -9,10 +9,11 @@ name: Release images
 # get a CMS with it" impossible — there was nothing to pull. With these published,
 # the Astro starter's demo compose can bring up the whole thing from one clone.
 #
-#   ghcr.io/hybriden/paperboy-app     api · init(migrate+seed) · web · mcp
-#   ghcr.io/hybriden/paperboy-admin   the admin SPA behind nginx
+#   ghcr.io/hybriden/paperboy-app     api (+ the admin SPA it serves) · init(migrate+seed) · web · mcp
 #
-# Both come from the one Dockerfile in this repo (targets `app` and `admin`).
+# Built from the `app` target of the one Dockerfile. `paperboy-admin` (the SPA
+# behind nginx) is no longer published: the api serves the admin itself now, so
+# its last pushed tags are frozen — consumers should drop that service.
 #
 # MULTI-ARCH (amd64 + arm64), because for a while these were amd64-only and that
 # quietly broke the promise above on every ARM machine:
@@ -61,16 +62,6 @@ jobs:
             runner: ubuntu-latest
           - target: app
             image: paperboy-app
-            arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
-          - target: admin
-            image: paperboy-admin
-            arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-latest
-          - target: admin
-            image: paperboy-admin
             arch: arm64
             platform: linux/arm64
             runner: ubuntu-24.04-arm
@@ -145,8 +136,6 @@ jobs:
         include:
           - target: app
             image: paperboy-app
-          - target: admin
-            image: paperboy-admin
 
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
