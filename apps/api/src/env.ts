@@ -74,6 +74,14 @@ const EnvSchema = z.object({
       .refine((v) => /^https?:\/\//.test(v) && URL.canParse(v), { message: "MCP_UPSTREAM_URL must be an http(s) URL such as http://mcp:8093" })
       .optional(),
   ),
+  // Run the MCP server as a child of this process and forward /mcp to it — for
+  // one-container hosts (App Service, Cloud Run, …) with no room for a second
+  // service. Sets MCP_UPSTREAM_URL itself (see loadEnv); compose keeps the
+  // separate `mcp` service and leaves this off.
+  MCP_EMBEDDED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   // Escape hatch for non-TLS internal/demo deployments. Must be set explicitly.
   ALLOW_INSECURE_COOKIES: z
     .enum(["true", "false"])
@@ -167,6 +175,9 @@ export function parseTrustProxy(value: string): boolean | string[] {
 
 export type Env = z.infer<typeof EnvSchema>;
 
+/** Where the embedded MCP server listens (MCP_EMBEDDED); the same port compose's `mcp` service uses. */
+export const EMBEDDED_MCP_PORT = 8093;
+
 const INSECURE_DEFAULTS = [
   "dev-session-secret-change-me-min-32-chars",
   "dev-csrf-secret-change-me-min-32-chars-long",
@@ -185,6 +196,14 @@ export function loadEnv(overrides: Partial<NodeJS.ProcessEnv> = {}): Env {
   // PORT is the hosting platform's convention; API_PORT is ours and wins.
   if (!raw.API_PORT && raw.PORT) raw.API_PORT = raw.PORT;
   const env = EnvSchema.parse(raw);
+  if (env.MCP_EMBEDDED) {
+    if (env.MCP_UPSTREAM_URL) {
+      throw new Error(
+        `Refusing to start: MCP_EMBEDDED=true runs the MCP server inside this process, but MCP_UPSTREAM_URL also points /mcp at ${env.MCP_UPSTREAM_URL}. Unset one: MCP_UPSTREAM_URL for a separate MCP service, or MCP_EMBEDDED for none.`,
+      );
+    }
+    env.MCP_UPSTREAM_URL = `http://127.0.0.1:${EMBEDDED_MCP_PORT}`;
+  }
   // Refuse to boot a production server with dev/placeholder secrets (fail fast).
   if (env.NODE_ENV === "production") {
     if (looksInsecure(env.SESSION_SECRET) || looksInsecure(env.CSRF_SECRET)) {

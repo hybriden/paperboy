@@ -1,6 +1,7 @@
 import { migrate } from "@paperboy/db";
 import { buildApp } from "./app.js";
-import { loadEnv } from "./env.js";
+import { EMBEDDED_MCP_PORT, loadEnv } from "./env.js";
+import { startEmbeddedMcp } from "./mcp-embedded.js";
 
 async function main() {
   const env = loadEnv();
@@ -9,11 +10,15 @@ async function main() {
   const app = await buildApp({ env });
   await app.listen({ port: env.API_PORT, host: "0.0.0.0" });
   app.log.info(`Paperboy API listening on :${env.API_PORT}`);
+  const mcp = env.MCP_EMBEDDED
+    ? startEmbeddedMcp({ port: EMBEDDED_MCP_PORT, publicUrl: env.PUBLIC_URL ?? env.CORS_ORIGIN, log: app.log })
+    : undefined;
   // Docker stops with SIGTERM; closing the app finishes in-flight requests and
   // releases the pool instead of dropping connections at the kill deadline.
   for (const signal of ["SIGTERM", "SIGINT"] as const) {
     process.once(signal, () => {
       app.log.info(`${signal} received — shutting down`);
+      mcp?.stop();
       app
         .close()
         .then(() => process.exit(0))
