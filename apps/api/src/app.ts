@@ -1,5 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { safeErrSerializer } from "./logging.js";
+import compress from "@fastify/compress";
 import cookie from "@fastify/cookie";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
@@ -122,6 +123,10 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
 
   await app.register(cookie, { secret: env.SESSION_SECRET });
   await app.register(cors, { origin: env.CORS_ORIGIN, credentials: true });
+  // Gzip responses for clients that accept it (nginx used to do this for /api).
+  // Pre-compressed admin assets already carry Content-Encoding and are left
+  // alone, as are hijacked streams (the Build-from-brief SSE, the /mcp forward).
+  await app.register(compress, { encodings: ["gzip"] });
   await app.register(multipart, {
     limits: { files: 1, fileSize: 5 * 1024 * 1024, fields: 5, fieldNameSize: 100, fieldSize: 1024 },
   });
