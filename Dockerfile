@@ -34,3 +34,7 @@ ENV NODE_ENV=production
 # verification (Next's .next/cache write path + chowning the existing uploads
 # volume to uid 1000) that can't be exercised from the test suite.
 EXPOSE 8091 8092
+# Default = the CMS (api + the admin it serves), so the image runs as-is on a
+# platform that just starts a container (App Service, Container Apps, Cloud Run…).
+# Compose overrides it per service (init/web/mcp).
+CMD ["pnpm", "--filter", "@paperboy/api", "start"]

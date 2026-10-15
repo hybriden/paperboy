@@ -164,7 +164,7 @@ Service or Container Apps, Cloud Run, Fly, Render, Railway) plus a managed Postg
 
 | Setting | Value |
 |---|---|
-| Image | `ghcr.io/hybriden/paperboy-app:latest`, command `pnpm --filter @paperboy/api start` |
+| Image | `ghcr.io/hybriden/paperboy-app:latest` — its default command starts the CMS |
 | Port | the platform's `PORT` is honoured (or set `API_PORT`) |
 | `DATABASE_URL` | your Postgres, e.g. `postgresql://…@host:5432/paperboy?sslmode=require` |
 | Secrets | `SESSION_SECRET`, `CSRF_SECRET`, `MFA_SECRET` — generate with `openssl rand -hex 32` |
