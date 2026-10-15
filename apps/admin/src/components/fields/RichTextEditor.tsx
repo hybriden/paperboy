@@ -197,11 +197,14 @@ function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolea
 /** Full TipTap rich-text editor (lazy-loaded). Stores TipTap doc JSON. */
 export default function RichTextEditor({
   id,
+  label,
   value,
   onChange,
   disabled = false,
 }: {
   id: string;
+  /** The field's accessible name (its display name). */
+  label: string;
   value: unknown;
   onChange: (doc: unknown) => void;
   /** Read-only (no content.update). TipTap must be told, or a Viewer types freely
@@ -224,6 +227,12 @@ export default function RichTextEditor({
     editorProps: {
       attributes: {
         id,
+        // A <label for> can't name a div, so the editor names itself, like every
+        // other field input. The role is ours too: TipTap ≥3.31 adds it, older
+        // versions don't, and aria-label on a role-less div is itself an axe error.
+        role: "textbox",
+        "aria-multiline": "true",
+        "aria-label": label,
         class:
           "prose-paperboy min-h-[120px] rounded-b-(--radius) border border-t-0 border-line bg-panel px-3 py-2.5 text-sm text-fg outline-hidden focus:border-accent",
       },

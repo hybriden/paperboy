@@ -57,7 +57,7 @@ export function FieldControl({
         </div>
       )}
       {field.type === "markdown" && <MarkdownEditor id={id} value={text} disabled={disabled} onChange={(v) => onChange(v)} />}
-      {field.type === "richtext" && <RichText id={id} value={value} onChange={onChange} disabled={disabled} />}
+      {field.type === "richtext" && <RichText id={id} label={field.displayName} value={value} onChange={onChange} disabled={disabled} />}
       {field.type === "boolean" && (
         <input id={id} aria-label={field.displayName} type="checkbox" checked={Boolean(value)} disabled={disabled} onChange={(e) => onChange(e.target.checked)} />
       )}
