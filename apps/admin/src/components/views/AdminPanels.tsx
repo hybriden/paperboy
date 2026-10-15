@@ -735,7 +735,7 @@ export function LanguagesPanel() {
     onError: (e) => toast.error("Couldn’t add language", (e as Error).message),
   });
   const update = useMutation({
-    mutationFn: (v: { code: string; patch: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean } }) =>
+    mutationFn: (v: { code: string; patch: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean; isDefault?: true } }) =>
       api.updateLocale(v.code, v.patch),
     onSuccess: () => { void invalidate(); setEditing(null); toast.success("Language updated"); },
     onError: (e) => toast.error("Couldn’t update", (e as Error).message),
@@ -793,6 +793,9 @@ export function LanguagesPanel() {
               {canManage && (
                 <div className="ml-auto flex items-center gap-1">
                   <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setEditing({ code: l.code, displayName: l.displayName, fallback: l.fallbackLocaleCode ?? "" })}>Edit</button>
+                  {!l.isDefault && l.enabled && (
+                    <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" disabled={update.isPending} onClick={() => update.mutate({ code: l.code, patch: { isDefault: true } })}>Make default</button>
+                  )}
                   {!l.isDefault && (
                     <button className="rounded px-2 py-0.5 text-xs text-muted hover:bg-line/60" disabled={update.isPending} onClick={() => update.mutate({ code: l.code, patch: { enabled: !l.enabled } })}>
                       {l.enabled ? "Disable" : "Enable"}

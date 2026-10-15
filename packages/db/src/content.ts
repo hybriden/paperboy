@@ -309,11 +309,19 @@ export async function updateLocale(
   db: Database,
   ctx: AccessContext,
   code: string,
-  patch: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean },
+  patch: { displayName?: string; fallbackLocaleCode?: string | null; enabled?: boolean; isDefault?: true },
 ): Promise<void> {
   requirePermission(ctx, "contenttype.manage");
   const row = (await db.select().from(locale).where(eq(locale.code, code)).limit(1))[0];
   if (!row) throw Errors.notFound("Language");
+  if (patch.isDefault) {
+    if (!row.enabled || patch.enabled === false) throw Errors.conflict("Enable this language before making it the default");
+    // Exactly one default: clear the old one and set the new one together.
+    await db.transaction(async (tx) => {
+      await tx.update(locale).set({ isDefault: false }).where(eq(locale.isDefault, true));
+      await tx.update(locale).set({ isDefault: true }).where(eq(locale.code, code));
+    });
+  }
   const updates: Partial<typeof locale.$inferInsert> = {};
   if (patch.displayName !== undefined) {
     const dn = patch.displayName.trim();

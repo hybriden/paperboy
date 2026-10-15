@@ -374,7 +374,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   );
   app.patch(
     "/locales/:code",
-    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ code: z.string() }), body: z.object({ displayName: z.string().min(1).max(120).optional(), fallbackLocaleCode: z.string().nullable().optional(), enabled: z.boolean().optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ code: z.string() }), body: z.object({ displayName: z.string().min(1).max(120).optional(), fallbackLocaleCode: z.string().nullable().optional(), enabled: z.boolean().optional(), isDefault: z.literal(true).optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await updateLocale(app.db, req.accessCtx!, req.params.code, req.body);
       await audit(app.db, { actorUserId: req.user!.id, action: "locale.update", ip: req.ip, detail: { code: req.params.code, ...req.body } });
