@@ -171,6 +171,7 @@ Service or Container Apps, Cloud Run, Fly, Render, Railway) plus a managed Postg
 | `CORS_ORIGIN` | the HTTPS origin you reach the admin at, plus `COOKIE_SECURE=true` |
 | `TRUST_PROXY` | the platform's load-balancer range, so rate limits see real client IPs |
 | Storage | a persistent volume (e.g. an Azure Files share) mounted at `/app/uploads` |
+| Remote MCP | `MCP_EMBEDDED=true` runs the MCP server inside the same container, at `{PUBLIC_URL}/mcp` |
 
 Run **exactly one replica**: rate limits and the scheduled-publish / retention timers
 live in the process. Migrations run on boot. Create the first admin once by running the
