@@ -190,8 +190,8 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
       if (!cfg.apiKey) {
         return reply.code(409).send({ error: "AI provider is not configured (Settings → Site → AI key)." });
       }
-      // SSE: take over the raw socket. X-Accel-Buffering disables proxy
-      // buffering (nginx) so events arrive as they happen.
+      // SSE: take over the raw socket. X-Accel-Buffering disables reverse-proxy
+      // buffering (nginx and kin, if one sits in front) so events arrive as they happen.
       reply.hijack();
       reply.raw.writeHead(200, {
         "content-type": "text/event-stream",

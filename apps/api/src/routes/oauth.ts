@@ -24,7 +24,7 @@ import { requireAuth, requireCsrf } from "../security.js";
  *
  *  - Discovery: /.well-known/oauth-authorization-server (RFC 8414) and
  *    /.well-known/oauth-protected-resource[/mcp] (RFC 9728), at the ROOT of the
- *    public origin — nginx routes them here.
+ *    public origin, which this process serves along with the admin.
  *  - Clients register themselves (RFC 7591) and use code + PKCE (S256 only).
  *  - The authorization endpoint is the admin's /oauth/authorize page: it reuses
  *    the admin's own login (and 2FA) and shows the consent screen, including the

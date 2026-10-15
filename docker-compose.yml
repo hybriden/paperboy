@@ -1,3 +1,14 @@
+# One image for every Node service. The api serves the admin SPA, so its build
+# args live here too — all four services share the tag, so they must share them.
+x-app-build: &app-build
+  context: .
+  target: app
+  args:
+    # Public origin of the web frontend; the preview iframe loads pages from here.
+    # Empty (the default) = the admin reads the site's preview URL from the API.
+    # Deliberately NO preview secret here — see the Dockerfile.
+    VITE_WEB_URL: ${VITE_WEB_URL:-}
+
 services:
   db:
     image: postgres:16-alpine
@@ -24,7 +35,7 @@ services:
   # the guard, recreate it once (`docker compose rm -f init && docker compose
   # up -d init`) so no pre-guard zombie container can ever run again.
   init:
-    build: { context: ., target: app }
+    build: *app-build
     image: paperboy/app:latest
     command: ["pnpm", "--filter", "@paperboy/db", "seed"]
     environment:
@@ -49,7 +60,7 @@ services:
     restart: "no"
 
   api:
-    build: { context: ., target: app }
+    build: *app-build
     image: paperboy/app:latest
     restart: unless-stopped
     command: ["pnpm", "--filter", "@paperboy/api", "start"]
@@ -59,9 +70,12 @@ services:
       API_PORT: "8091"
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:8090}
       # MCP OAuth: the public origin (the issuer) and the MCP endpoint's public
-      # URL. Unset = CORS_ORIGIN and {PUBLIC_URL}/mcp — one domain, as nginx routes it.
+      # URL. Unset = CORS_ORIGIN and {PUBLIC_URL}/mcp — one domain.
       PUBLIC_URL: ${PUBLIC_URL:-}
       MCP_PUBLIC_URL: ${MCP_PUBLIC_URL:-}
+      # /mcp on this origin is forwarded to the opt-in mcp service. While it isn't
+      # running, /mcp answers a 502 that says so; set empty to drop the route.
+      MCP_UPSTREAM_URL: ${MCP_UPSTREAM_URL-http://mcp:8093}
       COOKIE_SECURE: ${COOKIE_SECURE:-true} # behind Cloudflare (HTTPS) → Secure __Host- cookie
       ALLOW_INSECURE_COOKIES: ${ALLOW_INSECURE_COOKIES:-false} # set true only for a non-TLS LAN demo
       SESSION_SECRET: ${SESSION_SECRET:-prod-session-secret-please-override-32+chars}
@@ -107,6 +121,9 @@ services:
       init:
         condition: service_completed_successfully
     ports:
+      # The api also serves the admin SPA (ADMIN_DIST_DIR, set in the image), so
+      # one process answers both: the admin at :8090, the API at :8091 as before.
+      - "8090:8091"
       - "8091:8091"
     volumes:
       - paperboy-uploads:/app/uploads
@@ -119,7 +136,7 @@ services:
       retries: 12
 
   web:
-    build: { context: ., target: app }
+    build: *app-build
     image: paperboy/app:latest
     restart: unless-stopped
     command: ["pnpm", "--filter", "@paperboy/web", "start"]
@@ -148,30 +165,13 @@ services:
     # actually want is the Astro starter — see README.
     profiles: ["web"]
 
-  admin:
-    build:
-      context: .
-      target: admin
-      args:
-        # Public origin of the web frontend; the preview iframe loads pages from here.
-        VITE_WEB_URL: ${VITE_WEB_URL:-}
-        # Deliberately NO preview secret here — see the Dockerfile. The admin gets a
-        # short-lived token from the API at runtime instead.
-    image: paperboy/admin:latest
-    restart: unless-stopped
-    depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "8090:8090"
-
   # Paperboy MCP over Streamable HTTP — for remote MCP clients (e.g. harmonix).
   # Opt-in via the "mcp" profile so the default stack stays unchanged. Requires an
   # MCP token (Settings → MCP) which doubles as the Bearer credential clients send.
   #   MCP_TOKEN=mcp_… docker compose --profile mcp up -d --no-deps mcp
-  # In production, front it with TLS (e.g. Caddy → paperboy-mcp.<host> → mcp:8093).
+  # Clients reach it at {PUBLIC_URL}/mcp: the api forwards /mcp here (MCP_UPSTREAM_URL).
   mcp:
-    build: { context: ., target: app }
+    build: *app-build
     image: paperboy/app:latest
     restart: unless-stopped
     command: ["pnpm", "--filter", "@paperboy/mcp", "start"]

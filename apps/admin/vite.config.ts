@@ -6,7 +6,7 @@ const API_URL = process.env.VITE_API_URL ?? "http://localhost:8091";
 export default defineConfig({
   plugins: [react()],
   // No inline module-preload polyfill: it emits an inline <script> that the
-  // admin's strict `script-src 'self'` CSP (nginx.conf) would block. The admin
+  // admin's strict `script-src 'self'` CSP (ADMIN_CSP, apps/api/src/admin-spa.ts) would block. The admin
   // targets modern browsers with native modulepreload, so the polyfill is dead
   // weight anyway.
   build: { modulePreload: { polyfill: false } },
@@ -15,7 +15,7 @@ export default defineConfig({
     host: true,
     proxy: {
       "/api": { target: API_URL, changeOrigin: true },
-      // Same routes nginx proxies in production, so MCP OAuth works in dev too.
+      // Same routes the api answers in production, so MCP OAuth works in dev too.
       "/.well-known/oauth-": { target: API_URL, changeOrigin: true },
       "/mcp": { target: process.env.VITE_MCP_URL ?? "http://localhost:8093", changeOrigin: true },
     },

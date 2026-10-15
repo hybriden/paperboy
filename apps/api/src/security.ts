@@ -36,10 +36,10 @@ export async function requireCsrf(req: FastifyRequest, _reply: FastifyReply): Pr
   // it equals the configured CORS origin OR is genuinely same-origin with this
   // request (its host matches the Host header). The same-origin clause lets the
   // SPA work behind any hostname (localhost, LAN IP, a domain) — the admin and
-  // API share an origin via the nginx proxy — while still blocking true
+  // API share an origin (the api serves the admin) — while still blocking true
   // cross-site requests (their Origin host won't match our Host).
   const allowed = req.server.corsOrigin;
-  const host = req.headers.host; // proxied through as the public host (proxy_set_header Host $host)
+  const host = req.headers.host; // the public host (an edge proxy in front must preserve it)
   const origin = req.headers.origin;
   const referer = req.headers.referer;
   const refererOrigin = referer ? safeOrigin(referer) : null;

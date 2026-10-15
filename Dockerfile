@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# ---------- build: install workspace + build web (Next) and admin (Vite) ----------
+# ---------- the one image: api (which also serves the admin) · init · web · mcp ----------
 FROM node:24-bookworm-slim AS app
 RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 make g++ ca-certificates wget \
@@ -15,7 +15,7 @@ RUN pnpm install --frozen-lockfile
 # loaded on (localhost / LAN IP / domain) at runtime instead of hard-coding it.
 ARG VITE_WEB_URL=
 # NO VITE_PREVIEW_SECRET. Vite inlines VITE_* as string literals at build time and
-# nginx serves /assets/ unauthenticated, so passing the preview secret here
+# /assets/ is served unauthenticated, so passing the preview secret here
 # PUBLISHED it: anyone who fetched the admin's JS could read every draft forever.
 # The admin now asks the API for a short-lived token instead
 # (GET /manage/preview-token → ?pbt=…), and the secret stays server-side.
@@ -23,15 +23,14 @@ ENV VITE_API_URL=/ \
     VITE_WEB_URL=${VITE_WEB_URL}
 RUN pnpm --filter @paperboy/web build \
   && pnpm --filter @paperboy/admin build
+# The API serves the admin (ADMIN_DIST_DIR) and sends these .gz twins to every
+# browser that accepts gzip — the SPA is ~2.7 MB of JS, which ships raw otherwise.
+RUN find apps/admin/dist -type f \( -name '*.js' -o -name '*.css' -o -name '*.svg' -o -name '*.json' -o -name '*.webmanifest' \) \
+    -exec gzip -k -9 {} +
+ENV ADMIN_DIST_DIR=/app/apps/admin/dist
 RUN mkdir -p /app/uploads
 ENV NODE_ENV=production
 # TODO(S2-M1): run as the non-root `node` user. Deferred — needs deploy-side
 # verification (Next's .next/cache write path + chowning the existing uploads
 # volume to uid 1000) that can't be exercised from the test suite.
 EXPOSE 8091 8092
-
-# ---------- admin: nginx serving the built SPA + proxying /api ----------
-FROM nginx:1.27-alpine AS admin
-COPY apps/admin/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=app /app/apps/admin/dist /usr/share/nginx/html
-EXPOSE 8090

@@ -121,9 +121,9 @@ the right area, edits patch live. Protocol and details in
 ## Quickstart (Docker)
 ```bash
 ./scripts/setup.sh              # generates .env: unique secrets + your admin password
-docker compose up -d            # db → init(migrate+seed) → api → admin
+docker compose up -d            # db → init(migrate+seed) → api (which also serves the admin)
 # Admin   http://localhost:8090   (login printed by setup.sh — save it)
-# API     http://localhost:8091   (OpenAPI UI at /docs)
+# API     http://localhost:8091   (OpenAPI UI at /api/docs)
 ```
 
 That is the CMS. For the **website**, use the
@@ -155,6 +155,29 @@ script generates real ones; nothing else has to be configured.
 > ⚠️ Redeploy one service with `docker compose up -d --no-deps --force-recreate <svc>`.
 > The seed CLI refuses to wipe a database that already holds content (set `FORCE_SEED=1`
 > for a deliberate reseed) — but don't lean on the seatbelt. See `CLAUDE.md`.
+
+### Hosting without a VM
+
+The CMS is **one container**: the API serves the admin on the same port, so there is no
+proxy to configure. That makes it a fit for any "run a container" platform (Azure App
+Service or Container Apps, Cloud Run, Fly, Render, Railway) plus a managed Postgres:
+
+| Setting | Value |
+|---|---|
+| Image | `ghcr.io/hybriden/paperboy-app:latest`, command `pnpm --filter @paperboy/api start` |
+| Port | the platform's `PORT` is honoured (or set `API_PORT`) |
+| `DATABASE_URL` | your Postgres, e.g. `postgresql://…@host:5432/paperboy?sslmode=require` |
+| Secrets | `SESSION_SECRET`, `CSRF_SECRET`, `MFA_SECRET` — generate with `openssl rand -hex 32` |
+| `CORS_ORIGIN` | the HTTPS origin you reach the admin at, plus `COOKIE_SECURE=true` |
+| `TRUST_PROXY` | the platform's load-balancer range, so rate limits see real client IPs |
+| Storage | a persistent volume (e.g. an Azure Files share) mounted at `/app/uploads` |
+
+Run **exactly one replica**: rate limits and the scheduled-publish / retention timers
+live in the process. Migrations run on boot. Create the first admin once by running the
+same image with `pnpm --filter @paperboy/db seed` and real values for `SEED_ADMIN_EMAIL`,
+`SEED_ADMIN_PASSWORD`, `PAPERBOY_PUBLIC_KEY` and `PAPERBOY_PREVIEW_KEY` (it refuses the
+published demo defaults, and refuses to touch a database that already holds content).
+Back up the database AND the uploads volume.
 
 ## 🪟 Super-simple setup (Windows, no experience needed)
 
@@ -250,8 +273,9 @@ screen then asks **which site the connection may work in**. It offers one of the
 they hold a section in). The connection acts as you, with your roles, only in that site. Revoke it
 any time in Settings → Connected apps.
 
-Everything lives on one domain by default. The admin's nginx routes `/mcp` to the MCP server and
-`/.well-known/oauth-*` to the API; the consent page is the admin at `/oauth/authorize`. Two settings
+Everything lives on one domain by default. The API forwards `/mcp` to the MCP server
+(`MCP_UPSTREAM_URL`, preset in compose) and serves `/.well-known/oauth-*` itself; the consent page is
+the admin at `/oauth/authorize`. Two settings
 cover other layouts. Set both on the `api` and `mcp` services:
 
 | Variable | Default | What it is |
