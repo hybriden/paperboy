@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   AppError,
+  buildRedirectManifest,
   type Perspective,
   deliveryGetById,
   deliveryGetByPath,
@@ -14,7 +15,7 @@ import {
   resolveDefaultLocale,
   verifyDeliveryKey,
 } from "@paperboy/db";
-import { DeliveryContent, buildLlmsTxt, buildRobotsTxt, buildSecurityTxt, buildSitemapXml, parseSeoFilesConfig } from "@paperboy/shared";
+import { DeliveryContent, LocalePrefix, buildLlmsTxt, buildRobotsTxt, buildSecurityTxt, buildSitemapXml, parseSeoFilesConfig } from "@paperboy/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -312,7 +313,8 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   /** Site row + parsed files config for the key's site. */
   async function siteFiles(req: FastifyRequest) {
     const s = await getSiteById(app.db, req.deliverySiteId!);
-    return { site: s, cfg: parseSeoFilesConfig(s?.seoFiles), base: s?.canonicalBaseUrl ?? null };
+    const scheme = s ? { localePrefix: LocalePrefix.catch("always").parse(s.localePrefix), defaultLocale: s.defaultLocale } : undefined;
+    return { site: s, cfg: parseSeoFilesConfig(s?.seoFiles), base: s?.canonicalBaseUrl ?? null, scheme };
   }
   function textFileHeaders(reply: FastifyReply, perspective: Perspective, contentType: string, cv?: number): void {
     reply.type(contentType);
@@ -346,6 +348,23 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   const advertisablePages = (req: FastifyRequest) =>
     req.perspective === "preview" ? Promise.resolve({ pages: [], cv: 0 }) : deliveryPages(app.db, req.perspective!, req.deliverySiteId!);
 
+  /**
+   * The site's redirect rules as one manifest. A frontend applies a rule ONLY
+   * when no published page answers the request (so a rule never hijacks a live
+   * page), matching with `matchRedirect` from @paperboycms/client. Validated by
+   * a hash of the bytes like sitemap.xml: editing a rule changes no content cv.
+   */
+  app.get(
+    "/redirects",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } }, schema: { tags: ["delivery"], summary: "Redirect rules for this site (apply only where no page answers)" } },
+    async (req, reply) => {
+      const manifest = await buildRedirectManifest(app.db, req.deliverySiteId!);
+      textFileHeaders(reply, req.perspective!, "application/json; charset=utf-8");
+      reply.header("Cache-Control", req.perspective === "preview" ? "private, no-store" : "public, max-age=60, stale-while-revalidate=300");
+      return sendGeneratedFile(req, reply, JSON.stringify(manifest));
+    },
+  );
+
   app.get(
     "/robots.txt",
     { config: { rateLimit: { max: 120, timeWindow: "1 minute" } }, schema: { tags: ["delivery"] } },
@@ -360,10 +379,10 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     "/sitemap.xml",
     { config: { rateLimit: { max: 120, timeWindow: "1 minute" } }, schema: { tags: ["delivery"] } },
     async (req, reply) => {
-      const { base } = await siteFiles(req);
+      const { base, scheme } = await siteFiles(req);
       if (!base) throw needsBase("sitemap.xml");
       const { pages } = await advertisablePages(req);
-      const body = buildSitemapXml(pages, base);
+      const body = buildSitemapXml(pages, base, scheme);
       textFileHeaders(reply, req.perspective!, "application/xml; charset=utf-8");
       return sendGeneratedFile(req, reply, body);
     },
@@ -372,7 +391,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     "/llms.txt",
     { config: { rateLimit: { max: 120, timeWindow: "1 minute" } }, schema: { tags: ["delivery"] } },
     async (req, reply) => {
-      const { site, cfg, base } = await siteFiles(req);
+      const { site, cfg, base, scheme } = await siteFiles(req);
       textFileHeaders(reply, req.perspective!, "text/plain; charset=utf-8");
       // A full editor override needs no base URL (it embeds its own links).
       if (cfg.llmsOverride?.trim()) return buildLlmsTxt({ siteName: "", canonicalBaseUrl: "", defaultLocale: "", pages: [], override: cfg.llmsOverride });
@@ -384,6 +403,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
         defaultLocale: site?.defaultLocale ?? "en",
         pages,
         summary: cfg.llmsSummary,
+        scheme,
       });
       return sendGeneratedFile(req, reply, body);
     },

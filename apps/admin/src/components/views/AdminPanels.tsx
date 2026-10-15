@@ -954,12 +954,13 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
 
   // One editable draft per field, seeded from the site; resynced when the saved
   // site changes (keyed by the values we last persisted).
-  const saved = `${site.name}\u0000${site.slug}\u0000${site.previewBaseUrl ?? ""}\u0000${site.startPageId ?? ""}\u0000${site.canonicalBaseUrl ?? ""}\u0000${JSON.stringify(site.seoFiles)}`;
+  const saved = `${site.name}\u0000${site.slug}\u0000${site.previewBaseUrl ?? ""}\u0000${site.startPageId ?? ""}\u0000${site.canonicalBaseUrl ?? ""}\u0000${site.localePrefix}\u0000${JSON.stringify(site.seoFiles)}`;
   const [name, setName] = useState(site.name);
   const [slug, setSlug] = useState(site.slug);
   const [previewUrl, setPreviewUrl] = useState(site.previewBaseUrl ?? "");
   const [startPageId, setStartPageId] = useState(site.startPageId ?? "");
   const [canonicalUrl, setCanonicalUrl] = useState(site.canonicalBaseUrl ?? "");
+  const [localePrefix, setLocalePrefix] = useState(site.localePrefix);
   const [files, setFiles] = useState(() => filesOf(site));
   // React's documented "adjust state when a prop changes", which needs a value
   // React itself tracks: a render-phase ref write is invisible to it.
@@ -972,6 +973,7 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
     setPreviewUrl(site.previewBaseUrl ?? "");
     setStartPageId(site.startPageId ?? "");
     setCanonicalUrl(site.canonicalBaseUrl ?? "");
+    setLocalePrefix(site.localePrefix);
     setFiles(filesOf(site));
   }
 
@@ -983,8 +985,9 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
   const startChanged = (startPageId || null) !== (site.startPageId ?? null);
   const savedFiles = filesOf(site);
   const canonicalChanged = canonicalUrl.trim() !== (site.canonicalBaseUrl ?? "");
+  const prefixChanged = localePrefix !== site.localePrefix;
   const filesChanged = (Object.keys(files) as Array<keyof SeoFilesConfig>).filter((k) => files[k].trim() !== savedFiles[k]);
-  const dirty = nameChanged || previewChanged || startChanged || canonicalChanged || filesChanged.length > 0;
+  const dirty = nameChanged || previewChanged || startChanged || canonicalChanged || prefixChanged || filesChanged.length > 0;
   const invalid = canManage && (!name.trim() || !slugValid);
   const setFile = (k: keyof SeoFilesConfig, v: string) => setFiles((p) => ({ ...p, [k]: v }));
 
@@ -994,9 +997,10 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
       if (nameChanged) await api.renameSite(site.id, { name: name.trim(), slug: slug.trim() });
       if (previewChanged) await api.setPreviewUrl(previewUrl.trim(), site.id);
       if (startChanged) await api.setStartPage(startPageId || null, site.id);
-      if (canonicalChanged || filesChanged.length) {
-        const patch: Partial<Record<"canonicalBaseUrl" | keyof SeoFilesConfig, string | null>> = {};
+      if (canonicalChanged || prefixChanged || filesChanged.length) {
+        const patch: Parameters<typeof api.setPublicFiles>[0] = {};
         if (canonicalChanged) patch.canonicalBaseUrl = canonicalUrl.trim() || null;
+        if (prefixChanged) patch.localePrefix = localePrefix;
         for (const k of filesChanged) patch[k] = (files[k] ?? "").trim() || null;
         await api.setPublicFiles(patch, site.id);
       }
@@ -1055,6 +1059,18 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
         <span className="mt-1 block text-xs text-muted">
           The PUBLIC origin — absolute URLs in the generated sitemap.xml, robots.txt and llms.txt are built against it
           (the preview URL may point at staging).
+        </span>
+      </label>
+
+      {/* how the frontend spells locales in URLs */}
+      <label className="text-sm">
+        <span className="field-label">Language in URLs</span>
+        <select aria-label="Language in URLs" className="field-input" value={localePrefix} onChange={(e) => setLocalePrefix(e.target.value as SiteRow["localePrefix"])}>
+          <option value="always">Always prefixed — /{site.defaultLocale}/about</option>
+          <option value="except-default">No prefix for {site.defaultLocale} — /about (other languages keep theirs)</option>
+        </select>
+        <span className="mt-1 block text-xs text-muted">
+          Must match how your frontend builds URLs. Redirects to pages and the generated sitemap.xml / llms.txt use it.
         </span>
       </label>
 

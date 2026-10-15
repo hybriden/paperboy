@@ -303,7 +303,7 @@ export function LinkField({
 }
 
 /** Searchable page list, tree-ordered and indented by depth. */
-function PagePicker({
+export function PagePicker({
   pages,
   onPick,
   onClose,

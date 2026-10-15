@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { type DashboardData, api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
+import { relativeTime } from "../../lib/relative-time.js";
 import { useIsMobile } from "../../lib/useMediaQuery.js";
 import { AI_OFF_HINT, useAiEnabled } from "../../lib/useAiStatus.js";
 import { useUser } from "../../lib/user.js";
@@ -14,6 +15,7 @@ import { Surface } from "../ui/surface.js";
 import { useToast } from "../ui/toast.js";
 import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, FormSubmissionsPanel, LanguagesPanel, McpConnectionsPanel,
   McpTokensPanel, PasswordPanel, SitePanel, StockImagesPanel, TrashPanel, TypeTemplatesPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
+import { RedirectsPanel } from "./RedirectsPanel.js";
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
@@ -22,17 +24,6 @@ function StatCard({ label, value }: { label: string; value: number | string }) {
       <div className="eyebrow mt-2.5">{label}</div>
     </Surface>
   );
-}
-
-/** "2h ago" / "in 3 days" — coarse on purpose; the dashboard is a glance. */
-function relativeTime(iso: string): string {
-  const diff = new Date(iso).getTime() - Date.now();
-  const abs = Math.abs(diff);
-  const fmt = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
-  if (abs < 60_000) return fmt.format(Math.round(diff / 1000), "second");
-  if (abs < 3_600_000) return fmt.format(Math.round(diff / 60_000), "minute");
-  if (abs < 86_400_000) return fmt.format(Math.round(diff / 3_600_000), "hour");
-  return fmt.format(Math.round(diff / 86_400_000), "day");
 }
 
 function scheduleTime(iso: string): string {
@@ -357,6 +348,7 @@ export function SettingsView() {
     { key: "templates", label: "Type templates", group: "Content", show: has("contenttype.manage"), render: () => <TypeTemplatesPanel /> },
     { key: "languages", label: "Languages", group: "Content", show: true, render: () => <LanguagesPanel /> },
     { key: "site", label: "Site", group: "Content", show: has("content.publish"), render: () => <SitePanel /> },
+    { key: "redirects", label: "Redirects", group: "Content", show: true, render: () => <RedirectsPanel /> },
     { key: "submissions", label: "Form submissions", group: "Content", show: has("submission.read"), render: () => <FormSubmissionsPanel /> },
     { key: "users", label: "Users & roles", group: "Administration", show: has("user.manage"), render: () => <UsersPanel /> },
     { key: "keys", label: "API keys", group: "Administration", show: has("deliverykey.manage"), render: () => <DeliveryKeysPanel /> },

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { type SiteUrlScheme, sitePath } from "./redirects.js";
 
 /**
  * Public-files support: robots.txt, sitemap.xml, llms.txt and security.txt.
@@ -12,8 +13,9 @@ import { z } from "zod";
  *
  * These builders are PURE (no I/O) so the exact file contents are unit-testable.
  * URL convention: `${canonicalBaseUrl}/${locale}${urlPath}` — the reference
- * frontend's locale-prefixed scheme. A frontend with different URLs builds its
- * own files from GET /delivery/pages instead.
+ * frontend's locale-prefixed scheme — unless the site's locale prefix setting
+ * says the default locale is unprefixed (SiteUrlScheme). A frontend with other
+ * URLs builds its own files from GET /delivery/pages instead.
  */
 
 /** Editor-controlled file config, stored per site (site.seo_files). */
@@ -58,9 +60,10 @@ const stripTrailingSlash = (u: string) => u.trim().replace(/\/+$/, "");
 const xmlEscape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 
-/** Absolute page URL under the reference frontend's locale-prefixed scheme. */
-export function publicPageUrl(canonicalBaseUrl: string, locale: string, urlPath: string): string {
-  return `${stripTrailingSlash(canonicalBaseUrl)}/${locale}${urlPath === "/" ? "" : urlPath}`;
+/** Absolute page URL: locale-prefixed, or per the site's URL scheme when given. */
+export function publicPageUrl(canonicalBaseUrl: string, locale: string, urlPath: string, scheme?: SiteUrlScheme): string {
+  const path = sitePath(urlPath, locale, scheme ?? { localePrefix: "always", defaultLocale: "" });
+  return `${stripTrailingSlash(canonicalBaseUrl)}${path === "/" ? "" : path}`;
 }
 
 /** robots.txt: default-allow, editor extras, sitemap pointer (absolute URLs only). */
@@ -78,7 +81,7 @@ export function buildRobotsTxt(opts: { canonicalBaseUrl?: string | null; robotsE
  * self, per the sitemap spec). noIndex pages are EXCLUDED — robots/sitemaps
  * must never advertise paths the page itself asks crawlers to ignore.
  */
-export function buildSitemapXml(pages: PublicPageEntry[], canonicalBaseUrl: string): string {
+export function buildSitemapXml(pages: PublicPageEntry[], canonicalBaseUrl: string, scheme?: SiteUrlScheme): string {
   const indexable = pages.filter((p) => !p.noIndex);
   const byDoc = new Map<string, PublicPageEntry[]>();
   for (const p of indexable) {
@@ -88,14 +91,14 @@ export function buildSitemapXml(pages: PublicPageEntry[], canonicalBaseUrl: stri
   }
   const urls: string[] = [];
   for (const p of indexable) {
-    const loc = xmlEscape(publicPageUrl(canonicalBaseUrl, p.locale, p.urlPath));
+    const loc = xmlEscape(publicPageUrl(canonicalBaseUrl, p.locale, p.urlPath, scheme));
     const siblings = byDoc.get(p.documentId)!;
     const alternates =
       siblings.length > 1
         ? siblings
             .map(
               (s) =>
-                `    <xhtml:link rel="alternate" hreflang="${xmlEscape(s.locale)}" href="${xmlEscape(publicPageUrl(canonicalBaseUrl, s.locale, s.urlPath))}"/>`,
+                `    <xhtml:link rel="alternate" hreflang="${xmlEscape(s.locale)}" href="${xmlEscape(publicPageUrl(canonicalBaseUrl, s.locale, s.urlPath, scheme))}"/>`,
             )
             .join("\n")
         : "";
@@ -132,6 +135,7 @@ export function buildLlmsTxt(opts: {
   pages: PublicPageEntry[];
   summary?: string;
   override?: string;
+  scheme?: SiteUrlScheme;
 }): string {
   const override = opts.override?.trim();
   if (override) return `${override}\n`;
@@ -142,7 +146,7 @@ export function buildLlmsTxt(opts: {
   if (pages.length) {
     lines.push("", "## Pages", "");
     for (const p of pages) {
-      const url = publicPageUrl(opts.canonicalBaseUrl, p.locale, p.urlPath);
+      const url = publicPageUrl(opts.canonicalBaseUrl, p.locale, p.urlPath, opts.scheme);
       const desc = p.description?.trim();
       lines.push(`- [${p.name}](${url})${desc ? `: ${desc}` : ""}`);
     }

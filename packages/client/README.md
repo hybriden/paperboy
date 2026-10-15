@@ -169,6 +169,35 @@ if (!res.ok) {
 repo are the worked example — accessible by construction (`label for`,
 `aria-describedby`, `aria-invalid`, focus moved to the error summary on failure).
 
+## Redirects
+
+Redirect rules live in the CMS (Settings → Redirects, per site) and your
+frontend applies them. **Apply a rule only where no published page answers** —
+fetch the page first, and consult the rules on a 404 — so a rule can never
+hide a live page. Page targets arrive already resolved to the page's current
+URL, so a page that moved again never costs an extra hop.
+
+```ts
+import { createClient, matchRedirect } from "@paperboycms/client";
+
+const cms = createClient({ baseUrl, key: process.env.PAPERBOY_PUBLIC_KEY!, etagCache: true });
+
+// On a 404 for `url.pathname + url.search`:
+const manifest = await cms.redirects(); // cache it ~60 s
+const hit = matchRedirect(manifest, url.pathname + url.search);
+if (hit?.location) return Response.redirect(new URL(hit.location, url), hit.status);
+if (hit) return new Response("Gone", { status: 410 });
+
+// Fire-and-forget, server-side: hit counts + the 404 log in the admin.
+waitUntil(cms.reportTraffic(hit ? { redirectHits: [hit.rule.id] } : { notFound: [url.pathname] }));
+```
+
+- `matchRedirect` normalizes like the CMS does: case-insensitive, trailing
+  slash ignored, exact rules before the longest `/prefix/*` rule, the rest of
+  the path carried over, the query string kept unless the rule says not to.
+- `reportTraffic` needs the **public** key and sends paths only; never call it
+  from the browser.
+
 ## Types
 
 | Type | What it is |
@@ -183,6 +212,7 @@ repo are the worked example — accessible by construction (`label for`,
 | `FieldRenderKind` | `"richtext" \| "markdown" \| "text" \| "other"` — what `renderKind()` returns |
 | `FormSpec` · `FormField` | A delivered form and one of its fields |
 | `FormConfirmation` · `FormSubmitResult` | What `submitForm` resolves to |
+| `RedirectManifest` · `RedirectManifestRule` · `RedirectMatch` | What `redirects()` returns and `matchRedirect()` answers |
 | `PaperboyError` | Thrown on non-OK responses: `{ status, message, body }` |
 
 ## Preview tokens (server-side)

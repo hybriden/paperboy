@@ -77,6 +77,12 @@ import {
   restoreVersion,
   revokeDeliveryKey,
    setStartPage,
+  createRedirect,
+  deleteRedirects,
+  listNotFound,
+  listRedirects,
+  testRedirect,
+  updateRedirect,
    softDelete,
    updateTypeTemplate,
   unpublishContent,
@@ -881,6 +887,41 @@ tool(
 tool("get_site_config", "Get site config (current start page).", {}, () => getSiteConfig(db, ctx()));
 tool("set_start_page", "Set (or clear with null) the page served at /.", { documentId: z.string().nullable() },
   async ({ documentId }) => { await setStartPage(db, ctx(), documentId); await mcpAudit("site.start_page", documentId); return { ok: true }; });
+
+/* ------------------------------- redirects ------------------------------ */
+const RedirectStatusArg = z.union([z.literal(301), z.literal(302), z.literal(307), z.literal(308), z.literal(410)]);
+tool(
+  "list_redirects",
+  "List the site's redirect rules with each target's live URL, hit counts and problems (target-missing, target-unpublished, shadowed, chain, loop). Rules apply on the frontend ONLY where no published page answers the path. Pass targetDocumentId to see which old URLs point at one page.",
+  { targetDocumentId: z.string().optional() },
+  ({ targetDocumentId }) => listRedirects(db, ctx(), { targetDocumentId }),
+);
+tool(
+  "create_redirect",
+  "Create a redirect rule. source: a path (\"/old-page\"), a prefix (\"/blog/*\" — the rest of the path is carried over) or a full URL on the old site (reduced to its path). Target: EITHER targetDocumentId (+ optional targetLocale) to follow a page wherever it moves, OR target = a path or https:// URL — a path that names a published page is stored as that page. status: 301 (default, permanent — passes link equity), 302/307 temporary, 308 permanent, 410 gone (no target). A target that is itself redirected is collapsed to the final destination; loops are refused. Publishing a new slug or moving a page creates 301s automatically — check list_redirects before adding one by hand.",
+  { source: z.string(), target: z.string().nullable().optional(), targetDocumentId: z.string().nullable().optional(), targetLocale: z.string().nullable().optional(), status: RedirectStatusArg.optional(), keepQuery: z.boolean().optional(), note: z.string().nullable().optional() },
+  async (a) => { const r = await createRedirect(db, ctx(), a); await mcpAudit("redirect.create", null, null, { id: r.redirect.id, source: r.redirect.source }); return r; },
+);
+tool(
+  "update_redirect",
+  "Update a redirect rule by id (from list_redirects). Same fields and rules as create_redirect; omitted fields are unchanged.",
+  { id: z.number().int(), source: z.string().optional(), target: z.string().nullable().optional(), targetDocumentId: z.string().nullable().optional(), targetLocale: z.string().nullable().optional(), status: RedirectStatusArg.optional(), keepQuery: z.boolean().optional(), note: z.string().nullable().optional() },
+  async ({ id, ...patch }) => { const r = await updateRedirect(db, ctx(), id, patch); await mcpAudit("redirect.update", null, null, { id }); return r; },
+);
+tool("delete_redirects", "Delete redirect rules by id.", { ids: z.array(z.number().int()).min(1) },
+  async ({ ids }) => { const deleted = await deleteRedirects(db, ctx(), ids); await mcpAudit("redirect.delete", null, null, { ids, deleted }); return { deleted }; });
+tool(
+  "test_redirect",
+  "Follow a URL the way a visitor would: a published page answers first, then the rules, hop by hop. Returns each step (page, redirect, gone, external, not-found, loop) and the hop count. Use it to verify a migration: every old URL should end on a page in one hop.",
+  { url: z.string() },
+  ({ url }) => testRedirect(db, ctx(), url),
+);
+tool(
+  "list_not_found",
+  "Paths that answered 404 on the frontend, most hits first (path only — no query string). coveredBy is the id of a rule that now answers the path. Create a redirect for the ones with real traffic.",
+  {},
+  () => listNotFound(db, ctx()),
+);
 
 /* ---------------------------- platform admin --------------------------- */
 tool("list_users", "List users with roles and section scopes (admin).", {}, () => listUsers(db, ctx()));

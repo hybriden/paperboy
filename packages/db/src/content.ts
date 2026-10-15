@@ -11,6 +11,7 @@ import {
 import { DEFAULT_SITE_ID, auditLog, contentItem, contentReference, contentType, contentVersion, locale, site } from "./schema.js";
 import { getAgentReviewRequired } from "./site.js";
 import { dispatchWebhooks } from "./webhooks.js";
+import { trackUrlChanges } from "./redirects.js";
 
 const isUniqueViolation = (err: unknown): boolean => pgErrorCode(err) === PG_UNIQUE_VIOLATION;
 
@@ -2120,6 +2121,12 @@ function announceContent(
   );
 }
 
+/** Run a change that may move a PAGE's public URL with redirect tracking —
+ *  every changed URL in its subtree gets a 301 (redirects.ts). */
+function withUrlTracking<T>(db: Database, item: { kind: string; siteId: string; documentId: string }, change: () => Promise<T>): Promise<T> {
+  return item.kind === "page" ? trackUrlChanges(db, item.siteId, item.documentId, change) : change();
+}
+
 export async function publishContent(
   db: Database,
   ctx: AccessContext,
@@ -2154,7 +2161,7 @@ export async function publishContent(
       throw Errors.conflict("Nothing to publish (no draft changes)");
     }
     await assertDraftPublishable(db, item, loc, latest);
-    await promoteDraft(db, item, loc, latest.id, ctx.userId);
+    await withUrlTracking(db, item, () => promoteDraft(db, item, loc, latest.id, ctx.userId));
     const published = await getContent(db, ctx, documentId, loc);
     announceContent(db, "content.published", item, loc, published.name, published.urlPath);
     return published;
@@ -2165,7 +2172,7 @@ export async function publishContent(
   if ((ctx.via === "mcp" || ctx.via === "agent") && !opts?.allowLanguageMismatch) {
     await assertLanguageMatchesBranch(db, item, loc, draft);
   }
-  await promoteDraft(db, item, loc, draft.id, ctx.userId);
+  await withUrlTracking(db, item, () => promoteDraft(db, item, loc, draft.id, ctx.userId));
   const published = await getContent(db, ctx, documentId, loc);
   announceContent(db, "content.published", item, loc, published.name, published.urlPath);
   return published;
@@ -2362,7 +2369,7 @@ export async function runScheduledPublish(
       }
       // `due` is a snapshot: the schedule may have been cancelled (or the draft
       // discarded) since. Promote only if it is STILL a due scheduled draft.
-      await promoteDraft(db, item, d.locale, d.id, d.createdBy, { scheduledBy: now });
+      await withUrlTracking(db, item, () => promoteDraft(db, item, d.locale, d.id, d.createdBy, { scheduledBy: now }));
       const urlPath = item.kind === "page" ? await computePath(db, d.documentId, d.locale) : null;
       await dispatchWebhooks(db, {
         event: "content.published",
@@ -2600,7 +2607,7 @@ export async function moveContent(
     targetParentId = newParentId;
   }
 
-  await db.transaction(async (tx) => {
+  const move = () => db.transaction(async (tx) => {
     if (reparent) {
       // Serialize structural moves within the site so the acyclicity check and the
       // reparent write are atomic — two opposing concurrent reparents can't both
@@ -2689,6 +2696,8 @@ export async function moveContent(
       FROM (VALUES ${sql.join(ids.map((id, i) => sql`(${id}::text, ${i * 10}::int)`), sql`, `)}) AS v(id, i)
       WHERE c.document_id = v.id`);
   });
+  // Re-parenting moves the public URL of the page and its whole subtree.
+  await (reparent ? withUrlTracking(db, item, move) : move());
 }
 
 /**

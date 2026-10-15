@@ -81,6 +81,9 @@ export const site = pgTable("site", {
   // (SeoFilesConfig in @paperboy/shared).
   canonicalBaseUrl: text("canonical_base_url"),
   seoFiles: jsonb("seo_files").notNull().default({}),
+  // Migration 0031: how the frontend prefixes locales in URLs ('always' |
+  // 'except-default') — LocalePrefix in @paperboy/shared.
+  localePrefix: text("locale_prefix").notNull().default("always"),
 });
 
 export const contentItem = pgTable(
@@ -340,6 +343,42 @@ export const uploadLink = pgTable("upload_link", {
   siteId: text("site_id").notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** A redirect rule (migration 0031) — see packages/db/src/redirects.ts. */
+export const redirect = pgTable(
+  "redirect",
+  {
+    id: serial("id").primaryKey(),
+    siteId: text("site_id").notNull(),
+    sourcePath: text("source_path").notNull(),
+    matchType: text("match_type").notNull().default("exact"),
+    targetDocumentId: text("target_document_id"),
+    targetLocale: text("target_locale"),
+    targetPath: text("target_path"),
+    statusCode: integer("status_code").notNull().default(301),
+    keepQuery: boolean("keep_query").notNull().default(true),
+    origin: text("origin").notNull().default("manual"),
+    note: text("note"),
+    hits: integer("hits").notNull().default(0),
+    lastHitAt: timestamp("last_hit_at", { withTimezone: true }),
+    createdBy: text("created_by"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    siteSourceIdx: uniqueIndex("redirect_site_source_idx").on(t.siteId, t.sourcePath),
+    targetDocIdx: index("redirect_target_doc_idx").on(t.targetDocumentId),
+  }),
+);
+
+/** A path that answered 404 on the frontend, aggregated (migration 0031). */
+export const notFoundPath = pgTable("not_found_path", {
+  siteId: text("site_id").notNull(),
+  path: text("path").notNull(),
+  hits: integer("hits").notNull().default(0),
+  firstSeen: timestamp("first_seen", { withTimezone: true }).notNull().defaultNow(),
+  lastSeen: timestamp("last_seen", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export const auditLog = pgTable(
