@@ -139,7 +139,12 @@ export type LinkValue = z.infer<typeof LinkValue>;
 
 /** Definition of a single field on a content type (the lenient shape; see FieldDef). */
 const FieldDefShape = z.object({
-  name: z.string().regex(/^[a-zA-Z][a-zA-Z0-9_]*$/).max(60),
+  name: z
+    .string()
+    .regex(/^[a-zA-Z][a-zA-Z0-9_]*$/)
+    .max(60)
+    // `data.toString` would read Object.prototype.toString wherever data[name] is checked for undefined.
+    .refine((n) => !(n in Object.prototype), "Field name is a built-in object property (constructor, toString, …); choose another"),
   displayName: z.string().min(1).max(80),
   type: FieldType,
   /** Whether the field has an independent value per locale (document-level i18n). */
