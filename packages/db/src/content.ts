@@ -10,7 +10,7 @@ import {
 } from "./scope.js";
 import { DEFAULT_SITE_ID, auditLog, contentItem, contentReference, contentType, contentVersion, locale, site } from "./schema.js";
 import { getAgentReviewRequired } from "./site.js";
-import { dispatchWebhooks } from "./webhooks.js";
+import { announceDeliveryChange, dispatchWebhooks } from "./webhooks.js";
 import { trackUrlChanges } from "./redirects.js";
 
 const isUniqueViolation = (err: unknown): boolean => pgErrorCode(err) === PG_UNIQUE_VIOLATION;
@@ -193,6 +193,7 @@ export async function deleteContentType(db: Database, ctx: AccessContext, name: 
     throw Errors.conflict(`'${name}' is still in use (${parts.join(", ")}). Remove those first.`);
   }
   await db.delete(contentType).where(eq(contentType.name, name));
+  announceDeliveryChange(db, null, "content-type");
 }
 
 /**
@@ -202,6 +203,19 @@ export async function deleteContentType(db: Database, ctx: AccessContext, name: 
  * next re-publish of existing items (documented; the UI warns).
  */
 export async function updateContentType(
+  db: Database,
+  ctx: AccessContext,
+  name: string,
+  def: ContentTypeDef,
+): Promise<{ next: ContentTypeDef; prev: ContentTypeDef }> {
+  const result = await applyContentTypeUpdate(db, ctx, name, def);
+  announceDeliveryChange(db, null, "content-type");
+  return result;
+}
+
+/** updateContentType without the announcement, for a caller inside a
+ *  transaction — it announces once the transaction has committed. */
+export async function applyContentTypeUpdate(
   db: Queryable,
   ctx: AccessContext,
   name: string,
@@ -338,8 +352,8 @@ export async function updateLocale(
     if (!patch.enabled && row.isDefault) throw Errors.conflict("Can’t disable the default language");
     updates.enabled = patch.enabled;
   }
-  if (Object.keys(updates).length === 0) return;
-  await db.update(locale).set(updates).where(eq(locale.code, code));
+  if (Object.keys(updates).length) await db.update(locale).set(updates).where(eq(locale.code, code));
+  if (patch.isDefault || Object.keys(updates).length) announceDeliveryChange(db, null, "locale");
 }
 
 /** Permanently remove a locale. Blocked for the default and for locales that hold content. */
@@ -355,6 +369,7 @@ export async function deleteLocale(db: Database, ctx: AccessContext, code: strin
     await tx.update(locale).set({ fallbackLocaleCode: null }).where(eq(locale.fallbackLocaleCode, code));
     await tx.delete(locale).where(eq(locale.code, code));
   });
+  announceDeliveryChange(db, null, "locale");
 }
 
 /* ------------------------------ variant state ----------------------------- */
@@ -2536,7 +2551,7 @@ export async function deleteVariant(
   loc: string,
 ): Promise<{ ok: true; deleted: number }> {
   requirePermission(ctx, "content.delete");
-  await loadAuthorized(db, ctx, documentId); // not-found / cross-site guard
+  const item = await loadAuthorized(db, ctx, documentId); // not-found / cross-site guard
   const rows = await db
     .select({ locale: contentVersion.locale })
     .from(contentVersion)
@@ -2558,6 +2573,7 @@ export async function deleteVariant(
       .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)))
       .returning({ id: contentVersion.id });
   });
+  announceDeliveryChange(db, item.siteId, "variant-deleted", documentId);
   return { ok: true, deleted: deleted.length };
 }
 
@@ -2698,6 +2714,7 @@ export async function moveContent(
   });
   // Re-parenting moves the public URL of the page and its whole subtree.
   await (reparent ? withUrlTracking(db, item, move) : move());
+  announceDeliveryChange(db, item.siteId, "moved", documentId);
 }
 
 /**
@@ -2720,6 +2737,7 @@ export async function setChildSort(
     throw Errors.validation(parsed.error.issues[0]?.message ?? "Invalid childSort rule");
   }
   await db.update(contentItem).set({ childSort: parsed.data }).where(eq(contentItem.documentId, documentId));
+  announceDeliveryChange(db, item.siteId, "sorted", documentId);
 }
 
 /** Flat list of all pages in scope (id, name, parentId) — powers the "Move to" picker. */
@@ -3137,10 +3155,10 @@ export async function softDelete(
   documentId: string,
 ): Promise<{ trashed: number }> {
   requirePermission(ctx, "content.delete");
-  await loadAuthorized(db, ctx, documentId);
+  const item = await loadAuthorized(db, ctx, documentId);
 
   const now = new Date();
-  return db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     // Collect the subtree (guarded downward BFS) in the same transaction that trashes it.
     const ids = [documentId];
     const visited = new Set<string>([documentId]);
@@ -3166,6 +3184,8 @@ export async function softDelete(
       .where(and(inArray(contentVersion.documentId, ids), eq(contentVersion.isCurrentPublished, true)));
     return { trashed: ids.length };
   });
+  announceDeliveryChange(db, item.siteId, "trashed", documentId);
+  return result;
 }
 
 /** Restore from trash (clears deletedAt). Republishing is a separate, explicit step. */

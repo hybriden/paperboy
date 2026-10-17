@@ -10,7 +10,8 @@ import type { Database, Queryable } from "./client.js";
 import { AppError, Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { contentType, typeTemplate } from "./schema.js";
-import { createContentType, getContentType, updateContentType } from "./content.js";
+import { applyContentTypeUpdate, createContentType, getContentType } from "./content.js";
+import { announceDeliveryChange } from "./webhooks.js";
 
 /**
  * The content-type template collection: named, reusable ContentTypeDef recipes.
@@ -186,7 +187,7 @@ export async function instantiateTypeTemplate(
   }
   // One transaction: a set that fails halfway (a referenced block template that
   // turns out invalid) must not leave a partial type family installed.
-  return db.transaction(async (tx) => {
+  const instantiated = await db.transaction(async (tx) => {
     const existing = await tx.select({ id: contentType.id }).from(contentType).where(eq(contentType.name, def.name)).limit(1);
     let result: InstantiateResult;
     if (existing[0]) {
@@ -197,7 +198,7 @@ export async function instantiateTypeTemplate(
             `(kind must match, existing content is not migrated), or asName to create a type with a different name.`,
         );
       }
-      const { next } = await updateContentType(tx, ctx, def.name, def);
+      const { next } = await applyContentTypeUpdate(tx, ctx, def.name, def);
       result = { type: next, name: def.name, action: "updated" };
     } else {
       const created = await createContentType(tx, ctx, def);
@@ -206,6 +207,8 @@ export async function instantiateTypeTemplate(
     if (opts.withBlocks) result.blocks = await instantiateReferencedBlocks(tx, ctx, def);
     return result;
   });
+  if (instantiated.action === "updated") announceDeliveryChange(db, null, "content-type");
+  return instantiated;
 }
 
 /** Block type names a definition's content areas allow-list. */
