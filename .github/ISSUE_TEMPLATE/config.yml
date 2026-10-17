@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/hybriden/paperboy/security/advisories/new
+    about: Report privately. Please do not open a public issue.
+  - name: Questions and ideas
+    url: https://github.com/hybriden/paperboy/discussions
+    about: Setup help, "how do I", and design discussion.

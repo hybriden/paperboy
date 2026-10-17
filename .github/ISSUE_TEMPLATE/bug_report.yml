@@ -1,0 +1,37 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Surface
+      options: [Admin, Management API, Delivery API, MCP, Client SDK, Preview bridge, Docker / deploy, Other]
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Exact requests, tool calls or clicks. For API or MCP include the payload.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Image tag, commit SHA or npm package version
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "`docker compose logs api` around the failure. Redact secrets."
+      render: shell
