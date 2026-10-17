@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/hybriden/paperboy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hybriden/paperboy/actions/workflows/ci.yml)
 
-**An open-source headless CMS — editor-first, type-safe, batteries included.**
+**A self-hosted, open-source headless CMS in TypeScript on PostgreSQL. React admin with visual on-page editing, a typed Delivery API, and an MCP server so AI agents edit under the same rules as humans.**
 
 > **Paperboy ONE** — *Open, No Extras.* · **DPX** — *Don't Pay eXtra.*
 > A proper headless CMS without the "experience platform" invoice. Self-host it, own your content, ship.
