@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
-import { isFormType } from "@paperboy/shared";
+import { generalBlockTypes, isFormType } from "@paperboy/shared";
 import type { ContentTypeDef } from "@paperboy/shared";
 import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
@@ -227,7 +227,7 @@ function CreateBlockDialog({
   onCreated: (id: string) => void;
 }) {
   const qc = useQueryClient();
-  const [type, setType] = useState(blockTypes.find((t) => !t.nestedOnly)?.name ?? blockTypes[0]?.name ?? "");
+  const [type, setType] = useState(generalBlockTypes(blockTypes)[0]?.name ?? blockTypes[0]?.name ?? "");
   const [name, setName] = useState("");
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => { nameRef.current?.focus(); }, []);
@@ -254,7 +254,7 @@ function CreateBlockDialog({
         <TypePicker
           id="nb-type"
           label="Block type"
-          types={blockTypes.filter((t) => !t.nestedOnly)}
+          types={generalBlockTypes(blockTypes)}
           secondary={blockTypes.filter((t) => t.nestedOnly)}
           secondaryLabel="Parts (used inside another type)"
           value={type}
