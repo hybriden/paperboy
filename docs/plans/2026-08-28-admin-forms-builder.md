@@ -4,7 +4,7 @@
 
 ## Design rationale (the grounding the task demands)
 
-**Logic.** FORMS_PLAN.md §9 excluded "a bespoke drag-and-drop form designer" with the reasoning "content areas already order fields". That reasoning still holds and this plan obeys it: nothing here adds a parallel model. What §9 did NOT decide is how the existing area RENDERS when its blocks are questions — that is presentation, and presentation is where the clunk lives. The builder is therefore a specialized rendering of the same `BlockInstance[]`, switched on `isFormFieldType` (the same predicate delivery and coercion already use), driven by the type's own `FieldDef` list so copy (displayName/helpText) keeps its single source in `BUILTIN_TYPE_TEMPLATES`.
+**Logic.** docs/plans/2026-08-22-forms.md §9 excluded "a bespoke drag-and-drop form designer" with the reasoning "content areas already order fields". That reasoning still holds and this plan obeys it: nothing here adds a parallel model. What §9 did NOT decide is how the existing area RENDERS when its blocks are questions — that is presentation, and presentation is where the clunk lives. The builder is therefore a specialized rendering of the same `BlockInstance[]`, switched on `isFormFieldType` (the same predicate delivery and coercion already use), driven by the type's own `FieldDef` list so copy (displayName/helpText) keeps its single source in `BUILTIN_TYPE_TEMPLATES`.
 
 **UX (each choice names its principle):**
 - *Progressive disclosure* — a question is its Label + Required 95% of the time. Essentials render first (Label, Required, type extras like Options); the technical half (Field key, min/max/pattern, error copy) folds behind an "Answer rules & key" disclosure. Today all 8-9 editors sit at equal weight.

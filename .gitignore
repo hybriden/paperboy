@@ -14,3 +14,4 @@ playwright-report/
 .playwright-mcp/
 .turbo/
 *.tsbuildinfo
+.shipwright-retrospective.md

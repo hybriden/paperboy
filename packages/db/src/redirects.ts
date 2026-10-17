@@ -28,7 +28,7 @@ import { announceDeliveryChange } from "./webhooks.js";
 /**
  * Redirects — per site, stored here, applied by the frontend.
  *
- * Rules (each one answers a failure the research turned up; REDIRECTS_PLAN.md):
+ * Rules (each one answers a failure the research turned up; docs/plans/2026-10-15-redirects.md):
  *  - **A rule fires only where no published page answers.** The frontend asks
  *    delivery for the page first and consults the manifest on a 404, so a stale
  *    rule can never hijack a live page. A rule whose source IS a live page is

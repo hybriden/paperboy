@@ -1668,7 +1668,7 @@ test("drag a page to the RIGHT onto another page nests it (drag-to-nest)", async
 // Forms builder: a Form's questions area renders as a purpose-built builder
 // (essentials first, technical half behind a disclosure, visitor-eye preview,
 // plain-line options with parsed feedback) — same storage, same ordering, no
-// parallel model (FORMS_PLAN.md §9's reasoning still governs).
+// parallel model (docs/plans/2026-08-22-forms.md §9's reasoning still governs).
 test.describe("forms builder", () => {
   /** A throwaway shared Form document, created API-side for speed. The Form
    *  built-ins are templates, not seed types — instantiate them first

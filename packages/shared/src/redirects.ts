@@ -4,7 +4,7 @@ import { z } from "zod";
  * Redirects: the pure half (no I/O) — path normalization, the delivered
  * manifest's shape, and the matcher a frontend runs against it. The CMS stores
  * the rules (packages/db/src/redirects.ts); the frontend applies them, and only
- * where no published page answers the request. REDIRECTS_PLAN.md has the why.
+ * where no published page answers the request. docs/plans/2026-10-15-redirects.md has the why.
  *
  * `@paperboycms/client` ships its own copy of `matchRedirect` (it is published
  * and dependency-free); `client-redirects.test.ts` pins the two together, the

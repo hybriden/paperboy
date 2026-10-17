@@ -5,7 +5,7 @@ import { Icon } from "../../lib/icons.js";
 
 /**
  * The forms builder's question editor: a purpose-built arrangement of a form
- * field block's OWN fields (FORMS_PLAN.md §9 still governs — same storage,
+ * field block's OWN fields (docs/plans/2026-08-22-forms.md §9 still governs — same storage,
  * same ordering, no parallel model; this is presentation over the identical
  * BlockInstance).
  *
