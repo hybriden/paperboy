@@ -6,6 +6,7 @@ import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { asset } from "./schema.js";
+import { announceDeliveryChange } from "./webhooks.js";
 
 /** Path served by @fastify/static; the relative path is stored in the DB. */
 export const MEDIA_PREFIX = "/api/v1/media";
@@ -139,6 +140,7 @@ export async function updateAssetAlt(
   requirePermission(ctx, "content.update");
   const res = await db.update(asset).set({ alt }).where(and(eq(asset.documentId, documentId), eq(asset.siteId, ctx.siteId))).returning();
   if (!res[0]) throw Errors.notFound("Asset");
+  announceDeliveryChange(db, ctx.siteId, "asset", documentId);
   return toRecord(res[0]);
 }
 
@@ -205,11 +207,13 @@ export async function deleteAsset(
   // (UPLOADS_DIR missing, EACCES), the throw rolls the row back, so the erasure
   // stays retryable instead of leaving downloadable bytes with no row to find
   // them by.
-  return db.transaction(async (tx) => {
+  const removed = await db.transaction(async (tx) => {
     const res = await tx.delete(asset).where(and(eq(asset.documentId, documentId), eq(asset.siteId, ctx.siteId))).returning({ url: asset.url });
     if (!res[0]) throw Errors.notFound("Asset");
     const relativePath = res[0].url;
     if (uploadsDir) await removeAssetFiles(uploadsDir, relativePath);
     return { relativePath };
   });
+  announceDeliveryChange(db, ctx.siteId, "asset", documentId);
+  return removed;
 }

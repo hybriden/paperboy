@@ -5,6 +5,7 @@ import { Errors } from "./errors.js";
 import { type AccessContext, loadAuthorized, requirePermission } from "./scope.js";
 import { contentItem, site, siteSetting } from "./schema.js";
 import { decryptSecret, encryptSecret } from "./totp.js";
+import { announceDeliveryChange } from "./webhooks.js";
 
 /**
  * Site settings. The preview origin + start page are PER-SITE (on the `site`
@@ -45,6 +46,7 @@ export async function setStartPage(db: Database, ctx: AccessContext, documentId:
     if (item.kind !== "page") throw Errors.badRequest("Only a page can be the start page");
   }
   await db.update(site).set({ startPageId: documentId }).where(eq(site.id, ctx.siteId));
+  announceDeliveryChange(db, ctx.siteId, "start-page", documentId ?? undefined);
 }
 
 /** The front-end origin used to build preview links for a site (or "" if unset). */
@@ -105,7 +107,10 @@ export async function setSiteFilesConfig(
     }
     patch.seoFiles = SeoFilesConfig.parse(files); // max lengths enforced, self-teaching 422 on violation
   }
-  if (Object.keys(patch).length) await db.update(site).set(patch).where(eq(site.id, ctx.siteId));
+  if (Object.keys(patch).length) {
+    await db.update(site).set(patch).where(eq(site.id, ctx.siteId));
+    announceDeliveryChange(db, ctx.siteId, "site-settings");
+  }
 }
 
 /** Read-only site config surface for the admin (the ACTIVE site's start page + preview URL). */

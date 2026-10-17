@@ -8,7 +8,7 @@ import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
-import { webhook, webhookDelivery } from "./schema.js";
+import { site, webhook, webhookDelivery } from "./schema.js";
 
 /**
  * Outbound webhooks (publish-triggered integration events).
@@ -54,7 +54,46 @@ export interface FormSubmittedEvent {
   fields?: { name: string; label: string; kind: string }[];
 }
 
-export type AnyWebhookEvent = WebhookEvent | FormSubmittedEvent;
+/**
+ * What a site delivers changed WITHOUT a publish: a page moved or was trashed,
+ * a menu re-sorted, the start page, an image's alt text, a redirect, a field's
+ * delivery visibility. A frontend that caches rendered pages purges on this
+ * (together with the two content events); it never carries content itself.
+ */
+export type DeliveryChangeReason =
+  | "moved"
+  | "sorted"
+  | "trashed"
+  | "variant-deleted"
+  | "start-page"
+  | "site-settings"
+  | "asset"
+  | "redirects"
+  | "content-type"
+  | "locale";
+
+export interface DeliveryChangedEvent {
+  event: "delivery.changed";
+  siteId: string;
+  reason: DeliveryChangeReason;
+  documentId?: string;
+  at: string;
+}
+
+export type AnyWebhookEvent = WebhookEvent | FormSubmittedEvent | DeliveryChangedEvent;
+
+/**
+ * Announce a delivery change WITHOUT blocking the write — bookkeeping must
+ * never fail an editor's action. `siteId: null` is for what every site shares
+ * (content types, locales). Lives in the query layer so REST and MCP both fire.
+ */
+export function announceDeliveryChange(db: Database, siteId: string | null, reason: DeliveryChangeReason, documentId?: string): void {
+  void (async () => {
+    const siteIds = siteId ? [siteId] : (await db.select({ id: site.id }).from(site)).map((r) => r.id);
+    const at = new Date().toISOString();
+    await Promise.all(siteIds.map((id) => dispatchWebhooks(db, { event: "delivery.changed", siteId: id, reason, ...(documentId ? { documentId } : {}), at })));
+  })().catch((err: unknown) => console.error(`[paperboy] delivery.changed (${reason}) webhook dispatch failed:`, err));
+}
 
 const WEBHOOK_TIMEOUT_MS = 5000;
 

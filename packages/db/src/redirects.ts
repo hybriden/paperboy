@@ -23,6 +23,7 @@ import { publishedPagePaths } from "./delivery.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { contentItem, contentVersion, locale, notFoundPath, redirect, site } from "./schema.js";
+import { announceDeliveryChange } from "./webhooks.js";
 
 /**
  * Redirects — per site, stored here, applied by the frontend.
@@ -374,6 +375,7 @@ export async function createRedirect(
   const [row] = await db.insert(redirect).values({ ...values, siteId: ctx.siteId, origin, createdBy: ctx.userId }).returning();
   const repointed = await repointChainsInto(db, ctx.siteId, row!);
   const [view] = await viewsFor(db, ctx.siteId, [row!.id]);
+  announceDeliveryChange(db, ctx.siteId, "redirects");
   return { redirect: view!, collapsed, repointed };
 }
 
@@ -406,6 +408,7 @@ export async function updateRedirect(
   const [row] = await db.update(redirect).set({ ...values, origin: existing.origin === "auto" ? "manual" : existing.origin, updatedAt: new Date() }).where(eq(redirect.id, id)).returning();
   const repointed = await repointChainsInto(db, ctx.siteId, row!);
   const [view] = await viewsFor(db, ctx.siteId, [id]);
+  announceDeliveryChange(db, ctx.siteId, "redirects");
   return { redirect: view!, collapsed, repointed };
 }
 
@@ -413,6 +416,7 @@ export async function deleteRedirects(db: Database, ctx: AccessContext, ids: num
   requirePermission(ctx, "content.publish");
   if (ids.length === 0) return 0;
   const gone = await db.delete(redirect).where(and(eq(redirect.siteId, ctx.siteId), inArray(redirect.id, ids))).returning({ id: redirect.id });
+  if (gone.length) announceDeliveryChange(db, ctx.siteId, "redirects");
   return gone.length;
 }
 
@@ -741,5 +745,6 @@ export async function importRedirects(db: Database, ctx: AccessContext, csv: str
     created = results.filter((r) => r.action === "create").length;
     updated = results.filter((r) => r.action === "update").length;
   }
+  if (!opts.dryRun && created + updated > 0) announceDeliveryChange(db, ctx.siteId, "redirects");
   return { rows: results, created, updated, errors };
 }

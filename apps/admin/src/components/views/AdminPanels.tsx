@@ -1903,7 +1903,7 @@ export function WebhooksPanel() {
   const [sendSubmissions, setSendSubmissions] = useState(false);
 
   const create = useMutation({
-    mutationFn: () => api.createWebhook({ name, url, events: sendSubmissions ? ["content.published", "content.unpublished", "form.submitted"] : undefined }),
+    mutationFn: () => api.createWebhook({ name, url, events: sendSubmissions ? ["content.published", "content.unpublished", "delivery.changed", "form.submitted"] : undefined }),
     onSuccess: (r) => { setCreated(r.secret); setName(""); setUrl(""); setSendSubmissions(false); void qc.invalidateQueries({ queryKey: ["webhooks"] }); },
     onError: (e) => toast.error("Couldn’t create webhook", (e as Error).message),
   });
@@ -1916,7 +1916,7 @@ export function WebhooksPanel() {
   return (
     <PanelShell
       title="Webhooks"
-      hint="POSTed (HMAC-SHA256 signed) on publish/unpublish — wire up ISR revalidation or a CDN purge. Can also forward form submissions, which is how a submission reaches email or a CRM."
+      hint="POSTed (HMAC-SHA256 signed) on publish/unpublish, and on every other change to what the site delivers (moves, sorting, trash, start page, alt text, redirects, settings) — wire up ISR revalidation or a CDN purge. Can also forward form submissions, which is how a submission reaches email or a CRM."
       action={
         <div className="flex items-center gap-1.5">
           <input className="field-input" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Webhook name" />
