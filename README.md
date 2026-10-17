@@ -42,21 +42,21 @@ visual on-page editing, Next.js reference frontend, MCP server. Runs as **one co
 
 ## How it compares
 
-Defaults as each vendor documents them on 2026-10-17, not what plugins or custom code can reach. Every cell is sourced in [`docs/comparison-sources.md`](docs/comparison-sources.md); corrections are welcome as PRs.
+What ships in the box as of 2026-10-17. **core** = built in · **plugin** · **paid** · **no**. Every cell is sourced in [`docs/comparison-sources.md`](docs/comparison-sources.md); corrections welcome.
 
 | | Paperboy | Strapi | Payload | Directus | Sanity |
 |---|---|---|---|---|---|
-| **License** | MIT | MIT core; SSO, releases, live preview, workflows and audit log are paid | MIT; enterprise add-ons sales-led | MSCL 1.0 (source-available, GPL after 4 years); unlicensed installs capped at 3 seats / 25 collections | Studio MIT; backend proprietary |
-| **Self-hosted deploy** | one container + Postgres, official image | Node app + DB, no official image | inside your Next.js app + DB, no official image | one container + any SQL DB, official image | backend not self-hostable |
-| **Forms: submissions in your DB, validated server-side against the form** | yes, core | third-party plugin | official plugin stores them; server only checks values exist | no form builder; model a collection yourself | no; third-party form services |
-| **SEO meta + schema.org JSON-LD computed by the CMS** | yes, every page | plugin stores meta fields, no JSON-LD (archived Apr 2026) | plugin stores title/description/image, no JSON-LD | Labs plugin stores fields, no JSON-LD | frontend or community plugins |
-| **Redirects, automatic 301 on rename** | yes, core | third-party plugin | official plugin, manual rules only | none | DIY schema + a Sanity Function recipe |
-| **MCP server acting as a user, with that user's roles** | built in; token or OAuth 2.1; REST parity test-enforced | built in (GA Sep 2026); admin token scoped by its owner | official plugin (beta); API key acts as its owner | built in (11.12+); OAuth 2.1 since v12 | official remote server; OAuth as the user |
-| **Multisite in one instance** | yes, core | no; one deploy per site | official multi-tenant plugin | data-modelling pattern | datasets (metered per plan) or separate projects |
-| **Visual click-to-edit on the live page** | yes, framework-agnostic bridge | paid plans only (Growth+) | "coming soon", enterprise | yes (11.6+) | yes, all plans |
-| **GraphQL API** | no | official plugin, opt-in | core | core | core (GROQ preferred) |
-| **Hosted option** | no | Strapi Cloud, paid only | Payload Cloud paused to new projects | Directus Cloud add-on | hosted only, free tier |
-| **Ecosystem and plugin marketplace** | new, none yet | large | official plugins + community | marketplace + Labs | large |
+| **License** | MIT | MIT + paid tiers | MIT | source-available | closed backend |
+| **Self-host** | one image | Node app | your Next.js app | one image | no |
+| **Forms, validated server-side** | core | plugin | plugin, partial | no | no |
+| **SEO meta + JSON-LD from the CMS** | core | plugin, no JSON-LD | plugin, no JSON-LD | plugin, no JSON-LD | no |
+| **Auto 301 on rename** | core | plugin | plugin, manual | no | DIY |
+| **MCP server acting as a user** | core | core | plugin (beta) | core | core |
+| **Multisite** | core | no | plugin | pattern | datasets |
+| **Click-to-edit on the live page** | core | paid | soon | core | core |
+| **GraphQL** | no | plugin | core | core | core |
+| **Hosted option** | no | paid | paused | paid | yes |
+| **Ecosystem** | none yet | large | growing | growing | large |
 
 ## Layout
 ```
