@@ -231,7 +231,7 @@ const RAW_TEMPLATES = [
       },
       {
         name: "topics", displayName: "FAQ topics", type: "contentArea", localized: true, delivery: "public",
-        allowedBlocks: ["FaqTopicBlock"],
+        allowedBlocks: ["FaqTopicBlock"], schemaProp: "mainEntity",
         helpText: "A tip is to split your FAQ into several topics. Many FAQs start off with a “general” topic.",
       },
       ...TEASER_GROUP,
@@ -353,9 +353,26 @@ const RAW_TEMPLATES = [
     nestedOnly: true,
     description: "The question should be short, but the answer can be longer and more descriptive.",
     icon: "ph:chat-circle-text",
+    schemaType: "Question",
     fields: [
-      { name: "question", displayName: "Question", type: "text", localized: true, required: true, delivery: "public", helpText: "The question, as a visitor would ask it." },
-      { name: "answer", displayName: "Answer", type: "richtext", localized: true, required: true, delivery: "public", helpText: "The answer to the question." },
+      { name: "question", displayName: "Question", type: "text", localized: true, required: true, delivery: "public", schemaProp: "name", helpText: "The question, as a visitor would ask it." },
+      { name: "answer", displayName: "Answer", type: "richtext", localized: true, required: true, delivery: "public", schemaProp: "acceptedAnswer.text", helpText: "The answer to the question." },
+    ],
+  },
+  {
+    name: "FaqBlock",
+    displayName: "FAQ list",
+    kind: "block",
+    description: "Questions and answers as a section on any page — delivered as FAQPage JSON-LD.",
+    icon: "ph:question",
+    schemaType: "FAQPage",
+    fields: [
+      { name: "heading", displayName: "Heading", type: "text", localized: true, delivery: "public", helpText: "E.g. “Frequently asked questions”." },
+      { name: "text", displayName: "Text", type: "richtext", localized: true, delivery: "public", helpText: "Optional introduction above the questions." },
+      {
+        name: "questions", displayName: "Questions and answers", type: "contentArea", localized: true, delivery: "public",
+        allowedBlocks: ["QuestionBlock"], schemaProp: "mainEntity", helpText: "One block per question, in the order they should appear.",
+      },
     ],
   },
   {

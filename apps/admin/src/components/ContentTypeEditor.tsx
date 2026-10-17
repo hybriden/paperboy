@@ -64,6 +64,10 @@ const SCHEMA_TYPES = [
   "FAQPage",
   "Product",
   "Event",
+  "Service",
+  "Organization",
+  "LocalBusiness",
+  "Question",
 ] as const;
 
 let uid = 0;
@@ -465,11 +469,13 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                   </select>
                 </label>
                 {f.delivery === "public" && <Badge tone="caution">exposed to public API</Badge>}
-                {f.schemaProp && (
-                  <Badge tone="primary" title="Feeds this schema.org property in the delivered JSON-LD">
-                    schema: {f.schemaProp}
-                    <button type="button" aria-label={`Clear schema.org mapping ${f.schemaProp}`} className="hover:text-danger" onClick={() => patchField(f._key, { schemaProp: undefined })}>×</button>
-                  </Badge>
+                {(f.delivery === "public" || f.schemaProp) && (
+                  <label className="inline-flex items-center gap-1.5 text-sm" title="The schema.org property this field feeds in the delivered JSON-LD. One dot builds a nested object (address.streetAddress); on a content area, the blocks' own nodes become the list (mainEntity, department).">
+                    <span className="text-muted">schema.org</span>
+                    <input className="w-44 rounded border border-line bg-panel px-1.5 py-0.5 font-mono text-xs text-fg" value={f.schemaProp ?? ""}
+                      placeholder={f.type === "contentArea" ? "e.g. mainEntity" : "e.g. telephone"} aria-label="Field schema.org property"
+                      onChange={(e) => patchField(f._key, { schemaProp: e.target.value.trim() || undefined })} />
+                  </label>
                 )}
                 <div className="ml-auto flex items-center gap-0.5">
                   <button className="rounded p-1 text-muted hover:bg-line" aria-label="Move field up" onClick={() => moveField(f._key, -1)}><Icon.Up width={14} height={14} /></button>
@@ -501,12 +507,14 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
           ))}
         </div>
 
-        {kind === "page" && (
-          <div className="mt-4 rounded-(--radius) border border-line bg-canvas/40 p-3">
+        <div className="mt-4 rounded-(--radius) border border-line bg-canvas/40 p-3">
             <h4 className="text-[13px] font-bold uppercase tracking-wide text-muted">SEO &amp; schema.org</h4>
             <p className="mb-3 mt-1 text-xs text-muted">
-              Optional. Delivery builds the SEO / JSON-LD block automatically from field-name conventions — set these only to
-              override that guess (e.g. force a schema.org type, or point a role at a differently-named field).
+              {kind === "page"
+                ? "Optional. Delivery builds the SEO / JSON-LD block automatically from field-name conventions — set these only to override that guess (e.g. force a schema.org type, or point a role at a differently-named field)."
+                : kind === "global"
+                  ? "Optional. With a schema.org type, delivery adds this global's own JSON-LD node — a SiteSettings typed Organization is the site's identity. Map fields to properties in each field's schema.org box."
+                  : "Optional. With a schema.org type, each instance of this block becomes a JSON-LD node: on its page, or in the list a parent's content area maps (e.g. Question blocks as an FAQ's mainEntity)."}
             </p>
             <div className="mb-3 flex items-end gap-2">
               <label className="block flex-1 text-sm" style={{ maxWidth: 280 }}>
@@ -591,7 +599,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                 </ul>
               </div>
             )}
-            <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
+            {kind === "page" && <div className="grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2">
               {SEO_ROLES.map((role) => {
                 const current = fieldForRole(role);
                 const opts = fields.filter((f) => f.name.trim() && (seoRoleEligible(role, f.type) || f._key === current));
@@ -606,9 +614,8 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                   </label>
                 );
               })}
-            </div>
-          </div>
-        )}
+            </div>}
+        </div>
 
         {errors.length > 0 && (
           <ul role="alert" className="mt-3 list-disc rounded border border-danger/40 bg-danger/10 px-5 py-2 text-xs text-danger">
