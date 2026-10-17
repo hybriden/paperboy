@@ -40,6 +40,24 @@ visual on-page editing, Next.js reference frontend, MCP server. Runs as **one co
 - **Secure by default** — Argon2id, opaque server-side sessions, CSRF, passwordless TOTP 2FA, deny-by-default RBAC with object-level scopes, append-only audit log.
 - **Typed client SDK** — [`@paperboycms/client`](packages/client) on npm, typed from the same Zod schemas the server serializes with. No codegen.
 
+## How it compares
+
+Defaults as each vendor documents them on 2026-10-17, not what plugins or custom code can reach. Every cell is sourced in [`docs/comparison-sources.md`](docs/comparison-sources.md); corrections are welcome as PRs.
+
+| | Paperboy | Strapi | Payload | Directus | Sanity |
+|---|---|---|---|---|---|
+| **License** | MIT | MIT core; SSO, releases, live preview, workflows and audit log are paid | MIT; enterprise add-ons sales-led | MSCL 1.0 (source-available, GPL after 4 years); unlicensed installs capped at 3 seats / 25 collections | Studio MIT; backend proprietary |
+| **Self-hosted deploy** | one container + Postgres, official image | Node app + DB, no official image | inside your Next.js app + DB, no official image | one container + any SQL DB, official image | backend not self-hostable |
+| **Forms: submissions in your DB, validated server-side against the form** | yes, core | third-party plugin | official plugin stores them; server only checks values exist | no form builder; model a collection yourself | no; third-party form services |
+| **SEO meta + schema.org JSON-LD computed by the CMS** | yes, every page | plugin stores meta fields, no JSON-LD (archived Apr 2026) | plugin stores title/description/image, no JSON-LD | Labs plugin stores fields, no JSON-LD | frontend or community plugins |
+| **Redirects, automatic 301 on rename** | yes, core | third-party plugin | official plugin, manual rules only | none | DIY schema + a Sanity Function recipe |
+| **MCP server acting as a user, with that user's roles** | built in; token or OAuth 2.1; REST parity test-enforced | built in (GA Sep 2026); admin token scoped by its owner | official plugin (beta); API key acts as its owner | built in (11.12+); OAuth 2.1 since v12 | official remote server; OAuth as the user |
+| **Multisite in one instance** | yes, core | no; one deploy per site | official multi-tenant plugin | data-modelling pattern | datasets (metered per plan) or separate projects |
+| **Visual click-to-edit on the live page** | yes, framework-agnostic bridge | paid plans only (Growth+) | "coming soon", enterprise | yes (11.6+) | yes, all plans |
+| **GraphQL API** | no | official plugin, opt-in | core | core | core (GROQ preferred) |
+| **Hosted option** | no | Strapi Cloud, paid only | Payload Cloud paused to new projects | Directus Cloud add-on | hosted only, free tier |
+| **Ecosystem and plugin marketplace** | new, none yet | large | official plugins + community | marketplace + Labs | large |
+
 ## Layout
 ```
 apps/api         Fastify v5 — Management API (auth/RBAC) + Delivery API (read-only, key-scoped); serves the admin
@@ -211,7 +229,7 @@ Add one `rclone copy` line once you have a bucket.
 ## Docs
 - **`CLAUDE.md`** — how to develop and deploy safely, and how agents should work in the repo.
 - **`STACK.md`** — the stack and the reasoning behind each choice.
-- **`docs/plans/`** — research and decisions behind the bigger features.
+- **`docs/plans/`** — research and decisions behind the bigger features. **`docs/comparison-sources.md`** — every cell of the comparison table, sourced.
 - **`CONTRIBUTING.md`** / **`SECURITY.md`** — how to send a PR, how to report a vulnerability.
 - **[`packages/client/README.md`](packages/client/README.md)** / **[`packages/preview/README.md`](packages/preview/README.md)** — the npm packages in depth.
 
