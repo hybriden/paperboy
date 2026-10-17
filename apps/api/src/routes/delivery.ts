@@ -133,10 +133,12 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const perspective = req.perspective!;
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!));
       // `data.<field>=value` query params become equality filters.
-      const filter: Record<string, string> = Object.create(null); // no prototype: a `data.__proto__` key is just a key
-      for (const [k, v] of Object.entries(req.query)) {
-        if (k.startsWith("data.") && typeof v === "string") filter[k.slice(5)] = v;
-      }
+      // fromEntries defines own properties only, so a `data.__proto__` key is just a key.
+      const filter = Object.fromEntries(
+        Object.entries(req.query)
+          .filter(([k, v]) => k.startsWith("data.") && typeof v === "string")
+          .map(([k, v]) => [k.slice(5), v as string]),
+      ) as Record<string, string>;
       const { items, total } = await deliveryList(app.db, perspective, req.deliverySiteId!, req.query.type, locale, req.query.populate, req.query.parentId, {
         limit: req.query.limit,
         offset: req.query.offset,
