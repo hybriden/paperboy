@@ -127,3 +127,19 @@ describe("the built-in composition parts", () => {
     }
   });
 });
+
+describe("field names: no Object.prototype members", () => {
+  const def = (name: string) => ({ name: "T", displayName: "T", kind: "block", fields: [{ name, displayName: name, type: "text" }] });
+  it("refuses constructor/toString/hasOwnProperty with a self-teaching message", () => {
+    for (const name of ["constructor", "toString", "hasOwnProperty"]) {
+      const r = ContentTypeDef.safeParse(def(name));
+      expect(r.success, name).toBe(false);
+      expect(JSON.stringify(r.error?.issues)).toContain("built-in object property");
+    }
+  });
+  it("still accepts ordinary names, including ones that merely start like a member", () => {
+    const ok = ContentTypeDef.safeParse(def("constructorName"));
+    expect(ok.success, JSON.stringify(ok.error?.issues)).toBe(true);
+    expect(ContentTypeDef.safeParse(def("title")).success).toBe(true);
+  });
+});
