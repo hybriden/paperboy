@@ -165,6 +165,28 @@ describe("structured data set up in the CMS", () => {
     expect(jsonLd.mainEntity.map((q: { name: string }) => q.name)).toEqual(["Who are you?", "Any fees?"]);
   });
 
+  // AI assistants and search engines weigh how fresh a page is, and dateModified
+  // only came from a field tagged with that role — which hardly any type has.
+  // The page's last publish is the honest answer, the same one sitemap.xml gives
+  // as lastmod; a field tagged dateModified still wins.
+  it("a page carries when it was last published as dateModified, unless a field says otherwise", async () => {
+    const id = (await call("POST", "/content", { type: "BlogPost", locale: "en", name: "Fresh", parentId: s.ids.blogId })).documentId as string;
+    await call("PUT", `/content/${id}?locale=en`, { data: { title: "Fresh" } });
+    const before = Date.now();
+    await call("POST", `/content/${id}/publish?locale=en`);
+    const modified = (await deliver(`/content/${id}?locale=en`)).seo.jsonLd.dateModified as string;
+    expect(Date.parse(modified)).toBeGreaterThanOrEqual(before - 60_000);
+    const sitemapEntry = (await deliver("/pages")).pages.find((p: { documentId: string; locale: string }) => p.documentId === id && p.locale === "en");
+    expect(modified).toBe(sitemapEntry.lastmod);
+
+    const blog = await call("GET", "/content-types/BlogPost");
+    blog.fields.push(field("updated", "datetime", { seoRole: "dateModified" }));
+    await call("PUT", "/content-types/BlogPost", blog);
+    await call("PUT", `/content/${id}?locale=en`, { data: { title: "Fresh", updated: "2026-01-02T03:04:05.000Z" } });
+    await call("POST", `/content/${id}/publish?locale=en`);
+    expect((await deliver(`/content/${id}?locale=en`)).seo.jsonLd.dateModified).toBe("2026-01-02T03:04:05.000Z");
+  });
+
   it("an article by the organisation itself is by the organisation, not a person of that name", async () => {
     const byCompany = (await call("POST", "/content", { type: "BlogPost", locale: "en", name: "Year in review", parentId: s.ids.blogId })).documentId as string;
     await call("PUT", `/content/${byCompany}?locale=en`, { data: { title: "Year in review", author: "Paperboy Regnskap AS" } });

@@ -804,6 +804,8 @@ async function computeSeo(
   urlPath: string | null,
   data: Record<string, unknown>,
   loc: string,
+  /** When the delivered version was made — what sitemap.xml gives as lastmod. */
+  versionDate: Date,
 ): Promise<DeliveryContent["seo"]> {
   const title = asText(data.metaTitle) ?? asText(roleOrConvention(def, "title", data, isStr)) ?? name;
   const description = asText(data.metaDescription) ?? asText(roleOrConvention(def, "description", data, isStr));
@@ -829,7 +831,10 @@ async function computeSeo(
 
   const siteName = await ctx.siteName(perspective, loc);
   const datePublished = asText(roleOrConvention(def, "datePublished", data, isStr));
-  const dateModified = asText(roleValue(def, "dateModified", data)); // no convention (rarely a distinct field)
+  // A field tagged dateModified wins (rarely a distinct field); otherwise the
+  // delivered version's date, the same lastmod sitemap.xml gives. Freshness is
+  // something search engines and AI assistants weigh, and it was always absent.
+  const dateModified = asText(roleValue(def, "dateModified", data)) ?? versionDate.toISOString();
   const author = asText(roleOrConvention(def, "author", data, isStr));
   const keywords = asText(roleOrConvention(def, "keywords", data, isStr));
 
@@ -929,7 +934,7 @@ export async function resolveContent(
   // SEO/schema.org contract — pages only, computed from SANITIZED (public) data.
   let seo: DeliveryContent["seo"] = null;
   if (item.kind === "page" && def) {
-    seo = await computeSeo(ctx, perspective, documentId, def, found.row.name, urlPath, sanitized, found.usedLocale);
+    seo = await computeSeo(ctx, perspective, documentId, def, found.row.name, urlPath, sanitized, found.usedLocale, found.row.createdAt);
   }
   // A global whose type declares a schemaType carries its own node — the
   // SiteSettings identity (Organization, LocalBusiness…) set in the CMS.
