@@ -383,6 +383,26 @@ export function SettingsView() {
   // change that has never re-targeted `active` either (pre-existing gap).
   const isMobile = useIsMobile();
   const [mobilePanel, setMobilePanel] = useState(hashIsTab);
+  const listHeadingRef = useRef<HTMLHeadingElement>(null);
+  const panelHeadingRef = useRef<HTMLHeadingElement>(null);
+  const prevPanelRef = useRef<boolean | null>(null);
+
+  useEffect(() => {
+    if (!isMobile) {
+      prevPanelRef.current = mobilePanel;
+      return;
+    }
+    const prev = prevPanelRef.current;
+    prevPanelRef.current = mobilePanel;
+    // Don't shift focus on initial list mount; only focus on deep links or view transitions.
+    if (prev === null) {
+      if (mobilePanel) panelHeadingRef.current?.focus();
+      return;
+    }
+    if (prev !== mobilePanel) {
+      (mobilePanel ? panelHeadingRef : listHeadingRef).current?.focus();
+    }
+  }, [isMobile, mobilePanel]);
 
   return (
     <div className="h-full overflow-hidden">
@@ -393,7 +413,7 @@ export function SettingsView() {
             aria-label="Settings sections"
             className={`shrink-0 overflow-auto border-line bg-panel p-3 ${isMobile ? "w-full" : "w-56 border-r"}`}
           >
-            <h1 className="masthead mb-3 px-2 text-xl text-fg">Settings</h1>
+            <h1 ref={listHeadingRef} tabIndex={-1} className="masthead mb-3 px-2 text-xl text-fg">Settings</h1>
             {groups.map((g) => {
               const items = tabs.filter((t) => t.group === g);
               if (!items.length) return null;
@@ -441,7 +461,7 @@ export function SettingsView() {
               )}
               <header className="mb-6 border-b border-line pb-4">
                 <div className="eyebrow">Settings</div>
-                <h2 className="section-title mt-1.5">{current?.label}</h2>
+                <h2 ref={panelHeadingRef} tabIndex={-1} className="section-title mt-1.5">{current?.label}</h2>
               </header>
               {current?.render()}
             </div>

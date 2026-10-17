@@ -1902,20 +1902,29 @@ test.describe("mobile (390×844)", () => {
     await page.goto("/settings");
     const nav = page.getByRole("navigation", { name: "Settings sections" });
     await expect(nav).toBeVisible();
+    const listHeading = page.getByRole("heading", { name: "Settings", level: 1 });
+    await expect(listHeading).toBeVisible();
+    await expect(listHeading).not.toBeFocused();
     // List FIRST: no section is rendered beside it (the desktop layout put the
     // panel in a ~165px sliver here, which is the bug this suite pins).
     await expect(page.getByRole("heading", { name: "Content types" })).toHaveCount(0);
 
     await nav.getByRole("button", { name: "Trash" }).click();
     // .first(): the section title AND the panel's own heading both say "Trash".
-    await expect(page.getByRole("heading", { name: "Trash" }).first()).toBeVisible();
+    // Drilling in moves focus to the incoming panel's h2 heading.
+    const panelHeading = page.getByRole("heading", { name: "Trash", level: 2 }).first();
+    await expect(panelHeading).toBeVisible();
+    await expect(panelHeading).toBeFocused();
     await expect(nav).toHaveCount(0);
 
     // The panel is headed by a back control that returns to the list.
+    // Returning to the list moves focus to the list heading.
     const back = page.getByRole("button", { name: "Back to settings", exact: true });
     await expect(back).toBeVisible();
     await back.click();
     await expect(nav).toBeVisible();
+    await expect(listHeading).toBeVisible();
+    await expect(listHeading).toBeFocused();
     await expect(page.getByRole("heading", { name: "Trash" })).toHaveCount(0);
 
     // A hash deep-link (how the dashboard and site switcher arrive) lands on
@@ -1924,7 +1933,9 @@ test.describe("mobile (390×844)", () => {
     // fragment change that never remounts, which is not how deep-links arrive.
     await page.goto("/dashboard");
     await page.goto("/settings#trash");
-    await expect(page.getByRole("heading", { name: "Trash" }).first()).toBeVisible();
+    const deepHeading = page.getByRole("heading", { name: "Trash", level: 2 }).first();
+    await expect(deepHeading).toBeVisible();
+    await expect(deepHeading).toBeFocused();
     await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toBeVisible();
   });
 
