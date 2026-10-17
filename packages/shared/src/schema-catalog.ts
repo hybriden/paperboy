@@ -60,7 +60,17 @@ export const SCHEMA_WRAPPER_TYPES: Record<string, string> = {
   performer: "Person",
   hiringOrganization: "Organization",
   aggregateRating: "AggregateRating",
+  parentOrganization: "Organization",
+  acceptedAnswer: "Answer",
 };
+
+/**
+ * Properties schema.org models as a LIST of plain values. A text field mapped
+ * to one of these is split on newlines and commas — one profile URL or topic
+ * per line in the editor becomes `"sameAs": ["…", "…"]`, which is the only
+ * form a consumer reads (a single string holding five URLs is one bad URL).
+ */
+export const SCHEMA_LIST_PROPS: ReadonlySet<string> = new Set(["sameAs", "knowsAbout", "keywords"]);
 
 /**
  * Conventional field names per SEO role — the safety net delivery uses when a
@@ -145,8 +155,9 @@ export const SCHEMA_FIELD_CATALOG: Record<string, SchemaFieldSuggestion[]> = {
   CollectionPage: PAGE_BASICS,
   AboutPage: PAGE_BASICS,
   ContactPage: PAGE_BASICS,
-  // FAQPage rich results additionally need Question/Answer pairs (mainEntity),
-  // which have no flat-field representation yet — basics only.
+  // The Question/Answer pairs (mainEntity) come from a content area tagged
+  // schemaProp "mainEntity" holding blocks typed "Question" — not flat fields,
+  // so the checklist covers the basics.
   FAQPage: PAGE_BASICS,
   Article: ARTICLE_LIKE,
   BlogPosting: ARTICLE_LIKE,

@@ -218,8 +218,9 @@ export type UpdateContentRequest = z.infer<typeof UpdateContentRequest>;
  * every PAGE item (null for blocks/globals). One source of truth across page
  * types AND frontends: a consumer renders the meta tags + `jsonLd` directly.
  * Origin-dependent URLs are RELATIVE (`canonicalPath`, breadcrumb `urlPath`) —
- * the frontend absolutizes them against its own public origin and adds the
- * site-identity nodes (WebSite/Organization/publisher) + the @id/url on jsonLd.
+ * the frontend absolutizes them against its own public origin, adds the @id/url
+ * on jsonLd, and links it to the site's identity: the SiteSettings global's
+ * `jsonLd` when its type declares a schemaType (else a WebSite node of its own).
  */
 export const DeliverySeo = z.object({
   /** metaTitle → field(role:title) → name. */
@@ -240,6 +241,11 @@ export const DeliverySeo = z.object({
   twitter: z.object({ card: z.string() }),
   /** schema.org page-entity node; @id/url/publisher are added by the frontend. */
   jsonLd: z.record(z.string(), z.unknown()),
+  /** Standalone schema.org nodes for blocks ON this page whose type declares a
+   *  schemaType — an FAQ block's FAQPage, say. Absent when there are none.
+   *  Render each beside jsonLd (a page type that isn't a CreativeWork, like a
+   *  Service, has no property that could hold them). */
+  jsonLdParts: z.array(z.record(z.string(), z.unknown())).optional(),
   /** Ancestor trail incl. self, root→leaf; urlPath null when not yet addressable. */
   breadcrumb: z.array(z.object({ name: z.string(), urlPath: z.string().nullable() })),
 });
@@ -307,6 +313,10 @@ export const DeliveryContent = z.object({
   fieldTypes: z.record(z.string(), z.string()),
   /** Normalized SEO/schema.org contract — present on pages, null otherwise. */
   seo: DeliverySeo.nullable(),
+  /** schema.org node of a GLOBAL whose type declares a schemaType — a
+   *  SiteSettings typed "Organization" is the site's identity, set in the CMS.
+   *  Absent otherwise. Pages point at it (publisher, provider, about). */
+  jsonLd: z.record(z.string(), z.unknown()).optional(),
   /** Ready-to-render form contract — present only on a Form. The fields, rules
    *  and error copy here are exactly what the submit endpoint enforces, so a
    *  frontend renders from the schema instead of interpreting block payloads

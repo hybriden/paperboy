@@ -103,6 +103,24 @@ const seo = post!.seo; // null on non-page kinds
 // URLs in `seo` are relative — absolutize against your site origin before emitting.
 ```
 
+Structured data is set up in the CMS, and three things come with it:
+
+- **`seo.jsonLd`**: the page's own node. Add `@id`/`url` on the frontend.
+- **`seo.jsonLdParts`** (optional): one node per block on the page whose type
+  declares a schema.org type — an FAQ block's `FAQPage`, say. Render each beside
+  `jsonLd`.
+- **`jsonLd` on a global** (optional): a global whose type declares a schema.org
+  type carries its own node. A SiteSettings typed `Organization` (or a subtype)
+  is the site's identity: render it once per page and point the page at it.
+
+A content area mapped to a property becomes a list of the nodes its blocks make
+(offices as `department`, questions as `mainEntity`).
+
+```ts
+const settings = await client.global("SiteSettings");
+const graph = [settings?.jsonLd, seo?.jsonLd, ...(seo?.jsonLdParts ?? [])].filter(Boolean);
+```
+
 ## Forms
 
 A form is content. A delivered Form carries `content.form` — a `FormSpec`
@@ -205,7 +223,7 @@ waitUntil(cms.reportTraffic(hit ? { redirectHits: [hit.rule.id] } : { notFound: 
 | `PaperboyClient` | `ReturnType<typeof createClient>` |
 | `PaperboyClientOptions` | `baseUrl`, `key`, `fetch?`, `fetchInit?`, `etagCache?` |
 | `GetOptions` · `ListOptions` · `SearchOptions` · `MediaOptions` | Per-method options; `ListOptions` adds `parentId`, `limit`, `offset`, `sort`, `filter` |
-| `DeliveryContent` | A delivered item: `documentId`, `type`, `kind`, `locale`, `name`, `slug`, `urlPath`, `cv`, `data`, `fieldTypes`, `form?`, `seo` |
+| `DeliveryContent` | A delivered item: `documentId`, `type`, `kind`, `locale`, `name`, `slug`, `urlPath`, `cv`, `data`, `fieldTypes`, `form?`, `seo`, `jsonLd?` (globals with a schema.org type) |
 | `Delivered<TData>` | `DeliveryContent` with `data` narrowed to your field shape — what every getter returns |
 | `DeliverySeo` | The server-computed SEO block on page items |
 | `AreaBlock` | One entry of a content area: inline `data` (+ `fieldTypes`) or a resolved shared `content` |

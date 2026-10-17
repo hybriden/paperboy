@@ -24,7 +24,7 @@ describe("Built-in type-template library", () => {
     expect(names).toEqual(
       [
         "AccordionBlock", "AccordionItemBlock", "ArticleListPage", "ArticlePage", "BannerBlock",
-        "FaqPage", "FaqTopicBlock", "FooterSettings", "HeaderSettings", "HeroBlock", "ImageBlock",
+        "FaqBlock", "FaqPage", "FaqTopicBlock", "FooterSettings", "HeaderSettings", "HeroBlock", "ImageBlock",
         "LinkItemBlock", "LinkListBlock", "PersonBlock", "PersonPage",
         "QuestionBlock", "QuoteBlock", "SectionPage", "StartPage", "TeaserListBlock", "TextBlock",
         "VideoBlock",

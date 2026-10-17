@@ -23,8 +23,9 @@
  * Normalized SEO + schema.org block, computed server-side and present on every
  * PAGE item (null for blocks/globals). Render the meta tags + `jsonLd` directly.
  * Origin-dependent URLs are RELATIVE (`canonicalPath`, breadcrumb `urlPath`) —
- * absolutize them against your site origin and add the site-identity JSON-LD
- * (WebSite/Organization/publisher) + the @id/url on `jsonLd`.
+ * absolutize them against your site origin, add the @id/url on `jsonLd`, and
+ * link it to the site's identity: the SiteSettings global's `jsonLd` when its
+ * type declares a schemaType (render it once per page).
  */
 export interface DeliverySeo {
   title: string;
@@ -43,6 +44,10 @@ export interface DeliverySeo {
   twitter: { card: string };
   /** schema.org page-entity node; add @id/url/publisher on the frontend. */
   jsonLd: Record<string, unknown>;
+  /** Standalone schema.org nodes for blocks on this page whose type declares a
+   *  schemaType (an FAQ block's FAQPage). Absent when there are none; render
+   *  each beside `jsonLd`. */
+  jsonLdParts?: Array<Record<string, unknown>>;
   /** Ancestor trail incl. self (root→leaf); urlPath null when not addressable. */
   breadcrumb: Array<{ name: string; urlPath: string | null }>;
 }
@@ -69,6 +74,9 @@ export interface DeliveryContent {
   form?: FormSpec;
   /** Normalized SEO/schema.org contract — present on pages, null otherwise. */
   seo: DeliverySeo | null;
+  /** schema.org node of a GLOBAL whose type declares a schemaType — a
+   *  SiteSettings typed "Organization" is the site's identity. Absent otherwise. */
+  jsonLd?: Record<string, unknown>;
 }
 
 /* ------------------------------- forms ----------------------------------- */

@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, type FieldDef, type PublicPageEntry, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, parseStoredContentTypeDef, scalarToString, sortByRule } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, parseStoredContentTypeDef, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
 import type { Database } from "./client.js";
@@ -148,6 +148,23 @@ class DeliveryCtx {
     }
     this._siteName = name;
     return name;
+  }
+
+  // The site's identity: the SiteSettings global's schema.org node, when its
+  // type declares a schemaType (see resolveContent). Cached per request, and
+  // resolved through the same chokepoint and perspective as everything else.
+  private _siteIdentity: Record<string, unknown> | null | undefined;
+  async siteIdentity(perspective: Perspective, loc: string): Promise<Record<string, unknown> | null> {
+    if (this._siteIdentity !== undefined) return this._siteIdentity;
+    this._siteIdentity = null;
+    const rows = await this.db
+      .select({ documentId: contentItem.documentId })
+      .from(contentItem)
+      .where(and(eq(contentItem.type, "SiteSettings"), eq(contentItem.kind, "global"), isNull(contentItem.deletedAt), eq(contentItem.siteId, this.siteId)))
+      .orderBy(asc(contentItem.id))
+      .limit(1);
+    if (rows[0]) this._siteIdentity = (await resolveContent(this, perspective, rows[0].documentId, loc, 0))?.jsonLd ?? null;
+    return this._siteIdentity;
   }
 
   async type(name: string): Promise<ContentTypeDef | null> {
@@ -611,14 +628,20 @@ function asText(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v : null;
 }
 /**
- * A schemaProp field's value as a JSON-LD scalar: strings/numbers/booleans
- * pass; a sanitized image ({url,…}) or link ({href,…}) collapses to its URL;
- * structural values (richtext docs, content areas, references) have no sane
- * scalar form and are skipped.
+ * A schemaProp field's value as JSON-LD: strings/numbers/booleans pass; a
+ * sanitized image ({url,…}) or link ({href,…}) collapses to its URL; a
+ * richtext doc becomes its plain text (an Answer's text, say). A list-valued
+ * property (SCHEMA_LIST_PROPS) splits text into one entry per line or comma.
+ * Other structural values have no sane JSON-LD form and are skipped.
  */
-function schemaPropValue(v: unknown): string | number | boolean | undefined {
+function schemaPropValue(v: unknown, prop: string): string | number | boolean | string[] | undefined {
+  if (typeof v === "string" && SCHEMA_LIST_PROPS.has(prop)) {
+    const items = v.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean);
+    return items.length ? items : undefined;
+  }
   if (typeof v === "string") return v.trim() ? v : undefined;
   if (typeof v === "number" || typeof v === "boolean") return v;
+  if (isRichTextDoc(v)) return tiptapToPlainText(v) || undefined;
   if (v && typeof v === "object") {
     const o = v as { url?: unknown; href?: unknown };
     if (typeof o.url === "string" && o.url) return o.url;
@@ -627,31 +650,134 @@ function schemaPropValue(v: unknown): string | number | boolean | undefined {
   return undefined;
 }
 
+type SchemaNode = Record<string, unknown>;
+/** How deep blocks nest into schema.org nodes (FAQ → topic → question is 3). */
+const MAX_SCHEMA_DEPTH = 4;
+
 /**
- * Fold `schemaProp`-tagged fields into the jsonLd. "a.b" builds a nested
- * object (siblings accumulate, e.g. offers.price + offers.priceCurrency), and
- * known wrapper props get their @type injected — a flat string on a wrapper
- * prop is lifted to {"@type": X, name: value}. Only ever called with the
+ * Fold `schemaProp`-tagged fields into a node. "a.b" builds a nested object
+ * (siblings accumulate, e.g. offers.price + offers.priceCurrency), and known
+ * wrapper props get their @type injected — a flat string on a wrapper prop is
+ * lifted to {"@type": X, name: value}. A tagged CONTENT AREA becomes the list
+ * of nodes its blocks make (areaNodes): an FAQ's questions as `mainEntity`,
+ * an organisation's offices as `department`. Only ever called with the
  * sanitized public data, so private fields are simply absent here.
  */
-function applySchemaProps(def: ContentTypeDef, data: Record<string, unknown>, jsonLd: Record<string, unknown>): void {
+async function applySchemaProps(
+  ctx: DeliveryCtx,
+  perspective: Perspective,
+  def: ContentTypeDef,
+  data: Record<string, unknown>,
+  node: SchemaNode,
+  loc: string,
+  depth: number,
+): Promise<void> {
   for (const f of def.fields as FieldDef[]) {
     if (!f.schemaProp) continue;
-    const value = schemaPropValue(data[f.name]);
-    if (value === undefined) continue;
     const [head, leaf] = f.schemaProp.split(".") as [string, string?];
+    const value =
+      f.type === "contentArea" ? await areaNodes(ctx, perspective, data[f.name], loc, depth) : schemaPropValue(data[f.name], leaf ?? head);
+    if (value === undefined) continue;
     const wrapperType = SCHEMA_WRAPPER_TYPES[head];
     if (leaf) {
-      const existing = jsonLd[head];
-      const obj: Record<string, unknown> =
-        existing && typeof existing === "object" && !Array.isArray(existing) ? (existing as Record<string, unknown>) : {};
+      const existing = node[head];
+      const obj: SchemaNode = existing && typeof existing === "object" && !Array.isArray(existing) ? (existing as SchemaNode) : {};
       if (wrapperType && !obj["@type"]) obj["@type"] = wrapperType;
       obj[leaf] = value;
-      jsonLd[head] = obj;
+      node[head] = obj;
     } else {
-      jsonLd[head] = wrapperType && typeof value === "string" ? { "@type": wrapperType, name: value } : value;
+      node[head] = wrapperType && typeof value === "string" ? { "@type": wrapperType, name: value } : value;
     }
   }
+}
+
+/**
+ * The schema.org nodes in a content area. A block whose type declares a
+ * schemaType becomes one node; a block without one is transparent, and the
+ * nodes in its own (untagged) content areas count instead — so an FAQ's
+ * topic blocks hand their questions up to the FAQ. Pages placed in an area are
+ * teasers, not parts, and are skipped. Undefined when there are none.
+ */
+async function areaNodes(ctx: DeliveryCtx, perspective: Perspective, area: unknown, loc: string, depth: number): Promise<SchemaNode[] | undefined> {
+  if (!Array.isArray(area) || depth >= MAX_SCHEMA_DEPTH) return undefined;
+  const nodes: SchemaNode[] = [];
+  for (const entry of area) {
+    const block = await areaBlock(ctx, perspective, entry, loc);
+    const def = block ? await ctx.type(block.type) : null;
+    if (!block || !def) continue;
+    if (def.schemaType) {
+      nodes.push(await schemaNode(ctx, perspective, def, block.data, loc, depth + 1));
+      continue;
+    }
+    for (const f of def.fields) {
+      if (f.type === "contentArea" && !f.schemaProp) nodes.push(...((await areaNodes(ctx, perspective, block.data[f.name], loc, depth + 1)) ?? []));
+    }
+  }
+  return nodes.length ? nodes : undefined;
+}
+
+/** A sanitized content-area entry as {type, data}: an inline block as it is, a
+ *  shared block through the chokepoint when it wasn't populated (same
+ *  perspective, same budget). A page in the area is not a block → null. */
+async function areaBlock(ctx: DeliveryCtx, perspective: Perspective, entry: unknown, loc: string): Promise<{ type: string; data: Record<string, unknown> } | null> {
+  if (!entry || typeof entry !== "object") return null;
+  const e = entry as { blockType?: unknown; data?: unknown; content?: { documentId?: unknown; kind?: unknown; type?: unknown; data?: unknown } };
+  if (e.data && typeof e.data === "object") return { type: scalarToString(e.blockType), data: e.data as Record<string, unknown> };
+  const c = e.content;
+  if (!c) return null;
+  if (c.data && typeof c.data === "object") return c.kind === "block" ? { type: scalarToString(c.type), data: c.data as Record<string, unknown> } : null;
+  if (typeof c.documentId !== "string" || !ctx.withinResolveBudget()) return null;
+  const resolved = await resolveContent(ctx, perspective, c.documentId, loc, 0);
+  return resolved && resolved.kind === "block" ? { type: resolved.type, data: resolved.data } : null;
+}
+
+const isStr = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+const isImg = (v: unknown) => asImage(v) != null;
+
+/**
+ * The node for a block or global whose type declares a schemaType: the Thing
+ * subset every @type accepts (name, description, image — from the SEO roles
+ * and naming conventions), then the type's explicit schemaProp mappings.
+ */
+async function schemaNode(
+  ctx: DeliveryCtx,
+  perspective: Perspective,
+  def: ContentTypeDef,
+  data: Record<string, unknown>,
+  loc: string,
+  depth: number,
+): Promise<SchemaNode> {
+  const node: SchemaNode = { "@type": def.schemaType };
+  const name = asText(roleOrConvention(def, "title", data, isStr));
+  const description = asText(roleOrConvention(def, "description", data, isStr));
+  const image = asImage(roleOrConvention(def, "image", data, isImg));
+  if (name) node.name = name;
+  if (description) node.description = description;
+  if (image) node.image = image.url;
+  await applySchemaProps(ctx, perspective, def, data, node, loc, depth);
+  return node;
+}
+
+/**
+ * An article's author. When it names the site's own organisation — the name,
+ * legal name or alternate name of the SiteSettings identity, or the site name
+ * — it is that organisation, not a person who happens to share its name.
+ */
+async function authorNode(ctx: DeliveryCtx, perspective: Perspective, loc: string, author: string, siteName: string | null): Promise<SchemaNode> {
+  const identity = await ctx.siteIdentity(perspective, loc);
+  const names = [identity?.name, identity?.legalName, identity?.alternateName, siteName].filter((n): n is string => typeof n === "string");
+  const wanted = author.trim().toLowerCase();
+  if (!names.some((n) => n.trim().toLowerCase() === wanted)) return { "@type": "Person", name: author };
+  return { "@type": typeof identity?.["@type"] === "string" ? identity["@type"] : "Organization", name: typeof identity?.name === "string" ? identity.name : author };
+}
+
+/** Nodes for blocks on a page (its untagged content areas), for seo.jsonLdParts. */
+async function pageParts(ctx: DeliveryCtx, perspective: Perspective, def: ContentTypeDef, data: Record<string, unknown>, loc: string): Promise<SchemaNode[]> {
+  const parts: SchemaNode[] = [];
+  for (const f of def.fields) {
+    if (f.type === "contentArea" && !f.schemaProp) parts.push(...((await areaNodes(ctx, perspective, data[f.name], loc, 0)) ?? []));
+  }
+  return parts;
 }
 
 /** An image field is sanitized to {url, alt, …}; normalize to {url, alt}. */
@@ -679,8 +805,6 @@ async function computeSeo(
   data: Record<string, unknown>,
   loc: string,
 ): Promise<DeliveryContent["seo"]> {
-  const isStr = (v: unknown) => typeof v === "string" && v.trim().length > 0;
-  const isImg = (v: unknown) => asImage(v) != null;
   const title = asText(data.metaTitle) ?? asText(roleOrConvention(def, "title", data, isStr)) ?? name;
   const description = asText(data.metaDescription) ?? asText(roleOrConvention(def, "description", data, isStr));
   const image = asImage(data.ogImage) ?? asImage(roleOrConvention(def, "image", data, isImg));
@@ -720,7 +844,7 @@ async function computeSeo(
     if (image) jsonLd.image = image.url;
     if (datePublished) jsonLd.datePublished = datePublished;
     if (dateModified) jsonLd.dateModified = dateModified;
-    if (author) jsonLd.author = { "@type": "Person", name: author };
+    if (author) jsonLd.author = await authorNode(ctx, perspective, loc, author, siteName);
     if (keywords) jsonLd.keywords = keywords;
   } else {
     // Product/Event/custom @types are not CreativeWorks: headline, author,
@@ -734,7 +858,8 @@ async function computeSeo(
   // Explicit field → schema.org property mappings, applied LAST so an explicit
   // mapping wins over a derived prop. Reads the sanitized PUBLIC data only —
   // a private field's schemaProp can never leak.
-  applySchemaProps(def, data, jsonLd);
+  await applySchemaProps(ctx, perspective, def, data, jsonLd, loc, 0);
+  const parts = await pageParts(ctx, perspective, def, data, loc);
 
   return {
     title,
@@ -750,6 +875,7 @@ async function computeSeo(
     },
     twitter: { card: asText(data.twitterCard) ?? (image ? "summary_large_image" : "summary") },
     jsonLd,
+    ...(parts.length ? { jsonLdParts: parts } : {}),
     breadcrumb: await breadcrumbOf(ctx, perspective, documentId, loc),
   };
 }
@@ -805,6 +931,12 @@ export async function resolveContent(
   if (item.kind === "page" && def) {
     seo = await computeSeo(ctx, perspective, documentId, def, found.row.name, urlPath, sanitized, found.usedLocale);
   }
+  // A global whose type declares a schemaType carries its own node — the
+  // SiteSettings identity (Organization, LocalBusiness…) set in the CMS.
+  const jsonLd =
+    item.kind === "global" && def?.schemaType
+      ? { "@context": "https://schema.org", ...(await schemaNode(ctx, perspective, def, sanitized, found.usedLocale, 0)) }
+      : undefined;
   // A Form ships a normalized, ready-to-render spec beside its raw fields, so a
   // frontend never has to interpret block payloads to draw a form — and so the
   // labels/rules it renders are exactly the ones the submit endpoint enforces.
@@ -829,6 +961,7 @@ export async function resolveContent(
     // Public field types so a frontend renders by schema type, not value shape.
     fieldTypes: def ? publicFieldTypes(def) : {},
     seo,
+    ...(jsonLd ? { jsonLd } : {}),
     ...(form ? { form } : {}),
   };
 }
