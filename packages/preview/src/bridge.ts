@@ -128,10 +128,11 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     const blockEl = el.closest<HTMLElement>(`[${ATTR.blockIndex}]`);
     const bi = blockEl?.getAttribute(ATTR.blockIndex) ?? null;
     const r = el.getBoundingClientRect();
+    const isArea = el.hasAttribute(ATTR.area) && !el.hasAttribute(ATTR.field);
     return {
-      field: el.getAttribute(ATTR.field),
-      blockIndex: bi != null ? Number(bi) : null,
-      blockType: blockEl?.getAttribute(ATTR.blockType) ?? null,
+      field: el.getAttribute(ATTR.field) ?? checkAreaValue(el),
+      blockIndex: isArea ? null : (bi != null ? Number(bi) : null),
+      blockType: isArea ? null : (blockEl?.getAttribute(ATTR.blockType) ?? null),
       rect: { x: r.x, y: r.y, w: r.width, h: r.height } as Rect,
     };
   };
@@ -290,6 +291,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     e.preventDefault();
     e.stopPropagation();
     if (!hoveredArea?.isConnected) return;
+    tracked = hoveredArea;
     const r = hoveredArea.getBoundingClientRect();
     target?.postMessage(
       { type: "paperboy:add-block", field: checkAreaValue(hoveredArea), rect: { x: r.x, y: r.y, w: r.width, h: r.height } as Rect },
@@ -299,15 +301,19 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   areaAdd.addEventListener("click", onAddClick);
 
   // ---- track the picked element's rect on scroll/resize; persist scroll ----
-  let raf = false;
+  let rafId = 0;
   const onScrollOrResize = () => {
-    if ((tracked || hoveredArea) && !raf) {
-      raf = true;
-      win.requestAnimationFrame(() => {
-        raf = false;
-        if (tracked?.isConnected) {
-          const { field, blockIndex, rect } = describe(tracked);
-          target?.postMessage({ type: "paperboy:rect", field, blockIndex, rect }, postOrigin);
+    if (tracked && !tracked.isConnected) tracked = null;
+    if ((tracked || hoveredArea) && !rafId) {
+      rafId = win.requestAnimationFrame(() => {
+        rafId = 0;
+        if (tracked) {
+          if (!tracked.isConnected) {
+            tracked = null;
+          } else {
+            const { field, blockIndex, rect } = describe(tracked);
+            target?.postMessage({ type: "paperboy:rect", field, blockIndex, rect }, postOrigin);
+          }
         }
         positionAreaChrome(); // keep the hovered area's tag + chip glued to it
       });
@@ -364,6 +370,21 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     } else if (msg.type === "paperboy:dragend") {
       dragPayload = null;
       setDropZone(null);
+    } else if (msg.type === "paperboy:rect") {
+      if (msg.rect === null) {
+        if (tracked) {
+          const current = describe(tracked);
+          const matchesField = msg.field == null || msg.field === current.field;
+          const matchesBlock = msg.blockIndex === undefined || msg.blockIndex === current.blockIndex;
+          if (matchesField && matchesBlock) {
+            tracked = null;
+            if (rafId) {
+              win.cancelAnimationFrame(rafId);
+              rafId = 0;
+            }
+          }
+        }
+      }
     } else if (msg.type === "paperboy:drag-at") {
       // Cross-origin: the admin caught the drag over its overlay and forwarded
       // the pointer (in our viewport coords). Highlight the content area under it.
@@ -408,6 +429,11 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     win.removeEventListener("scroll", onScrollOrResize);
     win.removeEventListener("resize", onScrollOrResize);
     win.removeEventListener("message", onMessage);
+    if (rafId) {
+      win.cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+    tracked = null;
     clearTimeout(focusTimer);
     setDropZone(null);
     areaAdd.removeEventListener("click", onAddClick);

@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { focusMessage, parsePreviewMessage, patchMessage } from "./protocol.js";
+import { focusMessage, parsePreviewMessage, patchMessage, rectMessage } from "./protocol.js";
 
 describe("parsePreviewMessage", () => {
   it("accepts known message types", () => {
     expect(parsePreviewMessage({ type: "paperboy:edit", field: "x" })?.type).toBe("paperboy:edit");
     expect(parsePreviewMessage({ type: "paperboy:drop", field: "a", payload: {} })?.type).toBe("paperboy:drop");
     expect(parsePreviewMessage({ type: "paperboy:patch", field: "b", html: "x" })?.type).toBe("paperboy:patch");
+    expect(parsePreviewMessage({ type: "paperboy:rect", field: "x", blockIndex: null, rect: { x: 0, y: 0, w: 10, h: 10 } })?.type).toBe("paperboy:rect");
+    expect(parsePreviewMessage({ type: "paperboy:rect", field: "x", blockIndex: null, rect: null })?.type).toBe("paperboy:rect");
   });
 
   it("accepts paperboy:add-block (the area add chip → admin palette)", () => {
@@ -31,9 +33,11 @@ describe("parsePreviewMessage", () => {
     // so anything else is a version-skewed or hostile sender — refuse it.
     expect(parsePreviewMessage({ type: "paperboy:patch", field: "b", blockIndex: '"] , [x' })).toBeNull();
     expect(parsePreviewMessage({ type: "paperboy:focus", field: "b", blockIndex: 1.5 })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:rect", field: "b", blockIndex: 1.5, rect: null })).toBeNull();
     // null and integer stay valid.
     expect(parsePreviewMessage({ type: "paperboy:focus", field: "b", blockIndex: null })?.type).toBe("paperboy:focus");
     expect(parsePreviewMessage({ type: "paperboy:patch", field: "b", html: "x", blockIndex: 3 })?.type).toBe("paperboy:patch");
+    expect(parsePreviewMessage({ type: "paperboy:rect", field: "b", blockIndex: 3, rect: null })?.type).toBe("paperboy:rect");
   });
 
   it("rejects a non-string field — patch/focus interpolate it into a selector, and it is a string by contract", () => {
@@ -43,6 +47,7 @@ describe("parsePreviewMessage", () => {
     // iframe → admin messages carry `field: string | null`; anything else is refused.
     expect(parsePreviewMessage({ type: "paperboy:edit", field: null })?.type).toBe("paperboy:edit");
     expect(parsePreviewMessage({ type: "paperboy:edit", field: 42 })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:rect", field: 42, rect: null })).toBeNull();
   });
 });
 
@@ -54,5 +59,20 @@ describe("message builders", () => {
 
   it("focusMessage", () => {
     expect(focusMessage("title")).toEqual({ type: "paperboy:focus", field: "title" });
+  });
+
+  it("rectMessage", () => {
+    expect(rectMessage("mainArea", null)).toEqual({
+      type: "paperboy:rect",
+      field: "mainArea",
+      blockIndex: null,
+      rect: null,
+    });
+    expect(rectMessage("title", { x: 0, y: 0, w: 10, h: 10 }, { blockIndex: 1 })).toEqual({
+      type: "paperboy:rect",
+      field: "title",
+      blockIndex: 1,
+      rect: { x: 0, y: 0, w: 10, h: 10 },
+    });
   });
 });

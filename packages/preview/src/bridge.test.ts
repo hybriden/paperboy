@@ -434,3 +434,337 @@ describe("initPreviewBridge — only the embedding parent may drive the bridge",
     expect(document.querySelector(".pb-edit-badge")).toBeNull();
   });
 });
+
+describe("initPreviewBridge — scroll tracking for anchored overlays", () => {
+  it("emits paperboy:rect with updated coordinates when scrolling occurs while an anchored overlay is open (add chip)", async () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="area" data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const area = document.getElementById("area")!;
+    let currentRect = { x: 20, y: 100, width: 600, height: 300, top: 100, left: 20, right: 620, bottom: 400 };
+    area.getBoundingClientRect = () => currentRect as DOMRect;
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    const add = document.querySelector<HTMLElement>(".pb-area-add")!;
+    expect(add.style.display).not.toBe("none");
+
+    target.postMessage.mockClear();
+    add.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "paperboy:add-block", field: "mainArea" }),
+      "*",
+    );
+    target.postMessage.mockClear();
+
+    // Element moves due to scroll
+    currentRect = { x: 20, y: 40, width: 600, height: 300, top: 40, left: 20, right: 620, bottom: 340 };
+    window.dispatchEvent(new Event("scroll"));
+
+    await new Promise((r) => window.requestAnimationFrame(r));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      {
+        type: "paperboy:rect",
+        field: "mainArea",
+        blockIndex: null,
+        rect: { x: 20, y: 40, w: 600, h: 300 },
+      },
+      "*",
+    );
+    teardown();
+  });
+
+  it("does not emit extra paperboy:rect updates when scrolling occurs with no anchored overlay open", async () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="area" data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+
+    // Hover area so hoveredArea is set, but no click was performed (no overlay opened)
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    target.postMessage.mockClear();
+
+    window.dispatchEvent(new Event("scroll"));
+    window.dispatchEvent(new Event("resize"));
+
+    await new Promise((r) => window.requestAnimationFrame(r));
+
+    const rectCalls = target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:rect");
+    expect(rectCalls).toHaveLength(0);
+    teardown();
+  });
+
+  it("throttles repeated scroll events using requestAnimationFrame", async () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="area" data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const area = document.getElementById("area")!;
+    let currentRect = { x: 20, y: 100, width: 600, height: 300, top: 100, left: 20, right: 620, bottom: 400 };
+    area.getBoundingClientRect = () => currentRect as DOMRect;
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    document.querySelector<HTMLElement>(".pb-area-add")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    target.postMessage.mockClear();
+
+    // Rapid successive scroll events
+    currentRect = { x: 20, y: 90, width: 600, height: 300, top: 90, left: 20, right: 620, bottom: 390 };
+    window.dispatchEvent(new Event("scroll"));
+    currentRect = { x: 20, y: 80, width: 600, height: 300, top: 80, left: 20, right: 620, bottom: 380 };
+    window.dispatchEvent(new Event("scroll"));
+    currentRect = { x: 20, y: 70, width: 600, height: 300, top: 70, left: 20, right: 620, bottom: 370 };
+    window.dispatchEvent(new Event("scroll"));
+
+    await new Promise((r) => window.requestAnimationFrame(r));
+
+    const rectCalls = target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:rect");
+    expect(rectCalls).toHaveLength(1);
+    expect(rectCalls[0][0].rect.y).toBe(70);
+    teardown();
+  });
+
+  it("stops sending updates when the anchored element is disconnected from the DOM", async () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="area" data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const area = document.getElementById("area")!;
+    const teardown = initPreviewBridge({ target, badge: false });
+
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    document.querySelector<HTMLElement>(".pb-area-add")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    target.postMessage.mockClear();
+
+    // Remove anchored element
+    area.remove();
+
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => window.requestAnimationFrame(r));
+
+    const rectCalls = target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:rect");
+    expect(rectCalls).toHaveLength(0);
+    teardown();
+  });
+
+  it("cancels pending animation frames on teardown and ignores further scroll events", async () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="area" data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    document.querySelector<HTMLElement>(".pb-area-add")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    target.postMessage.mockClear();
+
+    // Trigger scroll and immediately tear down
+    window.dispatchEvent(new Event("scroll"));
+    teardown();
+
+    await new Promise((r) => setTimeout(r, 50));
+
+    const rectCalls = target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:rect");
+    expect(rectCalls).toHaveLength(0);
+
+    // Further scroll after teardown emits nothing
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => setTimeout(r, 50));
+    expect(target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:rect")).toHaveLength(0);
+  });
+
+  it("stops sending updates after the Add-block palette closes", async () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="area" data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const area = document.getElementById("area")!;
+    let currentRect = { x: 20, y: 100, width: 600, height: 300, top: 100, left: 20, right: 620, bottom: 400 };
+    area.getBoundingClientRect = () => currentRect as DOMRect;
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    const add = document.querySelector<HTMLElement>(".pb-area-add")!;
+    add.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "paperboy:add-block", field: "mainArea" }),
+      "*",
+    );
+    target.postMessage.mockClear();
+
+    // Scroll while palette is open emits update
+    currentRect = { x: 20, y: 80, width: 600, height: 300, top: 80, left: 20, right: 620, bottom: 380 };
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => window.requestAnimationFrame(r));
+    expect(target.postMessage).toHaveBeenCalledWith(
+      {
+        type: "paperboy:rect",
+        field: "mainArea",
+        blockIndex: null,
+        rect: { x: 20, y: 80, w: 600, h: 300 },
+      },
+      "*",
+    );
+    target.postMessage.mockClear();
+
+    // Closing the overlay in the admin sends paperboy:rect with rect: null
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "paperboy:rect", field: "mainArea", blockIndex: null, rect: null },
+        source: target,
+      }),
+    );
+
+    // Preview scrolls after palette was closed
+    currentRect = { x: 20, y: 50, width: 600, height: 300, top: 50, left: 20, right: 620, bottom: 350 };
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => window.requestAnimationFrame(r));
+
+    const rectCalls = target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:rect");
+    expect(rectCalls).toHaveLength(0);
+    teardown();
+  });
+
+  it("does not clear tracking when paperboy:rect carries a non-null rectangle or targets a different field", async () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="area" data-pb-area="mainArea"><p id="inner">block</p></div>`;
+    const area = document.getElementById("area")!;
+    let currentRect = { x: 20, y: 100, width: 600, height: 300, top: 100, left: 20, right: 620, bottom: 400 };
+    area.getBoundingClientRect = () => currentRect as DOMRect;
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    document.getElementById("inner")!.dispatchEvent(new PointerEvent("pointerover", { bubbles: true }));
+    const add = document.querySelector<HTMLElement>(".pb-area-add")!;
+    add.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    target.postMessage.mockClear();
+
+    // Inbound paperboy:rect with a non-null rectangle retains tracking
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "paperboy:rect", field: "mainArea", blockIndex: null, rect: { x: 20, y: 100, w: 600, h: 300 } },
+        source: target,
+      }),
+    );
+
+    // Inbound paperboy:rect with rect: null for a DIFFERENT field does not clear tracking
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "paperboy:rect", field: "differentArea", blockIndex: null, rect: null },
+        source: target,
+      }),
+    );
+
+    // Scrolling still emits rect updates for mainArea
+    currentRect = { x: 20, y: 80, width: 600, height: 300, top: 80, left: 20, right: 620, bottom: 380 };
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => window.requestAnimationFrame(r));
+
+    const rectCalls = target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:rect");
+    expect(rectCalls).toHaveLength(1);
+    expect(rectCalls[0][0].field).toBe("mainArea");
+    expect(rectCalls[0][0].rect.y).toBe(80);
+    target.postMessage.mockClear();
+
+    // Now send rect: null for mainArea -> stops tracking
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "paperboy:rect", field: "mainArea", blockIndex: null, rect: null },
+        source: target,
+      }),
+    );
+
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => window.requestAnimationFrame(r));
+    expect(target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:rect")).toHaveLength(0);
+
+    teardown();
+  });
+
+  it("stops tracking when paperboy:rect matches both field and block index, but ignores signals for a different block", async () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div data-pb-block-index="0" data-pb-block-type="hero">
+        <h1 id="heading0" data-pb-field="title">Hero 0</h1>
+      </div>
+      <div data-pb-block-index="1" data-pb-block-type="hero">
+        <h1 id="heading1" data-pb-field="title">Hero 1</h1>
+      </div>
+    `;
+    const heading1 = document.getElementById("heading1")!;
+    let currentRect = { x: 10, y: 50, width: 200, height: 30, top: 50, left: 10, right: 210, bottom: 80 };
+    heading1.getBoundingClientRect = () => currentRect as DOMRect;
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    heading1.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "paperboy:edit", field: "title", blockIndex: 1 }),
+      "*",
+    );
+    target.postMessage.mockClear();
+
+    // Inbound close signal (rect: null) for block 0 with same field "title" does NOT stop tracking block 1
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "paperboy:rect", field: "title", blockIndex: 0, rect: null },
+        source: target,
+      }),
+    );
+
+    // Scroll still emits rect for block 1
+    currentRect = { x: 10, y: 30, width: 200, height: 30, top: 30, left: 10, right: 210, bottom: 60 };
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => window.requestAnimationFrame(r));
+
+    const rectCalls = target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:rect");
+    expect(rectCalls).toHaveLength(1);
+    expect(rectCalls[0][0]).toEqual({
+      type: "paperboy:rect",
+      field: "title",
+      blockIndex: 1,
+      rect: { x: 10, y: 30, w: 200, h: 30 },
+    });
+    target.postMessage.mockClear();
+
+    // Now send close signal matching block 1 -> stops tracking
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data: { type: "paperboy:rect", field: "title", blockIndex: 1, rect: null },
+        source: target,
+      }),
+    );
+
+    window.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => window.requestAnimationFrame(r));
+    expect(target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:rect")).toHaveLength(0);
+
+    teardown();
+  });
+
+  it("emits paperboy:rect with updated coordinates when scrolling occurs while an editable field overlay is open", async () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="field" data-pb-field="heading">Hello</div>`;
+    const field = document.getElementById("field")!;
+    let currentRect = { x: 10, y: 50, width: 200, height: 30, top: 50, left: 10, right: 210, bottom: 80 };
+    field.getBoundingClientRect = () => currentRect as DOMRect;
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    field.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "paperboy:edit", field: "heading" }),
+      "*",
+    );
+    target.postMessage.mockClear();
+
+    // Field moves due to scroll
+    currentRect = { x: 10, y: 15, width: 200, height: 30, top: 15, left: 10, right: 210, bottom: 45 };
+    window.dispatchEvent(new Event("scroll"));
+
+    await new Promise((r) => window.requestAnimationFrame(r));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      {
+        type: "paperboy:rect",
+        field: "heading",
+        blockIndex: null,
+        rect: { x: 10, y: 15, w: 200, h: 30 },
+      },
+      "*",
+    );
+    teardown();
+  });
+});

@@ -30,7 +30,7 @@ import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
 import { allowedBlockTypesFor } from "../lib/area-add.js";
 import { blockInstanceFromDrop, type DropPayload, newBlock, newBlockKey } from "../lib/block-drop.js";
 import { isFromPreviewFrame, previewOrigin } from "../lib/preview-origin.js";
-import { parsePreviewMessage } from "@paperboycms/preview/protocol";
+import { parsePreviewMessage, rectMessage } from "@paperboycms/preview/protocol";
 import { useConfirm } from "./ui/confirm.js";
 import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
@@ -815,8 +815,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         // Anchor update for the open overlay (same field — and same block, when
         // the overlay is scoped to a field inside a block).
         const o = opeRef.current;
-        if (msg.rect && o && msg.field === o.field && (o.block ? msg.blockIndex === o.block.index : msg.blockIndex == null)) {
-          setOpe((prev) => (prev ? { ...prev, rect: msg.rect } : prev));
+        const nextRect = msg.rect;
+        if (nextRect && o && msg.field === o.field && (o.block ? msg.blockIndex === o.block.index : msg.blockIndex == null)) {
+          setOpe((prev) => (prev ? { ...prev, rect: nextRect } : prev));
         }
         return;
       }
@@ -1003,7 +1004,24 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Close the on-page overlay; if anything was saved while it was open, do the
   // deferred preview reload now (the bridge restores the scroll position).
   function closeOpe() {
+    const active = opeRef.current;
     setOpe(null);
+    if (active) {
+      const win = previewFrameRef.current?.contentWindow;
+      const origin = previewOrigin(site.data);
+      if (win && origin) {
+        try {
+          win.postMessage(
+            rectMessage(active.field, null, {
+              blockIndex: active.block?.index ?? null,
+            }),
+            origin,
+          );
+        } catch {
+          // frame teardown race
+        }
+      }
+    }
     if (opeDirtyRef.current) {
       opeDirtyRef.current = false;
       setPreviewRefresh((n) => n + 1);
