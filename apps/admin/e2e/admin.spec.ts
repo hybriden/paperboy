@@ -990,9 +990,9 @@ test("visual editing: anchored block palette follows content area on preview scr
   const me = await page.request.get("/api/v1/auth/me");
   const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
   const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
-  const inst = await page.request.post("/api/v1/type-templates/instantiate", {
+  const inst = await page.request.post("/api/v1/manage/type-templates/SectionPage/instantiate", {
     headers,
-    data: { name: "SectionPage", withBlocks: true, updateExisting: true },
+    data: { withBlocks: true, updateExisting: true },
   });
   expect(inst.ok(), `instantiate SectionPage: ${inst.status()} ${await inst.text()}`).toBe(true);
   const created = await page.request.post("/api/v1/manage/content", {
