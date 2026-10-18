@@ -4,9 +4,7 @@ The browser-side **on-page-editing bridge** for the [Paperboy](https://github.co
 
 It is the single source of truth for the message protocol between the CMS admin (parent window) and a frontend rendered inside the preview iframe — so frontends and the admin can't drift.
 
-**Changes in 0.4.1** — `initPreviewBridge()` is a no-op without a DOM (safe at module
-scope under SSR) and idempotent (a second call returns the existing teardown instead of
-stacking chrome and listeners); `parsePreviewMessage` refuses a non-string `field`.
+**Changes in 0.5.0** — tracks anchored elements when opening overlays (such as the Add block palette) and re-emits `paperboy:rect` updates throttled by `requestAnimationFrame` on preview scroll/resize so anchored overlays follow their targets; stops tracking when receiving `paperboy:rect` with `rect: null`.
 
 ## Frontend (inside the preview iframe)
 

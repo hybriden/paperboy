@@ -65,7 +65,7 @@ export interface RectMessage {
   type: "paperboy:rect";
   field: string | null;
   blockIndex: number | null;
-  rect: Rect;
+  rect: Rect | null;
 }
 
 export interface DropMessage {
@@ -150,7 +150,15 @@ export interface DropAtMessage {
 }
 
 export type FromPreview = ReadyMessage | EditMessage | RectMessage | DropMessage | AddBlockMessage;
-export type ToPreview = PatchMessage | FocusMessage | DragSourceMessage | DragEndMessage | DragAtMessage | DropAtMessage | PingMessage;
+export type ToPreview =
+  | PatchMessage
+  | FocusMessage
+  | DragSourceMessage
+  | DragEndMessage
+  | DragAtMessage
+  | DropAtMessage
+  | PingMessage
+  | RectMessage;
 export type PaperboyMessage = FromPreview | ToPreview;
 
 const KNOWN_TYPES = new Set<string>([
@@ -220,3 +228,14 @@ export const pingMessage = (): PingMessage => ({ type: "paperboy:ping" });
 export const dragAtMessage = (x: number, y: number): DragAtMessage => ({ type: "paperboy:drag-at", x, y });
 
 export const dropAtMessage = (x: number, y: number, payload: unknown): DropAtMessage => ({ type: "paperboy:drop-at", x, y, payload });
+
+export const rectMessage = (
+  field: string | null,
+  rect: Rect | null,
+  opts?: { blockIndex?: number | null },
+): RectMessage => ({
+  type: "paperboy:rect",
+  field,
+  blockIndex: opts?.blockIndex ?? null,
+  rect,
+});

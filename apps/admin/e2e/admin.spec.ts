@@ -985,6 +985,64 @@ test("visual editing: an add-block message from the preview opens the area palet
   await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
 });
 
+test("visual editing: anchored block palette follows content area on preview scroll", async ({ page }) => {
+  await login(page);
+  const me = await page.request.get("/api/v1/auth/me");
+  const csrf = ((await me.json()) as { csrfToken: string }).csrfToken;
+  const headers = { "x-csrf-token": csrf, origin: "http://localhost:8090" };
+  const inst = await page.request.post("/api/v1/manage/type-templates/SectionPage/instantiate", {
+    headers,
+    data: { withBlocks: true, updateExisting: true },
+  });
+  expect(inst.ok(), `instantiate SectionPage: ${inst.status()} ${await inst.text()}`).toBe(true);
+  const created = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: "SectionPage", parentId: null, locale: "en", name: `PaletteScroll ${Date.now().toString(36)}` },
+  });
+  expect(created.ok(), `create host: ${created.status()} ${await created.text()}`).toBe(true);
+  const { documentId } = (await created.json()) as { documentId: string };
+
+  await page.goto(`/edit/${documentId}`);
+  await page.getByRole("button", { name: "Side by side" }).click();
+  const frame = await waitPreviewFrame(page);
+  await frame.locator("body.pb-editing").waitFor({ state: "attached", timeout: 20_000 });
+
+  // Ensure the preview content can scroll inside the iframe
+  await frame.evaluate(() => {
+    document.body.style.minHeight = "3000px";
+  });
+
+  const area = frame.locator('[data-pb-area="mainArea"]');
+  await expect(area).toBeVisible({ timeout: 10_000 });
+  await area.hover();
+  const addChip = frame.locator(".pb-area-add");
+  await expect(addChip).toBeVisible({ timeout: 5000 });
+  await addChip.click();
+
+  const dialog = page.getByRole("dialog", { name: "Add block" });
+  await expect(dialog).toBeVisible({ timeout: 5000 });
+
+  const dialogBefore = (await dialog.boundingBox())!;
+  const areaBefore = (await area.boundingBox())!;
+  const offsetBefore = dialogBefore.y - areaBefore.y;
+
+  // Scroll the preview iframe content
+  await frame.evaluate(() => window.scrollBy(0, 150));
+
+  await expect.poll(async () => {
+    const d = await dialog.boundingBox();
+    return d?.y;
+  }, { timeout: 5000 }).not.toBe(dialogBefore.y);
+
+  const dialogAfter = (await dialog.boundingBox())!;
+  const areaAfter = (await area.boundingBox())!;
+  const offsetAfter = dialogAfter.y - areaAfter.y;
+
+  expect(offsetAfter).toBeCloseTo(offsetBefore, 1);
+
+  await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+});
+
 test("focusing a block field in the form highlights that block's field in the preview", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
