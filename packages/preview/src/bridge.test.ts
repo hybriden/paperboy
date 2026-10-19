@@ -1508,7 +1508,6 @@ describe("initPreviewBridge — targeted second review edge cases", () => {
       <div id="area2" data-pb-area="area2"><p id="p2">Area 2</p></div>
     `;
     const area1 = document.getElementById("area1")!;
-    const area2 = document.getElementById("area2")!;
     const p1 = document.getElementById("p1")!;
     const p2 = document.getElementById("p2")!;
 
@@ -1536,8 +1535,8 @@ describe("initPreviewBridge — targeted second review edge cases", () => {
     document.body.innerHTML = `<div data-pb-field="title">Title</div>`;
     const title = document.querySelector("[data-pb-field]")!;
 
-    const teardown1 = initPreviewBridge({ target, badge: false });
-    // Simulate head reset without calling teardown1
+    initPreviewBridge({ target, badge: false });
+    // Simulate head reset without calling teardown on the first instance
     document.querySelector("style[data-pb-bridge]")!.remove();
 
     // Re-initialize bridge
