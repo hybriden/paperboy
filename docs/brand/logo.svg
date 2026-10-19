@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="224" fill="#c8362f"/>
+  <g transform="translate(-6 -36)">
+  <!-- the P is one sheet: dog-eared top right, a curled-under foot -->
+  <path d="M338 820 L476 900 L476 874 Z" fill="#8e2420"/>
+  <path d="M320 196 H586 L716 326 V478 C716 572 640 648 546 648 H476 V874 L320 784 Z" fill="#fff"/>
+  <path d="M586 196 V326 H716 Z" fill="#f1dcd9"/>
+  </g>
+</svg>

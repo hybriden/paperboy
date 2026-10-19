@@ -1,4 +1,9 @@
-# 📰 Paperboy
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wordmark-dark.png">
+    <img alt="Paperboy" src="docs/brand/wordmark-light.png" width="400">
+  </picture>
+</h1>
 
 [![CI](https://github.com/hybriden/paperboy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hybriden/paperboy/actions/workflows/ci.yml)
 
