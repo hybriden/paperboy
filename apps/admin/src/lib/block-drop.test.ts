@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { FieldDef } from "@paperboy/shared";
-import { blockInstanceFromDrop, newBlock, newBlockKey } from "./block-drop.js";
+import { blockInstanceFromDrop, insertBlockAt, newBlock, newBlockKey } from "./block-drop.js";
 
 // A content-area field; allowedBlocks empty = any block type allowed.
 const area = (allowedBlocks: string[] = []): FieldDef =>
@@ -90,5 +90,51 @@ describe("newBlock", () => {
     expect(a.key).toMatch(/^b_/);
     expect(a.key).not.toBe(b.key);
     expect(newBlockKey()).not.toBe(newBlockKey());
+  });
+});
+
+describe("insertBlockAt", () => {
+  const b1 = newBlock({ blockType: "B1", inline: {} }, "k1");
+  const b2 = newBlock({ blockType: "B2", inline: {} }, "k2");
+  const b3 = newBlock({ blockType: "B3", inline: {} }, "k3");
+  const newB = newBlock({ blockType: "New", inline: {} }, "new");
+
+  it("appends when index is undefined or null (backward compatibility)", () => {
+    expect(insertBlockAt([b1, b2], newB)).toEqual([b1, b2, newB]);
+    expect(insertBlockAt([b1, b2], newB, undefined)).toEqual([b1, b2, newB]);
+    expect(insertBlockAt([b1, b2], newB, null)).toEqual([b1, b2, newB]);
+  });
+
+  it("inserts at beginning when index is 0", () => {
+    expect(insertBlockAt([b1, b2], newB, 0)).toEqual([newB, b1, b2]);
+  });
+
+  it("inserts between blocks at specific index", () => {
+    expect(insertBlockAt([b1, b2, b3], newB, 1)).toEqual([b1, newB, b2, b3]);
+    expect(insertBlockAt([b1, b2, b3], newB, 2)).toEqual([b1, b2, newB, b3]);
+  });
+
+  it("inserts at end when index equals length", () => {
+    expect(insertBlockAt([b1, b2], newB, 2)).toEqual([b1, b2, newB]);
+  });
+
+  it("handles empty arrays", () => {
+    expect(insertBlockAt([], newB, 0)).toEqual([newB]);
+    expect(insertBlockAt([], newB)).toEqual([newB]);
+  });
+
+  it("clamps negative index to 0", () => {
+    expect(insertBlockAt([b1, b2], newB, -5)).toEqual([newB, b1, b2]);
+  });
+
+  it("clamps out-of-range index to length", () => {
+    expect(insertBlockAt([b1, b2], newB, 999)).toEqual([b1, b2, newB]);
+  });
+
+  it("appends when index is not a valid integer", () => {
+    expect(insertBlockAt([b1, b2], newB, 1.5)).toEqual([b1, b2, newB]);
+    expect(insertBlockAt([b1, b2], newB, NaN)).toEqual([b1, b2, newB]);
+    // @ts-expect-error non-number index
+    expect(insertBlockAt([b1, b2], newB, "1")).toEqual([b1, b2, newB]);
   });
 });

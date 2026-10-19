@@ -49,6 +49,21 @@ describe("parsePreviewMessage", () => {
     expect(parsePreviewMessage({ type: "paperboy:edit", field: 42 })).toBeNull();
     expect(parsePreviewMessage({ type: "paperboy:rect", field: 42, rect: null })).toBeNull();
   });
+
+  it("validates optional insertion index — integer >= 0 is allowed, non-integer or negative is rejected", () => {
+    // Valid: undefined, null, non-negative integers
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, index: 0 })).not.toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, index: 5 })).not.toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, index: null })).not.toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:add-block", field: "area", rect: { x: 0, y: 0, w: 1, h: 1 }, index: 2 })).not.toBeNull();
+
+    // Invalid: negative, float, non-number
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, index: -1 })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, index: 1.5 })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, index: "1" })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, index: NaN })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:add-block", field: "area", rect: { x: 0, y: 0, w: 1, h: 1 }, index: -2 })).toBeNull();
+  });
 });
 
 describe("message builders", () => {

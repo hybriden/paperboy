@@ -53,3 +53,23 @@ export function blockInstanceFromDrop(payload: DropPayload, field: FieldDef, key
 
   return { ok: true, block: newBlock({ blockType: payload.blockType, ref: payload.documentId }, key) };
 }
+
+/**
+ * Insert a block into a content area array at the specified index.
+ * When index is undefined, null, or invalid, appends to the end (legacy compatibility).
+ * When index is out of bounds, clamps to [0, current.length].
+ */
+export function insertBlockAt(
+  current: BlockInstance[],
+  block: BlockInstance,
+  index?: number | null,
+): BlockInstance[] {
+  const next = [...current];
+  if (typeof index === "number" && Number.isInteger(index)) {
+    const clamped = Math.max(0, Math.min(next.length, index));
+    next.splice(clamped, 0, block);
+  } else {
+    next.push(block);
+  }
+  return next;
+}

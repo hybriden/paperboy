@@ -59,7 +59,10 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   const doc = options.doc ?? (typeof document === "undefined" ? null : document);
   if (!doc) return () => {};
   const prior = active.get(doc);
-  if (prior?.style.isConnected) return prior.teardown;
+  if (prior) {
+    if (prior.style.isConnected) return prior.teardown;
+    prior.teardown();
+  }
   const win = doc.defaultView ?? (globalThis as unknown as Window);
   const target = options.target ?? win.parent;
   const accent = options.accent ?? "#0077BC";
@@ -98,6 +101,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     body.pb-editing [${ATTR.field}]:hover,body.pb-editing [${ATTR.blockIndex}]:hover{outline:2px solid ${accent};outline-offset:3px}
     body.pb-editing [${ATTR.field}].pb-focus{outline:3px solid ${accent};outline-offset:3px;box-shadow:0 0 0 6px ${accent}2e}
     body.pb-editing [${ATTR.area}].pb-drop-active{outline:3px solid ${accent};outline-offset:4px;background:${accent}14}
+    .pb-drop-indicator{position:fixed;z-index:99998;pointer-events:none;height:3px;background:${accent};border-radius:2px;box-shadow:0 0 4px ${accent}80}
     .pb-area-tag{position:fixed;z-index:99998;pointer-events:none;background:${accent};color:#fff;font:600 10px/1 ui-sans-serif,system-ui,sans-serif;padding:3px 7px;border-radius:4px;opacity:.92;transform:translateY(-50%)}
     .pb-area-add{position:fixed;z-index:99998;background:#fff;color:${accent};border:1px solid ${accent};font:600 12px/1 ui-sans-serif,system-ui,sans-serif;padding:6px 12px;border-radius:999px;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,.18);transform:translate(-50%,-50%)}
     .pb-area-add:hover{background:${accent};color:#fff}
@@ -177,6 +181,66 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   // the admin via paperboy:dragsource on dragstart (see onMessage below).
   let dragPayload: unknown = null;
   let dropZone: HTMLElement | null = null;
+  let dragInsertionIndex: number | null = null;
+
+  const dropIndicator = doc.createElement("div");
+  dropIndicator.className = "pb-drop-indicator";
+  dropIndicator.setAttribute("aria-hidden", "true");
+  dropIndicator.style.display = "none";
+  doc.body.appendChild(dropIndicator);
+
+  const computeInsertion = (zone: HTMLElement, y?: number): { index?: number; lineRect?: Rect } => {
+    if (typeof y !== "number" || Number.isNaN(y)) return {};
+    const blocks = Array.from(zone.querySelectorAll<HTMLElement>(`[${ATTR.blockIndex}]`))
+      .filter((el) => el.closest(`[${ATTR.area}]`) === zone);
+    const firstBlock = blocks[0];
+    if (!firstBlock) return {};
+
+    let nearestBlock: HTMLElement = firstBlock;
+    let minDistance = Infinity;
+    let isAbove = false;
+    let nearestRect = firstBlock.getBoundingClientRect();
+
+    for (const b of blocks) {
+      const r = b.getBoundingClientRect();
+      const midY = r.top + r.height / 2;
+      const dist = Math.abs(y - midY);
+      if (dist < minDistance) {
+        minDistance = dist;
+        nearestBlock = b;
+        isAbove = y < midY;
+        nearestRect = r;
+      }
+    }
+
+    const biAttr = nearestBlock.getAttribute(ATTR.blockIndex);
+    const parsedBi = biAttr != null ? Number(biAttr) : NaN;
+    const baseIndex = Number.isInteger(parsedBi) && parsedBi >= 0 ? parsedBi : blocks.indexOf(nearestBlock);
+    const index = isAbove ? baseIndex : baseIndex + 1;
+    const lineY = isAbove ? nearestRect.top : nearestRect.bottom;
+    const lineRect: Rect = {
+      x: nearestRect.left,
+      y: lineY,
+      w: nearestRect.width,
+      h: 3,
+    };
+    return { index, lineRect };
+  };
+
+  const showDropIndicator = (rect?: Rect) => {
+    if (!rect) {
+      dropIndicator.style.display = "none";
+      return;
+    }
+    dropIndicator.style.left = `${rect.x}px`;
+    dropIndicator.style.top = `${rect.y - 1}px`;
+    dropIndicator.style.width = `${rect.w}px`;
+    dropIndicator.style.display = "";
+  };
+  const hideDropIndicator = () => {
+    dropIndicator.style.display = "none";
+  };
+
   // data-pb-area's VALUE must be the contentArea FIELD NAME (it is posted back
   // as paperboy:drop {field} and looked up on the content type). A boolean-ish
   // marker is the classic mistake and makes every drop fail silently in the
@@ -198,6 +262,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     dropZone?.classList.remove("pb-drop-active");
     dropZone = z;
     dropZone?.classList.add("pb-drop-active");
+    if (!z) hideDropIndicator();
   };
   const onDragOver = (e: DragEvent) => {
     // Opt in when the drag carries our MIME (same-origin) OR the admin told us a
@@ -208,15 +273,33 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     // closest([data-pb-area]) misses) and the block silently vanished.
     hideAreaChrome();
     const zone = (e.target as HTMLElement | null)?.closest?.(`[${ATTR.area}]`) as HTMLElement | null;
-    if (!zone) { setDropZone(null); return; }
+    if (!zone) {
+      setDropZone(null);
+      dragInsertionIndex = null;
+      hideDropIndicator();
+      return;
+    }
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
     setDropZone(zone);
+    const insertion = computeInsertion(zone, e.clientY);
+    dragInsertionIndex = insertion.index ?? null;
+    showDropIndicator(insertion.lineRect);
   };
   const onDragLeave = (e: DragEvent) => {
-    if (!(e.relatedTarget as HTMLElement | null)?.closest?.(`[${ATTR.area}]`)) setDropZone(null);
+    const relatedArea = (e.relatedTarget as HTMLElement | null)?.closest?.(`[${ATTR.area}]`) as HTMLElement | null;
+    if (!relatedArea || relatedArea !== dropZone) {
+      setDropZone(null);
+      dragInsertionIndex = null;
+      hideDropIndicator();
+    }
   };
-  const onDragEnd = () => setDropZone(null);
+  const onDragEnd = () => {
+    dragPayload = null;
+    setDropZone(null);
+    dragInsertionIndex = null;
+    hideDropIndicator();
+  };
   const onDrop = (e: DragEvent) => {
     const zone = (e.target as HTMLElement | null)?.closest?.(`[${ATTR.area}]`) as HTMLElement | null;
     // Prefer the admin-broadcast payload (works cross-origin); fall back to
@@ -226,11 +309,24 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       const raw = e.dataTransfer?.getData(DRAG_MIME);
       if (raw) { try { payload = JSON.parse(raw); } catch { /* ignore */ } }
     }
+    const isSameZone = dropZone === zone;
+    const hasClientY = typeof e.clientY === "number" && !Number.isNaN(e.clientY);
+    const index = zone
+      ? (hasClientY
+          ? computeInsertion(zone, e.clientY).index
+          : (isSameZone ? dragInsertionIndex ?? undefined : undefined))
+      : undefined;
+
     dragPayload = null;
     setDropZone(null);
+    dragInsertionIndex = null;
+    hideDropIndicator();
     if (!zone || payload == null) return;
     e.preventDefault();
-    target?.postMessage({ type: "paperboy:drop", field: checkAreaValue(zone), payload }, postOrigin);
+    target?.postMessage(
+      { type: "paperboy:drop", field: checkAreaValue(zone), payload, ...(index != null ? { index } : {}) },
+      postOrigin,
+    );
   };
 
   // ---- area chrome: name tag + "add block" chip for the hovered area ----
@@ -251,20 +347,45 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   doc.body.appendChild(areaAdd);
 
   let hoveredArea: HTMLElement | null = null;
+  let addBlockIndex: number | null = null;
+  let lastPointerY: number | undefined;
+
   const hideAreaChrome = () => {
     hoveredArea = null;
+    addBlockIndex = null;
+    lastPointerY = undefined;
     areaTag.style.display = "none";
     areaAdd.style.display = "none";
   };
-  const positionAreaChrome = () => {
+  const positionAreaChrome = (pointerY?: number) => {
     if (!hoveredArea?.isConnected) { hideAreaChrome(); return; }
+    if (pointerY !== undefined) lastPointerY = pointerY;
     const r = hoveredArea.getBoundingClientRect();
-    // Tag straddles the top-left corner; chip straddles the bottom-center edge
+    // Tag straddles the top-left corner; chip straddles the target seam
     // (both transform-centered in the CSS), so neither covers area content.
     areaTag.style.left = `${Math.max(4, r.x + 8)}px`;
     areaTag.style.top = `${Math.max(10, r.y)}px`;
-    areaAdd.style.left = `${r.x + r.width / 2}px`;
-    areaAdd.style.top = `${Math.min(win.innerHeight - 20, r.y + r.height)}px`;
+
+    const blocks = Array.from(hoveredArea.querySelectorAll<HTMLElement>(`[${ATTR.blockIndex}]`))
+      .filter((el) => el.closest(`[${ATTR.area}]`) === hoveredArea);
+
+    if (blocks.length === 0 || lastPointerY === undefined) {
+      addBlockIndex = null;
+      areaAdd.style.left = `${r.x + r.width / 2}px`;
+      areaAdd.style.top = `${Math.min(win.innerHeight - 20, r.y + r.height)}px`;
+      return;
+    }
+
+    const insertion = computeInsertion(hoveredArea, lastPointerY);
+    addBlockIndex = insertion.index ?? null;
+
+    if (insertion.lineRect) {
+      areaAdd.style.left = `${insertion.lineRect.x + insertion.lineRect.w / 2}px`;
+      areaAdd.style.top = `${Math.min(win.innerHeight - 20, insertion.lineRect.y)}px`;
+    } else {
+      areaAdd.style.left = `${r.x + r.width / 2}px`;
+      areaAdd.style.top = `${Math.min(win.innerHeight - 20, r.y + r.height)}px`;
+    }
   };
   const onPointerOver = (e: PointerEvent) => {
     const t = e.target as HTMLElement | null;
@@ -273,15 +394,17 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     // pointer target: it is pointer-events:none.)
     if (t === areaAdd) return;
     const area = (t?.closest?.(`[${ATTR.area}]`) as HTMLElement | null) ?? null;
-    if (area === hoveredArea) return;
     if (!area) { hideAreaChrome(); return; }
+    const changedArea = area !== hoveredArea;
     hoveredArea = area;
-    const areaName = area.getAttribute(ATTR.area) ?? "";
-    areaTag.textContent = areaName;
-    areaAdd.setAttribute("aria-label", areaName ? `Add block to ${areaName}` : "Add block");
-    areaTag.style.display = "";
-    areaAdd.style.display = "";
-    positionAreaChrome();
+    if (changedArea) {
+      const areaName = area.getAttribute(ATTR.area) ?? "";
+      areaTag.textContent = areaName;
+      areaAdd.setAttribute("aria-label", areaName ? `Add block to ${areaName}` : "Add block");
+      areaTag.style.display = "";
+      areaAdd.style.display = "";
+    }
+    positionAreaChrome(e.clientY);
   };
   // Leaving the DOCUMENT fires no pointerover anywhere, so without this the
   // chip lingers after the pointer moves into the admin chrome — and a later
@@ -293,8 +416,16 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     if (!hoveredArea?.isConnected) return;
     tracked = hoveredArea;
     const r = hoveredArea.getBoundingClientRect();
+    const chipRect = areaAdd.getBoundingClientRect();
+    const chipY = chipRect.top + chipRect.height / 2;
+    const anchorHeight = Math.max(0, Math.min(r.height, chipY - r.top));
     target?.postMessage(
-      { type: "paperboy:add-block", field: checkAreaValue(hoveredArea), rect: { x: r.x, y: r.y, w: r.width, h: r.height } as Rect },
+      {
+        type: "paperboy:add-block",
+        field: checkAreaValue(hoveredArea),
+        rect: { x: r.x, y: r.y, w: r.width, h: anchorHeight } as Rect,
+        ...(addBlockIndex != null ? { index: addBlockIndex } : {}),
+      },
       postOrigin,
     );
   };
@@ -367,9 +498,12 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       // swallow the drop (elementFromPoint in drop-at hits the chip, zone null).
       dragPayload = msg.payload;
       hideAreaChrome();
+      hideDropIndicator();
     } else if (msg.type === "paperboy:dragend") {
       dragPayload = null;
       setDropZone(null);
+      dragInsertionIndex = null;
+      hideDropIndicator();
     } else if (msg.type === "paperboy:rect") {
       if (msg.rect === null) {
         if (tracked) {
@@ -389,12 +523,30 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       // Cross-origin: the admin caught the drag over its overlay and forwarded
       // the pointer (in our viewport coords). Highlight the content area under it.
       const el = doc.elementFromPoint(msg.x, msg.y) as HTMLElement | null;
-      setDropZone((el?.closest(`[${ATTR.area}]`) as HTMLElement | null) ?? null);
+      const zone = (el?.closest(`[${ATTR.area}]`) as HTMLElement | null) ?? null;
+      setDropZone(zone);
+      if (zone) {
+        const insertion = computeInsertion(zone, msg.y);
+        dragInsertionIndex = insertion.index ?? null;
+        showDropIndicator(insertion.lineRect);
+      } else {
+        dragInsertionIndex = null;
+        hideDropIndicator();
+      }
     } else if (msg.type === "paperboy:drop-at") {
       const el = doc.elementFromPoint(msg.x, msg.y) as HTMLElement | null;
       const zone = el?.closest(`[${ATTR.area}]`) as HTMLElement | null;
+      const index = zone ? computeInsertion(zone, msg.y).index : undefined;
+      dragPayload = null;
       setDropZone(null);
-      if (zone) target?.postMessage({ type: "paperboy:drop", field: checkAreaValue(zone), payload: msg.payload }, postOrigin);
+      dragInsertionIndex = null;
+      hideDropIndicator();
+      if (zone) {
+        target?.postMessage(
+          { type: "paperboy:drop", field: checkAreaValue(zone), payload: msg.payload, ...(index != null ? { index } : {}) },
+          postOrigin,
+        );
+      }
     }
   };
 
@@ -435,7 +587,12 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     }
     tracked = null;
     clearTimeout(focusTimer);
+    dragPayload = null;
+    dragInsertionIndex = null;
     setDropZone(null);
+    hideDropIndicator();
+    hideAreaChrome();
+    dropIndicator.remove();
     areaAdd.removeEventListener("click", onAddClick);
     areaTag.remove();
     areaAdd.remove();
