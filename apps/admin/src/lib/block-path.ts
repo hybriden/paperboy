@@ -50,6 +50,58 @@ export function blockAtPath(data: Record<string, unknown>, path: BlockPath): Blo
 }
 
 /**
+ * Map an index-based path from preview messages ({ field, blockIndex }[]) to a
+ * key-based BlockPath ({ field, key }[]).
+ * Returns null if any step cannot be resolved (e.g. index out of bounds or block missing).
+ */
+export function resolveBlockPath(
+  data: Record<string, unknown>,
+  path: { field: string; blockIndex: number }[],
+): BlockPath | null {
+  const result: BlockPath = [];
+  let current = data;
+  for (const step of path) {
+    const blocks = areaOf(current, step.field);
+    const block = blocks[step.blockIndex];
+    if (!block || !block.key) return null;
+    result.push({ field: step.field, key: block.key });
+    current = block.inline ?? {};
+  }
+  return result;
+}
+
+/**
+ * Immutably update the block targeted by a BlockPath.
+ * Calls `update(targetBlock)` and re-embeds the updated block up to the root.
+ * If any step along path does not exist, returns original data unchanged.
+ */
+export function updateBlockAtPath(
+  data: Record<string, unknown>,
+  path: BlockPath,
+  update: (block: BlockInstance) => BlockInstance,
+): Record<string, unknown> {
+  const head = path[0];
+  if (!head) return data;
+  const rest = path.slice(1);
+  const arr = areaOf(data, head.field);
+  let changed = false;
+  const nextArr = arr.map((b) => {
+    if (b.key !== head.key) return b;
+    if (rest.length === 0) {
+      changed = true;
+      return update(b);
+    }
+    const inlineData = b.inline ?? {};
+    const nextInline = updateBlockAtPath(inlineData, rest, update);
+    if (nextInline === inlineData) return b;
+    changed = true;
+    return { ...b, inline: nextInline };
+  });
+  if (!changed) return data;
+  return { ...data, [head.field]: nextArr };
+}
+
+/**
  * The line of text a compact row shows under (or beside) the block's type name.
  *
  * A row that says only "Hero" makes you open it to find out which hero it is, so

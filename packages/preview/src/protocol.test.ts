@@ -64,6 +64,23 @@ describe("parsePreviewMessage", () => {
     expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, index: NaN })).toBeNull();
     expect(parsePreviewMessage({ type: "paperboy:add-block", field: "area", rect: { x: 0, y: 0, w: 1, h: 1 }, index: -2 })).toBeNull();
   });
+
+  it("validates optional path array — valid steps pass, malformed steps are rejected", () => {
+    // Valid path
+    expect(parsePreviewMessage({
+      type: "paperboy:drop",
+      field: "area",
+      payload: {},
+      path: [{ field: "mainArea", blockIndex: 0 }, { field: "cols", blockIndex: 2 }],
+    })).not.toBeNull();
+
+    // Invalid paths
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, path: "invalid" })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, path: [null] })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, path: [{ field: 123, blockIndex: 0 }] })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, path: [{ field: "a", blockIndex: -1 }] })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, path: [{ field: "a", blockIndex: 1.5 }] })).toBeNull();
+  });
 });
 
 describe("message builders", () => {

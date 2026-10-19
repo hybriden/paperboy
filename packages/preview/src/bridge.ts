@@ -17,7 +17,7 @@
  * It injects its own minimal styles, so consumers ship NO bridge CSS. Returns a
  * teardown function (removes listeners, injected nodes, body class).
  */
-import { ATTR, DRAG_MIME, PROTOCOL_VERSION, parsePreviewMessage, type Rect } from "./protocol.js";
+import { ATTR, DRAG_MIME, PROTOCOL_VERSION, parsePreviewMessage, type PreviewBlockPathStep, type Rect } from "./protocol.js";
 
 export interface PreviewBridgeOptions {
   /** Window to post messages to. Default: the parent window. */
@@ -124,6 +124,56 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   const editableFrom = (t: EventTarget | null): HTMLElement | null =>
     (t as HTMLElement | null)?.closest?.(EDITABLE) ?? null;
 
+  // data-pb-area's VALUE must be the contentArea FIELD NAME (it is posted back
+  // as paperboy:drop {field} and looked up on the content type). A boolean-ish
+  // marker is the classic mistake and makes every drop fail silently in the
+  // editor — call it out in the frontend dev's own console.
+  const warnedAreas = new Set<string>();
+  const checkAreaValue = (zone: HTMLElement): string | null => {
+    const field = zone.getAttribute(ATTR.area);
+    if (field && /^(true|false|1|0|yes)$/i.test(field) && !warnedAreas.has(field)) {
+      warnedAreas.add(field);
+      console.warn(
+        `[paperboy] ${ATTR.area}="${field}" looks like a boolean marker, but its value must be the contentArea FIELD NAME ` +
+          `(e.g. ${ATTR.area}="mainArea") — the editor maps drops to the form field by this value. Use pbAreaAttrs() from @paperboycms/client.`,
+      );
+    }
+    return field;
+  };
+
+  /**
+   * Build ancestor path by walking [data-pb-area] / [data-pb-block-index] pairs,
+   * outermost first (Issue #97).
+   */
+  const blockPathFor = (el: HTMLElement, isAreaTarget = false): PreviewBlockPathStep[] | undefined => {
+    const steps: PreviewBlockPathStep[] = [];
+    let curr: HTMLElement | null = isAreaTarget ? el.parentElement : el;
+
+    while (curr) {
+      const blockEl = curr.closest<HTMLElement>(`[${ATTR.blockIndex}]`);
+      if (!blockEl) break;
+      const biAttr = blockEl.getAttribute(ATTR.blockIndex);
+      const blockIndex = biAttr != null ? Number(biAttr) : NaN;
+      const areaEl = blockEl.parentElement?.closest<HTMLElement>(`[${ATTR.area}]`);
+      if (!areaEl) break;
+      const field = checkAreaValue(areaEl);
+      let resolvedIndex = blockIndex;
+      if (!Number.isInteger(resolvedIndex) || resolvedIndex < 0) {
+        const directBlocks = Array.from(areaEl.querySelectorAll<HTMLElement>(`[${ATTR.blockIndex}]`))
+          .filter((b) => b.parentElement?.closest(`[${ATTR.area}]`) === areaEl);
+        resolvedIndex = directBlocks.indexOf(blockEl);
+      }
+      if (field && resolvedIndex >= 0) {
+        steps.push({ field, blockIndex: resolvedIndex });
+      }
+      curr = areaEl.parentElement;
+    }
+
+    if (steps.length === 0) return undefined;
+    steps.reverse();
+    return steps;
+  };
+
   const describe = (el: HTMLElement) => {
     // A field rendered INSIDE a block carries data-pb-field while the enclosing
     // block root carries data-pb-block-index — report both so the admin can
@@ -133,11 +183,13 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     const bi = blockEl?.getAttribute(ATTR.blockIndex) ?? null;
     const r = el.getBoundingClientRect();
     const isArea = el.hasAttribute(ATTR.area) && !el.hasAttribute(ATTR.field);
+    const path = blockPathFor(el, isArea);
     return {
       field: el.getAttribute(ATTR.field) ?? checkAreaValue(el),
       blockIndex: isArea ? null : (bi != null ? Number(bi) : null),
       blockType: isArea ? null : (blockEl?.getAttribute(ATTR.blockType) ?? null),
       rect: { x: r.x, y: r.y, w: r.width, h: r.height } as Rect,
+      ...(path ? { path } : {}),
     };
   };
 
@@ -241,22 +293,6 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     dropIndicator.style.display = "none";
   };
 
-  // data-pb-area's VALUE must be the contentArea FIELD NAME (it is posted back
-  // as paperboy:drop {field} and looked up on the content type). A boolean-ish
-  // marker is the classic mistake and makes every drop fail silently in the
-  // editor — call it out in the frontend dev's own console.
-  const warnedAreas = new Set<string>();
-  const checkAreaValue = (zone: HTMLElement): string | null => {
-    const field = zone.getAttribute(ATTR.area);
-    if (field && /^(true|false|1|0|yes)$/i.test(field) && !warnedAreas.has(field)) {
-      warnedAreas.add(field);
-      console.warn(
-        `[paperboy] ${ATTR.area}="${field}" looks like a boolean marker, but its value must be the contentArea FIELD NAME ` +
-          `(e.g. ${ATTR.area}="mainArea") — the editor maps drops to the form field by this value. Use pbAreaAttrs() from @paperboycms/client.`,
-      );
-    }
-    return field;
-  };
   const setDropZone = (z: HTMLElement | null) => {
     if (dropZone === z) return;
     dropZone?.classList.remove("pb-drop-active");
@@ -317,6 +353,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
           : (isSameZone ? dragInsertionIndex ?? undefined : undefined))
       : undefined;
 
+    const path = zone ? blockPathFor(zone, true) : undefined;
     dragPayload = null;
     setDropZone(null);
     dragInsertionIndex = null;
@@ -324,7 +361,13 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     if (!zone || payload == null) return;
     e.preventDefault();
     target?.postMessage(
-      { type: "paperboy:drop", field: checkAreaValue(zone), payload, ...(index != null ? { index } : {}) },
+      {
+        type: "paperboy:drop",
+        field: checkAreaValue(zone),
+        payload,
+        ...(index != null ? { index } : {}),
+        ...(path ? { path } : {}),
+      },
       postOrigin,
     );
   };
@@ -419,12 +462,14 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     const chipRect = areaAdd.getBoundingClientRect();
     const chipY = chipRect.top + chipRect.height / 2;
     const anchorHeight = Math.max(0, Math.min(r.height, chipY - r.top));
+    const path = hoveredArea ? blockPathFor(hoveredArea, true) : undefined;
     target?.postMessage(
       {
         type: "paperboy:add-block",
         field: checkAreaValue(hoveredArea),
         rect: { x: r.x, y: r.y, w: r.width, h: anchorHeight } as Rect,
         ...(addBlockIndex != null ? { index: addBlockIndex } : {}),
+        ...(path ? { path } : {}),
       },
       postOrigin,
     );
@@ -542,8 +587,15 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       dragInsertionIndex = null;
       hideDropIndicator();
       if (zone) {
+        const path = blockPathFor(zone, true);
         target?.postMessage(
-          { type: "paperboy:drop", field: checkAreaValue(zone), payload: msg.payload, ...(index != null ? { index } : {}) },
+          {
+            type: "paperboy:drop",
+            field: checkAreaValue(zone),
+            payload: msg.payload,
+            ...(index != null ? { index } : {}),
+            ...(path ? { path } : {}),
+          },
           postOrigin,
         );
       }
