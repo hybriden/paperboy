@@ -145,7 +145,7 @@ export function Login({ onLogin }: { onLogin: (u: SessionUser) => void }) {
         <div className="w-full max-w-[380px] animate-fade-in">
           {/* Compact wordmark for mobile, where the masthead panel is hidden. */}
           <div className="mb-8 flex items-center gap-2.5 md:hidden">
-            <span className="grid h-9 w-9 place-items-center rounded-(--radius) bg-brand font-display text-lg font-semibold text-white">P</span>
+            <img src="/icons/logo.svg" alt="" className="h-9 w-9" />
             <span className="font-display text-2xl font-semibold tracking-[-0.01em]">Paperboy</span>
           </div>
 

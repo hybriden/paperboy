@@ -62,7 +62,7 @@ export function OAuthConsent() {
     <main className="grid min-h-full place-items-center bg-canvas px-6 py-10">
       <div className="w-full max-w-[440px] animate-fade-in">
         <div className="mb-8 flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-(--radius) bg-brand font-display text-lg font-semibold text-white">P</span>
+          <img src="/icons/logo.svg" alt="" className="h-9 w-9" />
           <span className="font-display text-2xl font-semibold tracking-[-0.01em]">Paperboy</span>
         </div>
 
