@@ -23,7 +23,11 @@ RUN service postgresql start \
   && pnpm --filter @paperboy/db seed \
   && service postgresql stop
 
-WORKDIR /app/apps/mcp
+# Glama ignores CMD and spawns the start command from its form through its own
+# proxy, so the launcher lives on PATH: set the form's command to `paperboy-mcp`.
 # stdio: stdout is JSON-RPC, so Postgres' startup chatter goes to stderr and tsx
 # runs directly (pnpm would print its script banner to stdout).
-CMD ["sh", "-c", "service postgresql start >&2 && exec ./node_modules/.bin/tsx src/server.ts"]
+RUN printf '#!/bin/sh\nservice postgresql start >&2\ncd /app/apps/mcp && exec ./node_modules/.bin/tsx src/server.ts\n' > /usr/local/bin/paperboy-mcp \
+  && chmod +x /usr/local/bin/paperboy-mcp
+WORKDIR /app/apps/mcp
+CMD ["paperboy-mcp"]
