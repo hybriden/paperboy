@@ -253,7 +253,370 @@ describe("initPreviewBridge", () => {
     const teardown = initPreviewBridge({ target, badge: false });
     const payload = { kind: "block", documentId: "doc7", blockType: "CardBlock" };
     window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 50, y: 60, payload }, source: target }));
-    expect(target.postMessage).toHaveBeenCalledWith({ type: "paperboy:drop", field: "contentarea", payload }, "*");
+    expect(target.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "paperboy:drop", field: "contentarea", payload }),
+      "*",
+    );
+    teardown();
+  });
+
+  it("calculates insertion index 0 when dropping above a block's midpoint", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">Block 0</div>
+      </div>
+    `;
+    const b0 = document.getElementById("b0")!;
+    // b0 bounds: top 100, height 100 -> midpoint is 150
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc1", blockType: "CardBlock" };
+
+    // Dragover at y=120 (above midpoint 150)
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+    const overEv = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(overEv, "dataTransfer", { value: dt });
+    Object.defineProperty(overEv, "clientY", { value: 120 });
+    b0.dispatchEvent(overEv);
+
+    // Drop at y=120
+    const dropEv = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv, "clientY", { value: 120 });
+    b0.dispatchEvent(dropEv);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "mainArea", payload, index: 0 },
+      "*",
+    );
+    teardown();
+  });
+
+  it("calculates insertion index 1 when dropping below a block's midpoint", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">Block 0</div>
+      </div>
+    `;
+    const b0 = document.getElementById("b0")!;
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc1", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+
+    // Drop at y=180 (below midpoint 150)
+    const dropEv = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv, "clientY", { value: 180 });
+    b0.dispatchEvent(dropEv);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "mainArea", payload, index: 1 },
+      "*",
+    );
+    teardown();
+  });
+
+  it("calculates insertion index between blocks when dropping in a gap", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">Block 0</div>
+        <div id="b1" data-pb-block-index="1">Block 1</div>
+      </div>
+    `;
+    const b0 = document.getElementById("b0")!;
+    const b1 = document.getElementById("b1")!;
+    // b0: 100-200 (mid 150), b1: 220-320 (mid 270). Gap is 200-220.
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+    b1.getBoundingClientRect = () => ({ top: 220, bottom: 320, left: 10, right: 310, width: 300, height: 100, x: 10, y: 220 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc2", blockType: "CardBlock" };
+
+    // Cross-origin drop-at at y=210 (in gap between b0 and b1)
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => b0;
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 50, y: 210, payload }, source: target }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "mainArea", payload, index: 1 },
+      "*",
+    );
+    teardown();
+  });
+
+  it("appends with omitted index when dropping in an empty content area", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="area" data-pb-area="mainArea"></div>`;
+    const area = document.getElementById("area")!;
+    area.getBoundingClientRect = () => ({ top: 50, bottom: 150, left: 10, right: 310, width: 300, height: 100, x: 10, y: 50 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc1", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+
+    const dropEv = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv, "clientY", { value: 70 });
+    area.dispatchEvent(dropEv);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "mainArea", payload },
+      "*",
+    );
+    teardown();
+  });
+
+  it("isolates nested content areas when computing block indexes (Issue #97 compatibility)", () => {
+    const target = makeTarget();
+    // mainArea has b0. Inside b0 is columnsArea with its own child nestedB0.
+    document.body.innerHTML = `
+      <div id="mainArea" data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">
+          <div id="nestedArea" data-pb-area="columnsArea">
+            <div id="nestedB0" data-pb-block-index="0">Nested Block</div>
+          </div>
+        </div>
+      </div>
+    `;
+    const b0 = document.getElementById("b0")!;
+    const nestedB0 = document.getElementById("nestedB0")!;
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 400, left: 10, right: 310, width: 300, height: 300, x: 10, y: 100 } as DOMRect);
+    nestedB0.getBoundingClientRect = () => ({ top: 150, bottom: 250, left: 20, right: 290, width: 270, height: 100, x: 20, y: 150 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc1", blockType: "CardBlock" };
+
+    // Drop on mainArea at y=450 (below b0's midpoint 250).
+    // nestedB0 must NOT be treated as a block of mainArea!
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => b0;
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 50, y: 450, payload }, source: target }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "mainArea", payload, index: 1 },
+      "*",
+    );
+    teardown();
+  });
+
+  it("posts paperboy:add-block with the calculated index when hovering over a block", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="area" data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">Block 0</div>
+        <div id="b1" data-pb-block-index="1">Block 1</div>
+      </div>
+    `;
+    const area = document.getElementById("area")!;
+    const b0 = document.getElementById("b0")!;
+    const b1 = document.getElementById("b1")!;
+    area.getBoundingClientRect = () => ({ top: 100, bottom: 350, left: 10, right: 310, width: 300, height: 250, x: 10, y: 100 } as DOMRect);
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+    b1.getBoundingClientRect = () => ({ top: 220, bottom: 320, left: 10, right: 310, width: 300, height: 100, x: 10, y: 220 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+
+    // Hover over b0 in its lower half (y=180, midpoint 150) -> index 1
+    const ptrEv = new PointerEvent("pointerover", { bubbles: true });
+    Object.defineProperty(ptrEv, "clientY", { value: 180 });
+    b0.dispatchEvent(ptrEv);
+
+    target.postMessage.mockClear();
+    const addChip = document.querySelector<HTMLElement>(".pb-area-add")!;
+    addChip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "paperboy:add-block", field: "mainArea", index: 1 }),
+      "*",
+    );
+    teardown();
+  });
+
+  it("posts paperboy:add-block with index 0 and anchors at top when hovering above first block", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="area" data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">Block 0</div>
+        <div id="b1" data-pb-block-index="1">Block 1</div>
+      </div>
+    `;
+    const area = document.getElementById("area")!;
+    const b0 = document.getElementById("b0")!;
+    const b1 = document.getElementById("b1")!;
+    area.getBoundingClientRect = () => ({ top: 100, bottom: 350, left: 10, right: 310, width: 300, height: 250, x: 10, y: 100 } as DOMRect);
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+    b1.getBoundingClientRect = () => ({ top: 220, bottom: 320, left: 10, right: 310, width: 300, height: 100, x: 10, y: 220 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+
+    // Hover over b0 in its upper half (y=120, midpoint 150) -> index 0
+    const ptrEv = new PointerEvent("pointerover", { bubbles: true });
+    Object.defineProperty(ptrEv, "clientY", { value: 120 });
+    b0.dispatchEvent(ptrEv);
+
+    target.postMessage.mockClear();
+    const addChip = document.querySelector<HTMLElement>(".pb-area-add")!;
+    addChip.getBoundingClientRect = () => ({ top: 88, bottom: 112, left: 110, right: 210, width: 100, height: 24, x: 110, y: 88 } as DOMRect);
+    addChip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      {
+        type: "paperboy:add-block",
+        field: "mainArea",
+        rect: { x: 10, y: 100, w: 300, h: 0 },
+        index: 0,
+      },
+      "*",
+    );
+    teardown();
+  });
+
+  it("posts paperboy:add-block with index 2 and anchors at bottom when hovering below last block", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="area" data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">Block 0</div>
+        <div id="b1" data-pb-block-index="1">Block 1</div>
+      </div>
+    `;
+    const area = document.getElementById("area")!;
+    const b0 = document.getElementById("b0")!;
+    const b1 = document.getElementById("b1")!;
+    area.getBoundingClientRect = () => ({ top: 100, bottom: 350, left: 10, right: 310, width: 300, height: 250, x: 10, y: 100 } as DOMRect);
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+    b1.getBoundingClientRect = () => ({ top: 220, bottom: 320, left: 10, right: 310, width: 300, height: 100, x: 10, y: 220 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+
+    // Hover over b1 in its lower half (y=300, midpoint 270) -> index 2
+    const ptrEv = new PointerEvent("pointerover", { bubbles: true });
+    Object.defineProperty(ptrEv, "clientY", { value: 300 });
+    b1.dispatchEvent(ptrEv);
+
+    target.postMessage.mockClear();
+    const addChip = document.querySelector<HTMLElement>(".pb-area-add")!;
+    addChip.getBoundingClientRect = () => ({ top: 308, bottom: 332, left: 110, right: 210, width: 100, height: 24, x: 110, y: 308 } as DOMRect);
+    addChip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      {
+        type: "paperboy:add-block",
+        field: "mainArea",
+        rect: { x: 10, y: 100, w: 300, h: 220 },
+        index: 2,
+      },
+      "*",
+    );
+    teardown();
+  });
+
+  it("manages drop indicator visibility and cleanup during drag lifecycle", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="area" data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">Block 0</div>
+      </div>
+    `;
+    const b0 = document.getElementById("b0")!;
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const indicator = document.querySelector<HTMLElement>(".pb-drop-indicator")!;
+    expect(indicator).not.toBeNull();
+    expect(indicator.style.display).toBe("none");
+
+    const payload = { kind: "block", documentId: "doc1", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+
+    // 1. Dragover above midpoint -> indicator shown at top
+    const overEv = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(overEv, "dataTransfer", { value: dt });
+    Object.defineProperty(overEv, "clientY", { value: 120 });
+    b0.dispatchEvent(overEv);
+
+    expect(indicator.style.display).toBe("");
+    expect(indicator.style.left).toBe("10px");
+    expect(indicator.style.top).toBe("99px"); // y - 1
+    expect(indicator.style.width).toBe("300px");
+
+    // 2. Dragover below midpoint -> indicator moved to bottom
+    const overEv2 = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(overEv2, "dataTransfer", { value: dt });
+    Object.defineProperty(overEv2, "clientY", { value: 180 });
+    b0.dispatchEvent(overEv2);
+
+    expect(indicator.style.display).toBe("");
+    expect(indicator.style.top).toBe("199px");
+
+    // 3. Dragleave outside area -> indicator hidden
+    const leaveEv = new Event("dragleave", { bubbles: true });
+    Object.defineProperty(leaveEv, "relatedTarget", { value: document.body });
+    b0.dispatchEvent(leaveEv);
+    expect(indicator.style.display).toBe("none");
+
+    // 4. Dragover again, then dragend -> indicator hidden
+    b0.dispatchEvent(overEv);
+    expect(indicator.style.display).toBe("");
+    window.dispatchEvent(new Event("dragend"));
+    expect(indicator.style.display).toBe("none");
+
+    // 5. Dragover again, then drop -> indicator hidden
+    b0.dispatchEvent(overEv);
+    expect(indicator.style.display).toBe("");
+    const dropEv = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv, "clientY", { value: 120 });
+    b0.dispatchEvent(dropEv);
+    expect(indicator.style.display).toBe("none");
+
+    // 6. Teardown removes indicator from DOM
+    teardown();
+    expect(document.querySelector(".pb-drop-indicator")).toBeNull();
+  });
+
+  it("handles malformed or missing data-pb-block-index attributes by falling back to DOM index", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="invalid">Block 0</div>
+        <div id="b1" data-pb-block-index="-3">Block 1</div>
+      </div>
+    `;
+    const b0 = document.getElementById("b0")!;
+    const b1 = document.getElementById("b1")!;
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+    b1.getBoundingClientRect = () => ({ top: 220, bottom: 320, left: 10, right: 310, width: 300, height: 100, x: 10, y: 220 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc1", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+
+    // Dropping above b0 (DOM index 0) -> baseIndex should be DOM index 0, index 0
+    const dropEv0 = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv0, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv0, "clientY", { value: 120 });
+    b0.dispatchEvent(dropEv0);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "mainArea", payload, index: 0 },
+      "*",
+    );
+
+    target.postMessage.mockClear();
+    // Dropping below b1 (DOM index 1) -> baseIndex should be DOM index 1, index 2
+    const dropEv1 = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv1, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv1, "clientY", { value: 300 });
+    b1.dispatchEvent(dropEv1);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "mainArea", payload, index: 2 },
+      "*",
+    );
     teardown();
   });
 
@@ -766,5 +1129,425 @@ describe("initPreviewBridge — scroll tracking for anchored overlays", () => {
       "*",
     );
     teardown();
+  });
+});
+
+describe("initPreviewBridge — targeted second review edge cases", () => {
+  it("calculates index from final drop coordinates rather than stale dragover index within the same area (same-origin)", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">Block 0</div>
+      </div>
+    `;
+    const b0 = document.getElementById("b0")!;
+    // b0 bounds: top 100, bottom 200, midpoint 150
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc1", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+
+    // 1. Dragover at y=120 (above midpoint 150 -> index 0)
+    const overEv = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(overEv, "dataTransfer", { value: dt });
+    Object.defineProperty(overEv, "clientY", { value: 120 });
+    b0.dispatchEvent(overEv);
+
+    // 2. Drop at y=180 (below midpoint 150 -> should calculate index 1 from final pointer coords)
+    const dropEv = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv, "clientY", { value: 180 });
+    b0.dispatchEvent(dropEv);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "mainArea", payload, index: 1 },
+      "*",
+    );
+    teardown();
+  });
+
+  it("calculates index from final drop coordinates when moving between different content areas without intervening dragover (same-origin)", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="area1" data-pb-area="area1">
+        <div id="a1_b0" data-pb-block-index="0">Area 1 Block 0</div>
+      </div>
+      <div id="area2" data-pb-area="area2">
+        <div id="a2_b0" data-pb-block-index="0">Area 2 Block 0</div>
+        <div id="a2_b1" data-pb-block-index="1">Area 2 Block 1</div>
+      </div>
+    `;
+    const a1_b0 = document.getElementById("a1_b0")!;
+    const a2_b0 = document.getElementById("a2_b0")!;
+    const a2_b1 = document.getElementById("a2_b1")!;
+
+    a1_b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+    a2_b0.getBoundingClientRect = () => ({ top: 300, bottom: 400, left: 10, right: 310, width: 300, height: 100, x: 10, y: 300 } as DOMRect);
+    a2_b1.getBoundingClientRect = () => ({ top: 420, bottom: 520, left: 10, right: 310, width: 300, height: 100, x: 10, y: 420 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc2", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+
+    // Dragover on area1 at y=120 (calculates index 0 for area1)
+    const overEv = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(overEv, "dataTransfer", { value: dt });
+    Object.defineProperty(overEv, "clientY", { value: 120 });
+    a1_b0.dispatchEvent(overEv);
+
+    // Drop immediately on area2 at y=480 (in lower half of a2_b1, midpoint 470 -> index 2)
+    const dropEv = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv, "clientY", { value: 480 });
+    a2_b1.dispatchEvent(dropEv);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "area2", payload, index: 2 },
+      "*",
+    );
+    teardown();
+  });
+
+  it("calculates index from final drop coordinates in drop-at rather than stale drag-at index (cross-origin)", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">Block 0</div>
+      </div>
+    `;
+    const b0 = document.getElementById("b0")!;
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => b0;
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc3", blockType: "CardBlock" };
+
+    // 1. drag-at sent at y=120 (above midpoint 150 -> index 0)
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drag-at", x: 50, y: 120 }, source: target }));
+
+    // 2. drop-at sent at y=180 (below midpoint 150 -> index 1)
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 50, y: 180, payload }, source: target }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "mainArea", payload, index: 1 },
+      "*",
+    );
+    teardown();
+  });
+
+  it("calculates index from final drop-at coordinates when drop-at lands on a different zone than drag-at (cross-origin)", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="area1" data-pb-area="area1">
+        <div id="a1_b0" data-pb-block-index="0">Area 1 Block 0</div>
+      </div>
+      <div id="area2" data-pb-area="area2">
+        <div id="a2_b0" data-pb-block-index="0">Area 2 Block 0</div>
+      </div>
+    `;
+    const a1_b0 = document.getElementById("a1_b0")!;
+    const a2_b0 = document.getElementById("a2_b0")!;
+
+    a1_b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+    a2_b0.getBoundingClientRect = () => ({ top: 300, bottom: 400, left: 10, right: 310, width: 300, height: 100, x: 10, y: 300 } as DOMRect);
+
+    let currentHit: Element = a1_b0;
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => currentHit;
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc4", blockType: "CardBlock" };
+
+    // drag-at over area 1
+    currentHit = a1_b0;
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drag-at", x: 50, y: 120 }, source: target }));
+
+    // drop-at over area 2 below midpoint (y=380, mid 350 -> index 1)
+    currentHit = a2_b0;
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 50, y: 380, payload }, source: target }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "area2", payload, index: 1 },
+      "*",
+    );
+    teardown();
+  });
+
+  it("positions add-block chip at bottom-center of empty content area and posts add-block with omitted index", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="emptyArea" data-pb-area="emptyArea"></div>`;
+    const emptyArea = document.getElementById("emptyArea")!;
+    emptyArea.getBoundingClientRect = () => ({
+      top: 100,
+      bottom: 160,
+      left: 20,
+      right: 420,
+      width: 400,
+      height: 60,
+      x: 20,
+      y: 100,
+    } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const ptrEv = new PointerEvent("pointerover", { bubbles: true });
+    Object.defineProperty(ptrEv, "clientY", { value: 120 });
+    emptyArea.dispatchEvent(ptrEv);
+
+    const addChip = document.querySelector<HTMLElement>(".pb-area-add")!;
+    expect(addChip.style.display).not.toBe("none");
+    expect(addChip.style.left).toBe("220px"); // 20 + 400/2
+    expect(addChip.style.top).toBe("160px"); // 100 + 60
+
+    addChip.getBoundingClientRect = () => ({
+      top: 148,
+      bottom: 172,
+      left: 170,
+      right: 270,
+      width: 100,
+      height: 24,
+      x: 170,
+      y: 148,
+    } as DOMRect);
+
+    target.postMessage.mockClear();
+    addChip.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      {
+        type: "paperboy:add-block",
+        field: "emptyArea",
+        rect: { x: 20, y: 100, w: 400, h: 60 },
+      },
+      "*",
+    );
+    teardown();
+  });
+
+  it("highlights empty area on dragover without showing line drop indicator and drops with omitted index", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="emptyArea" data-pb-area="emptyArea"></div>`;
+    const emptyArea = document.getElementById("emptyArea")!;
+    emptyArea.getBoundingClientRect = () => ({
+      top: 100,
+      bottom: 160,
+      left: 20,
+      right: 420,
+      width: 400,
+      height: 60,
+      x: 20,
+      y: 100,
+    } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc5", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+
+    const overEv = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(overEv, "dataTransfer", { value: dt });
+    Object.defineProperty(overEv, "clientY", { value: 130 });
+    emptyArea.dispatchEvent(overEv);
+
+    expect(emptyArea.classList.contains("pb-drop-active")).toBe(true);
+    const indicator = document.querySelector<HTMLElement>(".pb-drop-indicator")!;
+    expect(indicator.style.display).toBe("none");
+
+    const dropEv = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv, "clientY", { value: 130 });
+    emptyArea.dispatchEvent(dropEv);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "emptyArea", payload },
+      "*",
+    );
+    teardown();
+  });
+
+  it("cross-origin drop-at on empty area posts paperboy:drop with omitted index", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div id="emptyArea" data-pb-area="emptyArea"></div>`;
+    const emptyArea = document.getElementById("emptyArea")!;
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => emptyArea;
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc6", blockType: "HeroBlock" };
+
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 50, y: 120, payload }, source: target }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "emptyArea", payload },
+      "*",
+    );
+    teardown();
+  });
+
+  it("inner-area drop never uses outer-area insertion index after dragover in outer area", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="outerArea" data-pb-area="outerArea">
+        <div id="out_b0" data-pb-block-index="0">Outer 0</div>
+        <div id="out_b1" data-pb-block-index="1">
+          <div id="innerArea" data-pb-area="innerArea">
+            <div id="in_b0" data-pb-block-index="0">Inner 0</div>
+            <div id="in_b1" data-pb-block-index="1">Inner 1</div>
+          </div>
+        </div>
+      </div>
+    `;
+    const out_b0 = document.getElementById("out_b0")!;
+    const in_b1 = document.getElementById("in_b1")!;
+
+    out_b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+    in_b1.getBoundingClientRect = () => ({ top: 320, bottom: 420, left: 20, right: 290, width: 270, height: 100, x: 20, y: 320 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc7", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+
+    // Dragover outer area at y=120 (above out_b0 midpoint 150 -> index 0 for outerArea)
+    const overEv = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(overEv, "dataTransfer", { value: dt });
+    Object.defineProperty(overEv, "clientY", { value: 120 });
+    out_b0.dispatchEvent(overEv);
+
+    // Drop on in_b1 in innerArea at y=400 (below in_b1 midpoint 370 -> index 2 for innerArea)
+    const dropEv = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv, "clientY", { value: 400 });
+    in_b1.dispatchEvent(dropEv);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "innerArea", payload, index: 2 },
+      "*",
+    );
+    teardown();
+  });
+
+  it("outer-area drop never uses inner-area insertion index after dragover in inner area", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="outerArea" data-pb-area="outerArea">
+        <div id="out_b0" data-pb-block-index="0">Outer 0</div>
+        <div id="out_b1" data-pb-block-index="1">
+          <div id="innerArea" data-pb-area="innerArea">
+            <div id="in_b0" data-pb-block-index="0">Inner 0</div>
+          </div>
+        </div>
+      </div>
+    `;
+    const out_b0 = document.getElementById("out_b0")!;
+    const in_b0 = document.getElementById("in_b0")!;
+
+    out_b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+    in_b0.getBoundingClientRect = () => ({ top: 220, bottom: 300, left: 20, right: 290, width: 270, height: 80, x: 20, y: 220 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc8", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+
+    // Dragover inner area at y=240 (above in_b0 midpoint 260 -> index 0 for innerArea)
+    const overEv = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(overEv, "dataTransfer", { value: dt });
+    Object.defineProperty(overEv, "clientY", { value: 240 });
+    in_b0.dispatchEvent(overEv);
+
+    // Drop on out_b0 in outer area at y=180 (below out_b0 midpoint 150 -> index 1 for outerArea)
+    const dropEv = new Event("drop", { bubbles: true });
+    Object.defineProperty(dropEv, "dataTransfer", { value: dt });
+    Object.defineProperty(dropEv, "clientY", { value: 180 });
+    out_b0.dispatchEvent(dropEv);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      { type: "paperboy:drop", field: "outerArea", payload, index: 1 },
+      "*",
+    );
+    teardown();
+  });
+
+  it("clears dragPayload, dropZone, and indicator on dragend", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="area" data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">Block 0</div>
+      </div>
+    `;
+    const area = document.getElementById("area")!;
+    const b0 = document.getElementById("b0")!;
+    b0.getBoundingClientRect = () => ({ top: 100, bottom: 200, left: 10, right: 310, width: 300, height: 100, x: 10, y: 100 } as DOMRect);
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc9", blockType: "HeroBlock" };
+
+    // Cross-origin dragsource sets dragPayload
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:dragsource", payload }, source: target }));
+
+    // Dragover without MIME still activates because dragPayload was set
+    const dt = { types: [] as string[], dropEffect: "", getData: () => "" };
+    const overEv = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(overEv, "dataTransfer", { value: dt });
+    Object.defineProperty(overEv, "clientY", { value: 120 });
+    b0.dispatchEvent(overEv);
+
+    expect(area.classList.contains("pb-drop-active")).toBe(true);
+
+    // Window dragend fires
+    window.dispatchEvent(new Event("dragend"));
+    expect(area.classList.contains("pb-drop-active")).toBe(false);
+
+    // Subsequent dragover without MIME must now be ignored because dragPayload was cleared
+    b0.dispatchEvent(overEv);
+    expect(area.classList.contains("pb-drop-active")).toBe(false);
+
+    teardown();
+  });
+
+  it("clears dropZone when dragleave leaves drop zone to another area", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="area1" data-pb-area="area1"><p id="p1">Area 1</p></div>
+      <div id="area2" data-pb-area="area2"><p id="p2">Area 2</p></div>
+    `;
+    const area1 = document.getElementById("area1")!;
+    const area2 = document.getElementById("area2")!;
+    const p1 = document.getElementById("p1")!;
+    const p2 = document.getElementById("p2")!;
+
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc10", blockType: "CardBlock" };
+    const dt = { types: ["application/x-paperboy"], dropEffect: "", getData: () => JSON.stringify(payload) };
+
+    const overEv = new Event("dragover", { bubbles: true, cancelable: true });
+    Object.defineProperty(overEv, "dataTransfer", { value: dt });
+    Object.defineProperty(overEv, "clientY", { value: 50 });
+    p1.dispatchEvent(overEv);
+    expect(area1.classList.contains("pb-drop-active")).toBe(true);
+
+    // Leave area1 with relatedTarget in area2
+    const leaveEv = new Event("dragleave", { bubbles: true });
+    Object.defineProperty(leaveEv, "relatedTarget", { value: p2 });
+    p1.dispatchEvent(leaveEv);
+
+    expect(area1.classList.contains("pb-drop-active")).toBe(false);
+    teardown();
+  });
+
+  it("clears prior window listeners if re-initialized after style node was removed without teardown", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-field="title">Title</div>`;
+    const title = document.querySelector("[data-pb-field]")!;
+
+    const teardown1 = initPreviewBridge({ target, badge: false });
+    // Simulate head reset without calling teardown1
+    document.querySelector("style[data-pb-bridge]")!.remove();
+
+    // Re-initialize bridge
+    const teardown2 = initPreviewBridge({ target, badge: false });
+    target.postMessage.mockClear();
+
+    // Click field -> should post paperboy:edit only ONCE, not twice from stacked listeners
+    title.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:edit")).toHaveLength(1);
+
+    teardown2();
   });
 });

@@ -4,6 +4,8 @@ The browser-side **on-page-editing bridge** for the [Paperboy](https://github.co
 
 It is the single source of truth for the message protocol between the CMS admin (parent window) and a frontend rendered inside the preview iframe — so frontends and the admin can't drift.
 
+**Changes in 0.6.0** — supports inserting blocks at a specific position (`index?: number` on `paperboy:drop` and `paperboy:add-block`), displays an insertion indicator line during drag-over, and positions the "Add block" chip between blocks on hover.
+
 **Changes in 0.5.0** — tracks anchored elements when opening overlays (such as the Add block palette) and re-emits `paperboy:rect` updates throttled by `requestAnimationFrame` on preview scroll/resize so anchored overlays follow their targets; stops tracking when receiving `paperboy:rect` with `rect: null`.
 
 ## Frontend (inside the preview iframe)
@@ -66,11 +68,11 @@ The bridge then:
   confirm the bridge is alive at any moment instead of relying on catching the
   one-shot announcement it posts at init,
 - posts `paperboy:edit` when an editable region is clicked (with rect/click/caret),
-- posts `paperboy:drop` when a shared block/page is dragged from the Assets pane onto a `data-pb-area`,
+- posts `paperboy:drop` (with optional `index`) when a shared block/page is dragged from the Assets pane onto a `data-pb-area`,
 - streams `paperboy:rect` on scroll/resize, applies `paperboy:patch` (live swap) and `paperboy:focus`,
 - outlines every `data-pb-area` with a dotted border (v0.4+) so editors see where
   each content area starts and ends; hovering an area shows its name and a
-  "＋ Add block" chip that posts `paperboy:add-block {field, rect}`, which the admin
+  "＋ Add block" chip that posts `paperboy:add-block {field, rect, index?}`, which the admin
   answers by opening its block palette for that area, anchored at the chip. The
   chrome is `position:fixed` elements injected into `<body>` — never DOM inside
   your area elements, so grid/flex layouts are untouched. Older admins ignore the
@@ -92,7 +94,7 @@ import { ATTR, DRAG_MIME, PROTOCOL_VERSION, parsePreviewMessage, patchMessage, f
 | `ATTR` | The attribute names — `field`, `area`, `blockIndex`, `blockType`. Spell markers through it (`{ [ATTR.field]: "title" }`) so your markup can't drift from the bridge |
 | `DRAG_MIME` | `application/x-paperboy` — the `dataTransfer` type of an Assets-pane drag |
 | `PROTOCOL_VERSION` | `1` — carried by `paperboy:preview-ready` |
-| `parsePreviewMessage(data)` | Narrows an untrusted `MessageEvent.data` to the typed union, or `null` (unknown type, or a non-integer `blockIndex`) |
+| `parsePreviewMessage(data)` | Narrows an untrusted `MessageEvent.data` to the typed union, or `null` (unknown type, or a non-integer `blockIndex` / `index`) |
 | `patchMessage` `focusMessage` `dragSourceMessage` `dragEndMessage` `dragAtMessage` `dropAtMessage` `pingMessage` | Builders for the admin → iframe messages |
 | Types | `FromPreview` = `ReadyMessage` \| `EditMessage` \| `RectMessage` \| `DropMessage` \| `AddBlockMessage`; `ToPreview` = `PatchMessage` \| `FocusMessage` \| `DragSourceMessage` \| `DragEndMessage` \| `DragAtMessage` \| `DropAtMessage` \| `PingMessage`; `PaperboyMessage`, `Rect`, `Caret` |
 

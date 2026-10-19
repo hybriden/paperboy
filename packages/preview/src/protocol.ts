@@ -74,6 +74,8 @@ export interface DropMessage {
   field: string | null;
   /** The Assets-pane payload (e.g. { kind, documentId, blockType, name }). */
   payload: unknown;
+  /** Optional 0-based insertion index within the content area. Absent = append. */
+  index?: number | null;
 }
 
 /** The editor clicked an area's "＋ Add block" chip (bridge chrome). The admin
@@ -85,6 +87,8 @@ export interface AddBlockMessage {
   field: string | null;
   /** The area's rect (iframe viewport coords), for anchoring the palette. */
   rect: Rect;
+  /** Optional 0-based insertion index within the content area. Absent = append. */
+  index?: number | null;
 }
 
 /* ----------------------------- admin → iframe ----------------------------- */
@@ -192,6 +196,10 @@ export function parsePreviewMessage(data: unknown): PaperboyMessage | null {
   // protocol chokepoint, rather than trusting every reader to re-check.
   const bi = (data as { blockIndex?: unknown }).blockIndex;
   if (bi !== undefined && bi !== null && !Number.isInteger(bi)) return null;
+  // index is `number | null` when present on drop/add-block messages. An invalid
+  // or negative index is rejected at this boundary.
+  const idx = (data as { index?: unknown }).index;
+  if (idx !== undefined && idx !== null && (!Number.isInteger(idx) || (idx as number) < 0)) return null;
   // `field` is `string | null` everywhere, and a plain `string` on the two
   // admin → iframe messages the bridge resolves to an element.
   const field = (data as { field?: unknown }).field;

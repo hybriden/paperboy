@@ -28,7 +28,7 @@ import { reviewBadge } from "../lib/review-badge.js";
 import { diffFields, docToText, wordDiff } from "../lib/version-diff.js";
 import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
 import { allowedBlockTypesFor } from "../lib/area-add.js";
-import { blockInstanceFromDrop, type DropPayload, newBlock, newBlockKey } from "../lib/block-drop.js";
+import { blockInstanceFromDrop, type DropPayload, insertBlockAt, newBlock, newBlockKey } from "../lib/block-drop.js";
 import { isFromPreviewFrame, previewOrigin } from "../lib/preview-origin.js";
 import { parsePreviewMessage, rectMessage } from "@paperboycms/preview/protocol";
 import { useConfirm } from "./ui/confirm.js";
@@ -298,7 +298,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // would otherwise anchor the card at its far-away bottom edge.
   // `block` scopes the overlay to a field INSIDE a content-area block instance
   // (absent → a page-level field, the classic case).
-  const [ope, setOpe] = useState<{ field: string; rect: PbRect; ox: number; oy: number; n: number; block?: { area: string; index: number }; add?: true } | null>(null);
+  const [ope, setOpe] = useState<{ field: string; rect: PbRect; ox: number; oy: number; n: number; block?: { area: string; index: number }; add?: true; index?: number | null } | null>(null);
   const opeRef = useRef<typeof ope>(null);
   useEffect(() => { opeRef.current = ope; }, [ope]);
   const opeModeRef = useRef(opeMode);
@@ -843,7 +843,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         }
         const cur = formRef.current?.data?.[fieldName];
         const current = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
-        setField(fieldName, [...current, res.block]);
+        setField(fieldName, insertBlockAt(current, res.block, msg.index));
         toast.success("Block added", payload.name ? `Added “${payload.name}”.` : "Added to the content area.");
         return;
       }
@@ -868,7 +868,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         }
         if (!msg.rect) return;
         // Anchor the palette card at the chip (bottom-center of the area rect).
-        setOpe({ field: fieldName, add: true, rect: msg.rect, ox: msg.rect.w / 2, oy: msg.rect.h, n: ++propCounter.current });
+        setOpe({ field: fieldName, add: true, rect: msg.rect, ox: msg.rect.w / 2, oy: msg.rect.h, n: ++propCounter.current, index: msg.index });
         return;
       }
       if (msg.type !== "paperboy:edit") return;
@@ -1759,7 +1759,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 const append = (block: BlockInstance, label: string | undefined) => {
                   const cur = (formRef.current ?? form).data[ope.field];
                   const arr = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
-                  setField(ope.field, [...arr, block]);
+                  setField(ope.field, insertBlockAt(arr, block, ope.index));
                   closeOpe();
                   toast.success("Block added", label ? `Added “${label}”.` : "Added to the content area.");
                 };
