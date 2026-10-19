@@ -9,6 +9,11 @@
 
 **A self-hosted, open-source headless CMS in TypeScript on PostgreSQL. React admin with visual on-page editing, a typed Delivery API, and an MCP server so AI agents edit under the same rules as humans.**
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero-dark.jpg">
+  <img alt="The Paperboy admin editing a page in place, next to the live site on a phone" src="docs/screenshots/hero-light.jpg">
+</picture>
+
 > **Paperboy ONE** — *Open, No Extras.* · **DPX** — *Don't Pay eXtra.* A proper headless CMS without the "experience platform" invoice.
 
 One container (API + admin), one Postgres. The website you build on is a separate repo, the
@@ -25,6 +30,16 @@ through the same validation, permissions and audit trail; the MCP↔API parity i
 | Let an AI client edit content | [MCP](#mcp) |
 | Run it for real | [Production](#production) · [Backups](#backups) |
 | Work on the CMS itself | [Developing](#developing) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`CLAUDE.md`](CLAUDE.md) |
+
+## See it
+
+**Click any text on your page and edit it right there.** The preview is your real frontend, not a mock-up, and it updates as you type.
+
+<img alt="Clicking the heading on the page opens an editor; typing changes the page live" src="docs/screenshots/on-page-editing.gif">
+
+**Your site stays yours.** This is the [Astro starter](https://github.com/hybriden/paperboy-astro-starter)'s demo site, every page of it built through the Management API. One command runs it with the CMS: `docker compose -f docker-compose.demo.yml up -d --build`.
+
+<img alt="The demo site: home page, an article, and the article on a phone" src="docs/screenshots/site.jpg">
 
 ## Highlights
 
