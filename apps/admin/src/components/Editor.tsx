@@ -855,26 +855,27 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           return;
         }
 
+        const targetField = def.name;
         if (resolvedPath && resolvedPath.length > 0) {
           patch((prev) => {
             const nextData = updateBlockAtPath(prev.data, resolvedPath, (b) => {
               const inline = b.inline ?? {};
-              const cur = inline[fieldName];
+              const cur = inline[targetField];
               const current = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
               return {
                 ...b,
                 inline: {
                   ...inline,
-                  [fieldName]: insertBlockAt(current, res.block, msg.index),
+                  [targetField]: insertBlockAt(current, res.block, msg.index),
                 },
               };
             });
             return { ...prev, data: nextData };
           });
         } else {
-          const cur = formRef.current?.data?.[fieldName];
+          const cur = formRef.current?.data?.[targetField];
           const current = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
-          setField(fieldName, insertBlockAt(current, res.block, msg.index));
+          setField(targetField, insertBlockAt(current, res.block, msg.index));
         }
         toast.success("Block added", payload.name ? `Added “${payload.name}”.` : "Added to the content area.");
         return;
@@ -1829,27 +1830,28 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 const parentType = ope.path?.length ? (parentBlock ? types.find((t) => t.name === parentBlock.blockType) : undefined) : type;
                 const areaDef = parentType?.fields.find((f) => f.name === ope.field && f.type === "contentArea");
                 if (!areaDef || !canEdit) return null;
+                const targetField = areaDef.name;
                 const append = (block: BlockInstance, label: string | undefined) => {
                   if (ope.path && ope.path.length > 0) {
                     patch((prev) => {
                       const nextData = updateBlockAtPath(prev.data, ope.path!, (b) => {
                         const inline = b.inline ?? {};
-                        const cur = inline[ope.field];
+                        const cur = inline[targetField];
                         const arr = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
                         return {
                           ...b,
                           inline: {
                             ...inline,
-                            [ope.field]: insertBlockAt(arr, block, ope.index),
+                            [targetField]: insertBlockAt(arr, block, ope.index),
                           },
                         };
                       });
                       return { ...prev, data: nextData };
                     });
                   } else {
-                    const cur = (formRef.current ?? form).data[ope.field];
+                    const cur = (formRef.current ?? form).data[targetField];
                     const arr = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
-                    setField(ope.field, insertBlockAt(arr, block, ope.index));
+                    setField(targetField, insertBlockAt(arr, block, ope.index));
                   }
                   closeOpe();
                   toast.success("Block added", label ? `Added “${label}”.` : "Added to the content area.");
@@ -1899,28 +1901,30 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               if (ope.block && !blockScope) return null; // block removed/replaced meanwhile
               const def = isName ? null : blockScope ? blockScope.def : type.fields.find((f) => f.name === ope.field);
               if (!isName && !def) return null;
-              const current = isName ? form.name : blockScope ? (blockScope.block.inline ?? {})[ope.field] : form.data[def!.name];
+              const current = isName ? form.name : blockScope ? (blockScope.block.inline ?? {})[blockScope.def.name] : form.data[def!.name];
               const freshCurrent = () => {
                 const f = formRef.current ?? form;
                 if (isName) return f.name;
                 if (!blockScope) return f.data[def!.name];
+                const targetField = blockScope.def.name;
                 if (blockScope.path) {
                   const b = blockAtPath(f.data, blockScope.path);
-                  return (b?.inline ?? {})[ope.field];
+                  return (b?.inline ?? {})[targetField];
                 }
                 const arr = f.data[ope.block!.area];
-                return Array.isArray(arr) ? ((arr[ope.block!.index] as BlockInstance | undefined)?.inline ?? {})[ope.field] : undefined;
+                return Array.isArray(arr) ? ((arr[ope.block!.index] as BlockInstance | undefined)?.inline ?? {})[targetField] : undefined;
               };
               const commit = (v: unknown) => {
                 if (!blockScope) {
                   setField(def!.name, v);
                   return;
                 }
+                const targetField = blockScope.def.name;
                 if (blockScope.path) {
                   patch((prev) => {
                     const nextData = updateBlockAtPath(prev.data, blockScope.path!, (x) => ({
                       ...x,
-                      inline: { ...x.inline, [ope.field]: v },
+                      inline: { ...x.inline, [targetField]: v },
                     }));
                     return { ...prev, data: nextData };
                   });
@@ -1928,7 +1932,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 }
                 const fresh = (formRef.current ?? form).data[ope.block!.area];
                 const arr = Array.isArray(fresh) ? (fresh as BlockInstance[]) : [];
-                setField(ope.block!.area, arr.map((x, i) => (i === ope.block!.index ? { ...x, inline: { ...x.inline, [ope.field]: v } } : x)));
+                setField(ope.block!.area, arr.map((x, i) => (i === ope.block!.index ? { ...x, inline: { ...x.inline, [targetField]: v } } : x)));
               };
               const liveText = (text: string) => setLivePatch({ field: "name", text, n: ++livePatchCounter.current });
               const patchName = (v: string) => patch((prev) => ({ ...prev, name: v }));

@@ -212,6 +212,8 @@ export function parsePreviewMessage(data: unknown): PaperboyMessage | null {
   const idx = (data as { index?: unknown }).index;
   if (idx !== undefined && idx !== null && (!Number.isInteger(idx) || (idx as number) < 0)) return null;
   // path is optional array of { field: string, blockIndex: number } steps.
+  // Rejects prototype pollution keys (__proto__, constructor, prototype).
+  const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
   const path = (data as { path?: unknown }).path;
   if (path !== undefined && path !== null) {
     if (!Array.isArray(path)) return null;
@@ -220,6 +222,7 @@ export function parsePreviewMessage(data: unknown): PaperboyMessage | null {
         !step ||
         typeof step !== "object" ||
         typeof (step as { field?: unknown }).field !== "string" ||
+        DANGEROUS_KEYS.has((step as { field: string }).field) ||
         !Number.isInteger((step as { blockIndex?: unknown }).blockIndex) ||
         (step as { blockIndex: number }).blockIndex < 0
       ) {
@@ -230,7 +233,7 @@ export function parsePreviewMessage(data: unknown): PaperboyMessage | null {
   // `field` is `string | null` everywhere, and a plain `string` on the two
   // admin → iframe messages the bridge resolves to an element.
   const field = (data as { field?: unknown }).field;
-  if (field != null && typeof field !== "string") return null;
+  if (field != null && (typeof field !== "string" || DANGEROUS_KEYS.has(field))) return null;
   if ((type === "paperboy:patch" || type === "paperboy:focus") && typeof field !== "string") return null;
   return data as PaperboyMessage;
 }

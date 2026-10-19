@@ -81,6 +81,30 @@ describe("parsePreviewMessage", () => {
     expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, path: [{ field: "a", blockIndex: -1 }] })).toBeNull();
     expect(parsePreviewMessage({ type: "paperboy:drop", field: "area", payload: {}, path: [{ field: "a", blockIndex: 1.5 }] })).toBeNull();
   });
+
+  it("rejects dangerous prototype pollution keys in field and path", () => {
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "__proto__", payload: {} })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "constructor", payload: {} })).toBeNull();
+    expect(parsePreviewMessage({ type: "paperboy:drop", field: "prototype", payload: {} })).toBeNull();
+    expect(parsePreviewMessage({
+      type: "paperboy:drop",
+      field: "area",
+      payload: {},
+      path: [{ field: "__proto__", blockIndex: 0 }],
+    })).toBeNull();
+    expect(parsePreviewMessage({
+      type: "paperboy:drop",
+      field: "area",
+      payload: {},
+      path: [{ field: "constructor", blockIndex: 0 }],
+    })).toBeNull();
+    expect(parsePreviewMessage({
+      type: "paperboy:drop",
+      field: "area",
+      payload: {},
+      path: [{ field: "prototype", blockIndex: 0 }],
+    })).toBeNull();
+  });
 });
 
 describe("message builders", () => {
