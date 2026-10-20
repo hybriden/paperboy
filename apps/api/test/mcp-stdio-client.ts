@@ -12,6 +12,13 @@ import { fileURLToPath } from "node:url";
 const REPO = fileURLToPath(new URL("../../..", import.meta.url));
 export const MCP_DIR = join(REPO, "apps", "mcp");
 
+export interface McpToolInfo {
+  name: string;
+  description?: string;
+  inputSchema: { properties?: Record<string, { description?: string }> };
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
+}
+
 export class McpClient {
   private proc: ChildProcess;
   private buf = "";
@@ -75,9 +82,13 @@ export class McpClient {
     await this.send("notifications/initialized", undefined, false);
   }
 
+  async listTools(): Promise<McpToolInfo[]> {
+    const res = (await this.send("tools/list", {})) as { tools: McpToolInfo[] };
+    return res.tools;
+  }
+
   async listToolNames(): Promise<string[]> {
-    const res = (await this.send("tools/list", {})) as { tools: { name: string }[] };
-    return res.tools.map((t) => t.name).sort();
+    return (await this.listTools()).map((t) => t.name).sort();
   }
 
   /** Call a tool; returns the parsed JSON payload (or raw text) + isError. */

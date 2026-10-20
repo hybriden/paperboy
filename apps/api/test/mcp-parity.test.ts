@@ -51,6 +51,26 @@ describe("MCP parity: real stdio server vs the API", () => {
     expect(names).toMatchSnapshot();
   }, 60_000);
 
+  // Registries (Glama's TDQS) and agents judge a tool by its description and
+  // parameter docs alone; a one-liner like "Delete a media asset." scored 1.8/5.
+  it("documents every tool: a real description, every parameter described, behaviour annotations", async () => {
+    const tools = await mcp.listTools();
+    const undocumented = tools.flatMap((t) => [
+      ...((t.description ?? "").length < 80 ? [`${t.name}: description under 80 chars`] : []),
+      ...Object.entries(t.inputSchema.properties ?? {})
+        .filter(([, prop]) => !prop.description)
+        .map(([param]) => `${t.name}.${param}: no description`),
+      ...(typeof t.annotations?.readOnlyHint === "boolean" ? [] : [`${t.name}: no readOnlyHint annotation`]),
+    ]);
+    expect(undocumented).toEqual([]);
+
+    const byName = new Map(tools.map((t) => [t.name, t.annotations]));
+    expect(byName.get("get_content")).toMatchObject({ readOnlyHint: true });
+    expect(byName.get("delete_asset")).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(byName.get("trash_content")).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    expect(byName.get("set_field")).toMatchObject({ readOnlyHint: false, idempotentHint: true });
+  }, 60_000);
+
   it("create_content parity: MCP-created draft reads identically through the API", async () => {
     const created = await mcp.call("create_content", { type: "BlogPost", parentId: s.ids.blogId, name: "MCP Parity Post" });
     expect(created.isError).toBe(false);
