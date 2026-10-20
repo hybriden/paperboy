@@ -149,7 +149,7 @@ describe("MCP agent journeys (real production sequences)", () => {
     it("replays the exact sequence: orientation reads → create(en) → set_field×N(nb) → publish(nb)", async () => {
       // Orientation phase, as the real agent did it.
       expect((await mcp.call("list_content_types")).isError).toBe(false);
-      expect((await mcp.call("tree", {})).isError).toBe(false);
+      expect((await mcp.call("list_tree", {})).isError).toBe(false);
       expect((await mcp.call("list_locales")).isError).toBe(false);
 
       const created = await mcp.call("create_content", {
@@ -291,8 +291,8 @@ describe("MCP agent journeys (real production sequences)", () => {
   // J6 — get_content_type with a guessed name (2026-06-07 run)
   // ------------------------------------------------------------------
   describe("J6: unknown content-type name errors list the real names", () => {
-    it("get_content_type 'blog-post' names the available types for one-step correction", async () => {
-      const r = await mcp.call("get_content_type", { name: "blog-post" });
+    it("list_content_types {name: 'blog-post'} names the available types for one-step correction", async () => {
+      const r = await mcp.call("list_content_types", { name: "blog-post" });
       expect(r.isError).toBe(true);
       // The agent guessed kebab-case; the error must hand it the real names.
       expect(r.text).toContain("BlogPost");

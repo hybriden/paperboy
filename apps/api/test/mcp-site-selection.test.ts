@@ -6,7 +6,7 @@ import { McpClient } from "./mcp-stdio-client.js";
  * The MCP must be able to act in a site OTHER than the Default one.
  *
  * Reported live 2026-09-09 on an instance holding two sites: EVERY MCP tool
- * returned the Default site's content — `tree`/`list_pages` listed only its
+ * returned the Default site's content — `tree`/`list_pages` (now list_tree/list_content) listed only its
  * documents and `delivery_search` for the second site's only page came back
  * `{"items":[],"total":0}`. Not a permission problem (user_scope was empty, so
  * the token was unscoped): `getAccessContext` was called without an active
@@ -34,7 +34,7 @@ describe("MCP site selection", () => {
     return c;
   };
   const pageNames = async (mcp: McpClient): Promise<string[]> => {
-    const res = await mcp.call("list_pages");
+    const res = await mcp.call("list_content", { kind: "page" });
     expect(res.isError, res.text).toBe(false);
     return (res.json as Array<{ name: string }>).map((p) => p.name);
   };
@@ -116,8 +116,8 @@ describe("MCP site selection", () => {
     const mcp = spawn();
     await mcp.initialize();
 
-    const here = await mcp.call("list_pages");
-    const there = await mcp.call("list_pages", { site: "second" });
+    const here = await mcp.call("list_content", { kind: "page" });
+    const there = await mcp.call("list_content", { kind: "page", site: "second" });
     expect(there.isError, there.text).toBe(false);
 
     const names = (r: typeof here) => (r.json as Array<{ name: string }>).map((x) => x.name);
@@ -127,8 +127,8 @@ describe("MCP site selection", () => {
     // Writes follow it too — not just reads.
     const made = await mcp.call("create_content", { type: "ArticlePage", name: "Written Into Second", site: "second" });
     expect(made.isError, made.text).toBe(false);
-    expect(names(await mcp.call("list_pages", { site: "second" }))).toContain("Written Into Second");
-    expect(names(await mcp.call("list_pages"))).not.toContain("Written Into Second");
+    expect(names(await mcp.call("list_content", { kind: "page", site: "second" }))).toContain("Written Into Second");
+    expect(names(await mcp.call("list_content", { kind: "page" }))).not.toContain("Written Into Second");
   }, 120_000);
 
   it("overlapping calls naming DIFFERENT sites do not bleed into each other", async () => {
@@ -138,8 +138,8 @@ describe("MCP site selection", () => {
     const mcp = spawn();
     await mcp.initialize();
     const [second, dflt] = await Promise.all([
-      mcp.call("list_pages", { site: "second" }),
-      mcp.call("list_pages"),
+      mcp.call("list_content", { kind: "page", site: "second" }),
+      mcp.call("list_content", { kind: "page" }),
     ]);
     const names = (r: typeof second) => (r.json as Array<{ name: string }>).map((x) => x.name);
     expect(names(second)).toContain("Second Site Only");
@@ -149,7 +149,7 @@ describe("MCP site selection", () => {
   it("an unknown `site` argument errors self-teachingly instead of returning nothing", async () => {
     const mcp = spawn();
     await mcp.initialize();
-    const res = await mcp.call("list_pages", { site: "nope" });
+    const res = await mcp.call("list_content", { kind: "page", site: "nope" });
     // Rule #1: never garbage-in-success-out. An empty list would read as
     // "this site has no pages" — the failure being fixed in the first place.
     expect(res.isError).toBe(true);
@@ -176,7 +176,7 @@ describe("MCP site selection", () => {
     expect(await pageNames(mcp)).toContain("Second Site Only");
 
     // And the Default site is refused, not silently served or silently empty.
-    const denied = await mcp.call("list_pages", { site: "default" });
+    const denied = await mcp.call("list_content", { kind: "page", site: "default" });
     expect(denied.isError).toBe(true);
     expect(denied.text).toContain("scoped");
 
@@ -199,7 +199,7 @@ describe("MCP site selection", () => {
     spawned.push(mcp);
     await mcp.initialize();
     expect(await pageNames(mcp)).not.toContain("Second Site Only");
-    const there = await mcp.call("list_pages", { site: "second" });
+    const there = await mcp.call("list_content", { kind: "page", site: "second" });
     expect((there.json as Array<{ name: string }>).map((x) => x.name)).toContain("Second Site Only");
   }, 120_000);
 

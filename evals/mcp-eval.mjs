@@ -219,7 +219,7 @@ const SYSTEM_PROMPT = [
   "You are an editor: you create, edit and publish content. Read each tool's",
   "description and input schema carefully — they tell you the exact value shape",
   "each field expects. When you are unsure of a content type's fields, call",
-  "get_content_type. When you are unsure where a page belongs in the site, call",
+  "list_content_types {name}. When you are unsure where a page belongs in the site, call",
   "the tree tool. Work step by step and verify your work. When the task is fully",
   "done, stop and briefly state what you did.",
 ].join(" ");
@@ -310,7 +310,7 @@ function recorder(mcp) {
 
 /** Find a top-level page's documentId by name (Blog, Projects are top-level). */
 async function findTopLevel(mcp, name) {
-  const res = await mcp.call("tree");
+  const res = await mcp.call("list_tree");
   const top = Array.isArray(res.json) ? res.json : [];
   const node = top.find((n) => typeof n?.name === "string" && n.name.trim().toLowerCase() === name.toLowerCase());
   return node?.documentId ?? null;
@@ -321,7 +321,7 @@ async function findTopLevel(mcp, name) {
  * ------------------------------------------------------------------ */
 /** Flat set of every page documentId currently in scope. */
 async function pageIdSet(mcp) {
-  const res = await mcp.call("list_pages");
+  const res = await mcp.call("list_content", { kind: "page" });
   const pages = Array.isArray(res.json) ? res.json : [];
   return new Set(pages.map((p) => p.documentId).filter(Boolean));
 }
@@ -359,7 +359,7 @@ async function inspectDoc(mcp, documentId, localeCodes) {
 
 /** find-or-create a list page (by name) that lists `listedType`. Setup only. */
 async function findOrCreateListPage(mcp, name, listedType, locale) {
-  const pages = await mcp.call("list_pages");
+  const pages = await mcp.call("list_content", { kind: "page" });
   const existing = (Array.isArray(pages.json) ? pages.json : []).find(
     (p) => typeof p?.name === "string" && p.name.trim().toLowerCase() === name.toLowerCase(),
   );
@@ -413,7 +413,7 @@ async function universalInvariants(mcp, info, parents) {
   // published perspective.
   if (publishedVariants.length > 0) {
     const loc = publishedVariants[0].locale;
-    const delivered = await mcp.call("delivery_get_by_id", { documentId: info.documentId, locale: loc, preview: false });
+    const delivered = await mcp.call("delivery_get", { documentId: info.documentId, locale: loc, preview: false });
     const seo = delivered.json && typeof delivered.json === "object" ? delivered.json.seo : null;
     const ok = Boolean(seo && typeof seo.title === "string" && seo.title.length > 0 && seo.jsonLd && seo.jsonLd["@type"]);
     add("delivers a complete SEO block (title + schema.org @type)", ok, ok ? `@type=${seo.jsonLd["@type"]}` : "missing/empty seo");

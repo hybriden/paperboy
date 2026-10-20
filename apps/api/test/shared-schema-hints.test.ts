@@ -8,7 +8,7 @@ import { type ContentTypeDef, type FieldDef, type FieldType, dataSchemaFor, fiel
  * The hint shape mirrors `withFieldFormats` in apps/mcp/src/server.ts:
  *   const { format, example } = fieldFormatHint(f);
  *   return { ...f, valueFormat: format, valueExample: example };
- * i.e. get_content_type returns each field with `valueFormat` + `valueExample`.
+ * i.e. list_content_types {name} returns each field with `valueFormat` + `valueExample`.
  *
  * Pure: imports @paperboy/shared only.
  */

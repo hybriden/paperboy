@@ -54,6 +54,14 @@ describe("MCP authorization — delivery tools and token revocation", () => {
     await s.app.close();
   });
 
+  it("lists only the tools the user's role can call (an Author never sees admin, publish or trash tools)", async () => {
+    const names = await authorMcp.listToolNames();
+    expect(names).toEqual(expect.arrayContaining(["get_content", "update_content", "create_content", "delivery_get", "list_sites"]));
+    for (const hidden of ["publish", "trash_content", "list_users", "create_user", "list_audit", "create_delivery_key", "create_webhook", "list_form_submissions", "create_content_type"]) {
+      expect(names, hidden).not.toContain(hidden);
+    }
+  }, 30_000);
+
   it("a section-scoped token cannot read drafts through delivery_search (preview)", async () => {
     const r = await authorMcp.call("delivery_search", { query: "Unpublished", preview: true });
     expect(r.isError, `expected refusal, got: ${r.text}`).toBe(true);
