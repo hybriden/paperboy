@@ -23,7 +23,7 @@ process.env.MCP_TOKEN = token;
 delete process.env.MCP_PASSWORD; // prove the token alone works
 const { client, transport } = await connect();
 try {
-  const tree = await call(client, "tree", {});
+  const tree = await call(client, "list_tree", {});
   console.log("MCP authed via TOKEN; tree returned", Array.isArray(tree) ? tree.length : "?", "top-level items");
 } finally {
   await transport.close();

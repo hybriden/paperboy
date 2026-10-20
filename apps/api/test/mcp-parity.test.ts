@@ -1,3 +1,4 @@
+import { createDb, schemaTables } from "@paperboy/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PUBLIC_KEY, TEST_DB, type Suite, authHeaders, login, setupApi } from "./helpers.js";
 import { McpClient } from "./mcp-stdio-client.js";
@@ -209,6 +210,66 @@ describe("MCP parity: real stdio server vs the API", () => {
     expect(m.total).toBe(viaApi.total);
     expect(m.items.map((i) => i.documentId)).toEqual(viaApi.items.map((i) => i.documentId));
   }, 60_000);
+
+  it("delivery_get reads one item by path, documentId, slug, global or start — the same item every way", async () => {
+    const byId = await mcp.call("delivery_get", { documentId: s.ids.blogId });
+    expect(byId.isError, byId.text).toBe(false);
+    const blog = byId.json as { documentId: string; slug: string; urlPath: string };
+    expect(blog.documentId).toBe(s.ids.blogId);
+
+    for (const args of [{ path: blog.urlPath }, { slug: blog.slug }]) {
+      const r = await mcp.call("delivery_get", args);
+      expect((r.json as { documentId: string }).documentId, JSON.stringify(args)).toBe(s.ids.blogId);
+    }
+    const start = await mcp.call("delivery_get", { start: true });
+    expect((start.json as { documentId: string }).documentId).toBe(s.ids.homeId);
+    const global = await mcp.call("delivery_get", { global: "SiteSettings" });
+    expect((global.json as { type: string }).type).toBe("SiteSettings");
+  }, 60_000);
+
+  it("merged read tools: list_content by kind, one type/template by name, the active site's setup in list_sites", async () => {
+    const pages = (await mcp.call("list_content", { kind: "page" })).json as Array<{ documentId: string }>;
+    expect(pages.map((p) => p.documentId)).toContain(s.ids.blogId);
+    const blocks = (await mcp.call("list_content", { kind: "block" })).json as Array<{ documentId: string }>;
+    expect(blocks.map((b) => b.documentId)).toContain(s.ids.cardId);
+    const globals = (await mcp.call("list_content", { kind: "global" })).json as Array<{ type: string }>;
+    expect(globals.map((g) => g.type)).toContain("SiteSettings");
+
+    const allTypes = (await mcp.call("list_content_types")).json as Array<{ name: string }>;
+    expect(allTypes.length).toBeGreaterThan(1);
+    const one = (await mcp.call("list_content_types", { name: "BlogPost" })).json as { name: string; fields: Array<{ valueFormat: string }> };
+    expect(one.name).toBe("BlogPost");
+    expect(one.fields[0]!.valueFormat).toBeTruthy();
+
+    const template = (await mcp.call("list_type_templates", { name: "FaqPage" })).json as { name: string };
+    expect(template.name).toBe("FaqPage");
+
+    const sites = (await mcp.call("list_sites")).json as { activeSite: { startPageId: string | null; previewBaseUrl: string } };
+    expect(sites.activeSite.startPageId).toBe(s.ids.homeId);
+  }, 60_000);
+
+  it("list_form_submissions with submissionId returns that one submission; without, a page of them", async () => {
+    const raw = createDb(TEST_DB, { max: 1 });
+    await raw.db.insert(schemaTables.formSubmission).values({
+      submissionId: "sub_mcp_parity", siteId: "site_default", formId: s.ids.cardId, locale: "en",
+      values: { email: "visitor@example.com" }, fieldSnapshot: [{ name: "email", label: "Email", kind: "FormEmailField" }],
+    });
+    await raw.sql.end();
+    const one = await mcp.call("list_form_submissions", { submissionId: "sub_mcp_parity" });
+    expect(one.json).toMatchObject({ submissionId: "sub_mcp_parity", values: { email: "visitor@example.com" } });
+    const page = await mcp.call("list_form_submissions", {});
+    expect(page.isError, page.text).toBe(false);
+    expect(JSON.stringify(page.json)).toContain("sub_mcp_parity");
+  }, 30_000);
+
+  it("delivery_get refuses zero or several selectors with a self-teaching error", async () => {
+    for (const args of [{}, { path: "/blog", documentId: s.ids.blogId }]) {
+      const r = await mcp.call("delivery_get", args);
+      expect(r.isError).toBe(true);
+      expect(r.text).toMatch(/exactly ONE of path, documentId, slug, global or start/);
+      expect(r.text).toMatch(/"path": "\/blog\/my-post"/);
+    }
+  }, 30_000);
 
   it("provenance: MCP writes record updatedVia='mcp' + the needs-review flag; a human edit clears both", async () => {
     const created = await mcp.call("create_content", { type: "BlogPost", parentId: s.ids.blogId, name: "MCP Provenance" });

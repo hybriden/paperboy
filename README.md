@@ -194,7 +194,7 @@ to (`POST /api/v1/uploads`, 20 files of 5 MB per request). `upload_asset` takes 
 - **Serialization-proof writes** — `set_field(documentId, field, value)` sends one flat string, because long strings inside record args get mangled by some clients.
 - **Safe defaults** — `update_content` merges by default, pages auto-slug from their name.
 - **A diagnosable trail** — tool errors are logged with their arguments, every write lands in the audit log as `ip=mcp`.
-- **Discoverable contract** — `get_content_type` annotates every field with `valueFormat` and `valueExample`.
+- **Discoverable contract** — `list_content_types` annotates every field with `valueFormat` and `valueExample`.
 
 The full rules are in [`CLAUDE.md`](CLAUDE.md#agent-api-design-rules-mcp--write-endpoints).
 

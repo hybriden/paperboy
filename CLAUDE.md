@@ -52,6 +52,7 @@ The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds
 - **In HTTP mode every request acts as the user whose token it presents** (OAuth or any user's `mcp_token`), re-resolved per request. An MCP session is bound to the user who opened it (another user's token on that session → 403). `mcp-http-transport.test.ts` pins this.
 - **Revocation is immediate in HTTP mode:** the bearer is resolved through the DB before any compare against the boot `MCP_TOKEN`, and `AccessContext` is re-resolved per request. A stdio process authenticates once at boot. An env-only `MCP_TOKEN` with no DB row still works (rotate by restart).
 - **Agents upload through an UPLOAD LINK** (migration 0030, `upload_link`). A remote server can't read the agent's disk and base64 costs ~100k tokens per image, so MCP `create_upload_link` mints a 15-minute hashed `upl_…` token and the agent curls files to `POST /api/v1/uploads` with it as Bearer (`apps/api/src/routes/uploads.ts`). The link acts as the minting user in the minting site, roles re-resolved per request; the route never reads the session cookie. `upload_asset` takes a public URL (`fetchPublicFile`: webhook egress guard per hop, pinned connect, manual redirects, 5 MB streamed cap) or base64. Every path, admin included, ends in `storeUploadedAsset` (packages/db/src/uploads.ts): one sniff, one size cap. Route cap: 20 files × 5 MB. `mcp-upload.test.ts`.
+- **MCP tools are listed per ROLE.** Each `tool()` declares the one permission it needs (`null` = anyone signed in); `buildServer` registers only the tools the session's user holds, so an Author never sees user/key/webhook/audit tools, and a call to an unlisted tool gets the SDK's "Tool X not found". The wrapper re-checks that permission on every call because the list is fixed per session while roles are re-resolved per request (a demoted user gets `Missing permission: …`). Site-scoped tokens still SEE instance-wide tools and get the self-teaching "needs an every-site token" refusal (`mcp-token-scope-instance-tools.test.ts`). Every tool must carry a ≥80-char description, a description on every parameter and annotations — `mcp-parity.test.ts` enforces it (Glama's TDQS reads exactly that).
 - **`delivery_*` MCP tools need `content.read`; the preview perspective also needs site-wide read.** The delivery chokepoint is key-scoped, not section-scoped, so a section-scoped user with `preview:true` would otherwise read every draft in the site.
 
 ## Content model
@@ -77,7 +78,7 @@ Per-site rules that keep link equity when URLs change. Research: `docs/plans/202
 - **`site.locale_prefix`** (`always` | `except-default`, migration 0031) turns (locale, urlPath) into the requested path. Redirect targets AND sitemap/llms follow it; default `always` matches the reference frontend.
 - **`POST /delivery/traffic` is the SECOND public write**, built like form submissions: own module (`routes/traffic.ts`), PUBLIC key only (preview key → 403, no cookie read), rate-limited per key. Counts rule hits and logs 404 paths (path only, no IP/UA, scanner noise dropped by `isNoise404`), 90-day retention + 2,000-path cap per site, swept hourly.
 - **No regex.** Exact paths and a trailing `/*` prefix. Case and trailing slash normalized (`normalizePath`); query passes through unless `keepQuery` is off.
-- Permissions: read `content.read`, write `content.publish`, audited. MCP: `list_redirects`, `create_redirect`, `update_redirect`, `delete_redirects`, `test_redirect`, `list_not_found`.
+- Permissions: read `content.read`, write `content.publish`, audited. MCP: `list_redirects`, `create_redirect`, `update_redirect`, `delete_redirect`, `test_redirect`, `list_not_found`.
 
 ## Forms and submissions
 Forms are **content** and submissions stay in this instance's Postgres, which no headless CMS surveyed does. Research: `docs/plans/2026-08-22-forms.md`.
@@ -133,7 +134,7 @@ Every rule traces to a real agent run that broke. Do not regress them.
 4. **Offer flat single-string params for long content** (`set_field`). Long strings nested in record params get mangled to `{}` by some clients' JSON repair. Steer to it in tool descriptions and errors.
 5. **Safe defaults over sharp semantics.** `update_content` merges by default (a full replace drops required fields and bricks the next publish). Pages auto-slug from their name.
 6. **Every failed run leaves a trail.** MCP tool errors log to stderr WITH truncated args (stdout is JSON-RPC in stdio mode); every MCP write audit-logs like the API (`ip='mcp'`). Two incidents were undiagnosable because errors only travelled in-band.
-7. **Annotate the schema for agents.** `get_content_type` returns `valueFormat` + `valueExample` per field.
+7. **Annotate the schema for agents.** `list_content_types {name}` returns `valueFormat` + `valueExample` per field.
 
 ## ⚖️ Bugfix law: failing test first
 Every bugfix STARTS with a test that reproduces the exact reported failure: same flow, same surface (API/MCP), same inputs. Run it and confirm it FAILS on the unfixed code. Then implement, and the same test goes green in the same change. No repro, no fix.

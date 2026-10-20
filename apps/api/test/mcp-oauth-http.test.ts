@@ -136,9 +136,11 @@ describe("MCP over HTTP with OAuth (no MCP_TOKEN, per-user identity)", () => {
   it("each token acts as ITS user: an Editor's connection can't manage users, an Admin's can", async () => {
     const ed = new Client((await connect(editor, null)).access_token);
     await ed.init();
+    // An Editor's session is not offered user management at all (tools are
+    // listed per the user's role), so the call is refused as an unknown tool.
     const denied = await ed.call("list_users");
     expect(denied.isError).toBe(true);
-    expect(denied.text).toMatch(/permission/i);
+    expect(denied.text).toMatch(/Tool list_users not found/);
 
     const ad = new Client((await connect(admin, null)).access_token);
     await ad.init();
@@ -152,7 +154,7 @@ describe("MCP over HTTP with OAuth (no MCP_TOKEN, per-user identity)", () => {
     const sites = await c.call("list_sites");
     expect(sites.isError, sites.text).toBe(false);
     expect(sites.json).toMatchObject({ tokenScopedTo: brandB });
-    const escape = await c.call("list_pages", { site: "default" });
+    const escape = await c.call("list_content", { kind: "page", site: "default" });
     expect(escape.isError).toBe(true);
     // Instance-wide changes need a connection to every site.
     const create = await c.call("create_user", { email: "scoped-oauth@paperboy.test", name: "X", password: "Scoped!Passw0rd1", roles: ["Viewer"] });

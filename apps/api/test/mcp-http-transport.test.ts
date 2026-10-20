@@ -240,19 +240,19 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     expect((await c.initialize()).status).toBe(200);
 
     // Accepted, and defaulted to ITS site without any per-call argument.
-    const pages = await c.call("list_pages");
+    const pages = await c.call("list_content", { kind: "page" });
     expect(pages.isError, pages.text).toBe(false);
     expect((pages.json as Array<{ name: string }>).map((x) => x.name)).toContain("Scoped Only Page");
 
     // Still capped: it cannot borrow the boot token's reach.
-    const denied = await c.call("list_pages", { site: "default" });
+    const denied = await c.call("list_content", { kind: "page", site: "default" });
     expect(denied.isError).toBe(true);
     expect(denied.text).toContain("scoped");
 
     // And the boot (cross-site) token is unaffected on the same server.
     const boot = new HttpMcp(envToken);
     await boot.initialize();
-    const bootPages = await boot.call("list_pages");
+    const bootPages = await boot.call("list_content", { kind: "page" });
     expect((bootPages.json as Array<{ name: string }>).map((x) => x.name)).not.toContain("Scoped Only Page");
   }, 60_000);
 
@@ -266,11 +266,33 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     const foreign = minted.json().token as string;
     const c = new HttpMcp(foreign);
     expect((await c.initialize()).status).toBe(200);
-    // The boot user is an Admin; the Editor may not list users.
+    // The boot user is an Admin; the Editor may not list users — its session
+    // is not even offered the tool, because tools are listed per user's role.
     const res = await c.call("list_users");
     expect(res.isError).toBe(true);
-    expect(res.text).toMatch(/permission/i);
+    expect(res.text).toMatch(/Tool list_users not found/);
   });
+
+  it("a user demoted mid-session is refused a tool its session still lists, with a self-teaching error", async () => {
+    const created = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/users",
+      headers: authHeaders(admin),
+      payload: { email: "demote-me@paperboy.test", name: "Demote Me", password: "Demote!Passw0rd1", roles: ["Editor"] },
+    });
+    expect(created.statusCode, created.body).toBe(200);
+    const userId = created.json().id as string;
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-demote", userId } });
+    const c = new HttpMcp(minted.json().token as string);
+    expect((await c.initialize()).status).toBe(200);
+
+    const demote = await s.app.inject({ method: "PUT", url: `/api/v1/manage/users/${userId}`, headers: authHeaders(admin), payload: { roles: ["Viewer"] } });
+    expect(demote.statusCode, demote.body).toBe(200);
+
+    const res = await c.call("set_field", { documentId: s.ids.blogId, field: "name", value: "Demoted write" });
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/Missing permission: content\.update/);
+  }, 60_000);
 
   it("a revoked minted token is refused on the next request", async () => {
     const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: authHeaders(admin), payload: { name: "http-revoke-me", userId: adminId } });
