@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { initPreviewBridge } from "./bridge.js";
+import { DRAG_MIME } from "./protocol.js";
 
 // postMessage is redeclared as a plain mock PROPERTY (not Window's method) so
 // tests can reference it unbound — `expect(target.postMessage)` — without tripping
@@ -1417,7 +1418,13 @@ describe("initPreviewBridge — targeted second review edge cases", () => {
     in_b1.dispatchEvent(dropEv);
 
     expect(target.postMessage).toHaveBeenCalledWith(
-      { type: "paperboy:drop", field: "innerArea", payload, index: 2 },
+      {
+        type: "paperboy:drop",
+        field: "innerArea",
+        payload,
+        index: 2,
+        path: [{ field: "outerArea", blockIndex: 1 }],
+      },
       "*",
     );
     teardown();
@@ -1548,5 +1555,153 @@ describe("initPreviewBridge — targeted second review edge cases", () => {
     expect(target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:edit")).toHaveLength(1);
 
     teardown2();
+  });
+
+  it("includes ancestor path when dropping into a two-level nested content area", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="mainArea" data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">
+          <div id="columnsArea" data-pb-area="columnsArea">
+            <div id="b1" data-pb-block-index="1">
+              <div id="innerArea" data-pb-area="innerArea">
+                <p id="pInner">Nested drop zone</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc1", blockType: "CardBlock" };
+
+    const innerZone = document.getElementById("innerArea")!;
+    const dropEv = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(dropEv, "dataTransfer", {
+      value: {
+        types: [DRAG_MIME],
+        getData: (mime: string) => (mime === DRAG_MIME ? JSON.stringify(payload) : ""),
+      },
+    });
+    innerZone.dispatchEvent(dropEv);
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      {
+        type: "paperboy:drop",
+        field: "innerArea",
+        payload,
+        path: [
+          { field: "mainArea", blockIndex: 0 },
+          { field: "columnsArea", blockIndex: 1 },
+        ],
+      },
+      "*",
+    );
+    teardown();
+  });
+
+  it("includes ancestor path on cross-origin drop-at into a nested content area", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="mainArea" data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">
+          <div id="columnsArea" data-pb-area="columnsArea">
+            <div id="b1" data-pb-block-index="1">
+              <div id="innerArea" data-pb-area="innerArea">
+                <p id="pInner">Nested drop zone</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    const teardown = initPreviewBridge({ target, badge: false });
+    const payload = { kind: "block", documentId: "doc1", blockType: "CardBlock" };
+
+    const innerZone = document.getElementById("innerArea")!;
+    (document as unknown as { elementFromPoint: (x: number, y: number) => Element | null }).elementFromPoint = () => innerZone;
+
+    target.postMessage.mockClear();
+    window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:drop-at", x: 50, y: 50, payload }, source: target }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      {
+        type: "paperboy:drop",
+        field: "innerArea",
+        payload,
+        path: [
+          { field: "mainArea", blockIndex: 0 },
+          { field: "columnsArea", blockIndex: 1 },
+        ],
+      },
+      "*",
+    );
+    teardown();
+  });
+
+  it("includes ancestor path when clicking add-block chip on a nested content area", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="mainArea" data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">
+          <div id="columnsArea" data-pb-area="columnsArea">
+            <p id="pInner">Nested area</p>
+          </div>
+        </div>
+      </div>
+    `;
+    const teardown = initPreviewBridge({ target, badge: false });
+    const pInner = document.getElementById("pInner")!;
+
+    pInner.dispatchEvent(new MouseEvent("pointerover", { bubbles: true }));
+    const chip = document.querySelector(".pb-area-add") as HTMLButtonElement | null;
+    expect(chip).toBeTruthy();
+
+    target.postMessage.mockClear();
+    chip!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "paperboy:add-block",
+        field: "columnsArea",
+        path: [{ field: "mainArea", blockIndex: 0 }],
+      }),
+      "*",
+    );
+    teardown();
+  });
+
+  it("includes ancestor path when clicking to edit a field inside a nested block", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div id="mainArea" data-pb-area="mainArea">
+        <div id="b0" data-pb-block-index="0">
+          <div id="columnsArea" data-pb-area="columnsArea">
+            <div id="b1" data-pb-block-index="1">
+              <p id="nestedTitle" data-pb-field="title">Nested Title</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    const teardown = initPreviewBridge({ target, badge: false });
+    const nestedTitle = document.getElementById("nestedTitle")!;
+
+    target.postMessage.mockClear();
+    nestedTitle.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+
+    expect(target.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "paperboy:edit",
+        field: "title",
+        blockIndex: 1,
+        path: [
+          { field: "mainArea", blockIndex: 0 },
+          { field: "columnsArea", blockIndex: 1 },
+        ],
+      }),
+      "*",
+    );
+    teardown();
   });
 });

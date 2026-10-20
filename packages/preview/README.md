@@ -67,12 +67,12 @@ The bridge then:
 - answers `paperboy:ping` with `paperboy:preview-ready` (v0.3.2+), so the admin can
   confirm the bridge is alive at any moment instead of relying on catching the
   one-shot announcement it posts at init,
-- posts `paperboy:edit` when an editable region is clicked (with rect/click/caret),
-- posts `paperboy:drop` (with optional `index`) when a shared block/page is dragged from the Assets pane onto a `data-pb-area`,
+- posts `paperboy:edit` when an editable region is clicked (with rect/click/caret and optional hierarchical `path` for nested blocks, v0.7+),
+- posts `paperboy:drop` (with optional `index` and hierarchical `path` for nested areas, v0.7+) when a shared block/page is dragged from the Assets pane onto a `data-pb-area`,
 - streams `paperboy:rect` on scroll/resize, applies `paperboy:patch` (live swap) and `paperboy:focus`,
 - outlines every `data-pb-area` with a dotted border (v0.4+) so editors see where
   each content area starts and ends; hovering an area shows its name and a
-  "＋ Add block" chip that posts `paperboy:add-block {field, rect, index?}`, which the admin
+  "＋ Add block" chip that posts `paperboy:add-block {field, rect, index?, path?}` (v0.7+), which the admin
   answers by opening its block palette for that area, anchored at the chip. The
   chrome is `position:fixed` elements injected into `<body>` — never DOM inside
   your area elements, so grid/flex layouts are untouched. Older admins ignore the

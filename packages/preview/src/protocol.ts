@@ -51,6 +51,11 @@ export interface ReadyMessage {
   version: number;
 }
 
+export interface PreviewBlockPathStep {
+  field: string;
+  blockIndex: number;
+}
+
 export interface EditMessage {
   type: "paperboy:edit";
   field: string | null;
@@ -59,6 +64,8 @@ export interface EditMessage {
   rect: Rect;
   click?: { x: number; y: number };
   caret?: Caret | null;
+  /** Ancestor pairs of [data-pb-area] / [data-pb-block-index], outermost first. */
+  path?: PreviewBlockPathStep[];
 }
 
 export interface RectMessage {
@@ -76,6 +83,8 @@ export interface DropMessage {
   payload: unknown;
   /** Optional 0-based insertion index within the content area. Absent = append. */
   index?: number | null;
+  /** Ancestor pairs of [data-pb-area] / [data-pb-block-index], outermost first. */
+  path?: PreviewBlockPathStep[];
 }
 
 /** The editor clicked an area's "＋ Add block" chip (bridge chrome). The admin
@@ -89,6 +98,8 @@ export interface AddBlockMessage {
   rect: Rect;
   /** Optional 0-based insertion index within the content area. Absent = append. */
   index?: number | null;
+  /** Ancestor pairs of [data-pb-area] / [data-pb-block-index], outermost first. */
+  path?: PreviewBlockPathStep[];
 }
 
 /* ----------------------------- admin → iframe ----------------------------- */
@@ -200,10 +211,29 @@ export function parsePreviewMessage(data: unknown): PaperboyMessage | null {
   // or negative index is rejected at this boundary.
   const idx = (data as { index?: unknown }).index;
   if (idx !== undefined && idx !== null && (!Number.isInteger(idx) || (idx as number) < 0)) return null;
+  // path is optional array of { field: string, blockIndex: number } steps.
+  // Rejects prototype pollution keys (__proto__, constructor, prototype).
+  const DANGEROUS_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+  const path = (data as { path?: unknown }).path;
+  if (path !== undefined && path !== null) {
+    if (!Array.isArray(path)) return null;
+    for (const step of path) {
+      if (
+        !step ||
+        typeof step !== "object" ||
+        typeof (step as { field?: unknown }).field !== "string" ||
+        DANGEROUS_KEYS.has((step as { field: string }).field) ||
+        !Number.isInteger((step as { blockIndex?: unknown }).blockIndex) ||
+        (step as { blockIndex: number }).blockIndex < 0
+      ) {
+        return null;
+      }
+    }
+  }
   // `field` is `string | null` everywhere, and a plain `string` on the two
   // admin → iframe messages the bridge resolves to an element.
   const field = (data as { field?: unknown }).field;
-  if (field != null && typeof field !== "string") return null;
+  if (field != null && (typeof field !== "string" || DANGEROUS_KEYS.has(field))) return null;
   if ((type === "paperboy:patch" || type === "paperboy:focus") && typeof field !== "string") return null;
   return data as PaperboyMessage;
 }

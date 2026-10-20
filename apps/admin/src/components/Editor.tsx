@@ -17,7 +17,7 @@ import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError, type AiTask } from "../lib/api.js";
 import { fieldWidthClass } from "../lib/field-width.js";
-import { blockAtPath, type BlockPath } from "../lib/block-path.js";
+import { blockAtPath, resolveBlockPath, updateBlockAtPath, type BlockPath } from "../lib/block-path.js";
 import { clearUnsaved, readUnsaved, stashUnsaved, type UnsavedEdits } from "../lib/unsaved-stash.js";
 import { filterFields } from "../lib/field-filter.js";
 import { opeAction } from "../lib/ope-target.js";
@@ -298,7 +298,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // would otherwise anchor the card at its far-away bottom edge.
   // `block` scopes the overlay to a field INSIDE a content-area block instance
   // (absent → a page-level field, the classic case).
-  const [ope, setOpe] = useState<{ field: string; rect: PbRect; ox: number; oy: number; n: number; block?: { area: string; index: number }; add?: true; index?: number | null } | null>(null);
+  const [ope, setOpe] = useState<{ field: string; rect: PbRect; ox: number; oy: number; n: number; block?: { area: string; index: number }; add?: true; index?: number | null; path?: BlockPath } | null>(null);
   const opeRef = useRef<typeof ope>(null);
   useEffect(() => { opeRef.current = ope; }, [ope]);
   const opeModeRef = useRef(opeMode);
@@ -823,14 +823,27 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       }
       if (msg.type === "paperboy:drop") {
         // A shared block (or page → teaser) was dragged from the Assets pane and
-        // dropped onto a content area in the rendered preview. Append it to that
+        // dropped onto a content area in the rendered preview. Append/insert it to that
         // field; autosave + the preview reload then show it in place.
         const fieldName = typeof msg.field === "string" ? msg.field : null;
-        const def = fieldName ? type?.fields.find((f) => f.name === fieldName) : undefined;
+        const formData = formRef.current?.data ?? {};
+        const resolvedPath = msg.path?.length ? resolveBlockPath(formData, msg.path) : null;
+
+        let def: FieldDef | undefined;
+        let containerName = type?.name ?? "this type";
+        if (msg.path?.length) {
+          const parentBlock = resolvedPath ? blockAtPath(formData, resolvedPath) : null;
+          const parentType = parentBlock ? types.find((t) => t.name === parentBlock.blockType) : undefined;
+          containerName = parentType?.name ?? "this block";
+          def = fieldName && parentType ? parentType.fields.find((f) => f.name === fieldName && f.type === "contentArea") : undefined;
+        } else {
+          def = fieldName ? type?.fields.find((f) => f.name === fieldName) : undefined;
+        }
+
         if (!fieldName || !def) {
           // A drop zone whose data-pb-area doesn't name a real field is a
           // frontend annotation bug — surface it instead of swallowing the drop.
-          toast.error("Couldn’t drop here", `The preview marks this area as “${fieldName ?? "?"}”, which isn’t a field of ${type?.name ?? "this type"}. data-pb-area must name the contentArea field.`);
+          toast.error("Couldn’t drop here", `The preview marks this area as “${fieldName ?? "?"}”, which isn’t a field of ${containerName}. data-pb-area must name the contentArea field.`);
           return;
         }
         const payload = (msg.payload ?? {}) as DropPayload;
@@ -841,34 +854,70 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           }
           return;
         }
-        const cur = formRef.current?.data?.[fieldName];
-        const current = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
-        setField(fieldName, insertBlockAt(current, res.block, msg.index));
+
+        const targetField = def.name;
+        if (resolvedPath && resolvedPath.length > 0) {
+          patch((prev) => {
+            const nextData = updateBlockAtPath(prev.data, resolvedPath, (b) => {
+              const inline = b.inline ?? {};
+              const cur = inline[targetField];
+              const current = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
+              return {
+                ...b,
+                inline: {
+                  ...inline,
+                  [targetField]: insertBlockAt(current, res.block, msg.index),
+                },
+              };
+            });
+            return { ...prev, data: nextData };
+          });
+        } else {
+          const cur = formRef.current?.data?.[targetField];
+          const current = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
+          setField(targetField, insertBlockAt(current, res.block, msg.index));
+        }
         toast.success("Block added", payload.name ? `Added “${payload.name}”.` : "Added to the content area.");
         return;
       }
       if (msg.type === "paperboy:add-block") {
         // The editor clicked an area's "＋ Add block" chip (bridge chrome).
-        // Same page-level rule as paperboy:drop: the field must be a
-        // contentArea of THIS type — a nested block-inner area falls through
-        // to the same self-teaching toast the drop path uses.
         const fieldName = typeof msg.field === "string" ? msg.field : null;
-        const def = fieldName ? type?.fields.find((f) => f.name === fieldName && f.type === "contentArea") : undefined;
+        const formData = formRef.current?.data ?? {};
+        const resolvedPath = msg.path?.length ? resolveBlockPath(formData, msg.path) : null;
+
+        let def: FieldDef | undefined;
+        let containerName = type?.name ?? "this type";
+        if (msg.path?.length) {
+          const parentBlock = resolvedPath ? blockAtPath(formData, resolvedPath) : null;
+          const parentType = parentBlock ? types.find((t) => t.name === parentBlock.blockType) : undefined;
+          containerName = parentType?.name ?? "this block";
+          def = fieldName && parentType ? parentType.fields.find((f) => f.name === fieldName && f.type === "contentArea") : undefined;
+        } else {
+          def = fieldName ? type?.fields.find((f) => f.name === fieldName && f.type === "contentArea") : undefined;
+        }
+
         if (!fieldName || !def) {
-          // A BLOCK's own nested area is correctly annotated but out of scope
-          // here (same page-level rule as drop) — that gets an honest pointer,
-          // not a toast blaming the frontend's markup.
-          const isBlockArea = !!fieldName && types.some((t) => t.kind === "block" && t.fields.some((f) => f.name === fieldName && f.type === "contentArea"));
+          const isBlockArea = !msg.path?.length && !resolvedPath && !!fieldName && types.some((t) => t.kind === "block" && t.fields.some((f) => f.name === fieldName && f.type === "contentArea"));
           if (isBlockArea) {
             toast.toast({ title: "This area belongs to a block", description: "Nested areas are edited in the form — open the block in Side by side or All properties to add here.", variant: "info" });
           } else {
-            toast.error("Couldn’t add here", `The preview marks this area as “${fieldName ?? "?"}”, which isn’t a contentArea field of ${type?.name ?? "this type"}. data-pb-area must name the contentArea field.`);
+            toast.error("Couldn’t add here", `The preview marks this area as “${fieldName ?? "?"}”, which isn’t a contentArea field of ${containerName}. data-pb-area must name the contentArea field.`);
           }
           return;
         }
         if (!msg.rect) return;
         // Anchor the palette card at the chip (bottom-center of the area rect).
-        setOpe({ field: fieldName, add: true, rect: msg.rect, ox: msg.rect.w / 2, oy: msg.rect.h, n: ++propCounter.current, index: msg.index });
+        setOpe({
+          field: fieldName,
+          add: true,
+          rect: msg.rect,
+          ox: msg.rect.w / 2,
+          oy: msg.rect.h,
+          n: ++propCounter.current,
+          index: msg.index,
+          path: resolvedPath ?? undefined,
+        });
         return;
       }
       if (msg.type !== "paperboy:edit") return;
@@ -877,13 +926,35 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       const def = fieldName ? type?.fields.find((f) => f.name === fieldName) : undefined;
 
       // A field INSIDE a rendered block: the bridge reports the field name PLUS
-      // the enclosing block's index. Resolve which contentArea holds that index
-      // and the field on the BLOCK's own type. Shared blocks resolve to null —
-      // their fields are edited on their own page — so the click falls through
-      // to the classic block-card flow.
+      // the enclosing block's index (and path for nested blocks).
       const blockField = (() => {
-        if (d.blockIndex == null || !fieldName) return null;
+        if (!fieldName) return null;
         const data = formRef.current?.data ?? {};
+
+        if (d.path && d.path.length > 0) {
+          const resolvedPath = resolveBlockPath(data, d.path);
+          if (resolvedPath && resolvedPath.length > 0) {
+            const b = blockAtPath(data, resolvedPath);
+            if (!b || b.ref !== null) return null;
+            if (d.blockType && b.blockType !== d.blockType) return null;
+            const bType = types.find((t) => t.name === b.blockType);
+            const fdef = bType?.fields.find((f) => f.name === fieldName);
+            if (!fdef) return null;
+            const lastStep = resolvedPath[resolvedPath.length - 1]!;
+            const topArea = resolvedPath[0]!.field;
+            const topAreaDef = type?.fields.find((f) => f.name === topArea && f.type === "contentArea");
+            return {
+              name: fieldName,
+              area: lastStep.field,
+              group: topAreaDef?.group ?? fdef.group,
+              key: b.key,
+              def: fdef,
+              path: resolvedPath,
+            };
+          }
+        }
+
+        if (d.blockIndex == null) return null;
         for (const areaDef of type?.fields.filter((f) => f.type === "contentArea") ?? []) {
           const arr = data[areaDef.name];
           if (!Array.isArray(arr)) continue;
@@ -943,7 +1014,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         };
         if (action.target === "name") setOpe({ field: "name", ...anchor });
         else if (action.target === "block" && blockField && d.blockIndex != null) {
-          setOpe({ field: blockField.name, block: { area: blockField.area, index: d.blockIndex }, ...anchor });
+          setOpe({ field: blockField.name, block: { area: blockField.area, index: d.blockIndex }, path: blockField.path, ...anchor });
         } else if (def) setOpe({ field: def.name, ...anchor });
         return;
       }
@@ -953,7 +1024,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       // expanded, so without this the focus had nothing to land on.
       if (blockField) {
         setTab(blockField.group);
-        setBlockPath([{ field: blockField.area, key: blockField.key }]);
+        setBlockPath(blockField.path ?? [{ field: blockField.area, key: blockField.key }]);
       } else if (def) {
         setTab(def.group);
       }
@@ -1754,12 +1825,34 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               // instead of a field editor. Appends EXACTLY as the sidebar
               // ContentArea does (same instance shapes, same allow-list home).
               if (ope.add) {
-                const areaDef = type.fields.find((f) => f.name === ope.field && f.type === "contentArea");
+                const formData = (formRef.current ?? form).data;
+                const parentBlock = ope.path?.length ? blockAtPath(formData, ope.path) : null;
+                const parentType = ope.path?.length ? (parentBlock ? types.find((t) => t.name === parentBlock.blockType) : undefined) : type;
+                const areaDef = parentType?.fields.find((f) => f.name === ope.field && f.type === "contentArea");
                 if (!areaDef || !canEdit) return null;
+                const targetField = areaDef.name;
                 const append = (block: BlockInstance, label: string | undefined) => {
-                  const cur = (formRef.current ?? form).data[ope.field];
-                  const arr = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
-                  setField(ope.field, insertBlockAt(arr, block, ope.index));
+                  if (ope.path && ope.path.length > 0) {
+                    patch((prev) => {
+                      const nextData = updateBlockAtPath(prev.data, ope.path!, (b) => {
+                        const inline = b.inline ?? {};
+                        const cur = inline[targetField];
+                        const arr = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
+                        return {
+                          ...b,
+                          inline: {
+                            ...inline,
+                            [targetField]: insertBlockAt(arr, block, ope.index),
+                          },
+                        };
+                      });
+                      return { ...prev, data: nextData };
+                    });
+                  } else {
+                    const cur = (formRef.current ?? form).data[targetField];
+                    const arr = Array.isArray(cur) ? (cur as BlockInstance[]) : [];
+                    setField(targetField, insertBlockAt(arr, block, ope.index));
+                  }
                   closeOpe();
                   toast.success("Block added", label ? `Added “${label}”.` : "Added to the content area.");
                 };
@@ -1792,7 +1885,14 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               // BLOCK's type and the value/commit path goes through the area array.
               const blockScope = (() => {
                 if (!ope.block) return null;
-                const arr = form.data[ope.block.area];
+                const fData = (formRef.current ?? form).data;
+                if (ope.path && ope.path.length > 0) {
+                  const b = blockAtPath(fData, ope.path);
+                  if (!b || b.ref !== null) return null;
+                  const fdef = types.find((t) => t.name === b.blockType)?.fields.find((f) => f.name === ope.field);
+                  return fdef ? { def: fdef, block: b, path: ope.path } : null;
+                }
+                const arr = fData[ope.block.area];
                 const b = Array.isArray(arr) ? (arr[ope.block.index] as BlockInstance | undefined) : undefined;
                 if (!b || b.ref !== null) return null;
                 const fdef = types.find((t) => t.name === b.blockType)?.fields.find((f) => f.name === ope.field);
@@ -1801,22 +1901,38 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               if (ope.block && !blockScope) return null; // block removed/replaced meanwhile
               const def = isName ? null : blockScope ? blockScope.def : type.fields.find((f) => f.name === ope.field);
               if (!isName && !def) return null;
-              const current = isName ? form.name : blockScope ? (blockScope.block.inline ?? {})[ope.field] : form.data[def!.name];
+              const current = isName ? form.name : blockScope ? (blockScope.block.inline ?? {})[blockScope.def.name] : form.data[def!.name];
               const freshCurrent = () => {
                 const f = formRef.current ?? form;
                 if (isName) return f.name;
                 if (!blockScope) return f.data[def!.name];
+                const targetField = blockScope.def.name;
+                if (blockScope.path) {
+                  const b = blockAtPath(f.data, blockScope.path);
+                  return (b?.inline ?? {})[targetField];
+                }
                 const arr = f.data[ope.block!.area];
-                return Array.isArray(arr) ? ((arr[ope.block!.index] as BlockInstance | undefined)?.inline ?? {})[ope.field] : undefined;
+                return Array.isArray(arr) ? ((arr[ope.block!.index] as BlockInstance | undefined)?.inline ?? {})[targetField] : undefined;
               };
               const commit = (v: unknown) => {
                 if (!blockScope) {
                   setField(def!.name, v);
                   return;
                 }
+                const targetField = blockScope.def.name;
+                if (blockScope.path) {
+                  patch((prev) => {
+                    const nextData = updateBlockAtPath(prev.data, blockScope.path!, (x) => ({
+                      ...x,
+                      inline: { ...x.inline, [targetField]: v },
+                    }));
+                    return { ...prev, data: nextData };
+                  });
+                  return;
+                }
                 const fresh = (formRef.current ?? form).data[ope.block!.area];
                 const arr = Array.isArray(fresh) ? (fresh as BlockInstance[]) : [];
-                setField(ope.block!.area, arr.map((x, i) => (i === ope.block!.index ? { ...x, inline: { ...x.inline, [ope.field]: v } } : x)));
+                setField(ope.block!.area, arr.map((x, i) => (i === ope.block!.index ? { ...x, inline: { ...x.inline, [targetField]: v } } : x)));
               };
               const liveText = (text: string) => setLivePatch({ field: "name", text, n: ++livePatchCounter.current });
               const patchName = (v: string) => patch((prev) => ({ ...prev, name: v }));
