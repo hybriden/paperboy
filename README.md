@@ -6,7 +6,8 @@
 </h1>
 
 [![CI](https://github.com/hybriden/paperboy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hybriden/paperboy/actions/workflows/ci.yml)
-[![Glama MCP score](https://glama.ai/mcp/servers/hybriden/paperboy/badges/score.svg)](https://glama.ai/mcp/servers/hybriden/paperboy)
+
+[![Paperboy CMS MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/hybriden/paperboy/badges/card.svg)](https://glama.ai/mcp/servers/hybriden/paperboy)
 
 **A self-hosted, open-source headless CMS in TypeScript on PostgreSQL. React admin with visual on-page editing, a typed Delivery API, and an MCP server so AI agents edit under the same rules as humans.**
 
