@@ -8,7 +8,12 @@
 [![CI](https://github.com/hybriden/paperboy/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/hybriden/paperboy/actions/workflows/ci.yml)
 [![Paperboy CMS MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/hybriden/paperboy/badges/score.svg)](https://glama.ai/mcp/servers/hybriden/paperboy)
 
-**A self-hosted, open-source headless CMS in TypeScript on PostgreSQL. React admin with visual on-page editing, a typed Delivery API, and an MCP server so AI agents edit under the same rules as humans.**
+**The MCP-first headless CMS.** Point Claude, Cursor or any MCP client at Paperboy and it can build
+pages, translate them, fix SEO, migrate redirects and publish on a schedule — as a real user, with that
+user's permissions, through the same validation and audit trail as your editors. Then open the admin:
+a visual editor where you click any text on your live site and change it.
+
+Agents do the volume. People decide what goes live. Self-hosted, MIT, one container and a Postgres.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero-dark.jpg">
@@ -17,18 +22,63 @@
 
 > **Paperboy ONE** — *Open, No Extras.* · **DPX** — *Don't Pay eXtra.* A proper headless CMS without the "experience platform" invoice.
 
-One container (API + admin), one Postgres. The website you build on is a separate repo, the
-[**Astro starter**](https://github.com/hybriden/paperboy-astro-starter). Admin, REST and MCP go
-through the same validation, permissions and audit trail; the MCP↔API parity is
-[test-enforced](apps/api/test/mcp-parity.test.ts).
+The website you build on is a separate repo, the
+[**Astro starter**](https://github.com/hybriden/paperboy-astro-starter).
 
-**Where to start**
+## Two front doors, one CMS
+
+| | Your agent (MCP) | Your editors (admin) |
+|---|---|---|
+| **Gets in with** | OAuth sign-in (with 2FA) or a site-scoped token | Password + TOTP 2FA |
+| **Sees** | Only the tools its role can use — an Author is never offered publish, users or webhooks | Only the sections and actions its role allows |
+| **Writes through** | The same Zod validation, RBAC and audit log — [parity is test-enforced](apps/api/test/mcp-parity.test.ts) | ← same |
+| **Is recorded as** | `via: mcp` on every version, badged **Agent edited** | `via: web` |
+
+## Connect your agent
+
+1. In Claude or Cursor, add `https://<your-domain>/mcp` as a connector.
+2. Sign in with your Paperboy login and pick which site it may work in.
+3. Ask for something real:
+
+- *"Write a post about our summer opening hours in Norwegian, put it under Blog, and schedule it for Monday 09:00."*
+- *"Here are 40 URLs from our old WordPress sitemap. Redirect each to the matching page and check every one lands in one hop."*
+- *"Create an FAQ page type and fill it from this document."*
+- *"Which pages are missing a meta description? Draft them, don't publish."*
+- *"Who changed the home page last week, and what did they change?"*
+- *"Export this month's contact-form submissions."*
+
+Running locally? Mint a token in Settings → MCP and use stdio — see [MCP setup](#mcp-setup).
+
+## Why "MCP-first" means more than an MCP server
+
+Every rule below exists because a real agent run broke without it.
+
+- **You decide how much to trust it.** Every version records whether a person or an agent wrote it,
+  and agent drafts are badged *Agent edited*. Switch on agent review (Settings → MCP) and agent drafts
+  become *Needs review*: the agent can still write, but nothing goes live until a person approves.
+- **Nothing an agent does is permanent by accident.** Full version history, a trash with restore, drafts
+  by default, scheduled publishing instead of fake dates in a field.
+- **Errors teach instead of fail.** A bad write is refused with the field name, the expected JSON shape and
+  a copyable example, so the agent fixes it in one step. Paperboy never "succeeds" with mangled data —
+  that once sent an agent into a nine-attempt loop.
+- **Guard rails for agent-typical mistakes.** Norwegian text can't silently land on the English branch.
+  A blog post created at the root gets told where it belongs. Updates merge instead of wiping fields.
+- **Long text survives the trip.** `set_field` takes one flat string, because some clients mangle long
+  strings nested in JSON.
+- **Files from the agent's own machine.** `create_upload_link` gives the agent a 15-minute upload URL;
+  no base64 through the context window.
+- **Tested the way agents use it.** CI drives the real MCP server through editorial tasks — a
+  deterministic driver on every push, a real model every week — and tool descriptions are graded
+  publicly (the Glama badge above). The full rules are in
+  [`CLAUDE.md`](CLAUDE.md#agent-api-design-rules-mcp--write-endpoints).
+
+**Where to start****Where to start**
 
 | You want to… | Go to |
 |---|---|
+| Connect an AI agent | [Connect your agent](#connect-your-agent) · [MCP setup](#mcp-setup) |
 | Try it in five minutes | [Quickstart](#quickstart) · [Windows, no experience needed](#-windows-no-experience-needed) |
 | Build a website on it | [Astro starter](https://github.com/hybriden/paperboy-astro-starter), then [`@paperboycms/client`](packages/client) and [`@paperboycms/preview`](packages/preview) |
-| Let an AI client edit content | [MCP](#mcp) |
 | Run it for real | [Production](#production) · [Backups](#backups) |
 | Work on the CMS itself | [Developing](#developing) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`CLAUDE.md`](CLAUDE.md) |
 
@@ -43,6 +93,11 @@ through the same validation, permissions and audit trail; the MCP↔API parity i
 <img alt="The demo site: home page, an article, and the article on a phone" src="docs/screenshots/site.jpg">
 
 ## Highlights
+
+**Built for agents**
+- **MCP server** — OAuth 2.1 sign-in or site-scoped tokens; acts as a user and lists only the tools that user's role can use. See [why MCP-first](#why-mcp-first-means-more-than-an-mcp-server).
+- **Secure by default** — Argon2id, server-side sessions, CSRF, TOTP 2FA, deny-by-default RBAC with object-level scopes, append-only audit log.
+- **Typed client SDK** — [`@paperboycms/client`](packages/client), typed from the same Zod schemas the server serializes with. No codegen.
 
 **Content**
 - **Content types are data** — pages, blocks and globals are defined in the admin, not in code. Content areas hold inline or shared blocks; a built-in template library covers the essentials.
@@ -62,11 +117,6 @@ through the same validation, permissions and audit trail; the MCP↔API parity i
 - **Visual on-page editing** — click an element in the preview to edit its field, drag blocks onto the page, cross-origin included. The bridge is [`@paperboycms/preview`](packages/preview).
 - **Admin** — React 19, light/dark, ⌘K palette, keyboard-operable drag-drop, axe-clean. The dashboard deep-links gaps, missing alt text and unused blocks.
 - **AI writing assistant** (optional; Anthropic or any OpenAI-compatible endpoint) — improve, rewrite, translate, alt text from the image, schema.org suggestions. With no key it refuses instead of faking output.
-
-**Agents and security**
-- **MCP server** — site-scoped tokens or OAuth 2.1 sign-in. Acts as a user with that user's permissions; every version records whether a human or an agent wrote it, with an opt-in review gate.
-- **Secure by default** — Argon2id, server-side sessions, CSRF, TOTP 2FA, deny-by-default RBAC with object-level scopes, append-only audit log.
-- **Typed client SDK** — [`@paperboycms/client`](packages/client), typed from the same Zod schemas the server serializes with. No codegen.
 
 ## How it compares
 
@@ -167,7 +217,7 @@ once you have forms, visitor personal data. Cron lines and the restore procedure
 [`ops/README.md`](ops/README.md). Known gap: backups land on the same disk as the data; add one
 `rclone copy` line once you have a bucket.
 
-## MCP
+## MCP setup
 
 ```bash
 # Mint a token in Settings → MCP, then run locally over stdio:
@@ -187,16 +237,6 @@ issuer, default `CORS_ORIGIN`) and `MCP_PUBLIC_URL` (default `{PUBLIC_URL}/mcp`)
 
 **Files from the agent's machine.** `create_upload_link` mints a 15-minute link the agent `curl`s files
 to (`POST /api/v1/uploads`, 20 files of 5 MB per request). `upload_asset` takes a public URL or base64.
-
-**Agent-ready by design.** Every rule came out of a real agent run that broke:
-
-- **No silent damage** — input is coerced only when meaning is preserved, otherwise rejected with an error that names the field, the shape and a copyable example.
-- **Serialization-proof writes** — `set_field(documentId, field, value)` sends one flat string, because long strings inside record args get mangled by some clients.
-- **Safe defaults** — `update_content` merges by default, pages auto-slug from their name.
-- **A diagnosable trail** — tool errors are logged with their arguments, every write lands in the audit log as `ip=mcp`.
-- **Discoverable contract** — `list_content_types` annotates every field with `valueFormat` and `valueExample`.
-
-The full rules are in [`CLAUDE.md`](CLAUDE.md#agent-api-design-rules-mcp--write-endpoints).
 
 ## The npm packages
 
