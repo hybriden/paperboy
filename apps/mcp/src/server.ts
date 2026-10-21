@@ -97,7 +97,7 @@ import {
   verifyOAuthAccessToken,
   schemaTables,
 } from "@paperboy/db";
-import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, RoleName, TYPE_TEMPLATE_EXPORT_FORMAT, TYPE_TEMPLATE_EXPORT_VERSION, aiAssist, fieldFormatHint, redactForLog } from "@paperboy/shared";
+import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, ROLE_PERMISSIONS, RoleName, TYPE_TEMPLATE_EXPORT_FORMAT, TYPE_TEMPLATE_EXPORT_VERSION, aiAssist, fieldFormatHint, redactForLog } from "@paperboy/shared";
 import { z } from "zod";
 
 /**
@@ -498,11 +498,21 @@ function tool<S extends z.ZodRawShape>(
     // Multisite: every per-site tool takes an optional `site`, so one server reaches
     // every site in the instance. Omitted, it acts in PAPERBOY_SITE (else the Default).
     const inputSchema = INSTANCE_WIDE_TOOLS.has(name) ? shape : { ...shape, site: SITE_ARG };
-    server.registerTool(name, { description, inputSchema, annotations: toolAnnotations(name) }, cb as never);
+    server.registerTool(name, { description: withPermission(description, permission), inputSchema, annotations: toolAnnotations(name) }, cb as never);
   } });
 }
 
-const toolsetList = (sets: Iterable<Toolset>) => TOOLSET_NAMES.filter((n) => new Set(sets).has(n)).join(",");
+/** State the permission a tool needs, from the same declaration that enforces
+ *  it, so a description can never claim a different gate than the server applies. */
+function withPermission(description: string, permission: Permission | null): string {
+  if (!permission || description.includes(permission)) return description;
+  const roles = RoleName.options.filter((role) => ROLE_PERMISSIONS[role].includes(permission));
+  // An Author's content permissions stop at its sections (deny-by-default in the query layer).
+  const scoped = roles.includes("Author") && permission.startsWith("content.") ? " — an Author only within their own sections" : "";
+  return `${description} Requires the ${permission} permission (${roles.join(", ")}${scoped}).`;
+}
+
+const toolsetList =(sets: Iterable<Toolset>) => TOOLSET_NAMES.filter((n) => new Set(sets).has(n)).join(",");
 
 /** Build a server listing the tools of `toolsets` that the current user's role
  *  can call: an Author never sees user, key, webhook or audit tools it would be
@@ -565,12 +575,12 @@ const isoInstant = (field: string) =>
 /* ------------------------------- content ------------------------------- */
 tool(
   "list_tree", "content.read",
-  "List ONE level of the page tree: the direct children of parentId, or the top-level pages when it is omitted, in the order the container sorts them, the whole level in one call. Each node has documentId, type, name, per-locale status and hasChildren — call list_tree again with a node's documentId to go deeper. Use it to find the parentId for create_content/move_content. For every page at once use list_content {kind:'page'}; shared blocks and globals are not in the tree (list_content with kind block or global).",
+  "List ONE level of the page tree: the direct children of parentId, or the top-level pages when it is omitted, in the order the container sorts them, the whole level in one call. Returns an array of nodes, each with documentId, type, name, per-locale status and hasChildren — call list_tree again with a node's documentId to go deeper. Trashed pages are left out, and a page without children (or a parentId that matches nothing) gives [] rather than an error, so check hasChildren first. Use it to find the parentId for create_content/move_content. For every page at once use list_content {kind:'page'}; shared blocks and globals are not in the tree (list_content with kind block or global).",
   { parentId: z.string().optional().describe("documentId of the page whose children to list. Omit for the top level.") },
   ({ parentId }) => getTree(db, ctx(), parentId ?? null));
 tool(
   "get_content", "content.read",
-  "Read one content item for editing: its working version (the draft if one exists, else the published version) in one locale, with name, slug, status, revision and the full `data` field map. Read this before update_content so you merge into current values, and pass its `revision` when replacing with merge:false. `data` maps each field name to its value in the shape list_content_types reports (valueFormat). An id from another site reads as not found (pass `site`). This is the editing view; for the public view (published only, private fields removed) use delivery_get, in the delivery toolset.",
+  "Read one content item for editing: its working version (the draft if one exists, else the published version) in one locale, with name, slug, status, revision and the full `data` field map. Read this before update_content so you merge into current values, and pass its `revision` when replacing with merge:false. `data` maps each field name to its value in the shape list_content_types reports (valueFormat). An unknown documentId, or one from another site, is refused as not found (pass `site` for another site); omit locale for the item's own language. This is the editing view; for the public view (published only, private fields removed) use delivery_get, in the delivery toolset.",
   { documentId: docId, locale: loc },
   async ({ documentId, locale }) => getContent(db, ctx(), documentId, await locFor(documentId, locale)));
 tool(
@@ -645,6 +655,9 @@ tool(
     "the whole map (send every required field, and the get_content `revision` so a concurrent",
     "human edit is refused with 409 instead of overwritten).",
     "For one LONG text/markdown value use set_field: nested long strings can be mangled in transit.",
+    "A value of the wrong shape is refused with the field, the expected shape and an example; text",
+    "in another language than the branch is refused unless allowLanguageMismatch. An agent's edit",
+    "marks the draft for review and cancels a pending scheduled publish of it.",
     "Returns the saved draft in the get_content shape, with its new revision.",
   ].join(" "),
   { documentId: docId, locale: loc, name: z.string().optional().describe("New display name. Omit to keep it."), slug: z.string().nullable().optional().describe("New URL slug for a page; publishing it adds a 301 from the old URL automatically. Omit to keep it."), displayInNav: z.boolean().optional().describe("Whether the page appears in the site navigation. Omit to keep it."), data: z.record(z.string(), z.unknown()).describe("Field name → value, shaped per the valueFormat list_content_types {name} reports. Pass {} to change only name/slug/displayInNav."), merge: z.boolean().optional().describe("Default true: shallow-merge data over the current draft. false = replace the whole field map"), revision: z.number().int().nonnegative().optional().describe("Optimistic concurrency: the `revision` from get_content. If a human (or another agent) has changed the draft since, the write is refused instead of overwriting their work. Recommended whenever merge:false"), allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately write text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)") },
@@ -661,14 +674,16 @@ tool(
 tool(
   "set_field", "content.update",
   [
-    "Set ONE field of a content item's draft to a plain string value (merged — other",
-    "fields are kept). THE MOST ROBUST WAY TO WRITE LONG TEXT/MARKDOWN CONTENT:",
-    "a flat string parameter survives tool-call serialization that can mangle long",
-    "strings nested inside `data` records. For text/markdown/select/datetime/image",
-    "fields, and the special field name `name` (the item's display name).",
-    "Use update_content instead for richtext, contentArea or reference fields (they take",
-    "JSON, not a string) or to change several fields in one write. Returns the saved draft",
-    "in the get_content shape; publish_content separately.",
+    "Write ONE field of an item's draft as a plain string; the other fields are kept. It is the",
+    "safest way to send long text or Markdown, because a flat string survives client",
+    "serialization that can mangle long strings nested in update_content's `data`.",
+    "`field` is a text, markdown, select, datetime or image field from list_content_types {name}",
+    "(an image takes an asset documentId), or `name` for the item's display name; `value` is the",
+    "field's whole new value. For richtext, contentArea or reference fields, or several fields at",
+    "once, use update_content. A value the field can't take is refused with the expected shape and",
+    "an example; text in another language than the locale branch is refused unless",
+    "allowLanguageMismatch. Like any agent edit, it cancels a pending scheduled publish.",
+    "Returns the saved draft in the get_content shape; publish_content separately.",
   ].join(" "),
   { documentId: docId, locale: loc, field: z.string().describe("Field name from the content type (or 'name')"), value: z.string().describe("The plain string value"), allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately write text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)") },
   async ({ documentId, locale, field, value, allowLanguageMismatch }) => {
@@ -689,7 +704,9 @@ tool(
     "new publishAt to reschedule, or without one to go live now. expireAt unpublishes it",
     "automatically later. Never fake a schedule with a date field — that publishes now.",
     "A changed slug or position gets a 301 from the old URL. Fires content.published.",
-    "Requires content.publish. Returns the item in the get_content shape with its new status.",
+    "Refused when there is nothing new to publish, when required fields are empty (the error",
+    "names them), or, if the site requires human review of agent drafts, until an editor approves",
+    "it. Returns the item in the get_content shape with its new status.",
     "To take it down use unpublish_content; to drop unpublished edits, discard_draft.",
   ].join(" "),
   {
@@ -737,7 +754,7 @@ tool(
   });
 tool(
   "unpublish_content", "content.publish",
-  "Take a content item off the live site in one locale: delivery stops serving it there (its URL starts answering 404) and content areas that reference it drop it. Fires the content.unpublished webhook. The content and its version history are kept, so publish_content brings it back. Other locales are unaffected. Returns the item in the get_content shape, now unpublished in that locale. To remove the item entirely use trash_content.",
+  "Take a content item off the live site in one locale: delivery stops serving it there (its URL starts answering 404) and content areas that reference it drop it. Fires the content.unpublished webhook. The content and its version history are kept, so publish_content brings it back. Name the item by documentId and the branch by locale (omit it for the item's own language); other locales are unaffected. Returns the item in the get_content shape, now unpublished in that locale. To remove the item entirely use trash_content.",
   { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {
     const l = await locFor(documentId, locale);
@@ -747,7 +764,7 @@ tool(
   });
 tool(
   "discard_draft", "content.update",
-  "Throw away the unpublished draft changes of one locale, so the working version falls back to the published one. The live site is unchanged; the discarded draft cannot be recovered. Refused for content that was never published (there is nothing to fall back to) — use trash_content to remove that instead. To roll back to an older version rather than the live one, use restore_version. Returns {ok:true}.",
+  "Throw away the unpublished draft changes of one item (documentId) in one locale (omitted: the item's own language), so the working version falls back to the published one. The live site is unchanged; the discarded draft cannot be recovered. Refused for content that was never published (there is nothing to fall back to) — use trash_content to remove that instead. To roll back to an older version rather than the live one, use restore_version. Returns {ok:true}.",
   { documentId: docId, locale: loc },
   async ({ documentId, locale }) => { const l = await locFor(documentId, locale); await discardDraft(db, ctx(), documentId, l); await mcpAudit("content.discard_draft", documentId, l); return { ok: true }; });
 tool(
@@ -762,7 +779,7 @@ tool(
   async ({ documentId, parentId, beforeId, afterId }) => { await moveContent(db, ctx(), documentId, { parentId, beforeId, afterId }); await mcpAudit("content.move", documentId); return { ok: true }; });
 tool(
   "duplicate_content", "content.create",
-  "Copy a content item into a NEW unpublished document beside the original (same parent), named \"<name> (copy)\", with every field of each locale's working version. A copied page gets a fresh slug, so it never collides with the original's URL. Children are not copied. Returns the new item (in the locale you name) in the get_content shape; edit it, then publish_content. To copy one language into another locale of the SAME item use copy_variant; to start from nothing use create_content.",
+  "Copy a content item into a NEW unpublished document beside the original (same parent), named \"<name> (copy)\", with every field of each locale's working version. A copied page gets a fresh slug, so it never collides with the original's URL. Children are not copied. locale only picks which language of the copy comes back. Returns the new item in the get_content shape; edit it, then publish_content. To copy one language into another locale of the SAME item use copy_variant; to start from nothing use create_content.",
   { documentId: docId, locale: z.string().optional().describe("Which locale of the copy to return in the result. Every locale is copied regardless. Omit for the document's own locale.") },
   async ({ documentId, locale }) => {
     const copy = await cloneContent(db, ctx(), documentId, await locFor(documentId, locale));
@@ -771,22 +788,22 @@ tool(
   });
 tool(
   "trash_content", "content.delete",
-  "Move a content item AND its whole page subtree to the trash: every locale is unpublished at once and disappears from delivery. Recoverable — restore_content brings it back (as drafts; publish again explicitly). Returns {trashed: <number of items>}. To only take it off the live site, use unpublish_content instead.",
+  "Move a content item (by documentId) AND its whole page subtree to the trash: every locale is unpublished at once and disappears from delivery, so there is no locale to pass. Recoverable — restore_content brings it back (as drafts; publish again explicitly). An unknown documentId is refused as not found. Returns {trashed: <number of items>}. To only take it off the live site, use unpublish_content instead.",
   { documentId: docId },
   async ({ documentId }) => { const r = await softDelete(db, ctx(), documentId); await mcpAudit("content.trash", documentId); return r; });
 tool(
   "restore_content", "content.delete",
-  "Bring a trashed item back to its old place in the tree, together with the descendants that were trashed with it. Restored content is NOT republished — call publish_content for each locale that should go live. Refused if its parent is still in the trash or a live sibling took its URL meanwhile. Returns {restored: <count>}. Find trashed ids with list_content {kind:'trash'}. To roll back an item that is not trashed, use restore_version instead.",
+  "Bring a trashed item back to its old place in the tree, together with the descendants that were trashed with it. Restored content is NOT republished — call publish_content for each locale that should go live. Refused if its parent is still in the trash (restore that first) or a live sibling took its URL meanwhile. There is no locale to pass: every language comes back. Returns {restored: <count>}. Find trashed ids with list_content {kind:'trash'}. To roll back an item that is not trashed, use restore_version instead.",
   { documentId: docId },
   async ({ documentId }) => { const r = await restoreContent(db, ctx(), documentId); await mcpAudit("content.restore", documentId); return r; });
 tool(
   "list_versions", "content.read",
-  "List a content item's version history in one locale, newest first and complete (no paging): each version's id, versionNumber, status, whether it is the live one, name, and who created it when. Use it to find what to roll back to — pass a version's `id` (not its versionNumber) to restore_version. For the current draft itself, use get_content.",
+  "List a content item's version history in one locale, newest first and complete (no paging); locale picks the language branch (omitted: the item's own). Each version's id, versionNumber, status, whether it is the live one, name, and who created it when. An unknown documentId is refused as not found. Use it to find what to roll back to — pass a version's `id` (not its versionNumber) to restore_version. For the current draft itself, use get_content.",
   { documentId: docId, locale: loc },
   async ({ documentId, locale }) => listVersions(db, ctx(), documentId, await locFor(documentId, locale)));
 tool(
   "restore_version", "content.update",
-  "Roll back an item to an older version: copy that version's name, slug and fields into the working draft of one locale. It REPLACES the current draft of that locale, so unpublished edits there are lost; published versions stay in the history (a rollback can itself be rolled back), and nothing goes live until you publish_content. Returns the new draft in the get_content shape. To bring back a TRASHED item use restore_content; to simply drop unpublished edits use discard_draft.",
+  "Roll back an item to an older version: copy that version's name, slug and fields into the working draft of one locale. versionId is the version's `id` from list_versions of the SAME locale, not its versionNumber. It REPLACES the current draft of that locale, so unpublished edits there are lost; published versions stay in the history (a rollback can itself be rolled back), and nothing goes live until you publish_content. Returns the new draft in the get_content shape. To bring back a TRASHED item use restore_content; to simply drop unpublished edits use discard_draft.",
   { documentId: docId, locale: loc, versionId: z.number().describe("The version's `id` from list_versions (not its versionNumber).") },
   async ({ documentId, locale, versionId }) => {
     const l = await locFor(documentId, locale);
@@ -836,7 +853,7 @@ function withFieldFormats<T extends { fields: FieldDef[] }>(def: T): T & { field
 tool(
   "list_content_types", "content.read",
   "Read the content model (instance-wide, shared by all sites). Pass name to get ONE type's definition — name, kind, displayName, schemaType and fields (name, type, required, options, allowed blocks of a content area…); an unknown name is refused with the list of real names. Call this before writing content of a type. " +
-    "Each field carries valueFormat + valueExample: the exact JSON shape create_content/update_content expect. These are LIVE types editors fill in; reusable type recipes (templates) live in the schema toolset. Omit name to get every full definition, which is large, so prefer name. Anyone who can read content may call it.",
+    "Each field carries valueFormat + valueExample: the exact JSON shape create_content/update_content expect. These are LIVE types editors fill in; reusable type recipes (templates) live in the schema toolset. Omit name to get every full definition, which is large, so prefer name.",
   { name: z.string().optional().describe("Content type name, PascalCase, e.g. 'BlogPost' (as in a content item's `type`). Omit to list all.") },
   async ({ name }) => {
     return name === undefined ? (await listContentTypes(db)).map(withFieldFormats) : withFieldFormats(await getContentType(db, name));
@@ -894,7 +911,7 @@ tool(
 );
 tool(
   "export_type_templates", "content.read",
-  "Export type templates as a portable JSON document ({format, version, exportedAt, templates}) to move them to another Paperboy instance (import_type_templates there) or keep a backup. To read or inspect templates here, list_type_templates is simpler. Omit names to export everything (built-ins included). Read-only; anyone who can read content may call it.",
+  "Export type templates as a portable JSON document ({format, version, exportedAt, templates}) to move them to another Paperboy instance (import_type_templates there) or keep a backup. To read or inspect templates here, list_type_templates is simpler. Omit names to export everything (built-ins included). Read-only.",
   { names: z.array(z.string()).optional().describe("Template names to export (default: all)") },
   async ({ names }) => {
     const templates = await exportTypeTemplates(db, names);
@@ -977,17 +994,17 @@ tool(
 /* -------------------------------- media -------------------------------- */
 tool(
   "list_assets", "content.read",
-  "List this site's whole media library (images and PDFs), newest first, in one call (no paging, so a big library is a big response): each asset's documentId, filename, mime, size, public url, alt text, attribution for stock imports, and folder. Use it to reuse an existing image: an image field stores the asset's documentId, set with set_field. To add a new file use upload_asset (URL, base64 or stock photo) or create_upload_link (files on your machine).",
+  "List this site's whole media library (images and PDFs), newest first, in one call (no paging, so a big library is a big response): each asset's documentId, filename, mime, size, public url, alt text, attribution for stock imports, and folder. Media is per site: pass `site` to see another site's library. An empty library gives []. Use it to reuse an existing image: an image field stores the asset's documentId, set with set_field. To add a new file use upload_asset (URL, base64 or stock photo) or create_upload_link (files on your machine).",
   {},
   () => listAssets(db, ctx()));
 tool(
   "update_asset_alt", "content.update",
-  "Set (overwrite) an image asset's alt text — the description screen readers announce and search engines index. Alt text belongs to the ASSET, not to a page: every page showing the image picks up the change, and set_field/update_content cannot set it. Describe what the image shows in one sentence; use \"\" only for a purely decorative image. Returns the updated asset. assist_writing cannot write alt text (it needs the image itself), so look at the image and write it.",
+  "Set (overwrite) an image asset's alt text — the description screen readers announce and search engines index. Alt text belongs to the ASSET, not to a page: every page showing the image picks up the change, and set_field/update_content cannot set it. documentId is the asset's (from list_assets or an upload), not a page's; an unknown one is refused as not found. Describe what the image shows in one sentence; use \"\" only for a purely decorative image. Returns the updated asset with its new alt. assist_writing cannot write alt text (it needs the image itself), so look at the image and write it.",
   { documentId: z.string().describe("The asset's documentId from list_assets or an upload result."), alt: z.string().describe("The new alt text, e.g. 'Two hikers on a ridge above a fjord at sunset'.") },
   async ({ documentId, alt }) => { const r = await updateAssetAlt(db, ctx(), documentId, alt); await mcpAudit("asset.alt", documentId); return r; });
 tool(
   "delete_asset", "content.delete",
-  "Permanently delete a media asset: the database row and the stored file. Irreversible. Content that still points at it is not blocked: delivery resolves those fields to null, so the image silently disappears from those pages — clear or replace them first. To stop using an image on one page, just clear that field with set_field and keep the asset. Returns {ok:true}.",
+  "Permanently delete a media asset — by the asset's documentId from list_assets, not a page's — removing the database row and the stored file. Irreversible. Content that still points at it is not blocked: delivery resolves those fields to null, so the image silently disappears from those pages — clear or replace them first. To stop using an image on one page, just clear that field with set_field and keep the asset. Returns {ok:true}.",
   { documentId: z.string().describe("The asset's documentId from list_assets.") },
   async ({ documentId }) => { await deleteAsset(db, ctx(), documentId, UPLOADS_DIR); await mcpAudit("asset.delete", documentId); return { ok: true }; });
 tool(
@@ -998,7 +1015,7 @@ tool(
 );
 tool(
   "create_upload_link", "content.create",
-  "Get a short-lived link for uploading LOCAL files (images, PDFs) into the media library — the way to upload files on your own machine, which this server can't read. POST them as multipart/form-data with the returned header, e.g. with curl (several -F file=@… per request is fine). The response lists each stored asset's documentId: set it on an image field with set_field, and give it alt text with update_asset_alt. The link uploads as you, into this site, and expires after 15 minutes. Returns {uploadUrl, headers, expiresAt, example, limits}: PNG, JPEG, GIF, WEBP or PDF, max 5 MB per file, up to 20 files per request. For a file at a public URL, or a stock photo, use upload_asset instead.",
+  "Get a 15-minute link for uploading LOCAL files (images, PDFs) into the media library — the way to upload files on your own machine, which this server can't read. POST them as multipart/form-data with the returned header, e.g. with curl (several -F file=@… per request is fine). The response lists each stored asset's documentId: set it on an image field with set_field, and give it alt text with update_asset_alt. The link uploads as you, into this site (pass `site` to upload into another), and expires after 15 minutes. Returns {uploadUrl, headers, expiresAt, example, limits}: PNG, JPEG, GIF, WEBP or PDF, max 5 MB per file, up to 20 files per request. Refused when the server has no PUBLIC_URL configured — then use upload_asset with dataBase64. For a file at a public URL, or a stock photo, use upload_asset instead.",
   {},
   async () => {
     if (!PUBLIC_URL) throw new Error("Upload links need PUBLIC_URL (the CMS's public origin, e.g. https://cms.example.com) set on the MCP server. Use upload_asset with a url or dataBase64 instead.");
@@ -1111,7 +1128,7 @@ tool(
 tool(
   "list_sites", "content.read",
   "Report where this server acts and in which languages. Returns: sites (every site you can reach: id, slug, name), activeSiteId, tokenScopedTo (the one site your token is limited to, or null), activeSite (startPageId — the page served at /, or null — and previewBaseUrl, where the admin previews a page as {previewBaseUrl}/{locale}{urlPath}), and locales (enabled language branches in order: code, displayName, isDefault, fallback). " +
-    "Anyone signed in may call it; it lists no content (use list_tree or list_content for that). Use it to pick the `locale` matching the language you write, so text lands in the right branch, and a slug to pass as `site` to other tools (pass `site` here too to see that site's setup). Content in another site is invisible to every tool, so an empty tree or search usually means the wrong site, not missing content.",
+    "It lists no content (use list_tree or list_content for that). Use it to pick the `locale` matching the language you write, so text lands in the right branch, and a slug to pass as `site` to other tools (pass `site` here too to see that site's setup). Content in another site is invisible to every tool, so an empty tree or search usually means the wrong site, not missing content.",
   {},
   async () => {
     const { startPageId, previewBaseUrl } = await getSiteConfig(db, ctx());
