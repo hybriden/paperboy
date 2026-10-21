@@ -29,7 +29,7 @@ The website you build on is a separate repo, the
 
 | | Your agent (MCP) | Your editors (admin) |
 |---|---|---|
-| **Gets in with** | OAuth sign-in (with 2FA) or a site-scoped token | Password + TOTP 2FA |
+| **Gets in with** | OAuth sign-in with a Paperboy login (2FA included) or a site-scoped token | Password, or email + TOTP code once 2FA is on |
 | **Sees** | Only the tools its role can use — an Author is never offered publish, users or webhooks | Only the sections and actions its role allows |
 | **Writes through** | The same Zod validation, RBAC and audit log — [parity is test-enforced](apps/api/test/mcp-parity.test.ts) | ← same |
 | **Is recorded as** | `via: mcp` on every version, badged **Agent edited** | `via: web` |
@@ -194,7 +194,7 @@ Container Apps, Cloud Run, Fly, Render, Railway) plus a managed Postgres.
 | Image | `ghcr.io/hybriden/paperboy-app:latest` |
 | Port | the platform's `PORT` (or `API_PORT`) |
 | `DATABASE_URL` | `postgresql://…@host:5432/paperboy?sslmode=require` |
-| Secrets | `SESSION_SECRET`, `CSRF_SECRET`, `MFA_SECRET` via `openssl rand -hex 32` |
+| Secrets | `SESSION_SECRET`, `CSRF_SECRET`, `MFA_SECRET` via `openssl rand -hex 32`; `PREVIEW_SECRET` too, set to the same value on your frontend, for draft preview |
 | `CORS_ORIGIN` | the admin's HTTPS origin, with `COOKIE_SECURE=true` |
 | `TRUST_PROXY` | the load-balancer range, so rate limits see real IPs |
 | Storage | a persistent volume at `/app/uploads` |
@@ -272,7 +272,7 @@ import { createClient, mediaUrl } from "@paperboycms/client";
 const cms = createClient({ baseUrl: "https://cms.example.com", key: process.env.PAPERBOY_PUBLIC_KEY! });
 const post = await cms.getBySlug<BlogPost>("hello-world", { locale: "en" });
 const { items } = await cms.list<BlogPost>("BlogPost", { sort: "-data.publishDate", limit: 10 });
-const src = mediaUrl(post!.data.image, { w: 640, format: "webp" });
+const src = post?.data.image && mediaUrl(post.data.image.url, { w: 640, format: "webp" }); // image fields arrive as {url, alt, …}
 ```
 
 Also `getByPath`, `startPage`, `global`, `search`, render helpers that follow `fieldTypes`,
@@ -301,8 +301,9 @@ packages/preview @paperboycms/preview — on-page-editing bridge (npm)
 pnpm install
 docker compose up -d db
 export DATABASE_URL=postgresql://paperboy:paperboy@localhost:5433/paperboy
+export UPLOADS_DIR=$PWD/.uploads            # the default, /app/uploads, is the container path
 pnpm db:seed
-pnpm dev                                    # api :8091, admin :8090, web :8092
+pnpm dev                                    # api :8091, admin :8090, web :8092 (mcp waits for MCP_TOKEN)
 
 pnpm --filter @paperboy/api test            # integration tests against a real Postgres
 pnpm --filter @paperboy/admin test:e2e      # Playwright e2e + axe
