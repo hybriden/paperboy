@@ -163,7 +163,7 @@ describe("update_content ergonomics: helpful errors + merge mode", () => {
     const msg = res.json().message as string;
     expect(msg).toContain("ogImage");
     expect(msg).toContain("not a URL");
-    expect(msg).toContain("import_stock_image"); // names the fix, not just the failure
+    expect(msg).toContain("upload_asset"); // names the fix, not just the failure
     expect(msg).toContain("'ogImage' is a image field"); // format hint appended as usual
   });
 

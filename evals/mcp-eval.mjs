@@ -328,9 +328,9 @@ async function pageIdSet(mcp) {
 
 /** Enabled locale codes + the default code. */
 async function localeInfo(mcp) {
-  const res = await mcp.call("list_locales");
-  const list = Array.isArray(res.json) ? res.json : [];
-  const enabled = list.filter((l) => l.enabled !== false).map((l) => l.code);
+  const res = await mcp.call("list_sites");
+  const list = Array.isArray(res.json?.locales) ? res.json.locales : [];
+  const enabled = list.map((l) => l.code);
   const def = (list.find((l) => l.isDefault) ?? list[0])?.code ?? "en";
   return { enabled: enabled.length ? enabled : ["en"], def };
 }
@@ -369,7 +369,7 @@ async function findOrCreateListPage(mcp, name, listedType, locale) {
   const id = created.json.documentId;
   await mcp.call("set_field", { documentId: id, locale, field: "heading", value: name });
   await mcp.call("update_content", { documentId: id, locale, data: { listedType }, merge: true });
-  await mcp.call("publish", { documentId: id, locale });
+  await mcp.call("publish_content", { documentId: id, locale });
   return id;
 }
 
@@ -413,7 +413,7 @@ async function universalInvariants(mcp, info, parents) {
   // published perspective.
   if (publishedVariants.length > 0) {
     const loc = publishedVariants[0].locale;
-    const delivered = await mcp.call("delivery_get", { documentId: info.documentId, locale: loc, preview: false });
+    const delivered = await harness.call("delivery_get", { documentId: info.documentId, locale: loc, preview: false });
     const seo = delivered.json && typeof delivered.json === "object" ? delivered.json.seo : null;
     const ok = Boolean(seo && typeof seo.title === "string" && seo.title.length > 0 && seo.jsonLd && seo.jsonLd["@type"]);
     add("delivers a complete SEO block (title + schema.org @type)", ok, ok ? `@type=${seo.jsonLd["@type"]}` : "missing/empty seo");
@@ -466,7 +466,7 @@ function scenarios(stamp) {
           await rec.call("set_field", { documentId: id, locale: "en", field: "title", value: title });
           await rec.call("set_field", { documentId: id, locale: "en", field: "body", value: "# Local AI\n\nRunning models locally is increasingly practical. This post covers the trade-offs of on-device inference." });
           await rec.call("set_field", { documentId: id, locale: "en", field: "summary", value: "A short note on running AI models locally." });
-          await rec.call("publish", { documentId: id, locale: "en" });
+          await rec.call("publish_content", { documentId: id, locale: "en" });
         }
         return rec.telemetry();
       },
@@ -496,7 +496,7 @@ function scenarios(stamp) {
         if (id) {
           await rec.call("set_field", { documentId: id, locale: "en", field: "heading", value: title });
           await rec.call("set_field", { documentId: id, locale: "en", field: "intro", value: "A small open-source project." });
-          await rec.call("publish", { documentId: id, locale: "en" });
+          await rec.call("publish_content", { documentId: id, locale: "en" });
         }
         return rec.telemetry();
       },
@@ -527,7 +527,7 @@ function scenarios(stamp) {
           await rec.call("set_field", { documentId: id, locale: "nb", field: "title", value: title });
           await rec.call("set_field", { documentId: id, locale: "nb", field: "body", value: "# Japansk interiør\n\nJapansk interiørdesign bygger på enkelhet, naturmaterialer og harmoni. Wabi-sabi feirer det ufullkomne og det forgjengelige." });
           await rec.call("set_field", { documentId: id, locale: "nb", field: "summary", value: "En kort introduksjon til japansk interiørdesign og wabi-sabi." });
-          await rec.call("publish", { documentId: id, locale: "nb" });
+          await rec.call("publish_content", { documentId: id, locale: "nb" });
         }
         return rec.telemetry();
       },
@@ -622,19 +622,31 @@ function printScenario(result, dryRun) {
 /* ------------------------------------------------------------------ *
  * Main
  * ------------------------------------------------------------------ */
+/** Every-toolset client for the harness's own checks (delivered output); set in main. */
+let harness;
+
 async function main() {
   const stamp = new Date().toISOString().slice(0, 19);
-  const mcp = new McpClient({ DATABASE_URL, MCP_EMAIL, MCP_PASSWORD, MCP_HTTP_PORT: "", MCP_TOKEN: "" });
+  // The agent sees the DEFAULT listing (the content toolset), exactly what a
+  // fresh connection gets; the harness reads delivery with every toolset.
+  const env = { DATABASE_URL, MCP_EMAIL, MCP_PASSWORD, MCP_HTTP_PORT: "", MCP_TOKEN: "" };
+  const mcp = new McpClient({ ...env, PAPERBOY_TOOLSETS: "" });
+  harness = new McpClient({ ...env, PAPERBOY_TOOLSETS: "all" });
+  const stop = () => {
+    mcp.kill();
+    harness.kill();
+  };
 
   try {
     await mcp.initialize();
+    await harness.initialize();
     const tools = (await mcp.listTools()).map(toAnthropicTool);
     const loc = await localeInfo(mcp);
     let all = scenarios(stamp);
     if (ONLY) all = all.filter((s) => s.id === ONLY);
     if (!all.length) {
       console.error(`[eval] no scenario matches --only=${ONLY}`);
-      mcp.kill();
+      stop();
       process.exit(2);
     }
 
@@ -646,7 +658,7 @@ async function main() {
         const ctx = (await s.setup(mcp, loc)) ?? {};
         console.log(`  setup[${s.id}] -> ${JSON.stringify(ctx)}`);
       }
-      mcp.kill();
+      stop();
       process.exit(0);
     }
 
@@ -668,12 +680,12 @@ async function main() {
     console.log(`\n${line}`);
     console.log(`  OVERALL: ${allPass ? "PASS" : "FAIL"} — ${results.length} scenario(s)`);
     console.log(line + "\n");
-    mcp.kill();
+    stop();
     process.exit(allPass ? 0 : 1);
   } catch (err) {
     console.error("\n[eval] FATAL:", err instanceof Error ? err.stack : String(err));
     if (mcp.stderr) console.error("[eval] MCP stderr tail:\n" + mcp.stderr.slice(-2000));
-    mcp.kill();
+    stop();
     process.exit(2);
   }
 }

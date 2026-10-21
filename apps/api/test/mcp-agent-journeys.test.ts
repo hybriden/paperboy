@@ -120,7 +120,7 @@ describe("MCP agent journeys (real production sequences)", () => {
     });
 
     it("publish succeeds and the delivery output is byte-identical (no flattening, no mangling)", async () => {
-      const pub = await mcp.call("publish", { documentId: docId, locale: "en" });
+      const pub = await mcp.call("publish_content", { documentId: docId, locale: "en" });
       expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
 
       const res = await deliveryBySlug("gpu-prices-climb-again-what-it-means", "en");
@@ -150,7 +150,7 @@ describe("MCP agent journeys (real production sequences)", () => {
       // Orientation phase, as the real agent did it.
       expect((await mcp.call("list_content_types")).isError).toBe(false);
       expect((await mcp.call("list_tree", {})).isError).toBe(false);
-      expect((await mcp.call("list_locales")).isError).toBe(false);
+      expect((await mcp.call("list_sites")).isError).toBe(false);
 
       const created = await mcp.call("create_content", {
         type: "BlogPost",
@@ -170,7 +170,7 @@ describe("MCP agent journeys (real production sequences)", () => {
         expect(r.isError, r.text.slice(0, 200)).toBe(false);
       }
 
-      const pub = await mcp.call("publish", { documentId: docId, locale: "nb" });
+      const pub = await mcp.call("publish_content", { documentId: docId, locale: "nb" });
       expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
       const published = pub.json as { name: string; slug: string };
       // THE incident assertions: never "Untitled", never /untitled.
@@ -194,7 +194,7 @@ describe("MCP agent journeys (real production sequences)", () => {
         const r = await mcp.call("set_field", { documentId: docId, locale: "en", field, value });
         expect(r.isError, r.text.slice(0, 200)).toBe(false);
       }
-      const pub = await mcp.call("publish", { documentId: docId, locale: "en" });
+      const pub = await mcp.call("publish_content", { documentId: docId, locale: "en" });
       expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
 
       const en = await deliveryBySlug("japansk-interior-en-historie", "en");
@@ -374,7 +374,7 @@ describe("MCP agent journeys (real production sequences)", () => {
         expect(r.isError).toBe(false);
       }
 
-      const pub = await mcp.call("publish", { documentId: docId, locale: "en" });
+      const pub = await mcp.call("publish_content", { documentId: docId, locale: "en" });
       expect(pub.isError).toBe(true);
       // Names the detected language, the branch, AND the atomic recovery path.
       expect(pub.text).toContain("nb");
@@ -383,7 +383,7 @@ describe("MCP agent journeys (real production sequences)", () => {
     });
 
     it("the explicit override publishes when the mismatch is intended", async () => {
-      const pub = await mcp.call("publish", { documentId: docId, locale: "en", allowLanguageMismatch: true });
+      const pub = await mcp.call("publish_content", { documentId: docId, locale: "en", allowLanguageMismatch: true });
       expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
     });
 
@@ -404,7 +404,7 @@ describe("MCP agent journeys (real production sequences)", () => {
       await mcp.call("set_field", { documentId: id, locale: "en", field: "body", value: NORSK_BODY, allowLanguageMismatch: true });
       await mcp.call("set_field", { documentId: id, locale: "en", field: "tags", value: "Interiør, Japan", allowLanguageMismatch: true });
 
-      const refused = await mcp.call("publish", { documentId: id, locale: "en" });
+      const refused = await mcp.call("publish_content", { documentId: id, locale: "en" });
       expect(refused.isError).toBe(true);
       // The error steers to the atomic move.
       expect(refused.text).toContain("copy_variant");
@@ -417,7 +417,7 @@ describe("MCP agent journeys (real production sequences)", () => {
       expect(nb.data.title).toBe("Atomisk flytting");
       expect(nb.data.tags).toBe("Interiør, Japan");
 
-      const pub = await mcp.call("publish", { documentId: id, locale: "nb" });
+      const pub = await mcp.call("publish_content", { documentId: id, locale: "nb" });
       expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
 
       // …and the mistaken en draft can be dropped, leaving nb as the only branch.
@@ -443,7 +443,7 @@ describe("MCP agent journeys (real production sequences)", () => {
         value:
           "# English post\n\nThis is a perfectly ordinary English article about hardware prices and the things we have seen in the market this year. It should publish without any language guard getting in the way of the agent doing its job.",
       });
-      const pub = await mcp.call("publish", { documentId: id, locale: "en" });
+      const pub = await mcp.call("publish_content", { documentId: id, locale: "en" });
       expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
     });
   });
@@ -511,14 +511,14 @@ describe("MCP agent journeys (real production sequences)", () => {
       const created = await mcp.call("create_content", { type: "BlogPost", locale: "en", name: "Premature publish", parentId: s.ids.blogId });
       const docId = (created.json as { documentId: string }).documentId;
 
-      const early = await mcp.call("publish", { documentId: docId, locale: "en" });
+      const early = await mcp.call("publish_content", { documentId: docId, locale: "en" });
       expect(early.isError).toBe(true);
       expect(early.text).toContain("title"); // names the missing field
       expect(early.text).toContain("merge:true"); // and the recovery path
 
       const fix = await mcp.call("set_field", { documentId: docId, locale: "en", field: "title", value: "Premature publish" });
       expect(fix.isError).toBe(false);
-      const pub = await mcp.call("publish", { documentId: docId, locale: "en" });
+      const pub = await mcp.call("publish_content", { documentId: docId, locale: "en" });
       expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
     });
   });

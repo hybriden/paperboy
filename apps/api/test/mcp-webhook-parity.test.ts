@@ -78,12 +78,12 @@ describe("MCP publish/unpublish fire the same webhooks as the manage routes", ()
     const { documentId } = created.json as { documentId: string };
 
     const before = stub.events.length;
-    const published = await mcp.call("publish", { documentId, locale: "en" });
+    const published = await mcp.call("publish_content", { documentId, locale: "en" });
     expect(published.isError, published.text).toBe(false);
     expect(await waitFor(stub.events, "content.published", before), `events: ${stub.events.join(",")}`).toBe(true);
 
     const mid = stub.events.length;
-    const unpublished = await mcp.call("unpublish", { documentId, locale: "en" });
+    const unpublished = await mcp.call("unpublish_content", { documentId, locale: "en" });
     expect(unpublished.isError, unpublished.text).toBe(false);
     expect(await waitFor(stub.events, "content.unpublished", mid), `events: ${stub.events.join(",")}`).toBe(true);
   }, 60_000);

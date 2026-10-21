@@ -14,10 +14,21 @@ export interface McpHttpDeps {
   challenge?: string;
   /** OAuth protected-resource metadata (RFC 9728), served at these paths. */
   resourceMetadata?: { paths: string[]; body: unknown };
-  buildServer: () => McpServer;
+  /** A server for a new session; may throw an HttpError to refuse it (e.g. a bad ?toolsets=). */
+  buildServer: (req: IncomingMessage) => McpServer;
   sessions: Map<string, StreamableHTTPServerTransport>;
   /** Last-touched timestamp per session id, for the idle sweep. */
   lastSeen: Map<string, number>;
+}
+
+/** A request the client got wrong: answered with this status and message, not a 500. */
+export class HttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
 }
 
 const json = (res: ServerResponse, code: number, body: unknown, extra: Record<string, string> = {}): void => {
@@ -96,10 +107,14 @@ export function makeMcpHttpHandler(deps: McpHttpDeps) {
           deps.lastSeen.delete(transport.sessionId);
         }
       };
-      const reqServer = deps.buildServer();
+      const reqServer = deps.buildServer(req);
       await reqServer.connect(transport);
       await transport.handleRequest(req, res);
     } catch (err) {
+      if (err instanceof HttpError) {
+        json(res, err.status, { error: err.message });
+        return;
+      }
       console.error("[paperboy-mcp] request error:", err);
       if (!res.headersSent) json(res, 500, { error: "internal error" });
     }

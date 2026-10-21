@@ -136,7 +136,7 @@ describe("MCP: uploading the agent's own files", () => {
 
     const neither = await mcp.call("upload_asset", { alt: "x" });
     expect(neither.isError).toBe(true);
-    expect(neither.text).toMatch(/exactly one of url or dataBase64/);
+    expect(neither.text).toMatch(/exactly one of url, dataBase64 or stockImageId/);
   }, 60_000);
 
   it("upload_asset refuses a URL that points inside the network (SSRF)", async () => {
