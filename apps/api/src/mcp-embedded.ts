@@ -1,6 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { FastifyBaseLogger } from "fastify";
 
 /** apps/mcp — beside this app in the monorepo and in the image. */
@@ -31,14 +31,16 @@ export function startEmbeddedMcp(opts: {
   env?: NodeJS.ProcessEnv;
   restartDelayMs?: number;
 }): EmbeddedMcp {
-  const tsxCli = createRequire(`${MCP_DIR}package.json`).resolve("tsx/cli");
+  const tsxLoader = pathToFileURL(createRequire(`${MCP_DIR}package.json`).resolve("tsx")).href;
   const restartDelayMs = opts.restartDelayMs ?? 5_000;
   let child: ChildProcess | undefined;
   let stopped = false;
   let restartTimer: NodeJS.Timeout | undefined;
 
   const start = (): void => {
-    const proc = spawn(process.execPath, [tsxCli, "src/server.ts"], {
+    // tsx as a loader, not the tsx CLI: the CLI runs the server as a grandchild,
+    // which a SIGKILLed (crashed) CLI orphans, still holding the port.
+    const proc = spawn(process.execPath, ["--import", tsxLoader, "src/server.ts"], {
       cwd: MCP_DIR,
       env: { ...(opts.env ?? process.env), MCP_HTTP_PORT: String(opts.port), PUBLIC_URL: opts.publicUrl },
       stdio: ["ignore", "inherit", "inherit"],
