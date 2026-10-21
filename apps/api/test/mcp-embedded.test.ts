@@ -70,6 +70,10 @@ describe("embedded MCP server behind /mcp", () => {
     const crashed = mcp.current()!;
     crashed.kill("SIGKILL");
     await new Promise((r) => crashed.once("exit", r));
+    // The crash took the server down: nothing may keep answering (an orphaned
+    // grandchild once did, holding the port and hanging the test runner).
+    const down = await fetch(`${base}/mcp`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+    expect(down.status).toBe(502);
     const deadline = Date.now() + 10_000;
     while (!mcp.current() && Date.now() < deadline) await new Promise((r) => setTimeout(r, 50));
     expect(mcp.current()?.pid).not.toBe(crashed.pid);
