@@ -219,12 +219,34 @@ once you have forms, visitor personal data. Cron lines and the restore procedure
 
 ## MCP setup
 
+**Remote clients (Streamable HTTP).** Start the MCP container; the api forwards `/mcp` to it, so
+clients use the admin's own domain:
+
 ```bash
-# Mint a token in Settings → MCP, then run locally over stdio:
-MCP_TOKEN=mcp_… DATABASE_URL=postgresql://… pnpm --filter @paperboy/mcp start
-# …or over Streamable HTTP for remote clients:
 docker compose --profile mcp up -d --no-deps mcp      # → https://<your-domain>/mcp
 ```
+
+On a one-container host, set `MCP_EMBEDDED=true` on the api instead and it serves the MCP itself.
+
+**Local clients (stdio).** The client starts the server, so this goes in its config, not a terminal.
+Mint a token in Settings → MCP and point `-C` at your Paperboy checkout (after `pnpm install`):
+
+```json
+{
+  "mcpServers": {
+    "paperboy": {
+      "command": "pnpm",
+      "args": ["-s", "-C", "/path/to/paperboy", "--filter", "@paperboy/mcp", "start"],
+      "env": {
+        "MCP_TOKEN": "mcp_…",
+        "DATABASE_URL": "postgresql://paperboy:paperboy@localhost:5433/paperboy"
+      }
+    }
+  }
+}
+```
+
+Keep `-s`: without it pnpm prints its script banner to stdout, which corrupts the stdio protocol.
 
 The MCP acts as a Paperboy user and inherits its permissions. Tokens are minted per site (or for
 every site); `PAPERBOY_SITE` pins a server to one site, and every tool also takes a per-call `site`.
