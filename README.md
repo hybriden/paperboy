@@ -249,7 +249,23 @@ Mint a token in Settings → MCP and point `-C` at your Paperboy checkout (after
 Keep `-s`: without it pnpm prints its script banner to stdout, which corrupts the stdio protocol.
 
 The MCP acts as a Paperboy user and inherits its permissions. Tokens are minted per site (or for
-every site); `PAPERBOY_SITE` pins a server to one site, and every tool also takes a per-call `site`.
+every site); `PAPERBOY_SITE` pins a server to one site, and every per-site tool also takes a per-call `site`.
+
+**Toolsets.** A connection lists the `content` tools by default (writing, editing, publishing,
+media). The rest is opt-in, so an agent writing a page isn't choosing among user and webhook tools:
+
+| Toolset | For |
+|---|---|
+| `content` (default) | pages, blocks, globals, versions, trash, media, the writing assistant |
+| `delivery` | what the public website receives (published output, search) |
+| `schema` | content types and type templates |
+| `redirects` | redirect rules and the 404 log |
+| `forms` | form submissions (export, erasure) |
+| `admin` | users, delivery keys, webhooks, audit log, start page |
+
+Pick them with `PAPERBOY_TOOLSETS=content,redirects` on the server, or per connection on the URL:
+`https://<your-domain>/mcp?toolsets=content,redirects` (`all` lists everything). Your role still
+decides what you may do; a tool outside the chosen toolsets answers with how to enable it.
 
 **OAuth for remote clients.** Add `https://<your-domain>/mcp` as a connector in Claude or Cursor. The
 client registers itself, sends you through Paperboy's own login (with 2FA), and a consent screen asks

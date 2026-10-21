@@ -10,6 +10,9 @@ export default defineConfig({
     fileParallelism: false,
     pool: "forks",
     maxWorkers: 1,
+    // Spawned MCP servers inherit this: suites exercise every toolset, and
+    // mcp-toolsets.test.ts overrides it to pin the real (content-only) default.
+    env: { PAPERBOY_TOOLSETS: "all" },
     coverage: {
       provider: "v8",
       // This suite drives the API over real HTTP against a real Postgres, so it

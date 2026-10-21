@@ -5,7 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
-import { makeMcpHttpHandler, sweepIdleSessions } from "./http-handler.js";
+import { HttpError, makeMcpHttpHandler, sweepIdleSessions } from "./http-handler.js";
 import {
   type AccessContext,
   adminCreateUser,
@@ -97,7 +97,7 @@ import {
   verifyOAuthAccessToken,
   schemaTables,
 } from "@paperboy/db";
-import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, RoleName, TYPE_TEMPLATE_EXPORT_FORMAT, TYPE_TEMPLATE_EXPORT_VERSION, aiAssist, fieldFormatHint, redactForLog } from "@paperboy/shared";
+import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, ROLE_PERMISSIONS, RoleName, TYPE_TEMPLATE_EXPORT_FORMAT, TYPE_TEMPLATE_EXPORT_VERSION, aiAssist, fieldFormatHint, redactForLog } from "@paperboy/shared";
 import { z } from "zod";
 
 /**
@@ -355,10 +355,81 @@ function mcpAudit(action: string, documentId?: string | null, locale?: string | 
 // request needs its own server+transport to carry the MCP init handshake.
 // `permission` (null = anyone signed in) decides whether the session's user
 // is shown the tool at all; the wrapper also enforces it on every call.
-type ToolRegistration = { permission: Permission | null; register: (server: McpServer) => void };
+type ToolRegistration = { name: string; permission: Permission | null; register: (server: McpServer) => void };
 const registrations: ToolRegistration[] = [];
 
-/** Register a tool whose handler returns any JSON-serialisable value. */
+/**
+ * What a session LISTS. The default is `content`: what an agent writing pages
+ * needs. The rest is opt-in, per server (PAPERBOY_TOOLSETS) or per HTTP
+ * connection (?toolsets=), because 64 tools in every listing — users, keys and
+ * webhooks beside the page being written — made agents slower to pick the right
+ * one. Roles still decide what may be CALLED; toolsets only decide what is
+ * listed. Every tool is in exactly one toolset (checked as it registers).
+ */
+const TOOLSETS = {
+  content: [
+    "list_tree", "list_content", "get_content", "list_content_types", "list_sites", "list_versions",
+    "create_content", "update_content", "set_field", "duplicate_content", "copy_variant", "move_content",
+    "discard_draft", "restore_version", "publish_content", "unpublish_content", "trash_content", "restore_content",
+    "list_assets", "upload_asset", "create_upload_link", "search_stock_images", "update_asset_alt", "delete_asset", "assist_writing",
+  ],
+  delivery: ["delivery_get", "delivery_list", "delivery_search"],
+  schema: [
+    "create_content_type", "update_content_type", "list_type_templates", "create_type_template", "update_type_template",
+    "delete_type_template", "instantiate_type_template", "export_type_templates", "import_type_templates",
+  ],
+  redirects: ["list_redirects", "create_redirect", "update_redirect", "delete_redirect", "test_redirect", "list_not_found"],
+  forms: ["list_forms", "list_form_submissions", "export_form_submissions", "erase_form_submissions"],
+  admin: [
+    "set_start_page", "list_users", "create_user", "update_user", "delete_user", "list_delivery_keys", "create_delivery_key",
+    "rename_delivery_key", "revoke_delivery_key", "list_webhooks", "create_webhook", "delete_webhook", "list_audit",
+  ],
+} as const satisfies Record<string, readonly string[]>;
+type Toolset = keyof typeof TOOLSETS;
+const TOOLSET_NAMES = Object.keys(TOOLSETS) as Toolset[];
+const TOOLSET_OF = new Map<string, Toolset>(TOOLSET_NAMES.flatMap((set) => TOOLSETS[set].map((name) => [name, set] as const)));
+
+/** "content,redirects" | "all" | "" (the default) → the toolsets to list. An
+ *  unknown name throws rather than falling back: a typo that silently listed
+ *  the default would look like the setting worked. */
+function parseToolsets(raw: string | null | undefined): Set<Toolset> {
+  const names = (raw ?? "").split(",").map((n) => n.trim().toLowerCase()).filter(Boolean);
+  if (names.length === 0) return new Set(["content"]);
+  if (names.includes("all")) return new Set(TOOLSET_NAMES);
+  const unknown = names.filter((n) => !Object.hasOwn(TOOLSETS, n));
+  if (unknown.length) {
+    throw new Error(`Unknown toolset ${unknown.map((n) => `"${n}"`).join(", ")}. Use a comma list of: ${TOOLSET_NAMES.join(", ")} — or all.`);
+  }
+  return new Set(names as Toolset[]);
+}
+const bootToolsets = (() => {
+  try {
+    return parseToolsets(process.env.PAPERBOY_TOOLSETS);
+  } catch (err) {
+    console.error(`[paperboy-mcp] PAPERBOY_TOOLSETS: ${(err as Error).message}`);
+    process.exit(1);
+  }
+})();
+
+/** Tools over data every site shares (content types, templates, users, the audit
+ *  log, the AI config): a `site` argument would be ignored, so they don't offer one. */
+const INSTANCE_WIDE_TOOLS = new Set([
+  "list_content_types", "create_content_type", "update_content_type", "list_type_templates", "create_type_template",
+  "update_type_template", "delete_type_template", "instantiate_type_template", "export_type_templates", "import_type_templates",
+  "list_users", "create_user", "update_user", "delete_user", "list_audit", "assist_writing",
+]);
+
+/** Retired tool names (#121): calling one answers with what replaced it. */
+const RETIRED_TOOLS: Record<string, string> = {
+  list_trash: "list_trash was merged into list_content: call it with {kind: \"trash\"}.",
+  list_locales: "list_locales was merged into list_sites: read its `locales` field.",
+  import_stock_image: "import_stock_image was merged into upload_asset: call it with {stockImageId}.",
+  delete_form_submission: "delete_form_submission was merged into erase_form_submissions: call it with {submissionId}.",
+  publish: "publish was renamed to publish_content (same arguments).",
+  unpublish: "unpublish was renamed to unpublish_content (same arguments).",
+  ai_assist: "ai_assist was renamed to assist_writing (same arguments).",
+};
+
 const SITE_ARG = z
   .string()
   .optional()
@@ -369,17 +440,19 @@ const SITE_ARG = z
 /** Writes that remove or take down data (MCP `destructiveHint`). Trash is
  *  absent on purpose: restore_content undoes it. */
 const DESTRUCTIVE_TOOLS = new Set([
-  "unpublish", "discard_draft", "delete_asset", "delete_form_submission", "erase_form_submissions",
+  "unpublish_content", "discard_draft", "copy_variant", "restore_version", "delete_asset", "erase_form_submissions",
   "delete_type_template", "delete_redirect", "delete_user", "revoke_delivery_key", "delete_webhook",
+  // Replace a whole definition or list: what the call leaves out is gone.
+  "update_content_type", "update_type_template", "update_user", "import_type_templates", "instantiate_type_template",
 ]);
 /** Writes where repeating the same call leaves the same state (MCP `idempotentHint`). */
 const IDEMPOTENT_TOOLS = new Set([
-  "update_content", "set_field", "copy_variant", "move_content", "update_content_type", "update_type_template",
+  "update_content", "set_field", "move_content", "update_content_type", "update_type_template",
   "update_asset_alt", "set_start_page", "update_redirect", "update_user", "rename_delivery_key",
 ]);
 /** Tools that reach a service outside this CMS (stock provider, AI model, arbitrary URL). */
-const OPEN_WORLD_TOOLS = new Set(["search_stock_images", "import_stock_image", "upload_asset", "ai_assist"]);
-const isReadOnlyTool = (name: string) => name === "ai_assist" || /^(list|get|delivery|search|test|export)_/.test(name);
+const OPEN_WORLD_TOOLS = new Set(["search_stock_images", "upload_asset", "assist_writing"]);
+const isReadOnlyTool = (name: string) => name === "assist_writing" || /^(list|get|delivery|search|test|export)_/.test(name);
 
 function toolAnnotations(name: string): ToolAnnotations {
   const openWorldHint = OPEN_WORLD_TOOLS.has(name);
@@ -394,7 +467,8 @@ function tool<S extends z.ZodRawShape>(
   shape: S,
   run: (args: z.infer<z.ZodObject<S>>) => Promise<unknown>,
 ): void {
-  registrations.push({ permission, register: (server) => {
+  if (!TOOLSET_OF.has(name)) throw new Error(`MCP tool ${name} is in no toolset: add it to TOOLSETS in apps/mcp/src/server.ts`);
+  registrations.push({ name, permission, register: (server) => {
     const cb = async (raw: z.infer<z.ZodObject<S>> & { site?: string }) => {
       try {
         // `site` is ours, not the handler's: strip it before the args reach a
@@ -421,21 +495,72 @@ function tool<S extends z.ZodRawShape>(
     };
     // The SDK's tool callback type is heavily generic; the wrapper above keeps each
     // tool's `run` strongly typed against its Zod shape, so cast only at this boundary.
-    // Multisite: EVERY tool takes an optional `site`, so one server reaches every
-    // site in the instance. Omitted, it acts in PAPERBOY_SITE (else the Default).
-    server.registerTool(name, { description, inputSchema: { ...shape, site: SITE_ARG }, annotations: toolAnnotations(name) }, cb as never);
+    // Multisite: every per-site tool takes an optional `site`, so one server reaches
+    // every site in the instance. Omitted, it acts in PAPERBOY_SITE (else the Default).
+    const inputSchema = INSTANCE_WIDE_TOOLS.has(name) ? shape : { ...shape, site: SITE_ARG };
+    server.registerTool(name, { description: withPermission(description, permission), inputSchema, annotations: toolAnnotations(name) }, cb as never);
   } });
 }
 
-/** Build a server listing only the tools the current user's role can call:
- *  an Author never sees user, key, webhook or audit tools it would be refused. */
-function buildServer(): McpServer {
-  const server = new McpServer({ name: "paperboy", version: "0.1.0" });
+/** State the permission a tool needs, from the same declaration that enforces
+ *  it, so a description can never claim a different gate than the server applies. */
+function withPermission(description: string, permission: Permission | null): string {
+  if (!permission || description.includes(permission)) return description;
+  const roles = RoleName.options.filter((role) => ROLE_PERMISSIONS[role].includes(permission));
+  // An Author's content permissions stop at its sections (deny-by-default in the query layer).
+  const scoped = roles.includes("Author") && permission.startsWith("content.") ? " — an Author only within their own sections" : "";
+  return `${description} Requires the ${permission} permission (${roles.join(", ")}${scoped}).`;
+}
+
+const toolsetList =(sets: Iterable<Toolset>) => TOOLSET_NAMES.filter((n) => new Set(sets).has(n)).join(",");
+
+/** Build a server listing the tools of `toolsets` that the current user's role
+ *  can call: an Author never sees user, key, webhook or audit tools it would be
+ *  refused, and a content-only session doesn't see the admin ones. */
+function buildServer(toolsets: ReadonlySet<Toolset> = bootToolsets): McpServer {
+  const others = TOOLSET_NAMES.filter((n) => !toolsets.has(n));
+  const server = new McpServer(
+    { name: "paperboy", version: "0.1.0" },
+    {
+      instructions:
+        `Paperboy CMS. Listing the ${toolsetList(toolsets)} toolset(s).` +
+        (others.length ? ` Also available: ${others.join(", ")} (set PAPERBOY_TOOLSETS on the server or ?toolsets= on the MCP URL, e.g. ?toolsets=${toolsetList(toolsets)},${others[0]}; "all" lists everything).` : ""),
+    },
+  );
   const granted = new Set(ctx().permissions);
-  for (const { permission, register } of registrations) {
-    if (!permission || granted.has(permission)) register(server);
+  const unlisted = new Map<string, string>(Object.entries(RETIRED_TOOLS));
+  for (const { name, permission, register } of registrations) {
+    if (permission && !granted.has(permission)) continue;
+    const set = TOOLSET_OF.get(name)!;
+    if (toolsets.has(set)) {
+      register(server);
+    } else {
+      const wanted = toolsetList([...toolsets, set]);
+      unlisted.set(name, `${name} is in the "${set}" toolset, which this connection doesn't list. Enable it with PAPERBOY_TOOLSETS=${wanted} on the server, or ?toolsets=${wanted} on the MCP URL.`);
+    }
   }
+  answerUnlistedTools(server, unlisted);
   return server;
+}
+
+/**
+ * A call to a tool this session doesn't list answers with how to reach it (rule
+ * #2) instead of the SDK's bare "Tool X not found". The SDK has no hook for
+ * that, so this wraps its tools/call handler; mcp-toolsets.test.ts pins the
+ * behaviour, so an SDK upgrade that moves the handler fails there, not silently.
+ */
+function answerUnlistedTools(server: McpServer, unlisted: ReadonlyMap<string, string>): void {
+  type Handler = (request: { params?: { name?: string } }, extra: unknown) => Promise<unknown>;
+  const handlers = (server.server as unknown as { _requestHandlers: Map<string, Handler> })._requestHandlers;
+  const inner = handlers.get("tools/call");
+  if (!inner) return; // no tool registered at all: there is no tools/call to answer
+  handlers.set("tools/call", (request, extra) => {
+    const name = request.params?.name ?? "";
+    const why = unlisted.get(name);
+    if (!why) return inner(request, extra);
+    console.error(`[paperboy-mcp] tool ${name} refused: ${why}`);
+    return Promise.resolve({ content: [{ type: "text", text: `Error: ${why}` }], isError: true });
+  });
 }
 
 const loc = z.string().optional().describe("Locale code. Omit for the document's own locale (its site-default variant, else its only variant).");
@@ -450,36 +575,32 @@ const isoInstant = (field: string) =>
 /* ------------------------------- content ------------------------------- */
 tool(
   "list_tree", "content.read",
-  "List ONE level of the page tree: the direct children of parentId, or the top-level pages when it is omitted, in the order the container sorts them. Each node has documentId, type, name, per-locale status and hasChildren — call list_tree again with a node's documentId to go deeper. Use it to find the parentId for create_content/move_content. For every page at once use list_content {kind:'page'}; shared blocks and globals are not in the tree (list_content with kind block or global).",
+  "List ONE level of the page tree: the direct children of parentId, or the top-level pages when it is omitted, in the order the container sorts them, the whole level in one call. Returns an array of nodes, each with documentId, type, name, per-locale status and hasChildren — call list_tree again with a node's documentId to go deeper. Trashed pages are left out, and a page without children (or a parentId that matches nothing) gives [] rather than an error, so check hasChildren first. Use it to find the parentId for create_content/move_content. For every page at once use list_content {kind:'page'}; shared blocks and globals are not in the tree (list_content with kind block or global).",
   { parentId: z.string().optional().describe("documentId of the page whose children to list. Omit for the top level.") },
   ({ parentId }) => getTree(db, ctx(), parentId ?? null));
 tool(
   "get_content", "content.read",
-  "Read one content item for editing: its working version (the draft if one exists, else the published version) in one locale, with name, slug, status, revision and the full `data` field map. Read this before update_content so you merge into current values, and pass its `revision` when replacing with merge:false. To see what visitors get instead (published only, private fields removed), use delivery_get.",
+  "Read one content item for editing: its working version (the draft if one exists, else the published version) in one locale, with name, slug, status, revision and the full `data` field map. Read this before update_content so you merge into current values, and pass its `revision` when replacing with merge:false. `data` maps each field name to its value in the shape list_content_types reports (valueFormat). An unknown documentId, or one from another site, is refused as not found (pass `site` for another site); omit locale for the item's own language. This is the editing view; for the public view (published only, private fields removed) use delivery_get, in the delivery toolset.",
   { documentId: docId, locale: loc },
   async ({ documentId, locale }) => getContent(db, ctx(), documentId, await locFor(documentId, locale)));
 tool(
   "create_content", "content.create",
   [
-    "Create a new content item (page/block/global) as a draft.",
-    "Pass the field content in `data` (field name → value, same shapes as update_content)",
-    "to fill the page in ONE call — strongly preferred for a one-shot create. If you omit",
-    "`data` it creates an EMPTY shell (name + auto slug only) that you MUST then fill with",
-    "update_content/set_field, or the page stays blank. Either way: list_content_types {name} first",
-    "to learn the field names/shapes for this type.",
-    "IMPORTANT: pages almost always belong UNDER an existing parent — a page's position",
-    "decides its URL and which template the frontend renders it with (a blog post created",
-    "at root gets a generic layout and looks empty when published). Call `list_tree` first and",
-    "pass the right parentId (e.g. blog posts/articles go under their blog/list page).",
-    "Omit parentId ONLY for genuinely top-level pages like the site's main sections.",
-    "Under a LIST PAGE, the type must match what that page lists (its listedType):",
-    "OMIT type to inherit it, or a mismatch is refused (the content would publish",
-    "but never appear on the list).",
+    "Create a new content item (page, block or global) as an unpublished draft, filled in ONE call:",
+    "pass its fields in `data` (shapes from list_content_types {name}). Without `data` you get an",
+    "empty shell that stays blank until update_content/set_field fills it.",
+    "A page's position decides its URL and the template that renders it, so find the right",
+    "parentId with list_tree (blog posts go under their blog page); omit it only for top-level",
+    "sections. Under a list page, omit `type` to inherit the type it lists — a mismatch is refused,",
+    "since the item would never appear on that list.",
+    "Returns the new item in the get_content shape (documentId, locale, revision, data…), plus a",
+    "`hint` when it still needs filling or placing. Then publish_content. To copy an existing item",
+    "instead, use duplicate_content.",
   ].join(" "),
   {
     type: z.string().optional().describe("Content type name. Under a list-page parent, OMIT to inherit the type that page lists; a mismatch is refused unless allowTypeMismatch."),
     parentId: z.string().nullable().optional().describe("documentId of the parent page. Required in practice for pages — find it with `list_tree`. Omit only for top-level pages."),
-    locale: z.string().optional().describe("The LANGUAGE BRANCH for this content — MATCH the language you are writing (Norwegian content → 'nb', English → 'en'). Call list_locales to see the site's branches. Defaults to the site default locale, which is usually English."),
+    locale: z.string().optional().describe("The LANGUAGE BRANCH for this content — MATCH the language you are writing (Norwegian content → 'nb', English → 'en'). list_sites reports the site's branches (`locales`). Defaults to the site default locale, which is usually English."),
     name: z.string().describe("Display name of the item (also the source of a page's auto slug), e.g. 'Summer sale 2026'."),
     data: z.record(z.string(), z.unknown()).optional().describe("Initial field values (field name → value), same shapes as update_content. Provide this to create a FILLED draft in one call. Call list_content_types {name} first for the field names/shapes."),
     slug: z.string().optional().describe("URL slug for a page. Omit to auto-derive from the name."),
@@ -512,7 +633,7 @@ tool(
     if (!hasData) {
       hints.push(
         `NEXT: this draft has NO content yet — call update_content {documentId:"${created.documentId}", data:{…}} ` +
-          "(or set_field) to write the body and other fields now, then publish. Until then the page is blank.",
+          "(or set_field) to write the body and other fields now, then publish_content. Until then the page is blank.",
       );
     }
     if (created.kind === "page" && !parentId) {
@@ -526,19 +647,18 @@ tool(
 tool(
   "update_content", "content.update",
   [
-    "Save the working draft of a content item. `data` maps field name → value.",
-    "For LONG text/markdown values prefer set_field: a flat string parameter survives",
-    "tool-call serialization that can mangle long strings nested inside `data`.",
-    "IMPORTANT: each field's value shape depends on its content-type field TYPE —",
-    "call list_content_types {name} first. text/markdown → a plain string; richtext → a TipTap",
-    "doc object {type:'doc',content:[…]}; contentArea → an ARRAY of block instances;",
-    "reference → {documentId,type?}; select → one option-value string; image → an asset id.",
-    "By default `data` is MERGED over the current draft — fields you omit are kept.",
-    "Pass merge:false to REPLACE the whole map (then you must send every required field,",
-    "or the next publish will fail validation).",
-    "With merge:false, also pass the `revision` you got from get_content: the write is",
-    "then refused (409) if a human editor changed the draft meanwhile, instead of",
-    "overwriting them. Merged writes don't need it — they read current data at write time.",
+    "Save fields into a content item's working draft; nothing goes live until publish_content.",
+    "Each value's shape follows its field type (list_content_types {name} gives valueFormat):",
+    "text/markdown → string; richtext → TipTap doc {type:'doc',content:[…]}; contentArea → array",
+    "of block instances; reference → {documentId}; image → asset documentId.",
+    "`data` is MERGED over the draft by default, so omitted fields are kept; merge:false replaces",
+    "the whole map (send every required field, and the get_content `revision` so a concurrent",
+    "human edit is refused with 409 instead of overwritten).",
+    "For one LONG text/markdown value use set_field: nested long strings can be mangled in transit.",
+    "A value of the wrong shape is refused with the field, the expected shape and an example; text",
+    "in another language than the branch is refused unless allowLanguageMismatch. An agent's edit",
+    "marks the draft for review and cancels a pending scheduled publish of it.",
+    "Returns the saved draft in the get_content shape, with its new revision.",
   ].join(" "),
   { documentId: docId, locale: loc, name: z.string().optional().describe("New display name. Omit to keep it."), slug: z.string().nullable().optional().describe("New URL slug for a page; publishing it adds a 301 from the old URL automatically. Omit to keep it."), displayInNav: z.boolean().optional().describe("Whether the page appears in the site navigation. Omit to keep it."), data: z.record(z.string(), z.unknown()).describe("Field name → value, shaped per the valueFormat list_content_types {name} reports. Pass {} to change only name/slug/displayInNav."), merge: z.boolean().optional().describe("Default true: shallow-merge data over the current draft. false = replace the whole field map"), revision: z.number().int().nonnegative().optional().describe("Optimistic concurrency: the `revision` from get_content. If a human (or another agent) has changed the draft since, the write is refused instead of overwriting their work. Recommended whenever merge:false"), allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately write text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)") },
   // merge defaults to TRUE here (agent-facing surface): a full replace that
@@ -554,11 +674,16 @@ tool(
 tool(
   "set_field", "content.update",
   [
-    "Set ONE field of a content item's draft to a plain string value (merged — other",
-    "fields are kept). THE MOST ROBUST WAY TO WRITE LONG TEXT/MARKDOWN CONTENT:",
-    "a flat string parameter survives tool-call serialization that can mangle long",
-    "strings nested inside `data` records. For text/markdown/select/datetime/image",
-    "fields, and the special field name `name` (the item's display name).",
+    "Write ONE field of an item's draft as a plain string; the other fields are kept. It is the",
+    "safest way to send long text or Markdown, because a flat string survives client",
+    "serialization that can mangle long strings nested in update_content's `data`.",
+    "`field` is a text, markdown, select, datetime or image field from list_content_types {name}",
+    "(an image takes an asset documentId), or `name` for the item's display name; `value` is the",
+    "field's whole new value. For richtext, contentArea or reference fields, or several fields at",
+    "once, use update_content. A value the field can't take is refused with the expected shape and",
+    "an example; text in another language than the locale branch is refused unless",
+    "allowLanguageMismatch. Like any agent edit, it cancels a pending scheduled publish.",
+    "Returns the saved draft in the get_content shape; publish_content separately.",
   ].join(" "),
   { documentId: docId, locale: loc, field: z.string().describe("Field name from the content type (or 'name')"), value: z.string().describe("The plain string value"), allowLanguageMismatch: z.boolean().optional().describe("Set true ONLY to deliberately write text whose language differs from the locale branch (the guard otherwise refuses, so e.g. Norwegian text can't silently land on the 'en' branch)") },
   async ({ documentId, locale, field, value, allowLanguageMismatch }) => {
@@ -571,15 +696,18 @@ tool(
     return updated;
   });
 tool(
-  "publish", "content.publish",
+  "publish_content", "content.publish",
   [
-    "Publish the working draft of a content item for a locale. The locale is a",
-    "LANGUAGE BRANCH — publishing Norwegian text into 'en' puts it on the English",
-    "site; a strong language/branch mismatch is refused unless allowLanguageMismatch is true.",
-    "A future publishAt SCHEDULES the go-live instead: the draft stays unpublished (and",
-    "invisible to readers) until then, and shows on the dashboard under Scheduled publishing.",
-    "Call publish again with a new publishAt to reschedule, or without one to go live now.",
-    "NEVER fake scheduling by putting the date in a data field — that publishes immediately.",
+    "Make a content item's working draft live in one locale (a LANGUAGE BRANCH: Norwegian",
+    "text published into 'en' lands on the English site, so a clear mismatch is refused).",
+    "A future publishAt SCHEDULES it instead: it stays invisible until then; call again with a",
+    "new publishAt to reschedule, or without one to go live now. expireAt unpublishes it",
+    "automatically later. Never fake a schedule with a date field — that publishes now.",
+    "A changed slug or position gets a 301 from the old URL. Fires content.published.",
+    "Refused when there is nothing new to publish, when required fields are empty (the error",
+    "names them), or, if the site requires human review of agent drafts, until an editor approves",
+    "it. Returns the item in the get_content shape with its new status.",
+    "To take it down use unpublish_content; to drop unpublished edits, discard_draft.",
   ].join(" "),
   {
     documentId: docId,
@@ -611,19 +739,22 @@ tool(
   [
     "Copy a document's working version (name, slug and EVERY field) from one locale",
     "to another, server-side and atomically. USE THIS to move content that landed in",
-    "the wrong language branch — never re-type the data field by field (a real agent",
-    "moved 4 of 9 fields by hand and published an article without its body).",
-    "The target locale gets a draft; publish it separately.",
+    "the wrong language branch — re-typing it field by field loses fields.",
+    "It REPLACES the target locale's draft (its unpublished edits are lost; its published",
+    "version stays live until you publish_content the copy). The text is copied as-is: to",
+    "translate it afterwards, run assist_writing {task:'translate'} and save with set_field.",
+    "Returns the target locale's new draft in the get_content shape. To copy into a NEW",
+    "item instead, use duplicate_content.",
   ].join(" "),
-  { documentId: docId, fromLocale: z.string().describe("Locale to copy FROM"), toLocale: z.string().describe("Locale to copy TO") },
+  { documentId: docId, fromLocale: z.string().describe("Locale to copy FROM, e.g. 'en' (list_sites → locales)."), toLocale: z.string().describe("Locale to copy TO; must differ from fromLocale.") },
   async ({ documentId, fromLocale, toLocale }) => {
     const copied = await copyVariant(db, ctx(), documentId, fromLocale, toLocale);
     await mcpAudit("content.copy_variant", documentId, toLocale, { fromLocale });
     return copied;
   });
 tool(
-  "unpublish", "content.publish",
-  "Take a content item off the live site in one locale: delivery stops serving it there (its URL starts answering 404) and content areas that reference it drop it. Fires the content.unpublished webhook. The content and its version history are kept, so publish brings it back. Other locales are unaffected. To remove the item entirely use trash_content.",
+  "unpublish_content", "content.publish",
+  "Take a content item off the live site in one locale: delivery stops serving it there (its URL starts answering 404) and content areas that reference it drop it. Fires the content.unpublished webhook. The content and its version history are kept, so publish_content brings it back. Name the item by documentId and the branch by locale (omit it for the item's own language); other locales are unaffected. Returns the item in the get_content shape, now unpublished in that locale. To remove the item entirely use trash_content.",
   { documentId: docId, locale: loc },
   async ({ documentId, locale }) => {
     const l = await locFor(documentId, locale);
@@ -633,12 +764,12 @@ tool(
   });
 tool(
   "discard_draft", "content.update",
-  "Throw away the unpublished draft changes of one locale, so the working version falls back to the published one. The live site is unchanged; the discarded draft cannot be recovered. Refused for content that was never published (there is nothing to fall back to) — use trash_content to remove that instead.",
+  "Throw away the unpublished draft changes of one item (documentId) in one locale (omitted: the item's own language), so the working version falls back to the published one. The live site is unchanged; the discarded draft cannot be recovered. Refused for content that was never published (there is nothing to fall back to) — use trash_content to remove that instead. To roll back to an older version rather than the live one, use restore_version. Returns {ok:true}.",
   { documentId: docId, locale: loc },
   async ({ documentId, locale }) => { const l = await locFor(documentId, locale); await discardDraft(db, ctx(), documentId, l); await mcpAudit("content.discard_draft", documentId, l); return { ok: true }; });
 tool(
   "move_content", "content.update",
-  "Move a page in the tree: give parentId to re-parent it (its URL path changes with its new position, and the old URL gets a 301 automatically), and/or beforeId/afterId to place it among its siblings. The page's whole subtree moves with it. Sibling order only sticks under a parent whose child sort is manual; a computed sort (name, date…) re-orders it. Returns {ok:true}.",
+  "Move a page in the page tree: parentId re-parents it (its URL path follows its new position, and the old URL gets a 301 automatically), beforeId/afterId place it among its siblings. Its whole subtree moves with it. Refused when the new parent is the page itself, is not a page, or lies outside your sections. Sibling order only sticks under a parent with a manual child sort; a computed sort (name, date…) re-orders it. Returns {ok:true}. To change only the URL's last segment, set a new slug with update_content instead; blocks and globals are not in the tree.",
   {
     documentId: docId,
     parentId: z.string().nullable().optional().describe("documentId of the new parent page; null moves it to the top level. Omit to keep the current parent."),
@@ -648,8 +779,8 @@ tool(
   async ({ documentId, parentId, beforeId, afterId }) => { await moveContent(db, ctx(), documentId, { parentId, beforeId, afterId }); await mcpAudit("content.move", documentId); return { ok: true }; });
 tool(
   "duplicate_content", "content.create",
-  "Copy a content item into a NEW unpublished document beside the original (same parent), named \"<name> (copy)\", with every field of each locale's working version. A copied page gets a fresh slug, so it never collides with the original's URL. Children are not copied. Returns the new item; edit it, then publish.",
-  { documentId: docId, locale: loc },
+  "Copy a content item into a NEW unpublished document beside the original (same parent), named \"<name> (copy)\", with every field of each locale's working version. A copied page gets a fresh slug, so it never collides with the original's URL. Children are not copied. locale only picks which language of the copy comes back. Returns the new item in the get_content shape; edit it, then publish_content. To copy one language into another locale of the SAME item use copy_variant; to start from nothing use create_content.",
+  { documentId: docId, locale: z.string().optional().describe("Which locale of the copy to return in the result. Every locale is copied regardless. Omit for the document's own locale.") },
   async ({ documentId, locale }) => {
     const copy = await cloneContent(db, ctx(), documentId, await locFor(documentId, locale));
     await mcpAudit("content.duplicate", copy.documentId, copy.locale, { source: documentId });
@@ -657,27 +788,22 @@ tool(
   });
 tool(
   "trash_content", "content.delete",
-  "Move a content item AND its whole page subtree to the trash: every locale is unpublished at once and disappears from delivery. Recoverable — restore_content brings it back (as drafts; publish again explicitly). Returns {trashed: <number of items>}. To only take it off the live site, use unpublish instead.",
+  "Move a content item (by documentId) AND its whole page subtree to the trash: every locale is unpublished at once and disappears from delivery, so there is no locale to pass. Recoverable — restore_content brings it back (as drafts; publish again explicitly). An unknown documentId is refused as not found. Returns {trashed: <number of items>}. To only take it off the live site, use unpublish_content instead.",
   { documentId: docId },
   async ({ documentId }) => { const r = await softDelete(db, ctx(), documentId); await mcpAudit("content.trash", documentId); return r; });
 tool(
   "restore_content", "content.delete",
-  "Bring a trashed item back to its old place in the tree, together with the descendants that were trashed with it. Restored content is NOT republished — call publish for each locale that should go live. Refused if its parent is still in the trash or a live sibling took its URL meanwhile. Returns {restored: <count>}. Find trashed ids with list_trash.",
+  "Bring a trashed item back to its old place in the tree, together with the descendants that were trashed with it. Restored content is NOT republished — call publish_content for each locale that should go live. Refused if its parent is still in the trash (restore that first) or a live sibling took its URL meanwhile. There is no locale to pass: every language comes back. Returns {restored: <count>}. Find trashed ids with list_content {kind:'trash'}. To roll back an item that is not trashed, use restore_version instead.",
   { documentId: docId },
   async ({ documentId }) => { const r = await restoreContent(db, ctx(), documentId); await mcpAudit("content.restore", documentId); return r; });
 tool(
-  "list_trash", "content.read",
-  "List the content in this site's trash that you can see — items removed with trash_content, which are unpublished in every locale and invisible to the live site but still recoverable. Each entry has documentId, type, kind, name and deletedAt (ISO time). Nothing is purged automatically; pass a documentId to restore_content to bring it (and the subtree trashed with it) back. Read-only.",
-  {},
-  () => listTrash(db, ctx()));
-tool(
   "list_versions", "content.read",
-  "List a content item's version history in one locale, newest first: each version's id, versionNumber, status, whether it is the live one, name, and who created it when. Pass a version's `id` to restore_version to roll back.",
+  "List a content item's version history in one locale, newest first and complete (no paging); locale picks the language branch (omitted: the item's own). Each version's id, versionNumber, status, whether it is the live one, name, and who created it when. An unknown documentId is refused as not found. Use it to find what to roll back to — pass a version's `id` (not its versionNumber) to restore_version. For the current draft itself, use get_content.",
   { documentId: docId, locale: loc },
   async ({ documentId, locale }) => listVersions(db, ctx(), documentId, await locFor(documentId, locale)));
 tool(
   "restore_version", "content.update",
-  "Roll back: copy an older version's content into the working draft of that locale. Nothing goes live until you publish; the version history keeps every earlier version. Returns the updated item.",
+  "Roll back an item to an older version: copy that version's name, slug and fields into the working draft of one locale. versionId is the version's `id` from list_versions of the SAME locale, not its versionNumber. It REPLACES the current draft of that locale, so unpublished edits there are lost; published versions stay in the history (a rollback can itself be rolled back), and nothing goes live until you publish_content. Returns the new draft in the get_content shape. To bring back a TRASHED item use restore_content; to simply drop unpublished edits use discard_draft.",
   { documentId: docId, locale: loc, versionId: z.number().describe("The version's `id` from list_versions (not its versionNumber).") },
   async ({ documentId, locale, versionId }) => {
     const l = await locFor(documentId, locale);
@@ -691,9 +817,11 @@ tool(
     "kind 'page': pages, to find one by name or pick a parent/reference target (list_tree shows one level in display order). " +
     "kind 'block': SHARED blocks — reusable block documents (banners, forms, CTAs…) that pages place by reference, so one edit updates every page using them; inline blocks live inside a page's data and are not listed. " +
     "kind 'global': singletons (header, footer, site settings…), which are neither in the page tree nor blocks, so this is the only way to enumerate them. " +
-    "Edit any of them with get_content/update_content on its documentId.",
-  { kind: z.enum(["page", "block", "global"]).describe("Which kind of content to list.") },
-  ({ kind }) => (kind === "page" ? listPages(db, ctx()) : kind === "block" ? listBlocks(db, ctx()) : listGlobals(db, ctx())));
+    "kind 'trash': items removed with trash_content (any kind), newest first, with deletedAt; nothing is purged automatically, and restore_content brings one back. " +
+    "Everything comes back in one call (no paging). Edit any of them with get_content/update_content on its documentId.",
+  { kind: z.enum(["page", "block", "global", "trash"]).describe("Which kind of content to list: page, block, global, or trash (what trash_content removed).") },
+  ({ kind }) =>
+    kind === "page" ? listPages(db, ctx()) : kind === "block" ? listBlocks(db, ctx()) : kind === "global" ? listGlobals(db, ctx()) : listTrash(db, ctx()));
 
 /* ----------------------------- content model --------------------------- */
 // Annotate each field with the JSON shape update_content expects for it, so an
@@ -724,20 +852,20 @@ function withFieldFormats<T extends { fields: FieldDef[] }>(def: T): T & { field
 }
 tool(
   "list_content_types", "content.read",
-  "Read the content model (instance-wide, shared by all sites). Pass name to get ONE type's definition — name, kind, displayName, schemaType and fields (name, type, required, options, allowed blocks of a content area…); an unknown name is refused with the list of real names. Call this before writing content of a type. Omit name to list every type (large). " +
-    "Each field carries valueFormat + valueExample: the exact JSON shape create_content/update_content expect. These are LIVE types editors fill in; for reusable recipes see list_type_templates.",
+  "Read the content model (instance-wide, shared by all sites). Pass name to get ONE type's definition — name, kind, displayName, schemaType and fields (name, type, required, options, allowed blocks of a content area…); an unknown name is refused with the list of real names. Call this before writing content of a type. " +
+    "Each field carries valueFormat + valueExample: the exact JSON shape create_content/update_content expect. These are LIVE types editors fill in; reusable type recipes (templates) live in the schema toolset. Omit name to get every full definition, which is large, so prefer name.",
   { name: z.string().optional().describe("Content type name, PascalCase, e.g. 'BlogPost' (as in a content item's `type`). Omit to list all.") },
   async ({ name }) => {
     return name === undefined ? (await listContentTypes(db)).map(withFieldFormats) : withFieldFormats(await getContentType(db, name));
   });
 tool(
   "create_content_type", "contenttype.manage",
-  "Create a new content type (the schema editors fill in) from a full ContentTypeDef. Content types are instance-wide, shared by every site, so this needs a token not limited to one site. Faster for common shapes: list_type_templates + instantiate_type_template. The definition is validated and a bad one is refused with the offending path.",
+  "Create a new content type (the schema editors fill in) from a full ContentTypeDef. Content types are instance-wide, shared by every site, so this needs a token not limited to one site. Faster for common shapes: list_type_templates + instantiate_type_template. The definition is validated and a bad one is refused with the offending path; an existing name is refused (409) — change that type with update_content_type. Returns the stored definition.",
   { definition: z.record(z.string(), z.unknown()).describe("A ContentTypeDef: {name: 'PascalCase', kind: 'page'|'block'|'global', fields: [{name, type, …}], …}. Copy the shape of an existing one from list_content_types {name}.") },
   async ({ definition }) => { requireCrossSiteToken("Content-type design"); const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createContentType(db, ctx(), def); await mcpAudit("contenttype.create", null, null, { name: def.name, kind: def.kind }); return r; });
 tool(
   "update_content_type", "contenttype.manage",
-  "Replace a content type's definition (add/remove/rename fields, change options). name and kind are immutable. Send the FULL definition — read it with list_content_types {name}, edit, send back; a field you leave out is removed from the schema. Existing content is not migrated: its stored values for removed fields are simply no longer shown or delivered. Instance-wide (all sites).",
+  "Replace a content type's definition (add/remove/rename fields, change options). name and kind are immutable. Send the FULL definition — read it with list_content_types {name}, edit, send back; a field you leave out is removed from the schema. Existing content is not migrated: its stored values for removed fields are simply no longer shown or delivered. Instance-wide (all sites), so it needs contenttype.manage and a token for every site. Returns the new definition. To add a type instead, create_content_type.",
   { name: z.string().describe("The existing type's name, e.g. 'BlogPost'."), definition: z.record(z.string(), z.unknown()).describe("The full updated ContentTypeDef (same shape list_content_types {name} returns; its valueFormat/valueExample annotations are ignored).") },
   async ({ name, definition }) => { requireCrossSiteToken("Content-type design"); const r = await updateContentType(db, ctx(), name, ContentTypeDef.parse(withoutFieldFormats(definition))); await mcpAudit("contenttype.update", null, null, { name }); return r.next; });
 
@@ -746,20 +874,20 @@ tool(
 // instantiate it back into a real content type (optionally under a new name).
 tool(
   "list_type_templates", "content.read",
-  "Read the type-template library — named ContentTypeDef RECIPES, not live types: the BUILT-IN starters that ship with Paperboy (read-only) plus stored templates. Pass name to get one template's full definition (to inspect before instantiate_type_template, or as a starting point for create_content_type); omit it to list them all. " +
+  "Read the type-template library — named ContentTypeDef RECIPES, not live types: the BUILT-IN starters that ship with Paperboy (read-only) plus stored templates. Pass name to get one template's full definition (to inspect before instantiate_type_template, or as a starting point for create_content_type); omit it to get every template's full definition (large). " +
     "Each field carries valueFormat + valueExample. A template's name is the content type name it materialises by default. For the types editors fill in today, see list_content_types.",
   { name: z.string().optional().describe("Template name, e.g. 'FaqPage'. Omit to list all.") },
   async ({ name }) => (name === undefined ? (await listTypeTemplates(db)).map(withFieldFormats) : withFieldFormats(await getTypeTemplate(db, name))));
-tool("create_type_template", "contenttype.manage", "Save a ContentTypeDef as a reusable TEMPLATE in the library — a recipe, not a live type: nothing becomes editable until instantiate_type_template turns it into a content type. Use it to keep a starter/backup of a type or to move it to another instance via export_type_templates; to create a type editors can use right now, call create_content_type instead. The template's name is the type name it materialises by default and must not clash with an existing or built-in template. Instance-wide; returns the stored template.", { definition: z.record(z.string(), z.unknown()).describe("Full ContentTypeDef, same shape as create_content_type") },
+tool("create_type_template", "contenttype.manage", "Save a ContentTypeDef as a reusable TEMPLATE in the library — a recipe, not a live type: nothing becomes editable until instantiate_type_template turns it into a content type. Use it to keep a starter/backup of a type or to move it to another instance via export_type_templates; to create a type editors can use right now, call create_content_type instead. The template's name is the type name it materialises by default and must not clash with an existing or built-in template. Instance-wide: requires contenttype.manage and a token for every site. Returns the stored template.", { definition: z.record(z.string(), z.unknown()).describe("Full ContentTypeDef, same shape as create_content_type") },
   async ({ definition }) => { requireCrossSiteToken("The type-template library"); const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createTypeTemplate(db, ctx(), def); await mcpAudit("type_template.create", null, null, { name: def.name, kind: def.kind }); return r; });
 tool(
   "update_type_template", "contenttype.manage",
-  "Replace a stored type template's definition (name and kind are immutable; built-in templates are read-only — copy one under a new name with create_type_template instead). Content types already instantiated from it are NOT changed; re-apply with instantiate_type_template {updateExisting:true}.",
+  "Replace a stored type template's definition (name and kind are immutable; built-in templates are read-only — copy one under a new name with create_type_template instead). Content types already instantiated from it are NOT changed; re-apply with instantiate_type_template {updateExisting:true}. Requires contenttype.manage and a token for every site. Returns the new definition.",
   { name: z.string().describe("The stored template's name."), definition: z.record(z.string(), z.unknown()).describe("The full updated ContentTypeDef (same shape as create_content_type).") },
   async ({ name, definition }) => { requireCrossSiteToken("The type-template library"); const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await updateTypeTemplate(db, ctx(), name, def); await mcpAudit("type_template.update", null, null, { name }); return r.next; });
 tool(
   "delete_type_template", "contenttype.manage",
-  "Permanently delete a stored type template from the library (built-ins can't be deleted). Content types instantiated from it, and their content, are NOT affected. Returns {ok:true}.",
+  "Permanently delete a stored type template from the library (built-ins can't be deleted). Content types instantiated from it, and their content, are NOT affected — so this only tidies the library; to change or retire a type editors use, edit the type itself with update_content_type. To keep a copy first, export_type_templates {names:[name]}. Returns {ok:true}.",
   { name: z.string().describe("The stored template's name.") },
   async ({ name }) => { requireCrossSiteToken("The type-template library"); await deleteTypeTemplate(db, ctx(), name); await mcpAudit("type_template.delete", null, null, { name }); return { ok: true }; });
 tool(
@@ -767,7 +895,8 @@ tool(
   "Materialise a type template into a real content type. Default: creates the type under the template's own name. " +
     "If that type already exists the call is REFUSED (409) — pass updateExisting: true to re-apply the template onto the existing type (kind must match; existing content is not migrated), " +
     "or asName: \"OtherName\" to create a type with a DIFFERENT name (must match ^[A-Z][a-zA-Z0-9]*$, e.g. \"CaseStudy\"). " +
-    "Pass withBlocks: true to ALSO create the block types the template's content areas reference (recursively; existing types are left untouched) — recommended for built-ins like FaqPage so the set works out of the box.",
+    "Pass withBlocks: true to ALSO create the block types the template's content areas reference (recursively; existing types are left untouched) — recommended for built-ins like FaqPage so the set works out of the box. " +
+    "Returns {name, action: 'created' | 'updated', type, blocks?}. Browse templates with list_type_templates; to design a type from scratch use create_content_type.",
   {
     name: z.string().describe("Template name"),
     updateExisting: z.boolean().optional().describe("Overwrite the existing type of the same name from the template (default false)"),
@@ -782,7 +911,7 @@ tool(
 );
 tool(
   "export_type_templates", "content.read",
-  "Export type templates as a portable JSON document ({format, version, exportedAt, templates}) that import_type_templates on another Paperboy instance accepts. Omit names to export everything (built-ins included).",
+  "Export type templates as a portable JSON document ({format, version, exportedAt, templates}) to move them to another Paperboy instance (import_type_templates there) or keep a backup. To read or inspect templates here, list_type_templates is simpler. Omit names to export everything (built-ins included). Read-only.",
   { names: z.array(z.string()).optional().describe("Template names to export (default: all)") },
   async ({ names }) => {
     const templates = await exportTypeTemplates(db, names);
@@ -791,7 +920,7 @@ tool(
 );
 tool(
   "import_type_templates", "contenttype.manage",
-  "Import type templates from an export document. Per-template outcome: new names are created; existing stored templates are skipped unless overwrite: true; built-in names are always skipped (they ship with every instance). Returns {created, updated, skipped:[{name, reason}]}.",
+  "Import type templates from the document export_type_templates produces (on this or another Paperboy instance) into the library. Per-template outcome: new names are created; existing stored templates are skipped unless overwrite: true; built-in names are always skipped (they ship with every instance). Templates are recipes: nothing becomes editable until instantiate_type_template. Requires contenttype.manage and a token for every site. Returns {created, updated, skipped:[{name, reason}]}.",
   {
     templates: z.array(z.record(z.string(), z.unknown())).min(1).max(200).describe("The export document's templates array (full ContentTypeDef objects)"),
     overwrite: z.boolean().optional().describe("Update existing stored templates from the import (default false)"),
@@ -815,7 +944,7 @@ tool(
  * rather than re-implemented — an Author still cannot read visitor messages
  * here, exactly as over HTTP.
  */
-tool("list_forms", "submission.read", "List the forms (Form blocks) in this site with formId, name, submission count and time of the last submission. Start here before list_form_submissions or export_form_submissions. Submissions are visitor personal data: requires the submission.read permission (Admin/Editor).", {},
+tool("list_forms", "submission.read", "List every form (Form block) in this site, all at once and in no set order, with formId, name, submission count and time of the last submission. Trashed forms are included, since their submissions are still stored. Start here before list_form_submissions or export_form_submissions. A form is a shared Form block: edit its questions with get_content/update_content on its formId. Submissions are visitor personal data: requires the submission.read permission (Admin/Editor).", {},
   () => listForms(db, ctx()));
 tool(
   "list_form_submissions", "submission.read",
@@ -839,20 +968,22 @@ tool(
   },
 );
 tool(
-  "delete_form_submission", "submission.manage",
-  "Permanently delete ONE form submission (irreversible; audit-logged; requires submission.manage). Returns {ok:false} when no such submission exists. To erase everything one person sent, use erase_form_submissions.",
-  { submissionId: z.string().describe("The submission's id from list_form_submissions.") },
-  async ({ submissionId }) => {
-    const ok = await deleteSubmission(db, ctx(), submissionId);
-    await mcpAudit("form.submission_deleted", null, null, { submissionId, found: ok });
-    return { ok };
-  });
-tool(
   "erase_form_submissions", "submission.manage",
-  "Data-subject erasure: delete EVERY submission in the active site whose answers contain this email address, in any field. Irreversible; requires submission.manage. Returns {deleted: <count>}; the audit log records that an erasure happened, never the address. Copies in database backups survive until the backups rotate.",
-  { email: z.string().describe("The address to erase, matched case-insensitively across all answers.") },
-  async ({ email }) => {
-    const res = await eraseSubmissionsByEmail(db, ctx(), email);
+  "Permanently delete form submissions, either ONE by submissionId (e.g. spam or a test entry) or, for a data-subject erasure request, EVERY submission in this site whose answers contain an email address, in any field. Pass exactly one of the two. Irreversible; audit-logged without the address; requires submission.manage. Returns {deleted: <count>} (0 when nothing matched). Copies in database backups survive until the backups rotate. To review first, use list_form_submissions.",
+  {
+    submissionId: z.string().optional().describe("Delete just this submission (its id from list_form_submissions)."),
+    email: z.string().optional().describe("Erase every submission containing this address, matched case-insensitively across all answers."),
+  },
+  async ({ submissionId, email }) => {
+    if (Boolean(submissionId) === Boolean(email)) {
+      throw new Error('Pass exactly one of submissionId or email. Example: {"email": "kari@example.com"} to erase everything one person sent, or {"submissionId": "sub_…"} for one entry.');
+    }
+    if (submissionId) {
+      const found = await deleteSubmission(db, ctx(), submissionId);
+      await mcpAudit("form.submission_deleted", null, null, { submissionId, found });
+      return { deleted: found ? 1 : 0 };
+    }
+    const res = await eraseSubmissionsByEmail(db, ctx(), email!);
     // The address is the subject of an erasure request — log that one happened
     // and how much it removed, never the address itself.
     await mcpAudit("form.submissions_erased", null, null, { deleted: res.deleted });
@@ -863,45 +994,28 @@ tool(
 /* -------------------------------- media -------------------------------- */
 tool(
   "list_assets", "content.read",
-  "List this site's media library (images and PDFs): each asset's documentId, filename, mime, size, public url, alt text, attribution for stock imports, and folder. An image field stores the asset's documentId — set it with set_field. To add files use upload_asset, create_upload_link or import_stock_image.",
+  "List this site's whole media library (images and PDFs), newest first, in one call (no paging, so a big library is a big response): each asset's documentId, filename, mime, size, public url, alt text, attribution for stock imports, and folder. Media is per site: pass `site` to see another site's library. An empty library gives []. Use it to reuse an existing image: an image field stores the asset's documentId, set with set_field. To add a new file use upload_asset (URL, base64 or stock photo) or create_upload_link (files on your machine).",
   {},
   () => listAssets(db, ctx()));
 tool(
   "update_asset_alt", "content.update",
-  "Set (overwrite) an image asset's alt text — the description screen readers announce and search engines index, wherever the image is used. Describe what the image shows in one sentence; use \"\" only for a purely decorative image. Returns the updated asset.",
+  "Set (overwrite) an image asset's alt text — the description screen readers announce and search engines index. Alt text belongs to the ASSET, not to a page: every page showing the image picks up the change, and set_field/update_content cannot set it. documentId is the asset's (from list_assets or an upload), not a page's; an unknown one is refused as not found. Describe what the image shows in one sentence; use \"\" only for a purely decorative image. Returns the updated asset with its new alt. assist_writing cannot write alt text (it needs the image itself), so look at the image and write it.",
   { documentId: z.string().describe("The asset's documentId from list_assets or an upload result."), alt: z.string().describe("The new alt text, e.g. 'Two hikers on a ridge above a fjord at sunset'.") },
   async ({ documentId, alt }) => { const r = await updateAssetAlt(db, ctx(), documentId, alt); await mcpAudit("asset.alt", documentId); return r; });
 tool(
   "delete_asset", "content.delete",
-  "Permanently delete a media asset: the database row and the stored file. Irreversible. Content that still points at it is not blocked: delivery resolves those fields to null, so the image silently disappears from those pages — clear or replace them first. Returns {ok:true}.",
+  "Permanently delete a media asset — by the asset's documentId from list_assets, not a page's — removing the database row and the stored file. Irreversible. Content that still points at it is not blocked: delivery resolves those fields to null, so the image silently disappears from those pages — clear or replace them first. To stop using an image on one page, just clear that field with set_field and keep the asset. Returns {ok:true}.",
   { documentId: z.string().describe("The asset's documentId from list_assets.") },
   async ({ documentId }) => { await deleteAsset(db, ctx(), documentId, UPLOADS_DIR); await mcpAudit("asset.delete", documentId); return { ok: true }; });
 tool(
   "search_stock_images", "content.read",
-  "Search the configured stock photo provider (Settings → Stock images; Unsplash). Returns photo candidates with id, description and attribution. To USE a photo: call import_stock_image with its id, then set_field the returned asset documentId on an image field.",
+  "Search the configured stock photo provider (Settings → Stock images; Unsplash) for photos to use on a page. Returns up to 24 candidates, best match first, each with id, description and attribution; nothing is stored yet. To USE one: upload_asset {stockImageId: <its id>} imports it into the media library, then set_field the returned asset documentId on an image field. Refused with a hint when no provider key is configured. To reuse a photo you already have, list_assets.",
   { query: z.string().min(1).max(200).describe("What the photo should show, e.g. 'mountain lake sunrise'") },
   ({ query }) => searchStockImages(db, ctx(), query, UNSPLASH_ACCESS_KEY),
 );
 tool(
-  "import_stock_image", "content.create",
-  "Import a stock photo (by the id from search_stock_images) into the media library. Downloads the image, stores it as a regular asset with alt text + attribution, and returns the asset — set its documentId on an image field with set_field.",
-  {
-    providerId: z.string().min(1).max(200).describe("Photo id from search_stock_images"),
-    alt: z.string().max(300).optional().describe("Alt text override (defaults to the provider's description)"),
-  },
-  async ({ providerId, alt }) => {
-    const rec = await importStockImage(db, ctx(), { providerId, alt }, {
-      envKey: UNSPLASH_ACCESS_KEY,
-      save: saveToUploadsDir(UPLOADS_DIR),
-    });
-    await mcpAudit("asset.import", rec.documentId, null, { provider: rec.sourceMeta?.provider, providerId, mime: rec.mime, size: rec.size });
-    return rec;
-  },
-);
-
-tool(
   "create_upload_link", "content.create",
-  "Get a short-lived link for uploading LOCAL files (images, PDFs) into the media library — the way to upload files on your own machine, which this server can't read. POST them as multipart/form-data with the returned header, e.g. with curl (several -F file=@… per request is fine). The response lists each stored asset's documentId: set it on an image field with set_field, and give it alt text with update_asset_alt. The link uploads as you, into this site, and expires after 15 minutes.",
+  "Get a 15-minute link for uploading LOCAL files (images, PDFs) into the media library — the way to upload files on your own machine, which this server can't read. POST them as multipart/form-data with the returned header, e.g. with curl (several -F file=@… per request is fine). The response lists each stored asset's documentId: set it on an image field with set_field, and give it alt text with update_asset_alt. The link uploads as you, into this site (pass `site` to upload into another), and expires after 15 minutes. Returns {uploadUrl, headers, expiresAt, example, limits}: PNG, JPEG, GIF, WEBP or PDF, max 5 MB per file, up to 20 files per request. Refused when the server has no PUBLIC_URL configured — then use upload_asset with dataBase64. For a file at a public URL, or a stock photo, use upload_asset instead.",
   {},
   async () => {
     if (!PUBLIC_URL) throw new Error("Upload links need PUBLIC_URL (the CMS's public origin, e.g. https://cms.example.com) set on the MCP server. Use upload_asset with a url or dataBase64 instead.");
@@ -919,16 +1033,23 @@ tool(
 );
 tool(
   "upload_asset", "content.create",
-  "Add a file (PNG, JPEG, GIF, WEBP or PDF, max 5 MB) to the media library from a public URL or from base64 bytes, and return the asset — set its documentId on an image field with set_field. For files on YOUR machine prefer create_upload_link: base64 through a tool call costs roughly 1 token per 2-3 bytes.",
+  "Add a file (PNG, JPEG, GIF, WEBP or PDF, max 5 MB) to the media library from exactly one source: a public URL, base64 bytes, or a stock photo id from search_stock_images (stored with its attribution). Returns the new asset — set its documentId on an image field with set_field. Each call stores a NEW asset, even for a file already in the library (reuse one via list_assets). A URL must be publicly reachable: private-network addresses are refused at every redirect hop, and a download over 5 MB is cut off with an error. For files on YOUR machine prefer create_upload_link: base64 through a tool call costs roughly 1 token per 2-3 bytes.",
   {
     url: z.string().url().optional().describe("Public http(s) URL of the file itself (not a web page showing it)"),
     dataBase64: z.string().optional().describe("The file's bytes, base64-encoded (a data: URL prefix is accepted)"),
-    filename: z.string().max(255).optional().describe("Display name in the media library, e.g. 'hero.jpg'"),
-    alt: z.string().max(300).optional().describe("Alt text"),
+    stockImageId: z.string().min(1).max(200).optional().describe("A photo id from search_stock_images; the image is downloaded from the stock provider."),
+    filename: z.string().max(255).optional().describe("Display name in the media library, e.g. 'hero.jpg' (url and base64 only; a stock photo is named by the provider)"),
+    alt: z.string().max(300).optional().describe("Alt text (for a stock photo, defaults to the provider's description)"),
   },
-  async ({ url, dataBase64, filename, alt }) => {
-    if (Boolean(url) === Boolean(dataBase64)) {
-      throw new Error("Pass exactly one of url or dataBase64. Example: {\"url\": \"https://example.com/photo.jpg\", \"alt\": \"A calculator on a desk\"}");
+  async ({ url, dataBase64, stockImageId, filename, alt }) => {
+    if ([url, dataBase64, stockImageId].filter(Boolean).length !== 1) {
+      throw new Error("Pass exactly one of url, dataBase64 or stockImageId. Example: {\"url\": \"https://example.com/photo.jpg\", \"alt\": \"A calculator on a desk\"}");
+    }
+    if (stockImageId) {
+      if (filename) throw new Error("filename can't be set for a stock photo (the provider names it): send stockImageId without filename.");
+      const rec = await importStockImage(db, ctx(), { providerId: stockImageId, alt }, { envKey: UNSPLASH_ACCESS_KEY, save: saveToUploadsDir(UPLOADS_DIR) });
+      await mcpAudit("asset.import", rec.documentId, null, { provider: rec.sourceMeta?.provider, providerId: stockImageId, mime: rec.mime, size: rec.size });
+      return rec;
     }
     const save = saveToUploadsDir(UPLOADS_DIR);
     const rec = url
@@ -987,7 +1108,7 @@ tool(
 );
 tool(
   "delivery_list", "content.read",
-  "List the published content of one type as the website receives it (e.g. every BlogPost for a listing). Supports pagination (limit/offset), sorting and equality filters on data fields; without sort it follows the parent's declared child order. Private fields are removed. Returns { items, total }.",
+  "List the published content of one type as the website receives it (e.g. every BlogPost for a listing page), to check what a frontend's list shows. Pages with limit/offset (total tells you how many exist), sorts by sort, and filters on exact data-field values; without sort it follows the parent's declared child order. Private fields are removed. Returns { items, total }. To find items by words use delivery_search; for one item, delivery_get; to edit, list_content.",
   {
     type: z.string().describe("Content type name, e.g. 'BlogPost'."),
     ...delv,
@@ -999,15 +1120,15 @@ tool(
   async ({ type, locale, populate, preview, limit, offset, sort, filter }) => { needDelivery(preview); return deliveryList(db, persp(preview), ctx().siteId, type, (await deliveryLocale(locale)), populate, undefined, { limit, offset, sort, filter }); });
 tool(
   "delivery_search", "content.read",
-  "Full-text search over the website's content (item names + public field text) in one locale, as visitors would search it: published only (unless preview), private fields never matched or returned. Returns { items, total }. To find content for editing, list_content or list_tree are usually faster.",
+  "Full-text search over the website's content (item names + public field text) in one locale, as a site search box would: published only (unless preview), private fields never matched or returned. Best match first, 20 results by default (limit up to 100). Returns { items, total }. To list every item of a type use delivery_list; to find content for editing, list_content or list_tree are usually faster.",
   { query: z.string().min(1).max(200).describe("Words to search for, e.g. 'pricing plans'."), type: z.string().optional().describe("Only return items of this content type."), locale: loc, limit: z.number().int().min(1).max(100).optional().describe("Max results, 1-100."), preview: PREVIEW_ARG },
   async ({ query, type, locale, limit, preview }) => { needDelivery(preview); return deliverySearch(db, persp(preview), ctx().siteId, query, (await deliveryLocale(locale)), type, limit); });
 
 /* --------------------------------- site -------------------------------- */
 tool(
   "list_sites", "content.read",
-  "Say where this server acts: every site you can reach (id, slug, name), which one is active, whether your token is limited to one site, and the active site's setup — startPageId (the page served at /, or null; change it with set_start_page) and previewBaseUrl (the frontend the admin's preview frames a page at, as {previewBaseUrl}/{locale}{urlPath}). " +
-    "Content in another site is invisible to every tool unless you pass its slug as `site`, so an empty tree or search usually means the wrong site, not missing content.",
+  "Report where this server acts and in which languages. Returns: sites (every site you can reach: id, slug, name), activeSiteId, tokenScopedTo (the one site your token is limited to, or null), activeSite (startPageId — the page served at /, or null — and previewBaseUrl, where the admin previews a page as {previewBaseUrl}/{locale}{urlPath}), and locales (enabled language branches in order: code, displayName, isDefault, fallback). " +
+    "It lists no content (use list_tree or list_content for that). Use it to pick the `locale` matching the language you write, so text lands in the right branch, and a slug to pass as `site` to other tools (pass `site` here too to see that site's setup). Content in another site is invisible to every tool, so an empty tree or search usually means the wrong site, not missing content.",
   {},
   async () => {
     const { startPageId, previewBaseUrl } = await getSiteConfig(db, ctx());
@@ -1016,10 +1137,11 @@ tool(
       tokenScopedTo: tokenSite(),
       activeSite: { startPageId, previewBaseUrl },
       sites: (await reachableSites()).map((x) => ({ id: x.id, slug: x.slug, name: x.name })),
+      locales: (await listLocales(db)).map((l) => ({ code: l.code, displayName: l.displayName, isDefault: l.isDefault, fallback: l.fallbackLocaleCode })),
     };
   },
 );
-tool("set_start_page", "content.publish", "Choose which page this site serves at / (the home page), or clear it with null. Takes effect immediately on the live site, in every locale the page is published in. Returns {ok:true}.", { documentId: z.string().nullable().describe("documentId of a page in this site, or null to clear.") },
+tool("set_start_page", "content.publish", "Choose which page this site serves at / (the home page), or clear it with null. Only a page in this site can be chosen (anything else is refused). Takes effect immediately on the live site, in every locale the page is published in (visitors only ever get a published version, so publish it first). The current start page is list_sites' activeSite.startPageId. Returns {ok:true}.", { documentId: z.string().nullable().describe("documentId of a page in this site, or null to clear.") },
   async ({ documentId }) => { await setStartPage(db, ctx(), documentId); await mcpAudit("site.start_page", documentId); return { ok: true }; });
 
 /* ------------------------------- redirects ------------------------------ */
@@ -1032,60 +1154,60 @@ const REDIRECT_KEEP_QUERY_ARG = z.boolean().optional().describe("Carry the reque
 const REDIRECT_NOTE_ARG = z.string().nullable().optional().describe("Free-text note for editors, e.g. 'old WordPress URL'.");
 tool(
   "list_redirects", "content.read",
-  "List the site's redirect rules with each target's live URL, hit counts and problems (target-missing, target-unpublished, shadowed, chain, loop). Rules apply on the frontend ONLY where no published page answers the path. Pass targetDocumentId to see which old URLs point at one page.",
+  "List this site's redirect rules, most recently changed first and all at once (no paging), each with its target's live URL, hit count and problems (target-missing, target-unpublished, shadowed, chain, loop). Rules apply on the frontend ONLY where no published page answers the path. Pass targetDocumentId to see which old URLs point at one page. To check how one URL resolves use test_redirect; for old URLs that still 404, list_not_found.",
   { targetDocumentId: z.string().optional().describe("Only rules pointing at this page (documentId). Omit for all rules.") },
   ({ targetDocumentId }) => listRedirects(db, ctx(), { targetDocumentId }),
 );
 tool(
   "create_redirect", "content.publish",
-  "Create a redirect rule. source: a path (\"/old-page\"), a prefix (\"/blog/*\" — the rest of the path is carried over) or a full URL on the old site (reduced to its path). Target: EITHER targetDocumentId (+ optional targetLocale) to follow a page wherever it moves, OR target = a path or https:// URL — a path that names a published page is stored as that page. status: 301 (default, permanent — passes link equity), 302/307 temporary, 308 permanent, 410 gone (no target). A target that is itself redirected is collapsed to the final destination; loops are refused. Publishing a new slug or moving a page creates 301s automatically — check list_redirects before adding one by hand.",
+  "Create a redirect rule. source: a path (\"/old-page\"), a prefix (\"/blog/*\" — the rest of the path is carried over) or a full URL on the old site (reduced to its path). Target: EITHER targetDocumentId (+ optional targetLocale) to follow a page wherever it moves, OR target = a path or https:// URL — a path that names a published page is stored as that page. status: 301 (default, permanent — passes link equity), 302/307 temporary, 308 permanent, 410 gone (no target). A target that is itself redirected is collapsed to the final destination; loops and a second rule for the same source are refused. Live from the frontend's next manifest fetch. Returns {redirect, collapsed, repointed}: the stored rule, whether its target was collapsed, and how many existing rules were re-pointed at it. Publishing a new slug or moving a page creates 301s automatically — check list_redirects before adding one by hand.",
   { source: REDIRECT_SOURCE_ARG, target: REDIRECT_TARGET_ARG, targetDocumentId: REDIRECT_TARGET_DOC_ARG, targetLocale: REDIRECT_TARGET_LOCALE_ARG, status: REDIRECT_STATUS_ARG.optional(), keepQuery: REDIRECT_KEEP_QUERY_ARG, note: REDIRECT_NOTE_ARG },
   async (a) => { const r = await createRedirect(db, ctx(), a); await mcpAudit("redirect.create", null, null, { id: r.redirect.id, source: r.redirect.source }); return r; },
 );
 tool(
   "update_redirect", "content.publish",
-  "Update a redirect rule by id (from list_redirects). Same fields and rules as create_redirect; omitted fields are unchanged.",
+  "Change an existing redirect rule by id (from list_redirects): a new target, status, source, keepQuery or note. Same fields and rules as create_redirect (collapsing, loop refusal); omitted fields are unchanged, and an unknown id is refused. Requires content.publish. Returns the same {redirect, collapsed, repointed} as create_redirect. To remove a rule use delete_redirect.",
   { id: z.number().int().describe("The rule's id from list_redirects."), source: REDIRECT_SOURCE_ARG.optional(), target: REDIRECT_TARGET_ARG, targetDocumentId: REDIRECT_TARGET_DOC_ARG, targetLocale: REDIRECT_TARGET_LOCALE_ARG, status: REDIRECT_STATUS_ARG.optional(), keepQuery: REDIRECT_KEEP_QUERY_ARG, note: REDIRECT_NOTE_ARG },
   async ({ id, ...patch }) => { const r = await updateRedirect(db, ctx(), id, patch); await mcpAudit("redirect.update", null, null, { id }); return r; },
 );
-tool("delete_redirect", "content.publish", "Permanently delete one redirect rule, or several at once, by id. Irreversible. The old URLs then answer 404 (or reach a page now published there) — check list_not_found afterwards. Returns {deleted: <count>}.", { ids: z.array(z.number().int()).min(1).describe("Rule ids from list_redirects.") },
+tool("delete_redirect", "content.publish", "Permanently delete one redirect rule, or several at once, by id (requires content.publish). Irreversible. The old URLs then answer 404 (or reach a page now published there) — check list_not_found afterwards. To point a rule somewhere else instead, use update_redirect. Returns {deleted: <count>}; ids that don't exist are not counted.", { ids: z.array(z.number().int()).min(1).describe("Rule ids from list_redirects.") },
   async ({ ids }) => { const deleted = await deleteRedirects(db, ctx(), ids); await mcpAudit("redirect.delete", null, null, { ids, deleted }); return { deleted }; });
 tool(
   "test_redirect", "content.read",
-  "Follow a URL the way a visitor would: a published page answers first, then the rules, hop by hop. Returns each step (page, redirect, gone, external, not-found, loop) and the hop count. Use it to verify a migration: every old URL should end on a page in one hop.",
+  "Follow a URL the way a visitor would: a published page answers first, then the rules, hop by hop. Returns each step (page, redirect, gone, external, not-found, loop) and the hop count, without changing anything. Use it to verify a migration — every old URL should end on a page in one hop — or after create_redirect/update_redirect. For all rules at once use list_redirects.",
   { url: z.string().describe("A path ('/old-page?x=1') or full URL on this site.") },
   ({ url }) => testRedirect(db, ctx(), url),
 );
 tool(
   "list_not_found", "content.read",
-  "List URL paths visitors hit that answered 404 on the website, as reported by the frontend: path (no query string), hits, firstSeen, lastSeen, and coveredBy — the id of a redirect rule that now answers it, or null. Most hits first, up to 2000. Use it after a migration or slug change: create_redirect for uncovered paths with real traffic, then test_redirect to verify. Read-only; no visitor data is stored.",
+  "List URL paths visitors hit that answered 404 on the website, as reported by the frontend: path (no query string), hits, firstSeen, lastSeen, and coveredBy — the id of a redirect rule that now answers it, or null. Most hits first, up to 2000. Use it after a migration or slug change: create_redirect for uncovered paths with real traffic, then test_redirect to verify. No visitor data is stored, and entries older than 90 days are dropped.",
   {},
   () => listNotFound(db, ctx()),
 );
 
 /* ---------------------------- platform admin --------------------------- */
-tool("list_users", "user.manage", "List every CMS user account (instance-wide): id, email, name, roles, section scopes, locked flag and createdAt. Requires the user.manage permission (Admin).", {}, () => listUsers(db, ctx()));
+tool("list_users", "user.manage", "List every CMS user account (admin editors, not website visitors), oldest first, all in one call (no paging): id, email, name, roles, section scopes, locked flag and createdAt. Users are shared by every site. Requires user.manage (Admin). Use an id from here with update_user or delete_user; to add someone, create_user.", {}, () => listUsers(db, ctx()));
 const ROLES_ARG = z.array(RoleName).describe("Admin = everything; Editor = all content + publish + form submissions; Author = write content within its sections; Viewer = read-only.");
 const SECTIONS_ARG = z.array(z.string()).optional().describe("documentIds of top-level pages this user is limited to (its subtree). Omit or [] for the whole site.");
 tool("create_user", "user.manage", "Create a CMS user account (an editor of the admin, not a website visitor) that signs in with this email and password. Users and roles are instance-wide, so they apply in every site; sections narrow what they can edit. Admin only, with a token not limited to one site. Returns {id}; fails if the email is taken. Give the password to the person out of band — they can change it and enable 2FA themselves. To change an existing account use update_user.", { email: z.string().email().describe("Sign-in email address; must be unique."), name: z.string().describe("Display name, e.g. 'Kari Nordmann'."), password: z.string().min(10).describe("Initial password, at least 10 characters."), roles: ROLES_ARG.min(1), sections: SECTIONS_ARG },
   async (a) => { requireCrossSiteToken("User management"); const id = await adminCreateUser(db, ctx(), a); await mcpAudit("user.create", null, null, { email: a.email, roles: a.roles }); return { id }; });
-tool("update_user", "user.manage", "Change a user's name, roles and/or section scopes (Admin only). Omitted fields are kept; roles and sections REPLACE the current lists. Changes apply from the user's next request. Returns {ok:true}.", { id: z.string().describe("The user's id from list_users."), name: z.string().optional().describe("New display name."), roles: ROLES_ARG.optional(), sections: SECTIONS_ARG },
+tool("update_user", "user.manage", "Change a user's name, roles and/or section scopes (Admin only). Omitted fields are kept; roles and sections REPLACE the current lists. Changes apply from the user's next request. Use it to promote, demote or narrow someone; removing every role locks them out without deleting the account (delete_user removes it). Taking Admin from the last Admin is refused. Users span every site, so it needs a token for every site. Returns {ok:true}.", { id: z.string().describe("The user's id from list_users."), name: z.string().optional().describe("New display name."), roles: ROLES_ARG.optional(), sections: SECTIONS_ARG },
   async ({ id, ...rest }) => { requireCrossSiteToken("User management"); await adminUpdateUser(db, ctx(), id, rest); await mcpAudit("user.update", null, null, { id }); return { ok: true }; });
-tool("delete_user", "user.manage", "Permanently delete a user account (Admin only): they can no longer sign in and their browser sessions end. Content they wrote stays. You cannot delete yourself or the last Admin. Irreversible. Returns {ok:true}.", { id: z.string().describe("The user's id from list_users.") },
+tool("delete_user", "user.manage", "Permanently delete a user account (Admin only): they can no longer sign in and their browser sessions end. Content they wrote stays. You cannot delete yourself or the last Admin. Irreversible, and users span every site (needs a token for every site). To only take away access, remove their roles with update_user instead. Returns {ok:true}.", { id: z.string().describe("The user's id from list_users.") },
   async ({ id }) => { requireCrossSiteToken("User management"); await adminDeleteUser(db, ctx(), id); await mcpAudit("user.delete", null, null, { id }); return { ok: true }; });
-tool("list_delivery_keys", "deliverykey.manage", "List this site's Delivery API keys — the credentials a website uses to read content: id, name, type (public | preview) and timestamps. Secrets are never shown again after creation. Admin only.", {}, () => listDeliveryKeys(db, ctx()));
-tool("create_delivery_key", "deliverykey.manage", "Mint a Delivery API key for this site (Admin only). A public key reads published content only — safe for a website build; a preview key also reads drafts, so keep it server-side. The secret is returned ONCE in this response; store it now.", { name: z.string().describe("Label for where it is used, e.g. 'Astro site production'."), type: z.enum(["public", "preview"]).describe("public = published only; preview = drafts too.") },
+tool("list_delivery_keys", "deliverykey.manage", "List this site's Delivery API keys — the credentials a website uses to read content — newest first, all at once: id, name, type (public | preview) and timestamps. Secrets are never shown again after creation, so a lost one means a new key (create_delivery_key). Use an id from here with rename_delivery_key or revoke_delivery_key. Admin only.", {}, () => listDeliveryKeys(db, ctx()));
+tool("create_delivery_key", "deliverykey.manage", "Mint a Delivery API key for this site (Admin only). A public key reads published content only — safe for a website build; a preview key also reads drafts, so keep it server-side. Returns {key}: the secret, shown ONCE — store it now. Manage existing keys with list_delivery_keys, rename_delivery_key and revoke_delivery_key.", { name: z.string().describe("Label for where it is used, e.g. 'Astro site production'."), type: z.enum(["public", "preview"]).describe("public = published only; preview = drafts too.") },
   async ({ name, type }) => { const r = await createDeliveryKey(db, ctx(), name, type); await mcpAudit("deliverykey.create", null, null, { name, type }); return r; });
-tool("rename_delivery_key", "deliverykey.manage", "Change a Delivery API key's label (Admin only). The secret and its access are unchanged. Returns {ok:true}.", { id: z.number().describe("The key's id from list_delivery_keys."), name: z.string().min(1).describe("The new label.") },
+tool("rename_delivery_key", "deliverykey.manage", "Change a Delivery API key's label (Admin only), e.g. after a site moves hosts. The secret, its type and its access are unchanged, so nothing using it breaks. To cut a key off use revoke_delivery_key; a key's type can't change, so mint a new one with create_delivery_key. Returns {ok:true}.", { id: z.number().describe("The key's id from list_delivery_keys."), name: z.string().min(1).describe("The new label.") },
   async ({ id, name }) => { await renameDeliveryKey(db, ctx(), id, name); await mcpAudit("deliverykey.rename", null, null, { id, name }); return { ok: true }; });
-tool("revoke_delivery_key", "deliverykey.manage", "Revoke a Delivery API key (Admin only): every request using it is refused from now on, so a website still using it stops getting content. Irreversible — mint a new key with create_delivery_key. Returns {ok:true}.", { id: z.number().describe("The key's id from list_delivery_keys.") },
+tool("revoke_delivery_key", "deliverykey.manage", "Revoke a Delivery API key (Admin only): every request using it is refused from now on, so a website still using it stops getting content. Irreversible — mint a new key with create_delivery_key (and deploy it) BEFORE revoking one a live site uses. To change only its label, use rename_delivery_key. Returns {ok:true}.", { id: z.number().describe("The key's id from list_delivery_keys.") },
   async ({ id }) => { await revokeDeliveryKey(db, ctx(), id); await mcpAudit("deliverykey.revoke", null, null, { id }); return { ok: true }; });
-tool("list_webhooks", "webhook.manage", "List this site's outbound webhooks: id, name, target url, subscribed events and status. Secrets are not shown. Admin only.", {}, () => listWebhooks(db, ctx()));
-tool("create_webhook", "webhook.manage", "Subscribe a URL to this site's events (Admin only): Paperboy POSTs a JSON payload signed with HMAC-SHA256 on each event, e.g. to trigger a static-site rebuild. Private-network URLs are refused. The signing secret is returned ONCE; store it to verify deliveries.", { name: z.string().describe("Label, e.g. 'Netlify rebuild'."), url: z.string().describe("Public https:// endpoint to POST to."), events: z.array(z.string()).optional().describe("Events to send: content.published, content.unpublished, form.submitted. Omit or [] for all.") },
+tool("list_webhooks", "webhook.manage", "List this site's outbound webhooks, newest first, all at once: id, name, target url, subscribed events and status. Secrets are not shown. Use it to check what a frontend's cache or rebuild hook is subscribed to; to change one, delete_webhook then create_webhook (there is no update). Admin only.", {}, () => listWebhooks(db, ctx()));
+tool("create_webhook", "webhook.manage", "Subscribe a URL to this site's events (Admin only): Paperboy POSTs a JSON payload signed with HMAC-SHA256 on each event, e.g. to trigger a static-site rebuild or purge a cache. Private-network URLs are refused. Each POST carries the event in x-paperboy-event and the signature in x-paperboy-signature (sha256=<hex HMAC of the body>). Returns {id, secret}: the signing secret is shown ONCE, so store it to verify deliveries. See existing hooks with list_webhooks; remove one with delete_webhook.", { name: z.string().describe("Label, e.g. 'Netlify rebuild'."), url: z.string().describe("Public https:// endpoint to POST to."), events: z.array(z.string()).optional().describe("Events to send: content.published, content.unpublished, delivery.changed (output changed without a publish: moves, sorting, settings…), form.submitted. Omit or [] for every event EXCEPT form.submitted, which carries visitor personal data and must be named.") },
   async (a) => { const r = await createWebhook(db, ctx(), a); await mcpAudit("webhook.create", null, null, { name: a.name }); return r; });
 tool("delete_webhook", "webhook.manage", "Permanently delete one of this site's webhooks (Admin only). Events are sent at the moment they happen and never queued, so nothing is pending: from now on its URL simply receives no more events, and its signing secret is gone. Irreversible. There is no update_webhook — to change a URL or event list, delete it and create_webhook again (the new one gets a new secret). Returns {ok:true}.", { id: z.number().describe("The webhook's id from list_webhooks.") },
   async ({ id }) => { await deleteWebhook(db, ctx(), id); await mcpAudit("webhook.delete", null, null, { id }); return { ok: true }; });
-tool("list_audit", "audit.read", "Read the append-only audit log, newest first: who did what (create, publish, delete, login, export…), when, to which document, from which surface (ip 'mcp' = agent). Use it to find out who changed something. Requires audit.read and a token not limited to one site.",
+tool("list_audit", "audit.read", "Read the append-only audit log, newest first: who did what (create, publish, delete, login, export…), when, to which document, from which surface (ip 'mcp' = agent). Each row has id, ts, actorUserId, action, documentId, locale, ip and detail. Use it to find out who changed something; for what an item looked like before, use list_versions instead. Requires audit.read and a token not limited to one site.",
   {
     limit: z.number().optional().describe("Rows to return, 1-500 (default 100)."),
     before: z.number().optional().describe("Paging cursor: the id of the oldest row you already have."),
@@ -1096,10 +1218,9 @@ tool("list_audit", "audit.read", "Read the append-only audit log, newest first: 
     to: z.string().optional().describe("Latest time, ISO 8601."),
   },
   (a) => { requireCrossSiteToken("The audit log"); return listAudit(db, ctx(), a); });
-tool("list_locales", "content.read", "List the enabled locales (language branches), in order, with which one is the default. Each content item has one variant per locale; pass these codes as `locale` to other tools so text lands in the branch matching its language.", {}, async () => { return listLocales(db); });
 
 /* ---------------------------------- AI --------------------------------- */
-tool("ai_assist", "content.update", "Run the CMS's writing assistant on a piece of text and return the result — it does NOT save anything; write the output yourself with set_field/update_content. Uses the model configured in Settings → AI (Anthropic or OpenAI-compatible). Without a configured model only meta_title, meta_description and summarize work (a basic truncation); the other tasks return an error saying so. Image alt text is not available here (it needs the image itself): write it and save with update_asset_alt.",
+tool("assist_writing", "content.update", "Run the CMS's writing assistant on a piece of text: SEO titles and descriptions, summaries, polishing, rewrites, variants, translation, drafting from a brief, schema.org field suggestions. Returns {result, provider}: result is the text (for variants, a JSON array of 3 strings). It saves nothing — write the result with set_field or update_content. It uses the model set in Settings → AI; without one, only meta_title, meta_description and summarize work (by truncation) and the rest are refused with a hint. It cannot write image alt text, since it never sees the image: write that yourself and save it with update_asset_alt.",
   {
     task: z.enum(AI_TASKS).describe("meta_title / meta_description = SEO text from the input; summarize; improve = polish grammar and flow; rewrite; variants = 3 alternatives as a JSON array; translate (needs targetLocale); write = 2-4 paragraphs about the topic in input; schema_fields = suggested fields for the schema.org @type named in input; alt_text is refused (see above)."),
     input: z.string().min(1).describe("The text to work on (or, for write, the topic/brief)."),
@@ -1164,6 +1285,9 @@ function oauthResourceServer(resource: string, httpPath: string) {
 }
 
 async function main(): Promise<void> {
+  const registered = new Set(registrations.map((r) => r.name));
+  const missing = [...TOOLSET_OF.keys()].filter((name) => !registered.has(name));
+  if (missing.length) throw new Error(`TOOLSETS names tools that are not registered: ${missing.join(", ")}`);
   // Prefer a Paperboy-issued MCP token (Settings → MCP); fall back to
   // email+password. With OAuth in HTTP mode there may be neither: the process
   // then has no identity of its own, and every request brings its user.
@@ -1231,7 +1355,17 @@ async function main(): Promise<void> {
         return check.userId;
       },
       ...(OAUTH ? oauthResourceServer(MCP_PUBLIC_URL!, MCP_HTTP_PATH) : {}),
-      buildServer,
+      // A connector's URL carries its toolsets (?toolsets=content,admin), fixed for
+      // the session it opens; without one, the server's PAPERBOY_TOOLSETS applies.
+      buildServer: (req) => {
+        const asked = new URL(req.url ?? "/", "http://mcp").searchParams.get("toolsets");
+        if (asked === null) return buildServer();
+        try {
+          return buildServer(parseToolsets(asked));
+        } catch (err) {
+          throw new HttpError(400, (err as Error).message);
+        }
+      },
       sessions,
       lastSeen,
     });

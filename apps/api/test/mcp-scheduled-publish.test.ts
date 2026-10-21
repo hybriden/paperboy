@@ -56,7 +56,7 @@ describe("MCP publish carries publishAt/expireAt (scheduled publishing over MCP)
     const id = await makeDraft("Scheduled Via MCP");
     const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
-    const res = await mcp.call("publish", { documentId: id, locale: "en", publishAt: future });
+    const res = await mcp.call("publish_content", { documentId: id, locale: "en", publishAt: future });
     expect(res.isError).toBe(false);
 
     // The draft holds the schedule — it is NOT live.
@@ -79,7 +79,7 @@ describe("MCP publish carries publishAt/expireAt (scheduled publishing over MCP)
     const id = await makeDraft("Expiring Via MCP");
     const future = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
-    const res = await mcp.call("publish", { documentId: id, locale: "en", expireAt: future });
+    const res = await mcp.call("publish_content", { documentId: id, locale: "en", expireAt: future });
     expect(res.isError).toBe(false);
 
     const d = await detail(id);
@@ -93,7 +93,7 @@ describe("MCP publish carries publishAt/expireAt (scheduled publishing over MCP)
     // Depending on SDK version, invalid args come back in-band (isError) or as a
     // JSON-RPC error (the client rejects) — treat both as the error path.
     const res = await mcp
-      .call("publish", { documentId: id, locale: "en", publishAt: "2026-08-04T09:00" })
+      .call("publish_content", { documentId: id, locale: "en", publishAt: "2026-08-04T09:00" })
       .catch((e: Error) => ({ text: e.message, json: null, isError: true }));
     expect(res.isError).toBe(true);
     expect(res.text).toContain("publishAt");

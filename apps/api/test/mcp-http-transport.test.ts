@@ -55,6 +55,12 @@ class HttpMcp {
     return res;
   }
 
+  async listToolNames(): Promise<string[]> {
+    const res = await this.post({ jsonrpc: "2.0", id: this.nextId++, method: "tools/list", params: {} });
+    const body = (await res.json()) as { result: { tools: Array<{ name: string }> } };
+    return body.result.tools.map((t) => t.name).sort();
+  }
+
   /** tools/call returning the same {text, json, isError} shape as the stdio client. */
   async call(name: string, args: Record<string, unknown> = {}): Promise<{ text: string; json: unknown; isError: boolean }> {
     const res = await this.post({ jsonrpc: "2.0", id: this.nextId++, method: "tools/call", params: { name, arguments: args } });
@@ -134,6 +140,30 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     expect(res.headers.get("www-authenticate")).toBe("Bearer");
   });
 
+  // A remote connector's URL carries its toolsets, so one HTTP server serves a
+  // content-only agent and an admin one at once without either seeing the other's.
+  it("?toolsets= picks the listing per connection", async () => {
+    const writer = new HttpMcp(envToken, `${URL_}?toolsets=content`);
+    const admin = new HttpMcp(envToken, `${URL_}?toolsets=content,admin`);
+    expect((await writer.initialize()).status).toBe(200);
+    expect((await admin.initialize()).status).toBe(200);
+    expect(await writer.listToolNames()).not.toContain("list_users");
+    expect(await admin.listToolNames()).toContain("list_users");
+    expect(await writer.listToolNames()).not.toContain("list_users"); // the admin session didn't bleed into it
+    const refused = await writer.call("list_users");
+    expect(refused.isError).toBe(true);
+    expect(refused.text).toContain('"admin" toolset');
+  });
+
+  it("an unknown ?toolsets= name is a 400 naming the real ones", async () => {
+    const c = new HttpMcp(envToken, `${URL_}?toolsets=contnet`);
+    const res = await c.initialize();
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('"contnet"');
+    expect(body.error).toContain("content, delivery, schema, redirects, forms, admin");
+  });
+
   it("a wrong bearer is 401 (no fallthrough)", async () => {
     const c = new HttpMcp("mcp_definitely-not-a-real-token");
     const res = await c.post({ jsonrpc: "2.0", id: 1, method: "ping" });
@@ -164,7 +194,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     const title = await c.call("set_field", { documentId: docId, locale: "en", field: "title", value: "HTTP transport roundtrip" });
     expect(title.isError).toBe(false);
 
-    const pub = await c.call("publish", { documentId: docId, locale: "en" });
+    const pub = await c.call("publish_content", { documentId: docId, locale: "en" });
     expect(pub.isError, pub.text.slice(0, 300)).toBe(false);
 
     // Verify through delivery: byte-identical body.
@@ -207,7 +237,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     const c = new HttpMcp(rotated);
     const init = await c.initialize();
     expect(init.status).toBe(200);
-    expect((await c.call("list_locales")).isError).toBe(false);
+    expect((await c.call("list_sites")).isError).toBe(false);
   });
 
   it("a SITE-SCOPED token works against a server booted with a cross-site one", async () => {

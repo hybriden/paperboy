@@ -411,7 +411,7 @@ export type RichTextDoc = z.infer<typeof RichTextDoc>;
 const ASSET_DOCUMENT_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const ASSET_DOCUMENT_ID_MESSAGE =
   "must reference the media library by asset documentId, not a URL or file path. " +
-  "Get one first: upload the file, or import a stock photo (MCP: search_stock_images → import_stock_image; " +
+  "Get one first: upload the file, or import a stock photo (MCP: upload_asset {url}, or search_stock_images → upload_asset {stockImageId}; " +
   "admin: the image field's Choose button), then send the documentId it returns";
 
 /**

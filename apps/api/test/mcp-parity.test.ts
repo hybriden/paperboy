@@ -69,6 +69,11 @@ describe("MCP parity: real stdio server vs the API", () => {
     expect(byName.get("get_content")).toMatchObject({ readOnlyHint: true });
     expect(byName.get("delete_asset")).toMatchObject({ readOnlyHint: false, destructiveHint: true });
     expect(byName.get("trash_content")).toMatchObject({ readOnlyHint: false, destructiveHint: false });
+    // Replacing a draft, definition or role list loses what the call leaves out:
+    // a description saying so beside destructiveHint:false is a contradiction (TDQS scores it 1).
+    for (const name of ["copy_variant", "restore_version", "update_content_type", "update_type_template", "update_user", "import_type_templates", "instantiate_type_template"]) {
+      expect(byName.get(name), name).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    }
     expect(byName.get("set_field")).toMatchObject({ readOnlyHint: false, idempotentHint: true });
   }, 60_000);
 
@@ -153,7 +158,7 @@ describe("MCP parity: real stdio server vs the API", () => {
     expect(bad.text).toContain("publishDate"); // the agent can self-correct in one step
   }, 60_000);
 
-  it("update_content REFUSES a raw URL in an image field, steering to import_stock_image (Harmonix 2026-06-12)", async () => {
+  it("update_content REFUSES a raw URL in an image field, steering to upload_asset (Harmonix 2026-06-12)", async () => {
     // Real incident: a flow wrote image:"https://images.unsplash.com/…" — it
     // persisted with a success response and the site rendered no image. The
     // error must name the field AND the tools that produce a real asset
@@ -166,7 +171,7 @@ describe("MCP parity: real stdio server vs the API", () => {
     });
     expect(bad.isError).toBe(true);
     expect(bad.text).toContain("ogImage");
-    expect(bad.text).toContain("import_stock_image");
+    expect(bad.text).toContain("upload_asset");
   }, 60_000);
 
   it("create_content with an empty-string image persists null, not an empty pseudo-id (Harmonix 2026-06-12)", async () => {
@@ -290,7 +295,7 @@ describe("MCP parity: real stdio server vs the API", () => {
     const created = await mcp.call("create_content", { type: "BlogPost", parentId: s.ids.blogId, name: "MCP Self Publish" });
     const id = (created.json as { documentId: string }).documentId;
     await mcp.call("update_content", { documentId: id, data: { title: "Self publish" } });
-    const pub = await mcp.call("publish", { documentId: id });
+    const pub = await mcp.call("publish_content", { documentId: id });
     expect(pub.isError).toBe(false);
   }, 60_000);
 
@@ -302,7 +307,7 @@ describe("MCP parity: real stdio server vs the API", () => {
       const id = (created.json as { documentId: string }).documentId;
       await mcp.call("update_content", { documentId: id, data: { title: "Gated" } });
 
-      const blocked = await mcp.call("publish", { documentId: id });
+      const blocked = await mcp.call("publish_content", { documentId: id });
       expect(blocked.isError).toBe(true);
       expect(blocked.text).toContain("human review"); // names the problem
       expect(blocked.text).toContain("/review"); // and the unblock path
@@ -312,7 +317,7 @@ describe("MCP parity: real stdio server vs the API", () => {
       expect(approve.statusCode).toBe(200);
       expect(approve.json().needsReview).toBe(false);
 
-      const pub = await mcp.call("publish", { documentId: id });
+      const pub = await mcp.call("publish_content", { documentId: id });
       expect(pub.isError).toBe(false);
 
       // HUMAN publishing is never gated: agent-drafts another change, human publishes it.
