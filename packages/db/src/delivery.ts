@@ -727,6 +727,11 @@ async function areaBlock(ctx: DeliveryCtx, perspective: Perspective, entry: unkn
   if (!c) return null;
   if (c.data && typeof c.data === "object") return c.kind === "block" ? { type: scalarToString(c.type), data: c.data as Record<string, unknown> } : null;
   if (typeof c.documentId !== "string" || !ctx.withinResolveBudget()) return null;
+  // A page stub is a teaser, not a part: skip it unresolved. Resolving it to find
+  // out ran ITS structured data too, so pages teasing each other recursed A → B → A
+  // until the resolve budget was spent and every later sibling came back a stub.
+  const stubType = typeof c.type === "string" ? await ctx.type(c.type) : null;
+  if (stubType && stubType.kind !== "block") return null;
   const resolved = await resolveContent(ctx, perspective, c.documentId, loc, 0);
   return resolved && resolved.kind === "block" ? { type: resolved.type, data: resolved.data } : null;
 }
