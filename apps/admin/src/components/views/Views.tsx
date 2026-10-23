@@ -381,7 +381,8 @@ export function SettingsView() {
   // One home for "does the hash name a tab this user can see" — active and the
   // mobile drill below must agree on it or a deep-link opens the wrong screen.
   const hashIsTab = tabs.some((t) => t.key === hashTab);
-  const [active, setActive] = useState(hashIsTab ? hashTab : (tabs[0]?.key ?? "model"));
+  // Content types is the landing tab (every role sees it), not whatever is listed first.
+  const [active, setActive] = useState(hashIsTab ? hashTab : "model");
   const current = tabs.find((t) => t.key === active) ?? tabs[0];
   const groups: SettingsTab["group"][] = ["Site", "Content model", "Instance", "You"];
 
