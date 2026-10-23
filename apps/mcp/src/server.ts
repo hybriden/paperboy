@@ -178,7 +178,7 @@ const OAUTH = Boolean(MCP_HTTP_PORT && MCP_PUBLIC_URL);
 // public repo, so defaulting to it booted an unconfigured server as admin.
 if (!MCP_TOKEN && !MCP_LOGIN && !OAUTH) {
   console.error(
-    "[paperboy-mcp] No credentials: set MCP_TOKEN (mint one in Settings → MCP), or MCP_EMAIL and MCP_PASSWORD — or, in HTTP mode, PUBLIC_URL so clients sign in with OAuth",
+    "[paperboy-mcp] No credentials: set MCP_TOKEN (mint one in Settings → AI agents), or MCP_EMAIL and MCP_PASSWORD — or, in HTTP mode, PUBLIC_URL so clients sign in with OAuth",
   );
   process.exit(1);
 }
@@ -210,7 +210,7 @@ async function bearerOk(req: IncomingMessage, bootUserId: string | null): Promis
 
   // The DATABASE IS CONSULTED FIRST, so revocation always wins: a compare against
   // the in-memory boot token before the lookup would keep a token revoked in
-  // Settings → MCP working until the container restarts.
+  // Settings → AI agents working until the container restarts.
   const found = await mcpTokenState(db, presented);
   if (found.state === "revoked") return DENIED;
   if (found.state === "active") {
@@ -274,7 +274,7 @@ async function ctxForSite(site: string): Promise<AccessContext> {
   if (found && cap && found.id !== cap) {
     const mine = await getSiteById(db, cap);
     throw new Error(
-      `This MCP token is scoped to the ${mine ? `'${mine.slug}'` : cap} site and cannot act in '${site}'. Mint a token for that site in Settings → MCP, or one for every site.`,
+      `This MCP token is scoped to the ${mine ? `'${mine.slug}'` : cap} site and cannot act in '${site}'. Mint a token for that site in Settings → AI agents, or one for every site.`,
     );
   }
   if (!found) {
@@ -303,7 +303,7 @@ function requireCrossSiteToken(what: string): void {
   if (tokenSite()) {
     throw new Error(
       `${what} is shared by every site, so a token scoped to one site cannot do this. ` +
-        `Mint a token for every site in Settings → MCP (tick "Every site") and use that one.`,
+        `Mint a token for every site in Settings → AI agents (tick "Every site") and use that one.`,
     );
   }
 }
@@ -1288,7 +1288,7 @@ async function main(): Promise<void> {
   const registered = new Set(registrations.map((r) => r.name));
   const missing = [...TOOLSET_OF.keys()].filter((name) => !registered.has(name));
   if (missing.length) throw new Error(`TOOLSETS names tools that are not registered: ${missing.join(", ")}`);
-  // Prefer a Paperboy-issued MCP token (Settings → MCP); fall back to
+  // Prefer a Paperboy-issued MCP token (Settings → AI agents); fall back to
   // email+password. With OAuth in HTTP mode there may be neither: the process
   // then has no identity of its own, and every request brings its user.
   let userId: string | null = null;

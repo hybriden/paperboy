@@ -75,7 +75,7 @@ export async function revokeMcpToken(db: Database, ctx: AccessContext, id: numbe
  * "revoked" and "unknown" both mean "don't authenticate", but the MCP server has
  * to tell them apart: it may be booted with an env-only MCP_TOKEN that has no row
  * at all ("unknown", and legitimately usable), while a token that DOES have a row
- * and was revoked in Settings → MCP must stop working immediately — even if it is
+ * and was revoked in Settings → AI agents must stop working immediately — even if it is
  * the same string the process booted with.
  */
 export type McpTokenState =

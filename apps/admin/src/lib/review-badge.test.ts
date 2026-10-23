@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { reviewBadge } from "./review-badge.js";
 
-// Settings → MCP → "Require human review before agents publish" gates whether an
+// Settings → AI → "Require human review before agents publish" gates whether an
 // agent may publish its own draft. The editor's "🤖 Needs review / Approve" badge
 // is the visible side of that gate — so with the gate OFF it must NOT appear, even
 // though the draft still carries the provenance `needsReview` flag. (Reported bug:

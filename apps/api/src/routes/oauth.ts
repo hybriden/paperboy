@@ -264,7 +264,7 @@ export async function registerOAuthRoutes(appBase: FastifyInstance, opts: { conf
     },
   );
 
-  /* ---- connected apps (Settings → MCP) ---- */
+  /* ---- connected apps (Settings → AI agents) ---- */
 
   app.get(
     "/api/v1/manage/oauth-grants",

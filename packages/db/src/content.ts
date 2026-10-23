@@ -2194,7 +2194,7 @@ export async function publishContent(
 }
 
 /**
- * Agent-review gate (opt-in via Settings → MCP): an agent cannot publish its
+ * Agent-review gate (opt-in via Settings → AI): an agent cannot publish its
  * own unreviewed draft — a human must approve it first (or edit it, which
  * clears the flag). Self-teaching: the error tells the agent exactly what
  * unblocks it. Human publishes are never gated (publishing IS reviewing).
@@ -2210,7 +2210,7 @@ async function assertAgentReviewCleared(
   if (ctx.via === "mcp" && draft?.needsReview && (await getAgentReviewRequired(db))) {
     throw Errors.forbidden(
       "This draft was written by an agent and the site requires human review before publishing " +
-        "(Settings → MCP → Agent review). Ask a human to approve it in the editor, or via " +
+        "(Settings → AI → Agent review). Ask a human to approve it in the editor, or via " +
         `POST /manage/content/${documentId}/review?locale=${loc}. The flag also clears when a human edits the draft.`,
     );
   }

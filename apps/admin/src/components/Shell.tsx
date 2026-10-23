@@ -19,7 +19,7 @@ const IS_MAC = /mac|iP(hone|ad|od)/i.test(platform);
 
 const RAIL = [
   { to: "/dashboard", icon: Icon.Dashboard, label: "Dashboard" },
-  { to: "/edit", icon: Icon.Edit, label: "Edit" },
+  { to: "/edit", icon: Icon.Edit, label: "Content" },
   { to: "/settings", icon: Icon.Settings, label: "Settings" },
 ];
 

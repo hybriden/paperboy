@@ -94,7 +94,7 @@ test("an unregistered redirect is refused on the page, never followed", async ({
   expect(new URL(page.url()).host).not.toContain("attacker.example"); // still on the admin, not sent anywhere
 });
 
-test("the connection is listed under Settings → Connected apps and can be disconnected", async ({ page }) => {
+test("the connection is listed under Settings → AI agents and can be disconnected", async ({ page }) => {
   const clientId = await registerClient(page);
   const { url, verifier } = authorizeUrl(clientId);
   let landed = "";
@@ -112,7 +112,7 @@ test("the connection is listed under Settings → Connected apps and can be disc
   });
   expect(tok.status()).toBe(200);
 
-  await page.goto("/settings#connections");
+  await page.goto("/settings#agents");
   const row = page.locator("div", { hasText: "Consent Test Client" }).filter({ has: page.getByRole("button", { name: "Disconnect" }) }).last();
   await expect(row).toBeVisible({ timeout: 15_000 });
   page.once("dialog", (d) => void d.accept());
