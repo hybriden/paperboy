@@ -191,6 +191,9 @@ services:
       # optional `site` that overrides this per call. An unknown value here
       # refuses to boot (an unknown one per call is a self-teaching error).
       PAPERBOY_SITE: ${PAPERBOY_SITE:-}
+      # Toolsets listed by default (comma list, or "all"); unset = content only.
+      # A client can still widen its own connection with /mcp?toolsets=….
+      PAPERBOY_TOOLSETS: ${PAPERBOY_TOOLSETS:-}
       # Settings stored via the admin (stock-image key, AI key) are encrypted at
       # rest with MFA_SECRET ?? SESSION_SECRET by the api service. The MCP reads
       # the SAME rows — without the same secrets here it silently treats every

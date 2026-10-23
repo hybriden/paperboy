@@ -263,7 +263,7 @@ media). The rest is opt-in, so an agent writing a page isn't choosing among user
 | `forms` | form submissions (export, erasure) |
 | `admin` | users, delivery keys, webhooks, audit log, start page |
 
-Pick them with `PAPERBOY_TOOLSETS=content,redirects` on the server, or per connection on the URL:
+Pick them with `PAPERBOY_TOOLSETS=content,redirects` on the server (in `.env` with Docker Compose), or per connection on the URL:
 `https://<your-domain>/mcp?toolsets=content,redirects` (`all` lists everything). Your role still
 decides what you may do; a tool outside the chosen toolsets answers with how to enable it.
 
