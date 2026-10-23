@@ -20,7 +20,7 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
   app.addHook("preHandler", requireAuth);
 
   // Resolve the provider config at request time: a config stored in the CMS
-  // (Settings → AI) overrides the env fallbacks, so it can be changed without
+  // (Settings → AI provider) overrides the env fallbacks, so it can be changed without
   // restarting the api. Key/provider/baseUrl resolve as a UNIT — see
   // resolveAiRuntimeConfig for the binding rules.
   const resolveAiConfig = () => resolveAiRuntimeConfig(app.db, app.aiEnv);
@@ -188,7 +188,7 @@ export async function registerAiRoutes(appBase: FastifyInstance): Promise<void> 
     async (req, reply) => {
       const cfg = await resolveAiConfig();
       if (!cfg.apiKey) {
-        return reply.code(409).send({ error: "AI provider is not configured (Settings → Site → AI key)." });
+        return reply.code(409).send({ error: "AI provider is not configured (Settings → AI provider)." });
       }
       // SSE: take over the raw socket. X-Accel-Buffering disables reverse-proxy
       // buffering (nginx and kin, if one sits in front) so events arrive as they happen.

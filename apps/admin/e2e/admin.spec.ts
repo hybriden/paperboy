@@ -456,7 +456,7 @@ test("Settings is tabbed and exposes the admin sections for an Admin", async ({ 
   // Default tab = Content types.
   await expect(page.getByRole("heading", { name: "Content types" }).first()).toBeVisible();
   // Each section is a tab in the left nav; clicking it shows that section.
-  for (const tab of ["Users & roles", "Delivery keys", "Webhooks", "Trash", "Audit log", "Your account", "AI agents", "Languages"]) {
+  for (const tab of ["General", "Delivery keys", "Webhooks", "Trash", "Sites", "Users & roles", "Agent access", "AI provider", "Audit log", "Sign-in & security", "Connected apps", "Languages"]) {
     await page.getByRole("button", { name: tab, exact: true }).click();
     await expect(page.getByRole("heading", { name: tab }).first()).toBeVisible();
   }

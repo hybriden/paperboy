@@ -47,14 +47,14 @@ The website you build on is a separate repo, the
 - *"Who changed the home page last week, and what did they change?"*
 - *"Export this month's contact-form submissions."*
 
-Running locally? Mint a token in Settings → AI agents and use stdio — see [MCP setup](#mcp-setup).
+Running locally? An admin mints a token in Settings → Agent access and use stdio — see [MCP setup](#mcp-setup).
 
 ## Why "MCP-first" means more than an MCP server
 
 Every rule below exists because a real agent run broke without it.
 
 - **You decide how much to trust it.** Every version records whether a person or an agent wrote it,
-  and agent drafts are badged *Agent edited*. Switch on agent review (Settings → AI) and agent drafts
+  and agent drafts are badged *Agent edited*. Switch on agent review (Settings → Agent access) and agent drafts
   become *Needs review*: the agent can still write, but nothing goes live until a person approves.
 - **Nothing an agent does is permanent by accident.** Full version history, a trash with restore, drafts
   by default, scheduled publishing instead of fake dates in a field.
@@ -229,7 +229,7 @@ docker compose --profile mcp up -d --no-deps mcp      # → https://<your-domain
 On a one-container host, set `MCP_EMBEDDED=true` on the api instead and it serves the MCP itself.
 
 **Local clients (stdio).** The client starts the server, so this goes in its config, not a terminal.
-Mint a token in Settings → AI agents and point `-C` at your Paperboy checkout (after `pnpm install`):
+An admin mints a token in Settings → Agent access and point `-C` at your Paperboy checkout (after `pnpm install`):
 
 ```json
 {
@@ -269,7 +269,7 @@ decides what you may do; a tool outside the chosen toolsets answers with how to 
 
 **OAuth for remote clients.** Add `https://<your-domain>/mcp` as a connector in Claude or Cursor. The
 client registers itself, sends you through Paperboy's own login (with 2FA), and a consent screen asks
-which site the connection may work in. Revoke it in Settings → AI agents. One domain is enough:
+which site the connection may work in. Revoke it in Settings → Connected apps. One domain is enough:
 the API forwards `/mcp` and serves `/.well-known/oauth-*`. For other layouts set `PUBLIC_URL` (the
 issuer, default `CORS_ORIGIN`) and `MCP_PUBLIC_URL` (default `{PUBLIC_URL}/mcp`) on both `api` and `mcp`.
 

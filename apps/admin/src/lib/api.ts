@@ -187,7 +187,7 @@ async function request<T>(
   path: string,
   body?: unknown,
   signal?: AbortSignal,
-  // Override the active site for THIS call only (lets Settings → Site read/write
+  // Override the active site for THIS call only (lets Settings → Sites read/write
   // any site's config without switching the whole admin's working context).
   siteOverride?: string,
   retried = false,

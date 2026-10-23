@@ -49,7 +49,7 @@ test("Languages: add, disable, then delete a locale", async ({ page }) => {
 });
 
 test("Site: save the preview base URL", async ({ page }) => {
-  await gotoSettings(page, "Site");
+  await gotoSettings(page, "General");
   const url = "http://localhost:8092";
   const input = page.getByRole("textbox", { name: /Preview base URL/ }).or(page.locator('input[type="url"]'));
   await input.first().fill(url);
@@ -58,7 +58,7 @@ test("Site: save the preview base URL", async ({ page }) => {
 });
 
 test("AI: save a key, see configured status, then clear it back to basic mode", async ({ page }) => {
-  await gotoSettings(page, "AI");
+  await gotoSettings(page, "AI provider");
   // No key in this env → basic mode status.
   await expect(page.getByText(/basic .*mode|No key configured/i).first()).toBeVisible({ timeout: 10_000 });
 
@@ -81,7 +81,7 @@ test("Stock images: panel reports unconfigured status", async ({ page }) => {
 });
 
 test("Delivery keys: create (secret shown once), rename, revoke", async ({ page }) => {
-  await gotoSettings(page, "API keys");
+  await gotoSettings(page, "Delivery keys");
   const name = uniqueName("dk");
   await page.getByLabel("Key name").fill(name);
   await page.getByLabel("Key type").selectOption("public");
@@ -107,7 +107,7 @@ test("Delivery keys: create (secret shown once), rename, revoke", async ({ page 
 });
 
 test("MCP tokens: create (token shown once), then revoke", async ({ page }) => {
-  await gotoSettings(page, "MCP");
+  await gotoSettings(page, "Agent access");
   const name = uniqueName("mcp");
   await page.getByLabel("Token name").fill(name);
   // "Acts as user" defaults to the first user — fine.

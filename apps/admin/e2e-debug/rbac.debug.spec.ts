@@ -21,7 +21,7 @@ test("Editor cannot see the Users & MCP settings tabs", async ({ page }) => {
   // …but the user-management tabs (gated on user.manage) are not.
   await expect(page.getByRole("button", { name: "Users & roles", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "MCP", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "AI", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "AI provider", exact: true })).toHaveCount(0);
 });
 
 test("Editor cannot manage content types (no New content type button)", async ({ page }) => {

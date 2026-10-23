@@ -4,7 +4,7 @@ export type ReviewBadge = "needs-review" | "agent-edited" | null;
 /**
  * Decide the agent badge for a working version.
  * - "needs-review": an agent wrote it AND the site requires human review before
- *   agents publish (Settings → AI) — an ACTIONABLE badge with an Approve button.
+ *   agents publish (Settings → Agent access) — an ACTIONABLE badge with an Approve button.
  * - "agent-edited": an agent wrote it but review is not required — a passive
  *   provenance label, no action implied.
  * - null: a human wrote it; show nothing.

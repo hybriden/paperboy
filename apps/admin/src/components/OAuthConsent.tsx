@@ -134,7 +134,7 @@ export function OAuthConsent() {
                 Cancel
               </button>
             </div>
-            <p className="mt-6 text-xs text-muted">You can disconnect it at any time in Settings → AI agents.</p>
+            <p className="mt-6 text-xs text-muted">You can disconnect it at any time in Settings → Connected apps.</p>
           </form>
         )}
       </div>

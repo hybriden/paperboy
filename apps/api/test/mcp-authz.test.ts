@@ -18,7 +18,7 @@ import { type Suite, TEST_DB, authHeaders, login, setupApi } from "./helpers.js"
  * KEY-scoped, not section-scoped.
  *
  * Separately: bearerOk compared the presented bearer against the in-memory boot
- * MCP_TOKEN *before* the DB lookup, so revoking that token in Settings → AI agents had
+ * MCP_TOKEN *before* the DB lookup, so revoking that token in Settings → Agent access had
  * no effect on the running server — the admin saw "revoked" while the holder kept
  * full access.
  */
