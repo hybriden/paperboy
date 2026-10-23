@@ -288,7 +288,7 @@ test("left rail navigates between views", async ({ page }) => {
   await page.screenshot({ path: `${SHOT}/04-dashboard.png` });
   await page.getByRole("link", { name: "Settings" }).click();
   await expect(page.getByRole("heading", { name: "Settings" })).toBeVisible();
-  await page.getByRole("link", { name: "Edit" }).click();
+  await page.getByRole("link", { name: "Content" }).click();
   await expect(page.getByRole("treeitem", { name: /Home/ })).toBeVisible();
 });
 
@@ -456,7 +456,7 @@ test("Settings is tabbed and exposes the admin sections for an Admin", async ({ 
   // Default tab = Content types.
   await expect(page.getByRole("heading", { name: "Content types" }).first()).toBeVisible();
   // Each section is a tab in the left nav; clicking it shows that section.
-  for (const tab of ["Users & roles", "API keys", "Webhooks", "Trash", "Audit log", "Your account", "Languages"]) {
+  for (const tab of ["Users & roles", "Delivery keys", "Webhooks", "Trash", "Audit log", "Your account", "AI agents", "Languages"]) {
     await page.getByRole("button", { name: tab, exact: true }).click();
     await expect(page.getByRole("heading", { name: tab }).first()).toBeVisible();
   }

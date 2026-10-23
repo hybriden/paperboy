@@ -332,7 +332,7 @@ export function DashboardView() {
 interface SettingsTab {
   key: string;
   label: string;
-  group: "Content" | "Administration" | "Account";
+  group: "Site" | "Content model" | "Instance" | "You";
   show: boolean;
   render: () => React.ReactNode;
 }
@@ -342,24 +342,32 @@ export function SettingsView() {
   useEffect(() => setCrumb(null), [setCrumb]);
   const { user } = useUser();
   const has = (p: string) => user.permissions.includes(p as never);
+  const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites() });
+  const activeSiteName = sites.data?.sites.find((x) => x.id === sites.data?.activeSiteId)?.name;
 
   const allTabs: SettingsTab[] = [
-    { key: "model", label: "Content types", group: "Content", show: true, render: () => <ContentTypesPanel /> },
-    { key: "templates", label: "Type templates", group: "Content", show: has("contenttype.manage"), render: () => <TypeTemplatesPanel /> },
-    { key: "languages", label: "Languages", group: "Content", show: true, render: () => <LanguagesPanel /> },
-    { key: "site", label: "Site", group: "Content", show: has("content.publish"), render: () => <SitePanel /> },
-    { key: "redirects", label: "Redirects", group: "Content", show: true, render: () => <RedirectsPanel /> },
-    { key: "submissions", label: "Form submissions", group: "Content", show: has("submission.read"), render: () => <FormSubmissionsPanel /> },
-    { key: "users", label: "Users & roles", group: "Administration", show: has("user.manage"), render: () => <UsersPanel /> },
-    { key: "keys", label: "API keys", group: "Administration", show: has("deliverykey.manage"), render: () => <DeliveryKeysPanel /> },
-    { key: "mcp", label: "MCP", group: "Administration", show: has("user.manage"), render: () => <McpTokensPanel /> },
-    { key: "ai", label: "AI", group: "Administration", show: has("user.manage"), render: () => <AiPanel /> },
-    { key: "stock", label: "Stock images", group: "Administration", show: has("user.manage"), render: () => <StockImagesPanel /> },
-    { key: "webhooks", label: "Webhooks", group: "Administration", show: has("webhook.manage"), render: () => <WebhooksPanel /> },
-    { key: "audit", label: "Audit log", group: "Administration", show: has("audit.read"), render: () => <AuditPanel /> },
-    { key: "trash", label: "Trash", group: "Administration", show: true, render: () => <TrashPanel /> },
-    { key: "account", label: "Your account", group: "Account", show: true, render: () => (<><TwoFactorPanel /><PasswordPanel /></>) },
-    { key: "connections", label: "Connected apps", group: "Account", show: true, render: () => <McpConnectionsPanel /> },
+    // Grouped by what a tab applies to: the active site, what every site shares, the instance, or you.
+    { key: "site", label: "Sites", group: "Site", show: has("content.publish"), render: () => <SitePanel /> },
+    { key: "redirects", label: "Redirects", group: "Site", show: true, render: () => <RedirectsPanel /> },
+    { key: "submissions", label: "Form submissions", group: "Site", show: has("submission.read"), render: () => <FormSubmissionsPanel /> },
+    { key: "keys", label: "Delivery keys", group: "Site", show: has("deliverykey.manage"), render: () => <DeliveryKeysPanel /> },
+    { key: "webhooks", label: "Webhooks", group: "Site", show: has("webhook.manage"), render: () => <WebhooksPanel /> },
+    { key: "trash", label: "Trash", group: "Site", show: true, render: () => <TrashPanel /> },
+    { key: "model", label: "Content types", group: "Content model", show: true, render: () => <ContentTypesPanel /> },
+    { key: "templates", label: "Type templates", group: "Content model", show: has("contenttype.manage"), render: () => <TypeTemplatesPanel /> },
+    { key: "languages", label: "Languages", group: "Content model", show: true, render: () => <LanguagesPanel /> },
+    { key: "users", label: "Users & roles", group: "Instance", show: has("user.manage"), render: () => <UsersPanel /> },
+    { key: "ai", label: "AI", group: "Instance", show: has("user.manage"), render: () => <AiPanel /> },
+    { key: "stock", label: "Stock images", group: "Instance", show: has("user.manage"), render: () => <StockImagesPanel /> },
+    { key: "audit", label: "Audit log", group: "Instance", show: has("audit.read"), render: () => <AuditPanel /> },
+    { key: "account", label: "Your account", group: "You", show: true, render: () => (<><TwoFactorPanel /><PasswordPanel /></>) },
+    {
+      key: "agents",
+      label: "AI agents",
+      group: "You",
+      show: true,
+      render: () => (<>{has("user.manage") && <McpTokensPanel />}<McpConnectionsPanel /></>),
+    },
   ];
   const tabs = allTabs.filter((t) => t.show);
 
@@ -367,13 +375,16 @@ export function SettingsView() {
   // switcher). A suffix after ":" addresses something INSIDE the tab — e.g.
   // #model:BlogPost from the dashboard opens that type's editor (the panel
   // itself consumes the suffix).
-  const hashTab = typeof window !== "undefined" ? window.location.hash.slice(1).split(":")[0]! : "";
+  const rawHashTab = typeof window !== "undefined" ? window.location.hash.slice(1).split(":")[0]! : "";
+  // #mcp and #connections were merged into #agents; old links still land there.
+  const hashTab = rawHashTab === "mcp" || rawHashTab === "connections" ? "agents" : rawHashTab;
   // One home for "does the hash name a tab this user can see" — active and the
   // mobile drill below must agree on it or a deep-link opens the wrong screen.
   const hashIsTab = tabs.some((t) => t.key === hashTab);
-  const [active, setActive] = useState(hashIsTab ? hashTab : (tabs[0]?.key ?? "model"));
+  // Content types is the landing tab (every role sees it), not whatever is listed first.
+  const [active, setActive] = useState(hashIsTab ? hashTab : "model");
   const current = tabs.find((t) => t.key === active) ?? tabs[0];
-  const groups: SettingsTab["group"][] = ["Content", "Administration", "Account"];
+  const groups: SettingsTab["group"][] = ["Site", "Content model", "Instance", "You"];
 
   // Phones drill instead of splitting: the w-56 rail beside a panel left ~165px
   // of content on a 390px screen. List ⇄ panel, one at a time. A hash deep-link
@@ -419,7 +430,7 @@ export function SettingsView() {
               if (!items.length) return null;
               return (
                 <div key={g} className="mb-3">
-                  <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-muted">{g}</div>
+                  <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-muted">{g === "Site" && activeSiteName ? `Site · ${activeSiteName}` : g}</div>
                   {items.map((t) => (
                     <button
                       key={t.key}
