@@ -235,9 +235,12 @@ export const userRole = pgTable(
     id: serial("id").primaryKey(),
     userId: text("user_id").notNull(),
     role: text("role").notNull(), // Admin | Editor | Author | Viewer
+    /** The one site this role applies in (migration 0032); NULL = every site. */
+    siteId: text("site_id"),
   },
   (t) => ({
-    uq: uniqueIndex("user_role_uq").on(t.userId, t.role),
+    uq: uniqueIndex("user_role_uq").on(t.userId, t.role, sql`coalesce(${t.siteId}, '')`),
+    siteIdx: index("user_role_site_idx").on(t.siteId),
   }),
 );
 
@@ -392,8 +395,11 @@ export const auditLog = pgTable(
     locale: text("locale"),
     ip: text("ip"),
     detail: jsonb("detail"),
+    /** The site the action happened in (migration 0032); NULL = instance-wide. */
+    siteId: text("site_id"),
   },
   (t) => ({
+    siteIdx: index("audit_log_site_idx").on(t.siteId),
     // Migration 0027: the Settings → Audit filters and the retention sweep.
     documentIdx: index("audit_log_document_idx").on(t.documentId),
     actorIdx: index("audit_log_actor_idx").on(t.actorUserId),

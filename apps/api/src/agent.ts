@@ -67,7 +67,7 @@ interface AgentDeps {
  * marks them the way MCP writes carry `ip: "mcp"`.
  */
 function agentAudit(d: { db: Database; ctx: AccessContext }, action: string, documentId: string, locale?: string | null, detail?: unknown): Promise<void> {
-  return audit(d.db, { actorUserId: d.ctx.userId, action, documentId, locale, ip: "agent", detail });
+  return audit(d.db, { siteId: d.ctx.siteId, actorUserId: d.ctx.userId, action, documentId, locale, ip: "agent", detail });
 }
 
 /** What one run has created and which existing documents it has edited. */

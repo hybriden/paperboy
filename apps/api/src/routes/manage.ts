@@ -1,5 +1,6 @@
 import {
   AppError,
+  type AccessContext,
   adminCreateUser,
   adminDeleteUser,
   adminUpdateUser,
@@ -176,7 +177,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], body: ContentTypeDef, response: { 200: ContentTypeDef } } },
     async (req) => {
       const created = await createContentType(app.db, req.accessCtx!, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "contenttype.create", ip: req.ip, detail: { name: created.name, kind: created.kind, fields: created.fields.length } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "contenttype.create", ip: req.ip, detail: { name: created.name, kind: created.kind, fields: created.fields.length } });
       return created;
     },
   );
@@ -185,7 +186,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ name: z.string() }), body: ContentTypeDef, response: { 200: ContentTypeDef } } },
     async (req) => {
       const { next, prev } = await updateContentType(app.db, req.accessCtx!, req.params.name, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "contenttype.update", ip: req.ip, detail: { name: next.name, deliveryDelta: deliveryFlagDelta(prev, next) } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "contenttype.update", ip: req.ip, detail: { name: next.name, deliveryDelta: deliveryFlagDelta(prev, next) } });
       return next;
     },
   );
@@ -194,7 +195,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ name: z.string() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await deleteContentType(app.db, req.accessCtx!, req.params.name);
-      await audit(app.db, { actorUserId: req.user!.id, action: "contenttype.delete", ip: req.ip, detail: { name: req.params.name } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "contenttype.delete", ip: req.ip, detail: { name: req.params.name } });
       return { ok: true };
     },
   );
@@ -276,7 +277,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         );
       }
       const result = await importTypeTemplates(app.db, req.accessCtx!, templates, overwrite ?? false);
-      await audit(app.db, {
+      await audit(app.db, { siteId: req.accessCtx?.siteId,
         actorUserId: req.user!.id,
         action: "type_template.import",
         ip: req.ip,
@@ -300,7 +301,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], body: ContentTypeDef, response: { 200: ContentTypeDef } } },
     async (req) => {
       const created = await createTypeTemplate(app.db, req.accessCtx!, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "type_template.create", ip: req.ip, detail: { name: created.name, kind: created.kind, fields: created.fields.length } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "type_template.create", ip: req.ip, detail: { name: created.name, kind: created.kind, fields: created.fields.length } });
       return created;
     },
   );
@@ -309,7 +310,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: TypeTemplateParams, body: ContentTypeDef, response: { 200: ContentTypeDef } } },
     async (req) => {
       const { next, prev } = await updateTypeTemplate(app.db, req.accessCtx!, req.params.name, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "type_template.update", ip: req.ip, detail: { name: next.name, deliveryDelta: deliveryFlagDelta(prev, next) } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "type_template.update", ip: req.ip, detail: { name: next.name, deliveryDelta: deliveryFlagDelta(prev, next) } });
       return next;
     },
   );
@@ -318,7 +319,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: TypeTemplateParams, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await deleteTypeTemplate(app.db, req.accessCtx!, req.params.name);
-      await audit(app.db, { actorUserId: req.user!.id, action: "type_template.delete", ip: req.ip, detail: { name: req.params.name } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "type_template.delete", ip: req.ip, detail: { name: req.params.name } });
       return { ok: true };
     },
   );
@@ -330,7 +331,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
     async (req) => {
       const result = await instantiateTypeTemplate(app.db, req.accessCtx!, req.params.name, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "type_template.instantiate", ip: req.ip, detail: { template: req.params.name, type: result.name, action: result.action } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "type_template.instantiate", ip: req.ip, detail: { template: req.params.name, type: result.name, action: result.action } });
       return result;
     },
   );
@@ -369,7 +370,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], body: z.object({ code: z.string().min(2).max(35), displayName: z.string().min(1).max(120), fallbackLocaleCode: z.string().nullable().optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await createLocale(app.db, req.accessCtx!, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "locale.create", ip: req.ip, detail: { code: req.body.code } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "locale.create", ip: req.ip, detail: { code: req.body.code } });
       return { ok: true };
     },
   );
@@ -378,7 +379,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ code: z.string() }), body: z.object({ displayName: z.string().min(1).max(120).optional(), fallbackLocaleCode: z.string().nullable().optional(), enabled: z.boolean().optional(), isDefault: z.literal(true).optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await updateLocale(app.db, req.accessCtx!, req.params.code, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "locale.update", ip: req.ip, detail: { code: req.params.code, ...req.body } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "locale.update", ip: req.ip, detail: { code: req.params.code, ...req.body } });
       return { ok: true };
     },
   );
@@ -387,7 +388,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("contenttype.manage")], schema: { tags: ["manage"], params: z.object({ code: z.string() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await deleteLocale(app.db, req.accessCtx!, req.params.code);
-      await audit(app.db, { actorUserId: req.user!.id, action: "locale.delete", ip: req.ip, detail: { code: req.params.code } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "locale.delete", ip: req.ip, detail: { code: req.params.code } });
       return { ok: true };
     },
   );
@@ -454,7 +455,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       // orphan shell behind a 422.
       const created = await createContent(app.db, req.accessCtx!, req.body);
       const withData = Boolean(req.body.data) || req.body.slug !== undefined;
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.create", documentId: created.documentId, locale: created.locale, ip: req.ip, detail: withData ? { withData } : undefined });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.create", documentId: created.documentId, locale: created.locale, ip: req.ip, detail: withData ? { withData } : undefined });
       return created;
     },
   );
@@ -475,7 +476,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const updated = await updateContent(app.db, req.accessCtx!, req.params.documentId, locale, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.update", documentId: req.params.documentId, locale, ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.update", documentId: req.params.documentId, locale, ip: req.ip });
       return updated;
     },
   );
@@ -487,7 +488,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await publishContent(app.db, req.accessCtx!, req.params.documentId, locale);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.publish", documentId: req.params.documentId, locale, ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.publish", documentId: req.params.documentId, locale, ip: req.ip });
       return r;
     },
   );
@@ -511,7 +512,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         publishAt: req.body.publishAt ? new Date(req.body.publishAt) : null,
         expireAt: req.body.expireAt ? new Date(req.body.expireAt) : null,
       });
-      await audit(app.db, {
+      await audit(app.db, { siteId: req.accessCtx?.siteId,
         actorUserId: req.user!.id,
         action: "content.schedule",
         documentId: req.params.documentId,
@@ -529,7 +530,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await unpublishContent(app.db, req.accessCtx!, req.params.documentId, locale);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.unpublish", documentId: req.params.documentId, locale, ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.unpublish", documentId: req.params.documentId, locale, ip: req.ip });
       return r;
     },
   );
@@ -540,7 +541,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await markReviewed(app.db, req.accessCtx!, req.params.documentId, locale);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.review", documentId: req.params.documentId, locale, ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.review", documentId: req.params.documentId, locale, ip: req.ip });
       return r;
     },
   );
@@ -550,7 +551,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       await discardDraft(app.db, req.accessCtx!, req.params.documentId, locale);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.discard_draft", documentId: req.params.documentId, locale, ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.discard_draft", documentId: req.params.documentId, locale, ip: req.ip });
       return { ok: true };
     },
   );
@@ -563,7 +564,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await deleteVariant(app.db, req.accessCtx!, req.params.documentId, locale);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.delete_variant", documentId: req.params.documentId, locale, ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.delete_variant", documentId: req.params.documentId, locale, ip: req.ip });
       return r;
     },
   );
@@ -574,7 +575,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, body: z.object({ parentId: z.string().nullable().optional(), beforeId: z.string().nullable().optional(), afterId: z.string().nullable().optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await moveContent(app.db, req.accessCtx!, req.params.documentId, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.move", documentId: req.params.documentId, ip: req.ip, detail: { parentId: req.body.parentId } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.move", documentId: req.params.documentId, ip: req.ip, detail: { parentId: req.body.parentId } });
       return { ok: true };
     },
   );
@@ -586,7 +587,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, body: z.object({ childSort: ChildSort }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await setChildSort(app.db, req.accessCtx!, req.params.documentId, req.body.childSort);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.child_sort", documentId: req.params.documentId, ip: req.ip, detail: { childSort: req.body.childSort } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.child_sort", documentId: req.params.documentId, ip: req.ip, detail: { childSort: req.body.childSort } });
       return { ok: true };
     },
   );
@@ -624,7 +625,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       if (data.file.truncated) throw new AppError(413, "too_large", "Max file size is 5 MB");
       const rec = await storeUploadedAsset(app.db, req.accessCtx!, { buf, filename: data.filename }, saveToUploadsDir(app.uploadsDir));
       const documentId = rec.documentId;
-      await audit(app.db, { actorUserId: req.user!.id, action: "asset.upload", documentId, ip: req.ip, detail: { mime: rec.mime, size: rec.size } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "asset.upload", documentId, ip: req.ip, detail: { mime: rec.mime, size: rec.size } });
       return rec;
     },
   );
@@ -642,7 +643,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       // uploadsDir passed → deleteAsset unlinks the bytes itself, so the API and
       // MCP surfaces erase identically.
       await deleteAsset(app.db, req.accessCtx!, req.params.documentId, app.uploadsDir);
-      await audit(app.db, { actorUserId: req.user!.id, action: "asset.delete", documentId: req.params.documentId, ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "asset.delete", documentId: req.params.documentId, ip: req.ip });
       return { ok: true };
     },
   );
@@ -671,7 +672,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("content.create")], schema: { tags: ["manage"], body: CreateFolderRequest, response: { 200: Folder } } },
     async (req) => {
       const f = await createFolder(app.db, req.accessCtx!, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "folder.create", documentId: f.documentId, ip: req.ip, detail: { kind: f.kind } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "folder.create", documentId: f.documentId, ip: req.ip, detail: { kind: f.kind } });
       return f;
     },
   );
@@ -681,7 +682,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("content.update")], schema: { tags: ["manage"], params: DocParams, body: UpdateFolderRequest, response: { 200: Folder } } },
     async (req) => {
       const f = await renameFolder(app.db, req.accessCtx!, req.params.documentId, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "folder.update", documentId: req.params.documentId, ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "folder.update", documentId: req.params.documentId, ip: req.ip });
       return f;
     },
   );
@@ -691,7 +692,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], params: DocParams, response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await deleteFolder(app.db, req.accessCtx!, req.params.documentId);
-      await audit(app.db, { actorUserId: req.user!.id, action: "folder.delete", documentId: req.params.documentId, ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "folder.delete", documentId: req.params.documentId, ip: req.ip });
       return { ok: true };
     },
   );
@@ -773,7 +774,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("deliverykey.manage")], schema: { tags: ["manage"], body: z.object({ name: z.string(), type: z.enum(["public", "preview"]) }), response: { 200: z.object({ key: z.string() }) } } },
     async (req) => {
       const r = await createDeliveryKey(app.db, req.accessCtx!, req.body.name, req.body.type);
-      await audit(app.db, { actorUserId: req.user!.id, action: "deliverykey.create", ip: req.ip, detail: { type: req.body.type } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "deliverykey.create", ip: req.ip, detail: { type: req.body.type } });
       return r;
     },
   );
@@ -796,7 +797,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("deliverykey.manage")], schema: { tags: ["manage"], params: z.object({ id: z.coerce.number() }), body: z.object({ name: z.string().min(1).max(120) }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await renameDeliveryKey(app.db, req.accessCtx!, req.params.id, req.body.name);
-      await audit(app.db, { actorUserId: req.user!.id, action: "deliverykey.rename", ip: req.ip, detail: { id: req.params.id, name: req.body.name } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "deliverykey.rename", ip: req.ip, detail: { id: req.params.id, name: req.body.name } });
       return { ok: true };
     },
   );
@@ -805,7 +806,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("deliverykey.manage")], schema: { tags: ["manage"], params: z.object({ id: z.coerce.number() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await revokeDeliveryKey(app.db, req.accessCtx!, req.params.id);
-      await audit(app.db, { actorUserId: req.user!.id, action: "deliverykey.revoke", ip: req.ip, detail: { id: req.params.id } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "deliverykey.revoke", ip: req.ip, detail: { id: req.params.id } });
       return { ok: true };
     },
   );
@@ -837,7 +838,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         ...(req.body.allSites ? { siteId: null } : {}),
       };
       const r = await createMcpToken(app.db, req.accessCtx!, input);
-      await audit(app.db, { actorUserId: req.user!.id, action: "mcptoken.create", ip: req.ip, detail: { name: input.name, userId: input.userId, siteId: req.body.allSites ? null : req.accessCtx!.siteId } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "mcptoken.create", ip: req.ip, detail: { name: input.name, userId: input.userId, siteId: req.body.allSites ? null : req.accessCtx!.siteId } });
       return r;
     },
   );
@@ -846,7 +847,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], params: z.object({ id: z.coerce.number() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await revokeMcpToken(app.db, req.accessCtx!, req.params.id);
-      await audit(app.db, { actorUserId: req.user!.id, action: "mcptoken.revoke", ip: req.ip, detail: { id: req.params.id } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "mcptoken.revoke", ip: req.ip, detail: { id: req.params.id } });
       return { ok: true };
     },
   );
@@ -862,7 +863,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], response: { 200: z.object({ ok: z.boolean(), purged: z.number() }) } } },
     async (req) => {
       const r = await emptyTrash(app.db, req.accessCtx!);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.trash.empty", ip: req.ip, detail: r });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.trash.empty", ip: req.ip, detail: r });
       return { ok: true, ...r };
     },
   );
@@ -871,7 +872,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], params: DocParams, response: { 200: z.object({ ok: z.boolean(), trashed: z.number() }) } } },
     async (req) => {
       const r = await softDelete(app.db, req.accessCtx!, req.params.documentId);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.trash", documentId: req.params.documentId, ip: req.ip, detail: r });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.trash", documentId: req.params.documentId, ip: req.ip, detail: r });
       return { ok: true, ...r };
     },
   );
@@ -880,7 +881,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("content.delete")], schema: { tags: ["manage"], params: DocParams, response: { 200: z.object({ ok: z.boolean(), restored: z.number() }) } } },
     async (req) => {
       const r = await restoreContent(app.db, req.accessCtx!, req.params.documentId);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.restore", documentId: req.params.documentId, ip: req.ip, detail: r });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.restore", documentId: req.params.documentId, ip: req.ip, detail: r });
       return { ok: true, ...r };
     },
   );
@@ -924,7 +925,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         );
       }
       const minted = mintPreviewToken(secret);
-      await audit(app.db, { actorUserId: req.user!.id, action: "preview.token_minted", ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "preview.token_minted", ip: req.ip });
       return minted;
     },
   );
@@ -936,7 +937,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const created = await cloneContent(app.db, req.accessCtx!, req.params.documentId, locale);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.duplicate", documentId: created.documentId, ip: req.ip, detail: { from: req.params.documentId } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.duplicate", documentId: created.documentId, ip: req.ip, detail: { from: req.params.documentId } });
       return created;
     },
   );
@@ -948,7 +949,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.accessCtx!.siteId));
       const r = await restoreVersion(app.db, req.accessCtx!, req.params.documentId, locale, req.params.versionId);
-      await audit(app.db, { actorUserId: req.user!.id, action: "content.version_restore", documentId: req.params.documentId, locale, ip: req.ip, detail: { versionId: req.params.versionId } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "content.version_restore", documentId: req.params.documentId, locale, ip: req.ip, detail: { versionId: req.params.versionId } });
       return r;
     },
   );
@@ -964,16 +965,16 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("content.publish")], schema: { tags: ["manage"], body: z.object({ documentId: z.string().nullable() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await setStartPage(app.db, req.accessCtx!, req.body.documentId);
-      await audit(app.db, { actorUserId: req.user!.id, action: "site.start_page", documentId: req.body.documentId, ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "site.start_page", documentId: req.body.documentId, ip: req.ip });
       return { ok: true };
     },
   );
   app.post(
     "/site/preview-url",
-    { preHandler: [requireCsrf, requirePermission("content.publish")], schema: { tags: ["manage"], body: z.object({ url: z.string().max(2000) }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    { preHandler: [requireCsrf, requirePermission("site.manage")], schema: { tags: ["manage"], body: z.object({ url: z.string().max(2000) }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await setPreviewBaseUrl(app.db, req.accessCtx!, req.body.url);
-      await audit(app.db, { actorUserId: req.user!.id, action: "site.preview_url", ip: req.ip });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "site.preview_url", ip: req.ip });
       return { ok: true };
     },
   );
@@ -984,7 +985,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   app.post(
     "/site/public-files",
     {
-      preHandler: [requireCsrf, requirePermission("content.publish")],
+      preHandler: [requireCsrf, requirePermission("site.manage")],
       schema: {
         tags: ["manage"],
         body: z.object({
@@ -1002,7 +1003,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
     async (req) => {
       await setSiteFilesConfig(app.db, req.accessCtx!, req.body);
-      await audit(app.db, {
+      await audit(app.db, { siteId: req.accessCtx?.siteId,
         actorUserId: req.user!.id,
         action: "site.public_files",
         ip: req.ip,
@@ -1069,7 +1070,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         baseUrl: req.body.baseUrl,
         reasoningEffort: req.body.reasoningEffort,
       });
-      await audit(app.db, {
+      await audit(app.db, { siteId: req.accessCtx?.siteId,
         actorUserId: req.user!.id,
         action: "site.ai_config",
         ip: req.ip,
@@ -1163,7 +1164,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], body: z.object({ required: z.boolean() }), response: { 200: z.object({ required: z.boolean() }) } } },
     async (req) => {
       await setAgentReviewRequired(app.db, req.accessCtx!, req.body.required);
-      await audit(app.db, { actorUserId: req.user!.id, action: "site.agent_review", ip: req.ip, detail: { required: req.body.required } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "site.agent_review", ip: req.ip, detail: { required: req.body.required } });
       return { required: req.body.required };
     },
   );
@@ -1204,7 +1205,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
     async (req) => {
       await setStockConfig(app.db, req.accessCtx!, { provider: req.body.provider, apiKey: req.body.apiKey });
-      await audit(app.db, {
+      await audit(app.db, { siteId: req.accessCtx?.siteId,
         actorUserId: req.user!.id,
         action: "site.stock_config",
         ip: req.ip,
@@ -1244,7 +1245,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         envKey: app.stockConfig.unsplashKey,
         save: saveToUploadsDir(app.uploadsDir),
       });
-      await audit(app.db, {
+      await audit(app.db, { siteId: req.accessCtx?.siteId,
         actorUserId: req.user!.id,
         action: "asset.import",
         documentId: rec.documentId,
@@ -1276,7 +1277,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("webhook.manage")], schema: { tags: ["manage"], body: z.object({ name: z.string().min(1).max(120), url: z.string().max(2000), events: z.array(z.string()).optional() }), response: { 200: z.object({ id: z.number(), secret: z.string() }) } } },
     async (req) => {
       const r = await createWebhook(app.db, req.accessCtx!, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "webhook.create", ip: req.ip, detail: { name: req.body.name, url: req.body.url } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "webhook.create", ip: req.ip, detail: { name: req.body.name, url: req.body.url } });
       return r;
     },
   );
@@ -1285,7 +1286,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("webhook.manage")], schema: { tags: ["manage"], params: z.object({ id: z.coerce.number() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await deleteWebhook(app.db, req.accessCtx!, req.params.id);
-      await audit(app.db, { actorUserId: req.user!.id, action: "webhook.delete", ip: req.ip, detail: { id: req.params.id } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "webhook.delete", ip: req.ip, detail: { id: req.params.id } });
       return { ok: true };
     },
   );
@@ -1343,7 +1344,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
     async (req, reply) => {
       const { csv, rows } = await exportSubmissions(app.db, req.accessCtx!, req.query.formId);
-      await audit(app.db, {
+      await audit(app.db, { siteId: req.accessCtx?.siteId,
         actorUserId: req.user!.id,
         action: "form.submissions_exported",
         ip: req.ip,
@@ -1384,7 +1385,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
     async (req) => {
       const ok = await deleteSubmission(app.db, req.accessCtx!, req.params.submissionId);
-      await audit(app.db, {
+      await audit(app.db, { siteId: req.accessCtx?.siteId,
         actorUserId: req.user!.id,
         action: "form.submission_deleted",
         ip: req.ip,
@@ -1410,7 +1411,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
     async (req) => {
       const res = await eraseSubmissionsByEmail(app.db, req.accessCtx!, req.body.email);
-      await audit(app.db, {
+      await audit(app.db, { siteId: req.accessCtx?.siteId,
         actorUserId: req.user!.id,
         action: "form.submissions_erased",
         ip: req.ip,
@@ -1430,35 +1431,41 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   );
 
   /* ------------------------------- users -------------------------------- */
+  // Every-site Admins manage every user; a one-site Admin (siteuser.manage
+  // without user.manage) only users' roles and sections in the active site —
+  // the db layer draws that line. Their changes go in that site's audit log.
+  const RoleGrantInSite = z.object({ siteId: z.string(), role: RoleName });
+  const userAuditSite = (ctx: AccessContext) => (ctx.permissions.includes("user.manage") ? null : ctx.siteId);
   const ManagedUserRow = z.object({
     id: z.string(),
     email: z.string(),
     name: z.string(),
     roles: z.array(RoleName),
+    siteRoles: z.array(RoleGrantInSite),
     sections: z.array(z.string()),
     locked: z.boolean(),
     createdAt: z.string(),
   });
   app.get(
     "/users",
-    { preHandler: [requirePermission("user.manage")], schema: { tags: ["manage"], response: { 200: z.array(ManagedUserRow) } } },
+    { preHandler: [requirePermission("siteuser.manage")], schema: { tags: ["manage"], response: { 200: z.array(ManagedUserRow) } } },
     async (req) => listUsers(app.db, req.accessCtx!),
   );
   app.post(
     "/users",
-    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], body: z.object({ email: z.string().email(), name: z.string().min(1).max(120), password: z.string().min(10).max(200), roles: z.array(RoleName).min(1), sections: z.array(z.string()).optional() }), response: { 200: z.object({ id: z.string() }) } } },
+    { preHandler: [requireCsrf, requirePermission("siteuser.manage")], schema: { tags: ["manage"], body: z.object({ email: z.string().email(), name: z.string().min(1).max(120), password: z.string().min(10).max(200).optional().describe("Required for a new account. A site Admin leaves it out to add an existing account to the active site."), roles: z.array(RoleName), siteRoles: z.array(RoleGrantInSite).optional().describe("Roles in one site each (every-site Admins only)."), sections: z.array(z.string()).optional() }).refine((b) => b.roles.length + (b.siteRoles?.length ?? 0) > 0, { message: "Give the user at least one role (roles or siteRoles)" }), response: { 200: z.object({ id: z.string() }) } } },
     async (req) => {
       const id = await adminCreateUser(app.db, req.accessCtx!, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "user.create", ip: req.ip, detail: { email: req.body.email, roles: req.body.roles } });
+      await audit(app.db, { siteId: userAuditSite(req.accessCtx!), actorUserId: req.user!.id, action: "user.create", ip: req.ip, detail: { email: req.body.email, roles: req.body.roles, siteRoles: req.body.siteRoles } });
       return { id };
     },
   );
   app.put(
     "/users/:id",
-    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1).max(120).optional(), email: z.string().email().max(200).optional(), roles: z.array(RoleName).optional(), sections: z.array(z.string()).optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    { preHandler: [requireCsrf, requirePermission("siteuser.manage")], schema: { tags: ["manage"], params: z.object({ id: z.string() }), body: z.object({ name: z.string().min(1).max(120).optional(), email: z.string().email().max(200).optional(), roles: z.array(RoleName).optional(), siteRoles: z.array(RoleGrantInSite).optional().describe("Replaces the user's one-site roles (every-site Admins only)."), sections: z.array(z.string()).optional() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await adminUpdateUser(app.db, req.accessCtx!, req.params.id, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "user.update", ip: req.ip, detail: { id: req.params.id, roles: req.body.roles, email: req.body.email } });
+      await audit(app.db, { siteId: userAuditSite(req.accessCtx!), actorUserId: req.user!.id, action: "user.update", ip: req.ip, detail: { id: req.params.id, roles: req.body.roles, siteRoles: req.body.siteRoles, email: req.body.email } });
       return { ok: true };
     },
   );
@@ -1467,7 +1474,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], params: z.object({ id: z.string() }), response: { 200: z.object({ ok: z.boolean() }) } } },
     async (req) => {
       await adminDeleteUser(app.db, req.accessCtx!, req.params.id);
-      await audit(app.db, { actorUserId: req.user!.id, action: "user.delete", ip: req.ip, detail: { id: req.params.id } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "user.delete", ip: req.ip, detail: { id: req.params.id } });
       return { ok: true };
     },
   );
@@ -1565,7 +1572,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
     async (req) => {
       const site = await createSite(app.db, req.accessCtx!, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "site.create", ip: req.ip, detail: { id: site.id, slug: site.slug } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "site.create", ip: req.ip, detail: { id: site.id, slug: site.slug } });
       return siteOut(site);
     },
   );
@@ -1584,7 +1591,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
     async (req) => {
       const site = await renameSite(app.db, req.accessCtx!, req.params.id, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "site.rename", ip: req.ip, detail: { id: site.id, name: site.name, slug: site.slug } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "site.rename", ip: req.ip, detail: { id: site.id, name: site.name, slug: site.slug } });
       return siteOut(site);
     },
   );
@@ -1611,7 +1618,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       for (const path of r.assetPaths) {
         await removeAssetFiles(app.uploadsDir, path).catch((err: unknown) => req.log.error({ err, path }, "site delete: asset unlink failed"));
       }
-      await audit(app.db, {
+      await audit(app.db, { siteId: req.accessCtx?.siteId,
         actorUserId: req.user!.id,
         action: "site.delete",
         ip: req.ip,

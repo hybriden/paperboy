@@ -345,7 +345,7 @@ const locFor = (documentId: string, locale?: string) => resolveRequestedLocale(d
  *  AWAITS it so a failed insert lands in that tool's stderr trail (rule #6); it
  *  is logged rather than thrown because the write itself already succeeded. */
 function mcpAudit(action: string, documentId?: string | null, locale?: string | null, detail?: object): Promise<void> {
-  return audit(db, { actorUserId: ctx().userId, action, documentId: documentId ?? null, locale: locale ?? null, ip: "mcp", detail }).catch((err: unknown) =>
+  return audit(db, { siteId: ctx().siteId, actorUserId: ctx().userId, action, documentId: documentId ?? null, locale: locale ?? null, ip: "mcp", detail }).catch((err: unknown) =>
     console.error(`[paperboy-mcp] audit failed for ${action}:`, err),
   );
 }

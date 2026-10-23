@@ -187,6 +187,7 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
         // touch), so there is no captureMetadata opt-in to honour — and a
         // dropped bot's address is not ours to store. The reason is enough.
         await audit(app.db, {
+          siteId: resolved.siteId,
           action: "form.submission_rejected",
           documentId,
           detail: { reason: spam.reason },
@@ -254,6 +255,7 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
 
       if (!result.replayed) {
         await audit(app.db, {
+          siteId: resolved.siteId,
           action: "form.submitted",
           documentId,
           detail: { submissionId: result.submissionId, locale: form.locale },

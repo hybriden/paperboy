@@ -344,10 +344,12 @@ export function SettingsView() {
   const has = (p: string) => user.permissions.includes(p as never);
   const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites() });
   const activeSiteName = sites.data?.sites.find((x) => x.id === sites.data?.activeSiteId)?.name;
+  // A one-site Admin's users and audit log are this site's, so they sit under Site.
+  const adminScope = has("user.manage") ? "Instance" : "Site";
 
   const allTabs: SettingsTab[] = [
     // Grouped by what a tab applies to: the active site, what every site shares, the instance, or you.
-    { key: "site", label: "General", group: "Site", show: has("content.publish"), render: () => <SiteGeneralPanel /> },
+    { key: "site", label: "General", group: "Site", show: has("site.manage"), render: () => <SiteGeneralPanel /> },
     { key: "redirects", label: "Redirects", group: "Site", show: true, render: () => <RedirectsPanel /> },
     { key: "submissions", label: "Form submissions", group: "Site", show: has("submission.read"), render: () => <FormSubmissionsPanel /> },
     { key: "keys", label: "Delivery keys", group: "Site", show: has("deliverykey.manage"), render: () => <DeliveryKeysPanel /> },
@@ -357,7 +359,7 @@ export function SettingsView() {
     { key: "templates", label: "Type templates", group: "Content model", show: has("contenttype.manage"), render: () => <TypeTemplatesPanel /> },
     { key: "languages", label: "Languages", group: "Content model", show: true, render: () => <LanguagesPanel /> },
     { key: "sites", label: "Sites", group: "Instance", show: has("user.manage"), render: () => <SitesPanel /> },
-    { key: "users", label: "Users & roles", group: "Instance", show: has("user.manage"), render: () => <UsersPanel /> },
+    { key: "users", label: "Users & roles", group: adminScope, show: has("siteuser.manage"), render: () => <UsersPanel /> },
     // MCP tokens are an admin instrument; everyone else connects agents with OAuth (You → Connected apps).
     {
       key: "agents",
@@ -368,7 +370,7 @@ export function SettingsView() {
     },
     { key: "ai", label: "AI provider", group: "Instance", show: has("user.manage"), render: () => <AiPanel /> },
     { key: "stock", label: "Stock images", group: "Instance", show: has("user.manage"), render: () => <StockImagesPanel /> },
-    { key: "audit", label: "Audit log", group: "Instance", show: has("audit.read"), render: () => <AuditPanel /> },
+    { key: "audit", label: "Audit log", group: adminScope, show: has("audit.read"), render: () => <AuditPanel /> },
     { key: "account", label: "Sign-in & security", group: "You", show: true, render: () => (<><TwoFactorPanel /><PasswordPanel /></>) },
     { key: "connections", label: "Connected apps", group: "You", show: true, render: () => <McpConnectionsPanel /> },
   ];

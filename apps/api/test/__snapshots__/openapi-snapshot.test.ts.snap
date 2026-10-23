@@ -1069,6 +1069,7 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "[]name",
       "[]roles",
       "[]sections",
+      "[]siteRoles",
     ],
     "summary": null,
     "tags": [
@@ -2062,7 +2063,6 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
     "requestBodyRequired": [
       "email",
       "name",
-      "password",
       "roles",
     ],
     "requiredParams": [],

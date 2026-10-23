@@ -57,7 +57,7 @@ export async function getPreviewBaseUrl(db: Database, siteId: string): Promise<s
 
 /** Set (or clear, with "") the ACTIVE site's preview base URL. */
 export async function setPreviewBaseUrl(db: Database, ctx: AccessContext, url: string): Promise<void> {
-  requirePermission(ctx, "content.publish");
+  requirePermission(ctx, "site.manage");
   const trimmed = url.trim().replace(/\/+$/, ""); // drop trailing slash
   if (trimmed && !/^https?:\/\/[^\s]+$/i.test(trimmed)) {
     throw Errors.badRequest("Preview URL must be a full http(s):// URL");
@@ -77,7 +77,7 @@ export async function setSiteFilesConfig(
   ctx: AccessContext,
   input: { canonicalBaseUrl?: string | null; localePrefix?: LocalePrefix } & { [K in keyof SeoFilesConfig]?: string | null },
 ): Promise<void> {
-  requirePermission(ctx, "content.publish");
+  requirePermission(ctx, "site.manage");
   const rows = await db.select().from(site).where(eq(site.id, ctx.siteId)).limit(1);
   if (!rows[0]) throw Errors.notFound("Site");
   const patch: Partial<typeof site.$inferInsert> = {};

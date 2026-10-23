@@ -18,7 +18,10 @@ export interface ManagedUser {
   id: string;
   email: string;
   name: string;
+  /** Roles in every site. */
   roles: RoleName[];
+  /** Roles in one site each (#130). A site Admin sees only their site's. */
+  siteRoles: Array<{ siteId: string; role: RoleName }>;
   sections: string[];
   locked: boolean;
   createdAt: string;
@@ -450,9 +453,9 @@ export const api = {
 
   // platform admin
   users: (signal?: AbortSignal) => request<ManagedUser[]>("GET", "/manage/users", undefined, signal),
-  createUser: (body: { email: string; name: string; password: string; roles: RoleName[]; sections?: string[] }) =>
+  createUser: (body: { email: string; name: string; password?: string; roles: RoleName[]; siteRoles?: ManagedUser["siteRoles"]; sections?: string[] }) =>
     request<{ id: string }>("POST", "/manage/users", body),
-  updateUser: (id: string, body: { name?: string; email?: string; roles?: RoleName[]; sections?: string[] }) =>
+  updateUser: (id: string, body: { name?: string; email?: string; roles?: RoleName[]; siteRoles?: ManagedUser["siteRoles"]; sections?: string[] }) =>
     request<{ ok: boolean }>("PUT", `/manage/users/${id}`, body),
   deleteUser: (id: string) => request<{ ok: boolean }>("DELETE", `/manage/users/${id}`),
 

@@ -77,7 +77,7 @@ export async function registerRedirectRoutes(appBase: FastifyInstance): Promise<
     { preHandler: [requireCsrf, requirePermission("content.publish")], schema: { tags: ["manage"], summary: "Create a redirect rule", body: RedirectBody, response: { 200: WriteOut } } },
     async (req) => {
       const out = await createRedirect(app.db, req.accessCtx!, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "redirect.create", ip: req.ip, detail: { id: out.redirect.id, source: out.redirect.source, status: out.redirect.status } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "redirect.create", ip: req.ip, detail: { id: out.redirect.id, source: out.redirect.source, status: out.redirect.status } });
       return out;
     },
   );
@@ -90,7 +90,7 @@ export async function registerRedirectRoutes(appBase: FastifyInstance): Promise<
     },
     async (req) => {
       const out = await updateRedirect(app.db, req.accessCtx!, req.params.id, req.body);
-      await audit(app.db, { actorUserId: req.user!.id, action: "redirect.update", ip: req.ip, detail: { id: req.params.id, ...req.body } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "redirect.update", ip: req.ip, detail: { id: req.params.id, ...req.body } });
       return out;
     },
   );
@@ -103,7 +103,7 @@ export async function registerRedirectRoutes(appBase: FastifyInstance): Promise<
     },
     async (req) => {
       const deleted = await deleteRedirects(app.db, req.accessCtx!, req.body.ids);
-      await audit(app.db, { actorUserId: req.user!.id, action: "redirect.delete", ip: req.ip, detail: { ids: req.body.ids, deleted } });
+      await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "redirect.delete", ip: req.ip, detail: { ids: req.body.ids, deleted } });
       return { deleted };
     },
   );
@@ -168,7 +168,7 @@ export async function registerRedirectRoutes(appBase: FastifyInstance): Promise<
     async (req) => {
       const out = await importRedirects(app.db, req.accessCtx!, req.body.csv, { dryRun: req.body.dryRun });
       if (!req.body.dryRun) {
-        await audit(app.db, { actorUserId: req.user!.id, action: "redirect.import", ip: req.ip, detail: { created: out.created, updated: out.updated, errors: out.errors } });
+        await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "redirect.import", ip: req.ip, detail: { created: out.created, updated: out.updated, errors: out.errors } });
       }
       return out;
     },
