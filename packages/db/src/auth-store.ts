@@ -1,7 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import argon2 from "argon2";
-import { and, asc, desc, eq, gte, isNull, like, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, isNotNull, isNull, like, lte, ne, or, sql } from "drizzle-orm";
 import {
+  INSTANCE_PERMISSIONS,
   type Permission,
   ROLE_PERMISSIONS,
   RoleName,
@@ -11,7 +12,7 @@ import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
-import { getDefaultSite } from "./sites.js";
+import { getDefaultSite, getSiteById, userSiteIds } from "./sites.js";
 import { DEFAULT_SITE_ID, auditLog, contentItem, deliveryKey, session, userRole, userScope, users } from "./schema.js";
 import {
   decryptSecret,
@@ -110,6 +111,7 @@ export async function createUser(
     password: string;
     roles: RoleName[];
     sections?: string[];
+    siteRoles?: Array<{ siteId: string; role: RoleName }>;
   },
 ): Promise<string> {
   const id = nanoid(16);
@@ -117,6 +119,9 @@ export async function createUser(
   await db.insert(users).values({ id, email: input.email, name: input.name, passwordHash });
   for (const role of input.roles) {
     await db.insert(userRole).values({ userId: id, role }).onConflictDoNothing();
+  }
+  for (const g of input.siteRoles ?? []) {
+    await db.insert(userRole).values({ userId: id, role: g.role, siteId: g.siteId }).onConflictDoNothing();
   }
   for (const sectionId of input.sections ?? []) {
     const siteId = await sectionSiteId(db, sectionId);
@@ -159,54 +164,121 @@ export interface ManagedUser {
   id: string;
   email: string;
   name: string;
+  /** Roles held in EVERY site. */
   roles: RoleName[];
+  /** Roles held in one site each (#130). */
+  siteRoles: Array<{ siteId: string; role: RoleName }>;
   sections: string[];
   locked: boolean;
   createdAt: string;
 }
 
+/**
+ * How far the caller's user administration reaches: an every-site Admin
+ * (user.manage) manages every user; a one-site Admin (siteuser.manage) only the
+ * roles and sections users hold in the ACTIVE site. Throws for anyone else.
+ */
+function userAdminReach(ctx: AccessContext): "instance" | "site" {
+  if (ctx.permissions.includes("user.manage")) return "instance";
+  requirePermission(ctx, "siteuser.manage");
+  return "site";
+}
+
+const everySiteAdmins = (db: Database) =>
+  db.select().from(userRole).where(and(eq(userRole.role, "Admin"), isNull(userRole.siteId)));
+
+async function assertSitesExist(db: Database, siteIds: string[]): Promise<void> {
+  for (const id of new Set(siteIds)) {
+    if (!(await getSiteById(db, id))) throw Errors.badRequest(`Unknown site '${id}' in siteRoles — use a site id from GET /manage/sites`);
+  }
+}
+
+/** A one-site Admin may only scope users to sections of their own site. */
+async function assertSectionsInSite(db: Database, siteId: string, sections: string[] | undefined): Promise<void> {
+  for (const sectionId of sections ?? []) {
+    if ((await sectionSiteId(db, sectionId)) !== siteId) throw Errors.badRequest(`Section '${sectionId}' is not in this site`);
+  }
+}
+
 export async function listUsers(db: Database, ctx: AccessContext): Promise<ManagedUser[]> {
-  requirePermission(ctx, "user.manage");
+  const reach = userAdminReach(ctx);
   const rows = await db.select().from(users).orderBy(asc(users.createdAt));
   const roleRows = await db.select().from(userRole);
   const scopeRows = await db.select().from(userScope);
   const now = new Date();
-  return rows.map((u) => ({
-    id: u.id,
-    email: u.email,
-    name: u.name,
-    roles: roleRows.filter((r) => r.userId === u.id).map((r) => r.role as RoleName),
-    sections: scopeRows.filter((s) => s.userId === u.id).map((s) => s.sectionId),
-    locked: Boolean(u.lockedUntil && u.lockedUntil > now),
-    createdAt: u.createdAt.toISOString(),
-  }));
+  // A one-site Admin sees the users who hold a role in this site, and only
+  // what they hold here (plus their every-site roles, which they can't edit).
+  const shown = (siteId: string | null) => reach === "instance" || siteId === ctx.siteId;
+  const visible = reach === "instance" ? rows : rows.filter((u) => roleRows.some((r) => r.userId === u.id && r.siteId === ctx.siteId));
+  return visible.map((u) => {
+    const mine = roleRows.filter((r) => r.userId === u.id);
+    return {
+      id: u.id,
+      email: u.email,
+      name: u.name,
+      roles: mine.filter((r) => r.siteId === null).map((r) => r.role as RoleName),
+      siteRoles: mine.filter((r) => r.siteId !== null && shown(r.siteId)).map((r) => ({ siteId: r.siteId!, role: r.role as RoleName })),
+      sections: scopeRows.filter((s) => s.userId === u.id && shown(s.siteId)).map((s) => s.sectionId),
+      locked: Boolean(u.lockedUntil && u.lockedUntil > now),
+      createdAt: u.createdAt.toISOString(),
+    };
+  });
 }
 
+/**
+ * Create a user. An every-site Admin sets every-site `roles` and/or one-site
+ * `siteRoles`. A one-site Admin's `roles` apply in the active site only; given
+ * an email that already has an account (and no password) it ADDS that user to
+ * this site instead — it never touches the account itself.
+ */
 export async function adminCreateUser(
   db: Database,
   ctx: AccessContext,
-  input: { email: string; name: string; password: string; roles: RoleName[]; sections?: string[] },
+  input: { email: string; name: string; password?: string; roles: RoleName[]; sections?: string[]; siteRoles?: Array<{ siteId: string; role: RoleName }> },
 ): Promise<string> {
-  requirePermission(ctx, "user.manage");
-  if (input.password.length < 10) throw Errors.badRequest("Password must be at least 10 characters");
+  const reach = userAdminReach(ctx);
   for (const r of input.roles) RoleName.parse(r);
-  const existing = await db.select({ id: users.id }).from(users).where(eq(users.email, input.email)).limit(1);
-  if (existing[0]) throw Errors.conflict("A user with that email already exists");
-  return createUser(db, input);
+  const existing = (await db.select({ id: users.id }).from(users).where(eq(users.email, input.email)).limit(1))[0];
+  if (reach === "site") {
+    if (input.siteRoles?.length) throw Errors.forbidden("A site Admin grants roles in this site only — send them as roles");
+    await assertSectionsInSite(db, ctx.siteId, input.sections);
+    if (existing) {
+      if (input.password) throw Errors.conflict("That email already has an account. Leave the password empty to add them to this site.");
+      for (const role of input.roles) await db.insert(userRole).values({ userId: existing.id, role, siteId: ctx.siteId }).onConflictDoNothing();
+      for (const sectionId of input.sections ?? []) await db.insert(userScope).values({ userId: existing.id, sectionId, siteId: ctx.siteId }).onConflictDoNothing();
+      return existing.id;
+    }
+  }
+  if (!input.password || input.password.length < 10) throw Errors.badRequest("Password must be at least 10 characters");
+  if (existing) throw Errors.conflict("A user with that email already exists");
+  if (reach === "site") {
+    return createUser(db, { ...input, password: input.password, roles: [], siteRoles: input.roles.map((role) => ({ siteId: ctx.siteId, role })) });
+  }
+  for (const g of input.siteRoles ?? []) RoleName.parse(g.role);
+  await assertSitesExist(db, (input.siteRoles ?? []).map((g) => g.siteId));
+  return createUser(db, { ...input, password: input.password });
 }
 
-/** Update a user's profile (name/email), roles and section scopes. */
+/**
+ * Update a user's profile (name/email), roles and section scopes. `roles`
+ * replaces the every-site roles, `siteRoles` the one-site ones. A one-site
+ * Admin changes only the roles and sections the user holds in the active site
+ * (removing every role there takes them out of the site); never the account.
+ */
 export async function adminUpdateUser(
   db: Database,
   ctx: AccessContext,
   userId: string,
-  input: { name?: string; email?: string; roles?: RoleName[]; sections?: string[] },
+  input: { name?: string; email?: string; roles?: RoleName[]; sections?: string[]; siteRoles?: Array<{ siteId: string; role: RoleName }> },
 ): Promise<void> {
-  requirePermission(ctx, "user.manage");
+  const reach = userAdminReach(ctx);
   const target = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   const current = target[0];
   if (!current) throw Errors.notFound("User");
   if (input.roles) for (const r of input.roles) RoleName.parse(r);
+  if (reach === "site") return updateSiteMember(db, ctx, current, input);
+  for (const g of input.siteRoles ?? []) RoleName.parse(g.role);
+  if (input.siteRoles) await assertSitesExist(db, input.siteRoles.map((g) => g.siteId));
 
   // Email is the login identity — keep it unique. Sessions are keyed by
   // userId, so the user's existing sessions survive the change.
@@ -217,9 +289,10 @@ export async function adminUpdateUser(
     if (taken[0]) throw Errors.conflict("That email is already in use");
   }
 
-  // Guard: never strip the last Admin (avoid locking everyone out).
+  // Guard: never strip the last every-site Admin (avoid locking everyone out
+  // of the instance — a one-site Admin can't manage users, sites or keys).
   if (input.roles && !input.roles.includes("Admin")) {
-    const admins = await db.select().from(userRole).where(eq(userRole.role, "Admin"));
+    const admins = await everySiteAdmins(db);
     if (admins.length === 1 && admins[0]!.userId === userId) {
       throw Errors.conflict("Cannot remove the last administrator");
     }
@@ -234,8 +307,12 @@ export async function adminUpdateUser(
     if (input.name !== undefined) await tx.update(users).set({ name: input.name }).where(eq(users.id, userId));
     if (emailChanged) await tx.update(users).set({ email }).where(eq(users.id, userId));
     if (input.roles) {
-      await tx.delete(userRole).where(eq(userRole.userId, userId));
+      await tx.delete(userRole).where(and(eq(userRole.userId, userId), isNull(userRole.siteId)));
       for (const role of input.roles) await tx.insert(userRole).values({ userId, role }).onConflictDoNothing();
+    }
+    if (input.siteRoles) {
+      await tx.delete(userRole).where(and(eq(userRole.userId, userId), isNotNull(userRole.siteId)));
+      for (const g of input.siteRoles) await tx.insert(userRole).values({ userId, role: g.role, siteId: g.siteId }).onConflictDoNothing();
     }
     if (input.sections) {
       await tx.delete(userScope).where(eq(userScope.userId, userId));
@@ -249,10 +326,38 @@ export async function adminUpdateUser(
   });
 }
 
+/** A one-site Admin's edit: this site's roles and sections, nothing else. */
+async function updateSiteMember(
+  db: Database,
+  ctx: AccessContext,
+  current: typeof users.$inferSelect,
+  input: { name?: string; email?: string; roles?: RoleName[]; sections?: string[]; siteRoles?: unknown[] },
+): Promise<void> {
+  // An unchanged name/email (the edit form sends them back) is not a change.
+  const touchesAccount = (input.name !== undefined && input.name !== current.name) || (input.email !== undefined && input.email.trim() !== current.email);
+  if (touchesAccount || input.siteRoles) {
+    throw Errors.forbidden("A site Admin can only change the roles and sections a user holds in this site — ask an every-site Admin to change the account");
+  }
+  const userId = current.id;
+  const member = await db.select().from(userRole).where(and(eq(userRole.userId, userId), eq(userRole.siteId, ctx.siteId))).limit(1);
+  if (!member[0]) throw Errors.notFound("User");
+  await assertSectionsInSite(db, ctx.siteId, input.sections);
+  await db.transaction(async (tx) => {
+    if (input.roles) {
+      await tx.delete(userRole).where(and(eq(userRole.userId, userId), eq(userRole.siteId, ctx.siteId)));
+      for (const role of input.roles) await tx.insert(userRole).values({ userId, role, siteId: ctx.siteId }).onConflictDoNothing();
+    }
+    if (input.sections) {
+      await tx.delete(userScope).where(and(eq(userScope.userId, userId), eq(userScope.siteId, ctx.siteId)));
+      for (const sectionId of input.sections) await tx.insert(userScope).values({ userId, sectionId, siteId: ctx.siteId }).onConflictDoNothing();
+    }
+  });
+}
+
 export async function adminDeleteUser(db: Database, ctx: AccessContext, userId: string): Promise<void> {
   requirePermission(ctx, "user.manage");
   if (userId === ctx.userId) throw Errors.conflict("You cannot delete your own account");
-  const admins = await db.select().from(userRole).where(eq(userRole.role, "Admin"));
+  const admins = await everySiteAdmins(db);
   if (admins.length === 1 && admins[0]!.userId === userId) {
     throw Errors.conflict("Cannot delete the last administrator");
   }
@@ -300,9 +405,21 @@ export async function changePassword(
   await db.delete(session).where(eq(session.userId, userId));
 }
 
-export async function getRoles(db: Database, userId: string): Promise<RoleName[]> {
-  const rows = await db.select().from(userRole).where(eq(userRole.userId, userId));
-  return rows.map((r) => r.role as RoleName);
+/** The roles a user holds in `siteId`: their every-site roles plus that site's own. */
+async function rolesIn(db: Database, userId: string, siteId: string): Promise<Array<{ role: RoleName; everySite: boolean }>> {
+  const rows = await db
+    .select()
+    .from(userRole)
+    .where(and(eq(userRole.userId, userId), or(isNull(userRole.siteId), eq(userRole.siteId, siteId))));
+  return rows.map((r) => ({ role: r.role as RoleName, everySite: r.siteId === null }));
+}
+
+/** Where a request with no site choice lands: the Default site, unless the
+ *  user only holds roles in other sites — then the first of those. */
+async function homeSiteId(db: Database, userId: string): Promise<string> {
+  const ids = await userSiteIds(db, userId);
+  if (ids !== "all" && ids.length > 0 && !ids.includes(DEFAULT_SITE_ID)) return ids[0]!;
+  return (await getDefaultSite(db)).id;
 }
 
 export async function getAccessContext(
@@ -310,17 +427,23 @@ export async function getAccessContext(
   userId: string,
   activeSiteId?: string,
 ): Promise<AccessContext> {
-  const roles = await getRoles(db, userId);
+  // The active site: an explicit choice (admin site switcher, Phase 3) or the
+  // user's home site. Roles and section scopes both depend on it.
+  const siteId = activeSiteId ?? (await homeSiteId(db, userId));
+  const grants = await rolesIn(db, userId, siteId);
+  const roles = grants.map((g) => g.role);
   const permissions = new Set<Permission>();
-  for (const role of roles) for (const p of ROLE_PERMISSIONS[role] ?? []) permissions.add(p);
+  for (const g of grants) {
+    for (const p of ROLE_PERMISSIONS[g.role] ?? []) {
+      // A one-site role never reaches what every site shares (#130).
+      if (g.everySite || !INSTANCE_PERMISSIONS.includes(p)) permissions.add(p);
+    }
+  }
   // Site-wide WRITE is Admin/Editor only; a Viewer's site-wide reach is READ.
   // Splitting these is what stops `[Author, Viewer]` from becoming a site-wide
   // writer — see AccessContext.siteWide. Author alone is section-scoped for both.
   const siteWide = roles.some((r) => r === "Admin" || r === "Editor");
   const readSiteWide = siteWide || roles.includes("Viewer");
-  // The active site: an explicit choice (admin site switcher, Phase 3) or the
-  // Default site. Section scopes are per-site, so only this site's scopes apply.
-  const siteId = activeSiteId ?? (await getDefaultSite(db)).id;
   const scopeRows = await db
     .select()
     .from(userScope)
@@ -335,11 +458,12 @@ export async function getAccessContext(
   };
 }
 
-export async function getSessionUser(db: Database, userId: string): Promise<SessionUser> {
+/** The signed-in user as the admin sees them: roles and permissions IN the active site. */
+export async function getSessionUser(db: Database, userId: string, activeSiteId?: string): Promise<SessionUser> {
   const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
   if (!rows[0]) throw Errors.unauthorized();
-  const ctx = await getAccessContext(db, userId);
-  const roles = await getRoles(db, userId);
+  const ctx = await getAccessContext(db, userId, activeSiteId);
+  const roles = [...new Set((await rolesIn(db, userId, ctx.siteId)).map((g) => g.role))];
   return {
     id: rows[0].id,
     email: rows[0].email,
@@ -604,9 +728,18 @@ export async function runAuditRetention(db: Database, days: number, now: Date = 
   return { deleted: res.length };
 }
 
+/**
+ * Actions over what every site shares. They are filed under no site, so a
+ * one-site Admin's log never shows sign-ins, tokens or the shared model.
+ * (user.* is filed by its route: under the site only when a site Admin acts.)
+ */
+const INSTANCE_ACTIONS = /^(auth|contenttype|type_template|locale|mcptoken|mcp\.oauth)\.|^site\.(create|rename|delete|ai_config|stock_config|agent_review)$/;
+
 export async function audit(
   db: Database,
   entry: {
+    /** The site it happened in (the request's active site); dropped for INSTANCE_ACTIONS. */
+    siteId?: string | null;
     actorUserId?: string | null;
     action: string;
     documentId?: string | null;
@@ -616,6 +749,7 @@ export async function audit(
   },
 ): Promise<void> {
   await db.insert(auditLog).values({
+    siteId: INSTANCE_ACTIONS.test(entry.action) ? null : (entry.siteId ?? null),
     actorUserId: entry.actorUserId ?? null,
     action: entry.action,
     documentId: entry.documentId ?? null,
@@ -645,6 +779,8 @@ export async function listAudit(
   requirePermission(ctx, "audit.read");
   const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
   const conds = [];
+  // A one-site Admin reads their own site's log; instance rows stay hidden.
+  if (!ctx.permissions.includes("user.manage")) conds.push(eq(auditLog.siteId, ctx.siteId));
   if (opts.before) conds.push(sql`${auditLog.id} < ${opts.before}`);
     // Prefix match so "content." selects the whole category; exact actions work
     // too. LIKE wildcards in the input are escaped, not interpreted (stripping

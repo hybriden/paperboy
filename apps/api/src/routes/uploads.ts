@@ -52,6 +52,7 @@ export async function registerUploadRoutes(app: FastifyInstance, opts: { uploads
           const buf = await part.toBuffer();
           const rec = await storeUploadedAsset(app.db, ctx, { buf, filename }, save);
           await audit(app.db, {
+            siteId: ctx.siteId,
             actorUserId: ctx.userId,
             action: "asset.upload",
             documentId: rec.documentId,

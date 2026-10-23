@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
-import { DEFAULT_SITE_ID, asset, contentItem, contentReference, contentVersion, deliveryKey, folder, formSubmission, locale, site, userScope, webhook, webhookDelivery } from "./schema.js";
+import { DEFAULT_SITE_ID, asset, contentItem, contentReference, contentVersion, deliveryKey, folder, formSubmission, locale, site, userRole, userScope, webhook, webhookDelivery } from "./schema.js";
 
 /**
  * The `site` entity (multisite). Content, delivery keys, media and user scopes
@@ -31,10 +31,25 @@ export async function getSiteBySlug(db: Database, slug: string): Promise<Site | 
   return rows[0] ?? null;
 }
 
-/** All sites, oldest first (the Default site sorts first by created_at). */
+/**
+ * The sites a user can open, oldest first: "all" with any every-site role
+ * (`user_role.site_id` NULL — what every role was before #130), otherwise the
+ * sites they hold a one-site role in.
+ */
+export async function userSiteIds(db: Database, userId: string): Promise<string[] | "all"> {
+  const rows = await db.select({ siteId: userRole.siteId }).from(userRole).where(eq(userRole.userId, userId));
+  if (rows.some((r) => r.siteId === null)) return "all";
+  const held = new Set(rows.map((r) => r.siteId));
+  const sites = await db.select({ id: site.id }).from(site).orderBy(asc(site.createdAt), asc(site.slug));
+  return sites.map((s) => s.id).filter((id) => held.has(id));
+}
+
+/** The sites this user can open, oldest first (the Default site sorts first by created_at). */
 export async function listSites(db: Database, ctx: AccessContext): Promise<Site[]> {
   requirePermission(ctx, "content.read");
-  return db.select().from(site).orderBy(asc(site.createdAt), asc(site.slug));
+  const all = await db.select().from(site).orderBy(asc(site.createdAt), asc(site.slug));
+  const ids = await userSiteIds(db, ctx.userId);
+  return ids === "all" ? all : all.filter((s) => ids.includes(s.id));
 }
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -154,6 +169,7 @@ export async function deleteSite(
     await tx.delete(folder).where(eq(folder.siteId, siteId));
     keys = (await tx.delete(deliveryKey).where(eq(deliveryKey.siteId, siteId)).returning({ id: deliveryKey.id })).length;
     await tx.delete(userScope).where(eq(userScope.siteId, siteId));
+    await tx.delete(userRole).where(eq(userRole.siteId, siteId)); // one-site roles only; every-site (NULL) roles stay
     await tx.delete(formSubmission).where(eq(formSubmission.siteId, siteId));
     const hooks = await tx.delete(webhook).where(eq(webhook.siteId, siteId)).returning({ id: webhook.id });
     if (hooks.length > 0) await tx.delete(webhookDelivery).where(inArray(webhookDelivery.webhookId, hooks.map((h) => h.id)));

@@ -1594,8 +1594,15 @@ export function PasswordPanel() {
 export function UsersPanel() {
   const qc = useQueryClient();
   const toast = useToast();
+  const { user } = useUser();
+  // An every-site Admin manages everyone; a site Admin only this site's members.
+  const everySite = user.permissions.includes("user.manage");
   const users = useQuery({ queryKey: ["users"], queryFn: ({ signal }) => api.users(signal) });
   const pages = useQuery({ queryKey: ["pages"], queryFn: ({ signal }) => api.pages(signal) });
+  const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites() });
+  const siteList = sites.data?.sites ?? [];
+  const activeSite = siteList.find((x) => x.id === sites.data?.activeSiteId);
+  const siteName = (id: string) => siteList.find((x) => x.id === id)?.name ?? id;
   const [dialog, setDialog] = useState<{ mode: "create" } | { mode: "edit"; user: ManagedUser } | null>(null);
 
   const del = useMutation({
@@ -1606,18 +1613,26 @@ export function UsersPanel() {
 
   return (
     <PanelShell
-      action={<button className="btn-subtle px-2 py-1 text-xs" onClick={() => setDialog({ mode: "create" })}><Icon.Plus width={14} height={14} /> New user</button>}
+      hint={everySite
+        ? "Roles apply in every site, or in one site you pick. A one-site Admin manages that site’s users, keys and settings — never other sites, the content model or instance settings."
+        : `The people who work in ${activeSite?.name ?? "this site"}. Roles you give apply in this site only.`}
+      action={<button className="btn-subtle px-2 py-1 text-xs" onClick={() => setDialog({ mode: "create" })}><Icon.Plus width={14} height={14} /> {everySite ? "New user" : "Add user"}</button>}
     >
       {(users.data ?? []).map((u) => (
-        <div key={u.id} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
+        <div key={u.id} className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
           <span className="font-medium text-fg">{u.name}</span>
           <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{u.email}</code>
-          <span className="flex gap-1">{u.roles.map((r) => <Badge key={r} tone="primary">{r}</Badge>)}</span>
+          <span className="flex flex-wrap gap-1">
+            {u.roles.map((r) => <Badge key={r} tone="primary">{r}{u.siteRoles.length > 0 || !everySite ? " · every site" : ""}</Badge>)}
+            {u.siteRoles.map((g) => <Badge key={`${g.siteId}:${g.role}`} tone="default">{g.role}{everySite ? ` · ${siteName(g.siteId)}` : ""}</Badge>)}
+          </span>
           {u.sections.length > 0 && <span className="text-[11px] text-muted">· {u.sections.length} section(s)</span>}
           {u.locked && <Badge tone="caution">locked</Badge>}
           <div className="ml-auto flex gap-1">
             <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setDialog({ mode: "edit", user: u })}>Edit</button>
-            <button className="rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => { if (confirm(`Delete ${u.email}?`)) del.mutate(u.id); }}>Delete</button>
+            {everySite && (
+              <button className="rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => { if (confirm(`Delete ${u.email}?`)) del.mutate(u.id); }}>Delete</button>
+            )}
           </div>
         </div>
       ))}
@@ -1626,6 +1641,9 @@ export function UsersPanel() {
         <UserDialog
           dialog={dialog}
           pages={pages.data ?? []}
+          sites={everySite ? siteList : null}
+          siteId={sites.data?.activeSiteId ?? ""}
+          siteName={activeSite?.name ?? "this site"}
           onClose={() => setDialog(null)}
           onSaved={() => { void qc.invalidateQueries({ queryKey: ["users"] }); setDialog(null); }}
         />
@@ -1634,68 +1652,114 @@ export function UsersPanel() {
   );
 }
 
+function RoleChips({ label, value, onToggle }: { label: string; value: RoleName[]; onToggle: (r: RoleName) => void }) {
+  return (
+    <div className="flex flex-wrap gap-1.5" role="group" aria-label={label}>
+      {ROLES.map((r) => (
+        <button key={r} type="button" aria-pressed={value.includes(r)} onClick={() => onToggle(r)}
+          className={`rounded-full border px-2.5 py-0.5 text-xs ${value.includes(r) ? "border-accent bg-accent/15 text-fg" : "border-line text-muted hover:bg-line/60"}`}>{r}</button>
+      ))}
+    </div>
+  );
+}
+
+const toggled = <T,>(list: T[], v: T) => (list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+
+/**
+ * `sites` is set for an every-site Admin, who picks roles for every site and per
+ * site. A site Admin (`sites` null) picks roles in the active site only, and
+ * can't change the account itself (name, email, password).
+ */
 function UserDialog({
   dialog,
   pages,
+  sites,
+  siteId,
+  siteName,
   onClose,
   onSaved,
 }: {
   dialog: { mode: "create" } | { mode: "edit"; user: ManagedUser };
   pages: { documentId: string; name: string; parentId: string | null }[];
+  sites: SiteRow[] | null;
+  siteId: string;
+  siteName: string;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const toast = useToast();
   const editing = dialog.mode === "edit" ? dialog.user : null;
+  const everySite = sites !== null;
   const [email, setEmail] = useState(editing?.email ?? "");
   const [name, setName] = useState(editing?.name ?? "");
   const [password, setPassword] = useState("");
-  const [roles, setRoles] = useState<RoleName[]>(editing?.roles ?? ["Author"]);
+  // For a site Admin, `roles` are the roles in THIS site.
+  const [roles, setRoles] = useState<RoleName[]>(
+    everySite ? (editing?.roles ?? ["Author"]) : (editing?.siteRoles.filter((g) => g.siteId === siteId).map((g) => g.role) ?? ["Author"]),
+  );
+  const [siteRoles, setSiteRoles] = useState<ManagedUser["siteRoles"]>(everySite ? (editing?.siteRoles ?? []) : []);
   const [sections, setSections] = useState<string[]>(editing?.sections ?? []);
 
-  const toggleRole = (r: RoleName) => setRoles((p) => (p.includes(r) ? p.filter((x) => x !== r) : [...p, r]));
-  const toggleSection = (id: string) => setSections((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const rolesIn = (id: string) => siteRoles.filter((g) => g.siteId === id).map((g) => g.role);
+  const toggleSiteRole = (id: string, r: RoleName) =>
+    setSiteRoles((p) => (p.some((g) => g.siteId === id && g.role === r) ? p.filter((g) => !(g.siteId === id && g.role === r)) : [...p, { siteId: id, role: r }]));
   // Author is the only role that is section-scoped; site-wide roles ignore sections.
-  const scoped = roles.includes("Author") && !roles.some((r) => r === "Admin" || r === "Editor" || r === "Viewer");
+  const held = [...roles, ...rolesIn(siteId)];
+  const scoped = held.includes("Author") && !held.some((r) => r === "Admin" || r === "Editor" || r === "Viewer");
+  const lockedAccount = Boolean(editing) && !everySite;
 
   const save = useMutation({
     mutationFn: async () => {
-      if (editing) await api.updateUser(editing.id, { name, email, roles, sections });
-      else await api.createUser({ email, name, password, roles, sections });
+      if (editing) await api.updateUser(editing.id, everySite ? { name, email, roles, siteRoles, sections } : { roles, sections });
+      else await api.createUser({ email, name, password: password || undefined, roles, ...(everySite ? { siteRoles } : {}), sections });
     },
-    onSuccess: () => { toast.success(editing ? "User updated" : "User created"); onSaved(); },
+    onSuccess: () => { toast.success(editing ? "User updated" : everySite ? "User created" : "User added"); onSaved(); },
     onError: (e) => toast.error("Couldn’t save user", (e as Error).message),
   });
+  const canSave = everySite ? roles.length + siteRoles.length > 0 : roles.length > 0 || Boolean(editing);
+  const passwordOk = editing ? true : everySite ? password.length >= 10 : password.length === 0 || password.length >= 10;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent title={editing ? `Edit ${editing.email}` : "New user"} description="Assign roles; Authors are scoped to the sections you select." size="lg">
+      <DialogContent
+        title={editing ? `Edit ${editing.email}` : everySite ? "New user" : `Add a user to ${siteName}`}
+        description={everySite ? "Assign roles in every site or per site; Authors are scoped to the sections you select." : `Roles apply in ${siteName} only. Removing every role takes them out of this site.`}
+        size="lg"
+      >
         <div className="grid grid-cols-2 gap-3">
           <label className="text-sm"><span className="field-label">Email</span>
-            <input aria-label="Email" className="field-input" type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></label>
+            <input aria-label="Email" className="field-input" type="email" value={email} disabled={lockedAccount} onChange={(e) => setEmail(e.target.value)} /></label>
           <label className="text-sm"><span className="field-label">Name</span>
-            <input aria-label="Name" className="field-input" value={name} onChange={(e) => setName(e.target.value)} /></label>
+            <input aria-label="Name" className="field-input" value={name} disabled={lockedAccount} onChange={(e) => setName(e.target.value)} /></label>
           {!editing && (
-            <label className="col-span-2 text-sm"><span className="field-label">Temporary password (min 10)</span>
-              <input aria-label="Temporary password (min 10)" className="field-input" type="text" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
+            <label className="col-span-2 text-sm"><span className="field-label">{everySite ? "Temporary password (min 10)" : "Temporary password (min 10; leave empty if they already have an account)"}</span>
+              <input aria-label="Temporary password" className="field-input" type="text" value={password} onChange={(e) => setPassword(e.target.value)} /></label>
           )}
         </div>
         <div className="mt-3">
-          <span className="field-label">Roles</span>
-          <div className="flex flex-wrap gap-1.5">
-            {ROLES.map((r) => (
-              <button key={r} type="button" aria-pressed={roles.includes(r)} onClick={() => toggleRole(r)}
-                className={`rounded-full border px-2.5 py-0.5 text-xs ${roles.includes(r) ? "border-accent bg-accent/15 text-fg" : "border-line text-muted hover:bg-line/60"}`}>{r}</button>
-            ))}
-          </div>
+          <span className="field-label">{everySite ? "Roles in every site" : `Roles in ${siteName}`}</span>
+          <RoleChips label={everySite ? "Roles in every site" : `Roles in ${siteName}`} value={roles} onToggle={(r) => setRoles((p) => toggled(p, r))} />
         </div>
+        {everySite && sites.length > 1 && (
+          <div className="mt-3">
+            <span className="field-label">Roles in one site</span>
+            <div className="space-y-1.5 rounded border border-line p-2">
+              {sites.map((x) => (
+                <div key={x.id} className="flex flex-wrap items-center gap-2 text-sm">
+                  <span className="w-32 truncate text-muted">{x.name}</span>
+                  <RoleChips label={`Roles in ${x.name}`} value={rolesIn(x.id)} onToggle={(r) => toggleSiteRole(x.id, r)} />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {scoped && (
           <div className="mt-3">
             <span className="field-label">Sections (Author scope)</span>
             <div className="max-h-40 space-y-1 overflow-auto rounded border border-line p-2">
               {pages.filter((p) => p.parentId === null).map((p) => (
                 <label key={p.documentId} className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" aria-label={p.name} checked={sections.includes(p.documentId)} onChange={() => toggleSection(p.documentId)} />
+                  <input type="checkbox" aria-label={p.name} checked={sections.includes(p.documentId)} onChange={() => setSections((s) => toggled(s, p.documentId))} />
                   <span>{p.name}</span>
                 </label>
               ))}
@@ -1705,8 +1769,8 @@ function UserDialog({
         )}
         <div className="mt-4 flex justify-end gap-2">
           <button className="btn-ghost" onClick={onClose}>Cancel</button>
-          <button className="btn-primary" disabled={save.isPending || roles.length === 0 || !email || (!editing && password.length < 10)} onClick={() => save.mutate()}>
-            {save.isPending ? "Saving…" : editing ? "Save" : "Create user"}
+          <button className="btn-primary" disabled={save.isPending || !canSave || !email || !passwordOk} onClick={() => save.mutate()}>
+            {save.isPending ? "Saving…" : editing ? "Save" : everySite ? "Create user" : "Add user"}
           </button>
         </div>
       </DialogContent>

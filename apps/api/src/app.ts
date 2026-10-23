@@ -17,6 +17,7 @@ import {
   createDb,
   getAccessContext,
   getSessionUser,
+  userSiteIds,
   getSiteById,
   pgErrorCode,
   readSession,
@@ -189,15 +190,17 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     if (!sess) return;
     req.sessionToken = token;
     req.sessionCsrf = sess.csrfToken;
-    req.user = await getSessionUser(db, sess.userId);
     // Active site (multisite): the admin site switcher sends x-paperboy-site.
-    // Validate it exists; an unknown/absent header falls back to the Default site.
+    // Validate it exists AND the user can open it; an unknown, absent or
+    // closed site falls back to the user's home site (a one-site Admin's own).
     const siteHeader = req.headers["x-paperboy-site"];
     let activeSiteId: string | undefined;
     if (typeof siteHeader === "string" && siteHeader) {
       const site = await getSiteById(db, siteHeader);
-      if (site) activeSiteId = site.id;
+      const open = site ? await userSiteIds(db, sess.userId) : [];
+      if (site && (open === "all" || open.includes(site.id))) activeSiteId = site.id;
     }
+    req.user = await getSessionUser(db, sess.userId, activeSiteId);
     // via:"web" — session writes are human; the MCP server tags its ctx "mcp".
     // Drives provenance (content_version.created_via) + the agent-review flag.
     req.accessCtx = { ...(await getAccessContext(db, sess.userId, activeSiteId)), via: "web" };

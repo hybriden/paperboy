@@ -25,6 +25,11 @@ export const Permission = z.enum([
   // own verbs rather than riding on content.read/content.delete.
   "submission.read",
   "submission.manage",
+  // Site → General (preview URL, canonical URL, public files): Admin only.
+  "site.manage",
+  // Add users to the ACTIVE site and set their roles there — what a one-site
+  // Admin gets in place of user.manage (#130).
+  "siteuser.manage",
 ]);
 export type Permission = z.infer<typeof Permission>;
 
@@ -43,6 +48,8 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
     "audit.read",
     "submission.read",
     "submission.manage",
+    "site.manage",
+    "siteuser.manage",
   ],
   Editor: [
     "content.read",
@@ -59,6 +66,19 @@ export const ROLE_PERMISSIONS: Record<RoleName, Permission[]> = {
   Author: ["content.read", "content.create", "content.update"],
   Viewer: ["content.read"],
 };
+
+/**
+ * Verbs over what EVERY site shares: users and their every-site roles, sites,
+ * the content model, the AI/stock keys, MCP tokens. A role held in one site
+ * (`user_role.site_id`) never grants these, or a one-site Admin could change
+ * every other site. audit.read is NOT here: a one-site Admin reads their own
+ * site's log (listAudit narrows it).
+ */
+export const INSTANCE_PERMISSIONS: Permission[] = ["user.manage", "contenttype.manage"];
+
+/** One role grant: `siteId` null = every site. */
+export const RoleGrant = z.object({ role: RoleName, siteId: z.string().nullable() });
+export type RoleGrant = z.infer<typeof RoleGrant>;
 
 export const LoginRequest = z.object({
   email: z.string().email(),

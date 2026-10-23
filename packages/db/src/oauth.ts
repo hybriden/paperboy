@@ -2,9 +2,8 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
-import { getAccessContext } from "./auth-store.js";
 import type { AccessContext } from "./scope.js";
-import { oauthClient, oauthCode, oauthGrant, site, userScope, users } from "./schema.js";
+import { oauthClient, oauthCode, oauthGrant, site, userRole, userScope, users } from "./schema.js";
 
 /**
  * OAuth 2.1 for the remote MCP server, as the MCP authorization spec lays it
@@ -108,19 +107,19 @@ function assertClientAuthenticated(client: typeof oauthClient.$inferSelect, pres
 
 /**
  * The sites a user may connect an MCP client to, and whether "every site" is
- * on offer. Roles are global: a site-wide reader (Admin, Editor, Viewer) sees
- * every site, so may pick any one of them or all. A section-scoped user
- * (Author) sees only the sites they hold a section in, and never "every site" —
- * that would also reach sites added later, which they have no part in.
+ * on offer. Only a site-wide reader (Admin, Editor, Viewer) held in EVERY site
+ * may pick "every site" — it also reaches sites added later. Everyone else is
+ * offered the sites they hold a one-site role or a section in.
  */
 export async function sitesForConsent(
   db: Database,
   userId: string,
 ): Promise<{ sites: Array<{ id: string; slug: string; name: string }>; allSitesAllowed: boolean }> {
-  const ctx = await getAccessContext(db, userId);
   const all = await db.select({ id: site.id, slug: site.slug, name: site.name }).from(site).orderBy(site.createdAt, site.slug);
-  if (ctx.readSiteWide) return { sites: all, allSitesAllowed: true };
+  const roles = await db.select().from(userRole).where(eq(userRole.userId, userId));
+  if (roles.some((r) => r.siteId === null && r.role !== "Author")) return { sites: all, allSitesAllowed: true };
   const scoped = new Set((await db.select({ siteId: userScope.siteId }).from(userScope).where(eq(userScope.userId, userId))).map((r) => r.siteId));
+  for (const r of roles) if (r.siteId) scoped.add(r.siteId);
   return { sites: all.filter((s) => scoped.has(s.id)), allSitesAllowed: false };
 }
 
