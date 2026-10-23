@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Suite, TEST_DB, authHeaders, login, setupApi } from "./helpers.js";
 
 /**
- * Per-site setup (Settings → Site): preview URL, start page and delivery keys
+ * Per-site setup (Settings → General): preview URL, start page and delivery keys
  * must each be per-site. Built red-first: while these live in the global
  * site_setting table, setting site B's preview URL clobbers site A's, and keys
  * aren't site-scoped — these assertions fail until they move onto the site.

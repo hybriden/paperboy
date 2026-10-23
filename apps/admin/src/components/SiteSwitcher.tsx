@@ -38,8 +38,8 @@ export function SiteSwitcher() {
       <select
         value={active}
         onChange={(e) => {
-          // Creation lives in Settings → Site (name + slug + default locale).
-          if (e.target.value === NEW_SITE) window.location.href = "/settings#site";
+          // Creation lives in Settings → Sites (name + slug + default locale).
+          if (e.target.value === NEW_SITE) window.location.href = "/settings#sites";
           else if (e.target.value !== active) switchSite(e.target.value);
         }}
         className="min-w-0 max-w-[160px] truncate rounded-(--radius) border border-line bg-canvas px-2 py-1.5 text-sm text-fg hover:bg-line/60 focus:outline-hidden"

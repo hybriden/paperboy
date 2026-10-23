@@ -126,7 +126,7 @@ export function PreviewPane({
 }) {
   const [device, setDevice] = useState<Device>("desktop");
   const [nonce, setNonce] = useState(0);
-  // Preview origin is configured in Settings → Site; nothing is framed until
+  // Preview origin is configured in Settings → General; nothing is framed until
   // it is known.
   const site = useQuery({ queryKey: ["site"], queryFn: ({ signal }) => api.site(signal) });
   // Every post below is addressed to THIS origin, never "*": a wildcard would
@@ -498,7 +498,7 @@ export function PreviewPane({
             // Both messages are written to be read by the person seeing them.
             <div className="flex h-full items-center justify-center border border-line bg-panel p-6 text-center text-sm text-muted">
               {site.isSuccess && !targetOrigin
-                ? "No preview URL is set for this site. Add one under Settings → Site to preview drafts here."
+                ? "No preview URL is set for this site. Add one under Settings → General to preview drafts here."
                 : previewToken.isError
                   ? ((previewToken.error as Error | undefined)?.message ??
                     "Preview isn’t available right now.")

@@ -14,7 +14,7 @@ import { SkeletonRows } from "../ui/skeleton.js";
 import { Surface } from "../ui/surface.js";
 import { useToast } from "../ui/toast.js";
 import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, FormSubmissionsPanel, LanguagesPanel, McpConnectionsPanel,
-  McpTokensPanel, PasswordPanel, SitePanel, StockImagesPanel, TrashPanel, TypeTemplatesPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
+  AgentReviewPanel, McpTokensPanel, PasswordPanel, SiteGeneralPanel, SitesPanel, StockImagesPanel, TrashPanel, TypeTemplatesPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
 import { RedirectsPanel } from "./RedirectsPanel.js";
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
@@ -347,7 +347,7 @@ export function SettingsView() {
 
   const allTabs: SettingsTab[] = [
     // Grouped by what a tab applies to: the active site, what every site shares, the instance, or you.
-    { key: "site", label: "Sites", group: "Site", show: has("content.publish"), render: () => <SitePanel /> },
+    { key: "site", label: "General", group: "Site", show: has("content.publish"), render: () => <SiteGeneralPanel /> },
     { key: "redirects", label: "Redirects", group: "Site", show: true, render: () => <RedirectsPanel /> },
     { key: "submissions", label: "Form submissions", group: "Site", show: has("submission.read"), render: () => <FormSubmissionsPanel /> },
     { key: "keys", label: "Delivery keys", group: "Site", show: has("deliverykey.manage"), render: () => <DeliveryKeysPanel /> },
@@ -356,18 +356,21 @@ export function SettingsView() {
     { key: "model", label: "Content types", group: "Content model", show: true, render: () => <ContentTypesPanel /> },
     { key: "templates", label: "Type templates", group: "Content model", show: has("contenttype.manage"), render: () => <TypeTemplatesPanel /> },
     { key: "languages", label: "Languages", group: "Content model", show: true, render: () => <LanguagesPanel /> },
+    { key: "sites", label: "Sites", group: "Instance", show: has("user.manage"), render: () => <SitesPanel /> },
     { key: "users", label: "Users & roles", group: "Instance", show: has("user.manage"), render: () => <UsersPanel /> },
-    { key: "ai", label: "AI", group: "Instance", show: has("user.manage"), render: () => <AiPanel /> },
-    { key: "stock", label: "Stock images", group: "Instance", show: has("user.manage"), render: () => <StockImagesPanel /> },
-    { key: "audit", label: "Audit log", group: "Instance", show: has("audit.read"), render: () => <AuditPanel /> },
-    { key: "account", label: "Your account", group: "You", show: true, render: () => (<><TwoFactorPanel /><PasswordPanel /></>) },
+    // MCP tokens are an admin instrument; everyone else connects agents with OAuth (You → Connected apps).
     {
       key: "agents",
-      label: "AI agents",
-      group: "You",
-      show: true,
-      render: () => (<>{has("user.manage") && <McpTokensPanel />}<McpConnectionsPanel /></>),
+      label: "Agent access",
+      group: "Instance",
+      show: has("user.manage"),
+      render: () => (<><McpTokensPanel /><McpConnectionsPanel everyone /><AgentReviewPanel /></>),
     },
+    { key: "ai", label: "AI provider", group: "Instance", show: has("user.manage"), render: () => <AiPanel /> },
+    { key: "stock", label: "Stock images", group: "Instance", show: has("user.manage"), render: () => <StockImagesPanel /> },
+    { key: "audit", label: "Audit log", group: "Instance", show: has("audit.read"), render: () => <AuditPanel /> },
+    { key: "account", label: "Sign-in & security", group: "You", show: true, render: () => (<><TwoFactorPanel /><PasswordPanel /></>) },
+    { key: "connections", label: "Connected apps", group: "You", show: true, render: () => <McpConnectionsPanel /> },
   ];
   const tabs = allTabs.filter((t) => t.show);
 
@@ -376,8 +379,8 @@ export function SettingsView() {
   // #model:BlogPost from the dashboard opens that type's editor (the panel
   // itself consumes the suffix).
   const rawHashTab = typeof window !== "undefined" ? window.location.hash.slice(1).split(":")[0]! : "";
-  // #mcp and #connections were merged into #agents; old links still land there.
-  const hashTab = rawHashTab === "mcp" || rawHashTab === "connections" ? "agents" : rawHashTab;
+  // #mcp (the old tokens tab) lands on Agent access.
+  const hashTab = rawHashTab === "mcp" ? "agents" : rawHashTab;
   // One home for "does the hash name a tab this user can see" — active and the
   // mobile drill below must agree on it or a deep-link opens the wrong screen.
   const hashIsTab = tabs.some((t) => t.key === hashTab);
@@ -390,10 +393,22 @@ export function SettingsView() {
   // of content on a 390px screen. List ⇄ panel, one at a time. A hash deep-link
   // lands on the panel directly, with Back available — deep-links arrive as
   // fresh mounts (dashboard navigate(), the site switcher's full page load),
-  // except #site clicked while ALREADY on /settings, a same-document fragment
-  // change that has never re-targeted `active` either (pre-existing gap).
+  // or as a same-document fragment change, which the hashchange listener below follows.
   const isMobile = useIsMobile();
   const [mobilePanel, setMobilePanel] = useState(hashIsTab);
+  const tabKeys = tabs.map((t) => t.key).join(",");
+  useEffect(() => {
+    const onHash = () => {
+      const k = window.location.hash.slice(1).split(":")[0]!;
+      const key = k === "mcp" ? "agents" : k;
+      if (tabKeys.split(",").includes(key)) {
+        setActive(key);
+        setMobilePanel(true);
+      }
+    };
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [tabKeys]);
   const listHeadingRef = useRef<HTMLHeadingElement>(null);
   const panelHeadingRef = useRef<HTMLHeadingElement>(null);
   const prevPanelRef = useRef<boolean | null>(null);

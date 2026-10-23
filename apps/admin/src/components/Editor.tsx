@@ -164,7 +164,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // origin is the public site, which any page there can post from.
   const previewFrameRef = useRef<HTMLIFrameElement>(null);
 
-  // The agent-review gate (Settings → AI). The "Needs review" badge is the
+  // The agent-review gate (Settings → Agent access). The "Needs review" badge is the
   // visible side of this gate, so it only shows when review is actually required.
   // Same query key as the settings panel, so the request is shared.
   const reviewGate = useQuery({ queryKey: ["agent-review"], queryFn: ({ signal }) => api.agentReview(signal) });
@@ -1067,7 +1067,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       for (const t of timers) clearTimeout(t);
     };
     // previewBaseUrl is in the deps so the origin check can't keep trusting a
-    // stale origin after Settings → Site changes the preview host; `types` so
+    // stale origin after Settings → General changes the preview host; `types` so
     // block-field resolution never runs against a stale type list.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [type, types, site.data?.previewBaseUrl]);
@@ -1377,7 +1377,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-panel px-4 py-1.5">
         <div className="flex items-center gap-2">
           {/* Agent provenance. The actionable "Needs review" badge only shows when
-              the site requires agent review (Settings → AI); otherwise an agent
+              this instance requires agent review (Settings → Agent access); otherwise an agent
               write is surfaced as a passive "agent-edited" label. */}
           {reviewBadge(form, reviewGate.data?.required ?? false) === "needs-review" && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-draft/10 px-2.5 py-1 text-xs font-semibold text-draft" title="The working draft was written by an agent (via MCP) and the site requires human review before agents publish. Approve it or edit it to clear the flag.">

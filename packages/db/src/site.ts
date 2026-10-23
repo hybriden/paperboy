@@ -66,7 +66,7 @@ export async function setPreviewBaseUrl(db: Database, ctx: AccessContext, url: s
 }
 
 /**
- * Per-site public-files config (Settings → Site): the canonical PUBLIC origin
+ * Per-site public-files config (Settings → General): the canonical PUBLIC origin
  * (absolute URLs in sitemap/robots/llms — distinct from the preview URL, which
  * may point at staging) + the editor-controlled robots/llms/security.txt
  * fields. Same permission as the preview URL (site chrome, content.publish).

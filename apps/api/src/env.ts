@@ -90,7 +90,7 @@ const EnvSchema = z.object({
   // AI editorial assistant. Two providers: Anthropic (ANTHROPIC_API_KEY) or any
   // OpenAI-compatible Chat Completions endpoint (OPENAI_API_KEY + optional
   // OPENAI_BASE_URL). AI_PROVIDER picks one when both keys are set; a config
-  // stored in the CMS (Settings → AI) overrides all of these. Each env key is
+  // stored in the CMS (Settings → AI provider) overrides all of these. Each env key is
   // bound to its own provider — see resolveAiRuntimeConfig in @paperboy/db.
   // Without any key a deterministic local fallback keeps the truncation tasks
   // usable offline. AI_MODEL has NO default here: the per-provider default

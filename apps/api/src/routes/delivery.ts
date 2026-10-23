@@ -287,7 +287,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   // security.txt built on it. Served from delivery (key = site + perspective,
   // like every read) so a frontend just PROXIES its own /robots.txt etc.
   // through — content-driven, never stale on publish; apps/web is the
-  // reference. Config lives per site in Settings → Site.
+  // reference. Config lives per site in Settings → General.
 
   const PublicPageOut = z.object({
     documentId: z.string(),
@@ -341,7 +341,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     new AppError(
       409,
       "not_configured",
-      `${file} needs absolute URLs — set the site's Canonical base URL (the public origin, e.g. https://www.example.com) in Settings → Site first.`,
+      `${file} needs absolute URLs — set the site's Canonical base URL (the public origin, e.g. https://www.example.com) in Settings → General first.`,
     );
   // A preview key frames unreleased drafts (a staging frontend), and the SEO
   // contract makes preview noindex everywhere — so its generated files never
@@ -420,7 +420,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
         throw new AppError(
           404,
           "not_configured",
-          "security.txt is not configured — RFC 9116 requires a Contact. Set one (email or https: URL) in Settings → Site → Public files.",
+          "security.txt is not configured — RFC 9116 requires a Contact. Set one (email or https: URL) in Settings → General → Public files.",
         );
       }
       textFileHeaders(reply, req.perspective!, "text/plain; charset=utf-8");

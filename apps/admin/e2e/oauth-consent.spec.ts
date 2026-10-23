@@ -94,7 +94,35 @@ test("an unregistered redirect is refused on the page, never followed", async ({
   expect(new URL(page.url()).host).not.toContain("attacker.example"); // still on the admin, not sent anywhere
 });
 
-test("the connection is listed under Settings → AI agents and can be disconnected", async ({ page }) => {
+test("an admin's Connected apps lists only their own; everyone's are under Agent access", async ({ page }) => {
+  const clientId = await registerClient(page);
+  const { url, verifier } = authorizeUrl(clientId);
+  let landed = "";
+  await page.route("https://client.example.net/**", (route) => {
+    landed = route.request().url();
+    return route.fulfill({ status: 200, body: "client callback" });
+  });
+  await page.goto(url);
+  await signIn(page, "viewer@paperboy.test", "Viewer!Passw0rd");
+  await page.getByRole("button", { name: "Allow" }).click();
+  await expect.poll(() => landed, { timeout: 10_000 }).toContain("code=");
+  const tok = await page.request.post("/api/v1/oauth/token", {
+    form: { grant_type: "authorization_code", code: new URL(landed).searchParams.get("code")!, code_verifier: verifier, client_id: clientId, redirect_uri: REDIRECT },
+  });
+  expect(tok.status()).toBe(200);
+
+  await page.context().clearCookies();
+  await page.goto("/settings");
+  await signIn(page, "admin@paperboy.test", "Admin!Passw0rd");
+  const viewersRow = page.getByText("acts as viewer@paperboy.test");
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "Agent access", exact: true }).click();
+  await expect(viewersRow.first()).toBeVisible({ timeout: 15_000 });
+  await page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "Connected apps", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Connected apps", level: 2 }).first()).toBeVisible();
+  await expect(viewersRow).toHaveCount(0);
+});
+
+test("the connection is listed under Settings → Connected apps and can be disconnected", async ({ page }) => {
   const clientId = await registerClient(page);
   const { url, verifier } = authorizeUrl(clientId);
   let landed = "";
@@ -112,7 +140,7 @@ test("the connection is listed under Settings → AI agents and can be disconnec
   });
   expect(tok.status()).toBe(200);
 
-  await page.goto("/settings#agents");
+  await page.goto("/settings#connections");
   const row = page.locator("div", { hasText: "Consent Test Client" }).filter({ has: page.getByRole("button", { name: "Disconnect" }) }).last();
   await expect(row).toBeVisible({ timeout: 15_000 });
   page.once("dialog", (d) => void d.accept());

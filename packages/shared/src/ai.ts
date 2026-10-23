@@ -26,7 +26,7 @@ export class AiUnavailableError extends Error {
   constructor(detail?: string) {
     super(
       detail ??
-        "AI is not configured — this task needs a real model. Add an API key in Settings → AI " +
+        "AI is not configured — this task needs a real model. Add an API key in Settings → AI provider " +
           "(Anthropic, or any OpenAI-compatible endpoint), or set ANTHROPIC_API_KEY / OPENAI_API_KEY.",
     );
     this.name = "AiUnavailableError";
@@ -457,7 +457,7 @@ export async function aiAssist(req: AiRequest, cfg: AiConfig): Promise<AiResult>
     // caller (human or agent) into believing the work happened.
     if (needsModel) {
       throw new AiUnavailableError(
-        `AI provider call failed (${err instanceof Error ? err.message : "unknown error"}) — try again, or check the key/model in Settings → AI.`,
+        `AI provider call failed (${err instanceof Error ? err.message : "unknown error"}) — try again, or check the key/model in Settings → AI provider.`,
       );
     }
     return { result: fallback(req), provider: "fallback" };
@@ -507,7 +507,7 @@ export async function aiImageAltText(req: AiAltTextRequest, cfg: AiConfig): Prom
   } catch (err) {
     if (err instanceof AiUnavailableError) throw err;
     throw new AiUnavailableError(
-      `AI provider call failed (${err instanceof Error ? err.message : "unknown error"}) — try again, or check the key/model in Settings → AI.`,
+      `AI provider call failed (${err instanceof Error ? err.message : "unknown error"}) — try again, or check the key/model in Settings → AI provider.`,
     );
   }
 }
@@ -525,7 +525,7 @@ async function callModelTranslate(texts: string[], targetLocale: string, cfg: Ai
   try {
     arr = JSON.parse(text);
   } catch {
-    throw new AiUnavailableError("The model did not return a JSON array of translations — try again, or check the model in Settings → AI.");
+    throw new AiUnavailableError("The model did not return a JSON array of translations — try again, or check the model in Settings → AI provider.");
   }
   if (!Array.isArray(arr) || !arr.every((x) => typeof x === "string")) throw new Error("Bad translate response");
   return arr as string[];

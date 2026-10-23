@@ -20,13 +20,16 @@ const ROLES: RoleName[] = ["Admin", "Editor", "Author", "Viewer"];
 
 const isSlug = (s: string) => s !== "" && s === slugifyValue(s);
 
-function PanelShell({ title, hint, action, children }: { title: string; hint?: string; action?: React.ReactNode; children: React.ReactNode }) {
+/** A titled section. Leave `title` out when the panel is its tab's only section: the tab label is already its heading. */
+function PanelShell({ title, hint, action, children }: { title?: string; hint?: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
     <section className="mb-8">
-      <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-xs font-bold uppercase tracking-wide text-muted">{title}</h2>
-        {action}
-      </div>
+      {(title || action) && (
+        <div className="mb-2 flex items-center justify-between gap-2">
+          {title && <h2 className="text-xs font-bold uppercase tracking-wide text-muted">{title}</h2>}
+          <div className="ml-auto">{action}</div>
+        </div>
+      )}
       {hint && <p className="mb-2 text-xs text-muted">{hint}</p>}
       <Surface elevation={1} className="overflow-hidden">{children}</Surface>
     </section>
@@ -215,8 +218,7 @@ export function ContentTypesPanel() {
 
   return (
     <PanelShell
-      title="Content types"
-      hint="The data model editors fill in. Pages, blocks and globals stand on their own; PARTS only exist inside another type (a form’s fields), so they are never offered as general blocks. Public fields are exposed by the Delivery API."
+      hint={`The data model editors fill in. Pages, blocks and globals stand on their own; PARTS only exist inside another type (a form’s fields), so they are never offered as general blocks. Public fields are exposed by the Delivery API.${canManage ? "" : " Read-only: your role can’t change content types."}`}
       action={canManage ? <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setPicker(true)}><Icon.Plus width={14} height={14} /> New content type</button> : undefined}
     >
       {/* Kind filter */}
@@ -474,7 +476,6 @@ export function TypeTemplatesPanel() {
 
   return (
     <PanelShell
-      title="Type templates"
       hint="Reusable content-type recipes. Built-in templates ship with Paperboy (read-only — duplicate one to customise it); your own are stored per instance. Instantiate one into a live type — existing types are never overwritten without an explicit confirm."
       action={
         canManage ? (
@@ -748,8 +749,7 @@ export function LanguagesPanel() {
 
   return (
     <PanelShell
-      title="Languages"
-      hint="Document-level localization with a per-locale fallback chain."
+      hint={`Document-level localization with a per-locale fallback chain.${canManage ? "" : " Read-only: your role can’t change languages."}`}
       action={
         canManage ? (
           <form
@@ -815,9 +815,8 @@ export function LanguagesPanel() {
   );
 }
 
-export function SitePanel() {
-  const { user } = useUser();
-  const canManageSites = user.permissions.includes("user.manage");
+/** Instance → Sites: every site's name and slug, which one is active, add and delete. */
+export function SitesPanel() {
   const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites() });
   const [wizard, setWizard] = useState(false);
 
@@ -826,18 +825,24 @@ export function SitePanel() {
 
   return (
     <PanelShell
-      title="Sites"
-      hint="Each site has its own preview URL and delivery keys. Edit any site here; “active” is the site the content editor works in."
-      action={canManageSites ? (
-        <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setWizard(true)}><Icon.Plus width={14} height={14} /> Add site</button>
-      ) : undefined}
+      hint="Each site has its own content, media, delivery keys and URLs. “Active” is the site the content editor works in; its URLs and public files are under Site → General."
+      action={<button className="btn-subtle px-2 py-1 text-xs" onClick={() => setWizard(true)}><Icon.Plus width={14} height={14} /> Add site</button>}
     >
-      <div className="flex flex-col gap-4 p-4">
-        {sites.data?.sites.map((s) => (
-          <SiteCard key={s.id} site={s} active={s.id === activeId} canManage={canManageSites} />
-        ))}
-      </div>
+      {sites.data?.sites.map((s) => (
+        <SiteIdentityRow key={s.id} site={s} active={s.id === activeId} />
+      ))}
       {wizard && <CreateSiteWizard defaultLocale={activeDefaultLocale} onClose={() => setWizard(false)} />}
+    </PanelShell>
+  );
+}
+
+/** Site → General: the ACTIVE site's preview and public URLs, start page and public files. */
+export function SiteGeneralPanel() {
+  const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites() });
+  const site = sites.data?.sites.find((x) => x.id === sites.data?.activeSiteId);
+  return (
+    <PanelShell hint={site ? `Settings for ${site.name}. Switch site at the top to edit another.` : undefined}>
+      {site && <SiteSettingsForm key={site.id} site={site} />}
     </PanelShell>
   );
 }
@@ -943,33 +948,88 @@ const filesOf = (s: SiteRow): Record<keyof SeoFilesConfig, string> => ({
   securityLanguages: s.seoFiles.securityLanguages ?? "",
 });
 
-/** One site row in the Sites panel: name, slug, preview URL and start page, all
- *  edited in place and persisted by a SINGLE Save button. Every write targets
- *  THIS site (per-call x-paperboy-site override), without changing the admin's
- *  working site. */
-function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean; canManage: boolean }) {
+/** One row in Instance → Sites: name and slug edited in place, make active, delete.
+ *  Writes target THIS site (per-call x-paperboy-site override), not the working site. */
+function SiteIdentityRow({ site, active }: { site: SiteRow; active: boolean }) {
   const toast = useToast();
   const qc = useQueryClient();
   const [deleting, setDeleting] = useState(false);
+  const saved = `${site.name}\u0000${site.slug}`;
+  const [name, setName] = useState(site.name);
+  const [slug, setSlug] = useState(site.slug);
+  // React's documented "adjust state when a prop changes", which needs a value
+  // React itself tracks: a render-phase ref write is invisible to it.
+  const [lastSaved, setLastSaved] = useState(saved);
+  if (lastSaved !== saved) {
+    setLastSaved(saved);
+    setName(site.name);
+    setSlug(site.slug);
+  }
+  const slugValid = isSlug(slug.trim());
+  const dirty = name.trim() !== site.name || slug.trim() !== site.slug;
+  const invalid = !name.trim() || !slugValid;
+
+  const save = useMutation({
+    mutationFn: () => api.renameSite(site.id, { name: name.trim(), slug: slug.trim() }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["sites"] });
+      void qc.invalidateQueries({ queryKey: ["site"] });
+      toast.success("Site saved", name.trim());
+    },
+    onError: (e) => toast.error("Couldn’t save site", (e as Error).message),
+  });
+
+  return (
+    <form className="flex flex-col gap-2 border-b border-line p-4 last:border-0" onSubmit={(e) => { e.preventDefault(); if (dirty && !invalid) save.mutate(); }}>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-sm" style={{ minWidth: 180 }}>
+          <span className="field-label">Name</span>
+          <input aria-label="Site name" className="field-input" value={name} onChange={(e) => setName(e.target.value)} />
+        </label>
+        <label className="text-sm" style={{ minWidth: 140 }}>
+          <span className="field-label">Slug</span>
+          <input aria-label="Site slug" className="field-input" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
+        </label>
+        {active ? (
+          <Badge tone="primary">active</Badge>
+        ) : (
+          <button type="button" className="text-xs text-accent hover:underline" onClick={() => switchSite(site.id)}>Make active</button>
+        )}
+        <div className="ml-auto flex items-center gap-3">
+          {site.id !== "site_default" && (
+            <button type="button" className="text-xs text-danger hover:underline" onClick={() => setDeleting(true)}>Delete site…</button>
+          )}
+          <button className="btn-primary" disabled={!dirty || invalid || save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
+        </div>
+      </div>
+      {/* Below the row, not inside the slug column — an in-column error makes
+          that column taller and shoves the whole items-end row out of line. */}
+      {slug.trim() !== "" && !slugValid && (
+        <p className="text-xs text-danger">Slug: lowercase letters, numbers and single hyphens only.</p>
+      )}
+      {deleting && <DeleteSiteDialog site={site} active={active} onClose={() => setDeleting(false)} />}
+    </form>
+  );
+}
+
+/** The active site's preview URL, public URL, language in URLs, public files and
+ *  start page, persisted by a SINGLE Save button. */
+function SiteSettingsForm({ site }: { site: SiteRow }) {
+  const toast = useToast();
+  const qc = useQueryClient();
 
   // One editable draft per field, seeded from the site; resynced when the saved
   // site changes (keyed by the values we last persisted).
-  const saved = `${site.name}\u0000${site.slug}\u0000${site.previewBaseUrl ?? ""}\u0000${site.startPageId ?? ""}\u0000${site.canonicalBaseUrl ?? ""}\u0000${site.localePrefix}\u0000${JSON.stringify(site.seoFiles)}`;
-  const [name, setName] = useState(site.name);
-  const [slug, setSlug] = useState(site.slug);
+  const saved = `${site.previewBaseUrl ?? ""}\u0000${site.startPageId ?? ""}\u0000${site.canonicalBaseUrl ?? ""}\u0000${site.localePrefix}\u0000${JSON.stringify(site.seoFiles)}`;
   const [previewUrl, setPreviewUrl] = useState(site.previewBaseUrl ?? "");
   const [startPageId, setStartPageId] = useState(site.startPageId ?? "");
   const [canonicalUrl, setCanonicalUrl] = useState(site.canonicalBaseUrl ?? "");
   const [localePrefix, setLocalePrefix] = useState(site.localePrefix);
   const [files, setFiles] = useState(() => filesOf(site));
-  // React's documented "adjust state when a prop changes", which needs a value
-  // React itself tracks: a render-phase ref write is invisible to it.
   const [lastSaved, setLastSaved] = useState(saved);
   if (lastSaved !== saved) {
     // The site changed under us (after a save elsewhere) — resync the draft.
     setLastSaved(saved);
-    setName(site.name);
-    setSlug(site.slug);
     setPreviewUrl(site.previewBaseUrl ?? "");
     setStartPageId(site.startPageId ?? "");
     setCanonicalUrl(site.canonicalBaseUrl ?? "");
@@ -979,22 +1039,18 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
 
   const pages = useQuery({ queryKey: ["pages", site.id], queryFn: ({ signal }) => api.pages(signal, site.id) });
 
-  const slugValid = isSlug(slug.trim());
-  const nameChanged = canManage && (name.trim() !== site.name || slug.trim() !== site.slug);
   const previewChanged = previewUrl.trim() !== (site.previewBaseUrl ?? "");
   const startChanged = (startPageId || null) !== (site.startPageId ?? null);
   const savedFiles = filesOf(site);
   const canonicalChanged = canonicalUrl.trim() !== (site.canonicalBaseUrl ?? "");
   const prefixChanged = localePrefix !== site.localePrefix;
   const filesChanged = (Object.keys(files) as Array<keyof SeoFilesConfig>).filter((k) => files[k].trim() !== savedFiles[k]);
-  const dirty = nameChanged || previewChanged || startChanged || canonicalChanged || prefixChanged || filesChanged.length > 0;
-  const invalid = canManage && (!name.trim() || !slugValid);
+  const dirty = previewChanged || startChanged || canonicalChanged || prefixChanged || filesChanged.length > 0;
   const setFile = (k: keyof SeoFilesConfig, v: string) => setFiles((p) => ({ ...p, [k]: v }));
 
   const save = useMutation({
     mutationFn: async () => {
       // Persist only what changed, in one user action.
-      if (nameChanged) await api.renameSite(site.id, { name: name.trim(), slug: slug.trim() });
       if (previewChanged) await api.setPreviewUrl(previewUrl.trim(), site.id);
       if (startChanged) await api.setStartPage(startPageId || null, site.id);
       if (canonicalChanged || prefixChanged || filesChanged.length) {
@@ -1008,41 +1064,13 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["sites"] });
       void qc.invalidateQueries({ queryKey: ["site"] });
-      toast.success("Site saved", name.trim());
+      toast.success("Site saved", site.name);
     },
     onError: (e) => toast.error("Couldn’t save site", (e as Error).message),
   });
 
   return (
-    <form className="flex flex-col gap-3 rounded-(--radius) border border-line bg-canvas/40 p-4" onSubmit={(e) => { e.preventDefault(); if (dirty && !invalid) save.mutate(); }}>
-      {/* name / slug / active */}
-      <div className="flex flex-wrap items-end gap-3">
-        {canManage ? (
-          <>
-            <label className="text-sm" style={{ minWidth: 180 }}>
-              <span className="field-label">Name</span>
-              <input aria-label="Site name" className="field-input" value={name} onChange={(e) => setName(e.target.value)} />
-            </label>
-            <label className="text-sm" style={{ minWidth: 140 }}>
-              <span className="field-label">Slug</span>
-              <input aria-label="Site slug" className="field-input" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
-            </label>
-          </>
-        ) : (
-          <span className="text-sm font-medium">{site.name} <code className="text-xs text-muted">/{site.slug}</code></span>
-        )}
-        {active ? (
-          <Badge tone="primary">active</Badge>
-        ) : (
-          <button type="button" className="text-xs text-accent hover:underline" onClick={() => switchSite(site.id)}>Make active</button>
-        )}
-      </div>
-      {/* Below the row, not inside the slug column — an in-column error makes
-          that column taller and shoves the whole items-end row out of line. */}
-      {canManage && slug.trim() !== "" && !slugValid && (
-        <p className="-mt-2 text-xs text-danger">Slug: lowercase letters, numbers and single hyphens only.</p>
-      )}
-
+    <form className="flex flex-col gap-3 p-4" onSubmit={(e) => { e.preventDefault(); if (dirty) save.mutate(); }}>
       {/* preview URL */}
       <label className="text-sm">
         <span className="field-label">Preview base URL</span>
@@ -1131,16 +1159,9 @@ function SiteCard({ site, active, canManage }: { site: SiteRow; active: boolean;
         </select>
       </label>
 
-      {/* one save for the whole site */}
-      <div className="flex items-center justify-between">
-        {canManage && site.id !== "site_default" ? (
-          <button type="button" className="text-xs text-danger hover:underline" onClick={() => setDeleting(true)}>Delete site…</button>
-        ) : (
-          <span />
-        )}
-        <button className="btn-primary" disabled={!dirty || invalid || save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
+      <div className="flex justify-end">
+        <button className="btn-primary" disabled={!dirty || save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
       </div>
-      {deleting && <DeleteSiteDialog site={site} active={active} onClose={() => setDeleting(false)} />}
     </form>
   );
 }
@@ -1288,7 +1309,7 @@ export function AiPanel() {
         : "No key configured — the writing assistant is offline (only basic SEO truncation works).";
 
   return (
-    <PanelShell title="AI provider" hint="Connect Anthropic (Claude) or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, Mistral, a local Ollama/vLLM…) so the writing assistant (SEO text, copy improvement, translation, image descriptions) uses a real model. The key is stored encrypted and never shown again; it overrides the server environment value.">
+    <PanelShell hint="Connect Anthropic (Claude) or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, Mistral, a local Ollama/vLLM…) so the writing assistant (SEO text, copy improvement, translation, image descriptions) uses a real model. The key is stored encrypted and never shown again; it overrides the server environment value.">
       <div className="space-y-4 p-4">
         <div className="flex items-center gap-2 text-sm">
           <span className={`h-2 w-2 rounded-full ${status?.configured ? "bg-published" : "bg-draft"}`} />
@@ -1400,13 +1421,12 @@ export function AiPanel() {
           </p>
         </form>
       </div>
-      <AgentReviewSetting />
     </PanelShell>
   );
 }
 
 /** Agent-review gate: agent drafts must be human-approved before an AGENT may publish them. Instance-wide. */
-function AgentReviewSetting() {
+export function AgentReviewPanel() {
   const qc = useQueryClient();
   const toast = useToast();
   const review = useQuery({ queryKey: ["agent-review"], queryFn: ({ signal }) => api.agentReview(signal) });
@@ -1420,33 +1440,35 @@ function AgentReviewSetting() {
   });
 
   return (
-    <label htmlFor="agent-review-toggle" className="flex items-start gap-2.5 border-t border-line px-4 py-3 text-sm">
-      <input
-        id="agent-review-toggle"
-        aria-label="Require human review before agents publish"
-        type="checkbox"
-        className="mt-0.5"
-        // FAILS CLOSED. `?? false` rendered an UNCHECKED, ENABLED box whenever
-        // the query hadn't resolved or had failed — so a safety gate that was ON
-        // looked OFF, and toggling it then WROTE that false value. Unknown state
-        // must not be presented as "off", and must not be writable.
-        checked={review.data?.required ?? true}
-        disabled={toggleReview.isPending || review.isLoading || review.isError || review.data === undefined}
-        onChange={(e) => toggleReview.mutate(e.target.checked)}
-      />
-      <span>
-        <span className="font-medium text-fg">Require human review before agents publish</span>
-        <span className="mt-0.5 block text-xs text-muted">
-          Drafts written via MCP carry a 🤖 needs-review flag. With this on, an agent can’t publish its own
-          unreviewed draft — a human approves it in the editor (or simply edits it) first. Human publishing is never gated.
-        </span>
-        {review.isError && (
-          <span className="mt-1 block text-xs text-danger">
-            Couldn’t read the current setting, so it’s shown as on and locked. Reload to try again.
+    <PanelShell title="Agent review">
+      <label htmlFor="agent-review-toggle" className="flex items-start gap-2.5 px-4 py-3 text-sm">
+        <input
+          id="agent-review-toggle"
+          aria-label="Require human review before agents publish"
+          type="checkbox"
+          className="mt-0.5"
+          // FAILS CLOSED. `?? false` rendered an UNCHECKED, ENABLED box whenever
+          // the query hadn't resolved or had failed — so a safety gate that was ON
+          // looked OFF, and toggling it then WROTE that false value. Unknown state
+          // must not be presented as "off", and must not be writable.
+          checked={review.data?.required ?? true}
+          disabled={toggleReview.isPending || review.isLoading || review.isError || review.data === undefined}
+          onChange={(e) => toggleReview.mutate(e.target.checked)}
+        />
+        <span>
+          <span className="font-medium text-fg">Require human review before agents publish</span>
+          <span className="mt-0.5 block text-xs text-muted">
+            Drafts written via MCP carry a 🤖 needs-review flag. With this on, an agent can’t publish its own
+            unreviewed draft — a human approves it in the editor (or simply edits it) first. Human publishing is never gated.
           </span>
-        )}
-      </span>
-    </label>
+          {review.isError && (
+            <span className="mt-1 block text-xs text-danger">
+              Couldn’t read the current setting, so it’s shown as on and locked. Reload to try again.
+            </span>
+          )}
+        </span>
+      </label>
+    </PanelShell>
   );
 }
 
@@ -1493,7 +1515,7 @@ export function StockImagesPanel() {
         : "No key configured — the Stock tab in the image picker is disabled.";
 
   return (
-    <PanelShell title="Stock images" hint="Connect an Unsplash access key so editors (and agents) can search stock photos and import them straight into the media library — with alt text and photographer attribution. The key is stored encrypted and never shown again.">
+    <PanelShell hint="Connect an Unsplash access key so editors (and agents) can search stock photos and import them straight into the media library — with alt text and photographer attribution. The key is stored encrypted and never shown again.">
       <div className="space-y-4 p-4">
         <div className="flex items-center gap-2 text-sm">
           <span className={`h-2 w-2 rounded-full ${status?.configured ? "bg-published" : "bg-draft"}`} />
@@ -1547,7 +1569,7 @@ export function PasswordPanel() {
     onError: (e) => toast.error("Couldn’t change password", (e as Error).message),
   });
   return (
-    <PanelShell title="Your account" hint="Changing your password signs you out of all sessions.">
+    <PanelShell title="Password" hint="Changing your password signs you out of all sessions.">
       <form
         className="flex flex-wrap items-end gap-3 p-4"
         onSubmit={(e) => { e.preventDefault(); change.mutate(); }}
@@ -1584,7 +1606,6 @@ export function UsersPanel() {
 
   return (
     <PanelShell
-      title="Users & roles"
       action={<button className="btn-subtle px-2 py-1 text-xs" onClick={() => setDialog({ mode: "create" })}><Icon.Plus width={14} height={14} /> New user</button>}
     >
       {(users.data ?? []).map((u) => (
@@ -1724,7 +1745,6 @@ export function DeliveryKeysPanel() {
 
   return (
     <PanelShell
-      title="Delivery API keys"
       hint="Public keys read published content; preview keys read drafts. The secret is shown once at creation."
       action={
         <div className="flex items-center gap-1.5">
@@ -1809,10 +1829,10 @@ export function McpTokensPanel() {
       action={
         <div className="flex items-center gap-1.5">
           <input className="field-input" placeholder="Token name" value={name} onChange={(e) => setName(e.target.value)} aria-label="Token name" />
-          <label className="flex items-center gap-1 text-xs text-muted">
-            <input type="checkbox" checked={allSites} onChange={(e) => setAllSites(e.target.checked)} aria-label="Every site" />
-            Every site
-          </label>
+          <select className="field-input" aria-label="Token scope" value={allSites ? "all" : "site"} onChange={(e) => setAllSites(e.target.value === "all")}>
+            <option value="site">Only {activeSite?.name ?? "the active site"}</option>
+            <option value="all">Every site</option>
+          </select>
           <button className="btn-subtle px-2 py-1 text-xs" disabled={create.isPending} onClick={() => create.mutate()}>
             <Icon.Plus width={14} height={14} /> Create
           </button>
@@ -1854,7 +1874,8 @@ export function McpTokensPanel() {
  * own (and can cut them off); a user manager sees everyone's. Revoking is
  * immediate: the MCP server checks the connection on every request.
  */
-export function McpConnectionsPanel() {
+/** OAuth connections: your own, or (`everyone`, user managers) every user's. */
+export function McpConnectionsPanel({ everyone = false }: { everyone?: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const { user } = useUser();
@@ -1868,11 +1889,14 @@ export function McpConnectionsPanel() {
     },
     onError: (e) => toast.error("Couldn’t disconnect", (e as Error).message),
   });
-  const active = (grants.data ?? []).filter((g) => !g.revokedAt);
+  // The API returns everyone's to a user manager; the personal view keeps only yours.
+  const active = (grants.data ?? []).filter((g) => !g.revokedAt && (everyone || g.userId === user.id));
   return (
     <PanelShell
-      title="Connected apps"
-      hint={`AI apps you connected to Paperboy’s MCP server by signing in (Claude, Cursor, …). Each acts as the person who connected it, only in the site chosen then.${user.permissions.includes("user.manage") ? " As a user manager you see everyone’s connections." : ""}`}
+      title={everyone ? "Connected apps" : undefined}
+      hint={everyone
+        ? "AI apps every user connected by signing in (Claude, Cursor, …). Each acts as the person who connected it, only in the site chosen then."
+        : "AI apps you connected to Paperboy’s MCP server by signing in (Claude, Cursor, …). Each acts as you, only in the site you chose then."}
     >
       {active.map((g) => (
         <div key={g.id} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
@@ -1923,7 +1947,6 @@ export function WebhooksPanel() {
 
   return (
     <PanelShell
-      title="Webhooks"
       hint="POSTed (HMAC-SHA256 signed) on publish/unpublish, and on every other change to what the site delivers (moves, sorting, trash, start page, alt text, redirects, settings) — wire up ISR revalidation or a CDN purge. Can also forward form submissions, which is how a submission reaches email or a CRM."
       action={
         <div className="flex items-center gap-1.5">
@@ -1988,7 +2011,6 @@ export function FormSubmissionsPanel() {
   const rows = forms.data ?? [];
   return (
     <PanelShell
-      title="Form submissions"
       hint="What visitors sent through this site’s forms. Personal data — read it, act on it, and delete it when you no longer need it."
     >
       {/* A failed load must not read as "no forms" — unknown state stays unknown. */}
@@ -2049,7 +2071,6 @@ export function TrashPanel() {
   const count = trash.data?.length ?? 0;
   return (
     <PanelShell
-      title="Trash"
       hint="Deleted content is unpublished and recoverable here."
       action={
         count > 0 ? (
@@ -2105,7 +2126,7 @@ export function AuditPanel() {
   });
   const rows = audit.data?.pages.flat() ?? [];
   return (
-    <PanelShell title="Audit log" hint="Append-only record of every privileged action.">
+    <PanelShell hint="Append-only record of every privileged action.">
       <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2">
         <select className="field-input w-auto py-1" value={action} onChange={(e) => setAction(e.target.value)} aria-label="Filter by action">
           <option value="">All actions</option>
