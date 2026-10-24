@@ -32,7 +32,9 @@ describe("a losing concurrent duplicate is a 409, not a 500", () => {
   // name is invisible to the route's pre-check select, and the route's own insert
   // then blocks on the unique index until that transaction commits — at which
   // point it loses with a genuine 23505 that only the error handler can catch.
-  it("a create that loses on the unique index after passing the pre-check is a 409 conflict", async () => {
+  // PGlite (#124) is one Postgres session: the staged transaction holds it, so the
+  // two writers serialize and this race cannot happen there.
+  it.skipIf(process.env.TEST_PGLITE === "1")("a create that loses on the unique index after passing the pre-check is a 409 conflict", async () => {
     const admin = await login(s.app, "admin@paperboy.test", "Admin!Passw0rd");
     const def = { name: "RaceType", displayName: "Race type", kind: "block", fields: [{ name: "title", displayName: "Title", type: "text" }] };
     const raw = createDb(TEST_DB);
