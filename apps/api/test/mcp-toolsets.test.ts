@@ -52,7 +52,7 @@ describe("MCP toolsets", () => {
 
   it("lists every tool with all, and a union for a comma list", async () => {
     const all = await (await boot("all")).listToolNames();
-    expect(all).toHaveLength(60);
+    expect(all).toHaveLength(67);
     expect(all).toEqual(expect.arrayContaining([...CONTENT, "list_users", "delivery_get", "create_redirect", "list_forms", "create_content_type"]));
 
     const some = await (await boot("content,redirects")).listToolNames();
@@ -73,7 +73,7 @@ describe("MCP toolsets", () => {
     clients.push(c);
     expect(await c.exited()).toBe(1);
     expect(c.stderr).toContain('"contnet"');
-    expect(c.stderr).toContain("content, delivery, schema, redirects, forms, admin");
+    expect(c.stderr).toContain("content, delivery, schema, redirects, experiments, forms, admin");
   }, 60_000);
 
   it("tools over data every site shares don't offer a `site` they would ignore", async () => {
