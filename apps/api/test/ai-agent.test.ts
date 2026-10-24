@@ -183,7 +183,7 @@ describe("AI content agent (build from brief)", () => {
       const thinkingTurn = { content: [{ type: "thinking", thinking: "", signature: "sig-abc" }, ...createTurn("Thought first").content], stop_reason: "tool_use" };
       const bodies: Array<{ messages: Array<{ role: string; content: unknown }>; output_config?: unknown }> = [];
       globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
-        if (!(url instanceof Request ? url.url : String(url)).includes("api.anthropic.com")) return realFetch(url as never, init as never);
+        if (new URL(url instanceof Request ? url.url : String(url)).hostname !== "api.anthropic.com") return realFetch(url as never, init as never);
         bodies.push(JSON.parse(typeof init?.body === "string" ? init.body : "{}"));
         const turn = bodies.length === 1 ? thinkingTurn : { content: [{ type: "text", text: "Done." }], stop_reason: "end_turn" };
         return new Response(JSON.stringify(turn), { status: 200, headers: { "content-type": "application/json" } });
