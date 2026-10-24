@@ -319,12 +319,12 @@ describe("MCP agent journeys (real production sequences)", () => {
       expect(created.isError).toBe(false);
       const docId = (created.json as { documentId: string }).documentId;
 
-      const r = await mcp.call("set_field", { documentId: docId, field: "tags", value: "Interiør, Japan" });
+      const r = await mcp.call("set_field", { documentId: docId, field: "author", value: "Interiør, Japan" });
       expect(r.isError, r.text.slice(0, 300)).toBe(false);
 
       // The write must land in nb (the document's only locale)…
       const nb = await mcp.call("get_content", { documentId: docId, locale: "nb" });
-      expect((nb.json as { data: { tags?: string } }).data.tags).toBe("Interiør, Japan");
+      expect((nb.json as { data: { author?: string } }).data.author).toBe("Interiør, Japan");
 
       // …and NO en variant may exist: reading en explicitly returns the
       // non-persisted scaffold (versionNumber 0, empty data), not a fork.
@@ -402,7 +402,7 @@ describe("MCP agent journeys (real production sequences)", () => {
       // Stage the mismatch via the write-time escape hatch (see note above).
       await mcp.call("set_field", { documentId: id, locale: "en", field: "title", value: "Atomisk flytting", allowLanguageMismatch: true });
       await mcp.call("set_field", { documentId: id, locale: "en", field: "body", value: NORSK_BODY, allowLanguageMismatch: true });
-      await mcp.call("set_field", { documentId: id, locale: "en", field: "tags", value: "Interiør, Japan", allowLanguageMismatch: true });
+      await mcp.call("set_field", { documentId: id, locale: "en", field: "author", value: "Interiør, Japan", allowLanguageMismatch: true });
 
       const refused = await mcp.call("publish_content", { documentId: id, locale: "en" });
       expect(refused.isError).toBe(true);
@@ -415,7 +415,7 @@ describe("MCP agent journeys (real production sequences)", () => {
       expect(nb.name).toBe("Atomisk flytting");
       expect(nb.data.body).toBe(NORSK_BODY); // byte-identical, EVERY field came along
       expect(nb.data.title).toBe("Atomisk flytting");
-      expect(nb.data.tags).toBe("Interiør, Japan");
+      expect(nb.data.author).toBe("Interiør, Japan");
 
       const pub = await mcp.call("publish_content", { documentId: id, locale: "nb" });
       expect(pub.isError, pub.text.slice(0, 300)).toBe(false);

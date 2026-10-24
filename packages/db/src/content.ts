@@ -1172,7 +1172,33 @@ function formatDataValidation(
     : lines;
 }
 
-/** The current working data for a variant: the draft's, else the published version's, else {}. */
+/**
+ * #79: refuse a top-level key the type doesn't declare (`titel` persisted with
+ * 200 and was never delivered). A key already stored (a removed field, an old
+ * row) rides along, so it never blocks an unrelated edit or the admin's full save.
+ */
+function assertKnownKeys(type: ContentTypeDef, data: Record<string, unknown>, stored: Record<string, unknown>): void {
+  const names = type.fields.map((f) => f.name);
+  const unknown = Object.keys(data).filter((k) => !names.includes(k) && !(k in stored));
+  if (!unknown.length) return;
+  const hints = unknown.map((k) => {
+    const near = names.find((n) => editDistance(k.toLowerCase(), n.toLowerCase()) <= 2);
+    return `'${k}' is not a field of ${type.name}${near ? ` (did you mean '${near}'?)` : ""}`;
+  });
+  throw Errors.validation(`${hints.join("; ")}. Fields: ${names.join(", ")}.`, unknown);
+}
+
+/** Levenshtein distance, for the "did you mean" hint above. */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const row = [i];
+    for (let j = 1; j <= b.length; j++) row[j] = Math.min(prev[j]! + 1, row[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = row;
+  }
+  return prev[b.length]!;
+}
+
 /** The working data a merge patches, plus the draft revision it was read at (0 = no draft). */
 async function workingData(
   db: Database,
@@ -1544,7 +1570,9 @@ async function prepareDraftData(
   loc: string,
   raw: Record<string, unknown>,
   allowLanguageMismatch?: boolean,
+  stored: Record<string, unknown> = {},
 ): Promise<Record<string, unknown>> {
+  assertKnownKeys(type, raw, stored);
   // Tolerant coercion: fix the unambiguous field-shape mistakes agents make
   // (single block → array, doc → text, string → doc) before validating.
   const data = coerceData(type, raw, loc, reg.blockTypes, await localeCodes(db));
@@ -1621,11 +1649,11 @@ async function updateContentOnce(
 
   // Merge mode: shallow-merge the patch over the current working data so a
   // caller can change one field without round-tripping the whole map.
-  const base = req.merge ? await workingData(db, documentId, loc) : null;
-  const merged = base ? { ...base.data, ...req.data } : req.data;
-  const pinnedRevision = base && req.revision === undefined ? base.draftRevision : undefined;
+  const base = await workingData(db, documentId, loc);
+  const merged = req.merge ? { ...base.data, ...req.data } : req.data;
+  const pinnedRevision = req.merge && req.revision === undefined ? base.draftRevision : undefined;
   const expectedRevision = req.revision ?? pinnedRevision;
-  const data = await prepareDraftData(db, ctx, type, reg, item.siteId, loc, merged, req.allowLanguageMismatch);
+  const data = await prepareDraftData(db, ctx, type, reg, item.siteId, loc, merged, req.allowLanguageMismatch, base.data);
 
   // Forensic trail (2026-06-08): a richtext "body" that arrives as a Markdown
   // string (set_field) or as a doc-ish value gets transformed by the coercion
@@ -2000,11 +2028,14 @@ export async function copyVariant(
   // otherwise let updateContent derive a unique one from the name.
   const slugFree =
     src.slug == null || !(await slugTakenBySibling(db, documentId, item.parentId, toLocale, src.slug));
+  // Only declared fields travel: a stray stored key would be refused as unknown in the target (#79).
+  const names = new Set(requireType(await loadTypeRegistry(db), item.type).fields.map((f) => f.name));
+  const data = Object.fromEntries(Object.entries(src.data as Record<string, unknown>).filter(([k]) => names.has(k)));
   return updateContent(db, ctx, documentId, toLocale, {
     name: src.name,
     ...(slugFree && src.slug != null ? { slug: src.slug } : {}),
     displayInNav: src.displayInNav,
-    data: src.data as Record<string, unknown>,
+    data,
     merge: false,
   });
 }

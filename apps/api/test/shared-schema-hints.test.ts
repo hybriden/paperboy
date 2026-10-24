@@ -289,6 +289,9 @@ describe("dataSchemaFor: representative valid/invalid per field type", () => {
 });
 
 describe("dataSchemaFor: object-level behavior", () => {
+  // The schema still passes unknown keys through so stored rows with stray keys
+  // keep reading and publishing; WRITES refuse new ones in prepareDraftData (#79,
+  // unknown-data-keys.test.ts).
   it("passes through unknown keys (passthrough schema)", () => {
     const type = ct([f("text", { name: "a" })]);
     const parsed = dataSchemaFor(type, true).safeParse({ a: "x", unknownExtra: 1 });
