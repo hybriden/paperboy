@@ -6,7 +6,9 @@ the same Zod schemas the server serializes with — no codegen step.
 **Changes in 0.7.0** — `formToolAttrs(spec)` makes a rendered form a
 [WebMCP](https://developer.chrome.com/docs/ai/webmcp) tool, and the honeypot from
 `honeypotAttrs` is now `readOnly`, which keeps it out of that tool (see
-[WebMCP](#webmcp-forms-as-agent-tools)).
+[WebMCP](#webmcp-forms-as-agent-tools)). A/B experiments: `applyExperiments`,
+`assignArm`, and exposures/conversions in `reportTraffic` and `submitForm`
+(see [A/B experiments](#ab-experiments)).
 
 ```ts
 import { createClient } from "@paperboycms/client";
@@ -148,7 +150,7 @@ for (const field of spec.fields) {
 // and put aria-hidden="true" on the wrapper.
 ```
 
-Submit through the same client — the ONLY write it makes. Do it server-side
+Submit through the same client (its writes are this and `reportTraffic`). Do it server-side
 (a server action or route handler) so the key never reaches the browser:
 
 ```ts
@@ -234,6 +236,40 @@ waitUntil(cms.reportTraffic(hit ? { redirectHits: [hit.rule.id] } : { notFound: 
   the path carried over, the query string kept unless the rule says not to.
 - `reportTraffic` needs the **public** key and sends paths only; never call it
   from the browser.
+
+## A/B experiments
+
+Editors test a content area of a page against up to three alternatives in the
+CMS. A page under test carries `experiments`; its areas in `data` stay version
+A. Pick the visitor's version on the SERVER (never swap content in the browser:
+it flickers), render as usual, and report what was shown:
+
+```ts
+import { applyExperiments } from "@paperboycms/client";
+
+const page = await cms.getByPath(path, { locale, populate: 2 });
+const { item, exposures } = applyExperiments(page!, {
+  visitorKey,                                   // see below; omitted → everyone sees A
+  force: preview ? url.searchParams.get("pbab") : null, // the admin's version picker
+});
+render(item);                                    // contentAreas()/blockData() work unchanged
+waitUntil(cms.reportTraffic({ exposures }));     // server-side, public key, never awaited by the render
+```
+
+- **`visitorKey`.** Without consent, use a fresh random value per page view
+  (cookieless: nothing stored on the device; only goals on the same page can be
+  attributed). With consent, a first-party random id you keep at most 13
+  months. In Norway a cookie that remembers the version needs consent
+  (ekomloven §3-15); don't label it "strictly necessary".
+- **Robots** get no key, so they see A: never branch on the user agent.
+- **Conversions.** A form on the page: pass the exposures to
+  `submitForm(id, { …, experiments: exposures })`. Anything else: report
+  `conversions: [{ experimentId, arm, goal: "event:signup" }]` with the
+  experiment's own goal.
+- **Caching.** A page under test is `Cache-Control: private`, or puts the
+  version into the cache key (e.g. rewrite to `/__ab/<id>-<arm>/…`).
+- `assignArm(experimentId, visitorKey, arms)` is the assignment itself, the
+  same function the CMS uses (pinned by a test).
 
 ## Types
 
