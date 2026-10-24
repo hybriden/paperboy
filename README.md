@@ -78,7 +78,7 @@ Every rule below exists because a real agent run broke without it.
 |---|---|
 | Connect an AI agent | [Connect your agent](#connect-your-agent) · [MCP setup](#mcp-setup) |
 | Try it in five minutes | [Quickstart](#quickstart) · [Windows, no experience needed](#-windows-no-experience-needed) |
-| Build a website on it | [Astro starter](https://github.com/hybriden/paperboy-astro-starter), then [`@paperboycms/client`](packages/client) and [`@paperboycms/preview`](packages/preview) |
+| Build a website on it | [Astro starter](https://github.com/hybriden/paperboy-astro-starter), or [any framework](docs/frontends.md) with [`@paperboycms/client`](packages/client) and [`@paperboycms/preview`](packages/preview) |
 | Run it for real | [Production](#production) · [Backups](#backups) |
 | Work on the CMS itself | [Developing](#developing) · [`CONTRIBUTING.md`](CONTRIBUTING.md) · [`CLAUDE.md`](CLAUDE.md) |
 
