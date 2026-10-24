@@ -992,6 +992,35 @@ test("visual editing: a shared block edits On-page on its standalone preview (#9
   await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
 });
 
+test("the preview is framed once: a fresh preview token (mount, focus, interval) does not reload the page", async ({ page }) => {
+  await login(page);
+  const me = await page.request.get("/api/v1/auth/me");
+  const headers = { "x-csrf-token": ((await me.json()) as { csrfToken: string }).csrfToken, origin: "http://localhost:8090" };
+  const created = await page.request.post("/api/v1/manage/content", { headers, data: { type: "LandingPage", parentId: null, locale: "en", name: `Framed ${Date.now().toString(36)}` } });
+  expect(created.ok(), await created.text()).toBe(true);
+  const { documentId } = (await created.json()) as { documentId: string };
+  // Every preview load is a full server render on the frontend; count them.
+  let frameLoads = 0;
+  page.on("request", (r) => {
+    if (r.isNavigationRequest() && r.frame() !== page.mainFrame() && r.url().includes("pbt=")) frameLoads++;
+  });
+
+  await page.goto(`/edit/${documentId}`);
+  await page.getByRole("button", { name: "On-page", exact: true }).click();
+  const frame = await waitPreviewFrame(page);
+  await expect.poll(() => frame.locator("[data-pb-field]").count(), { timeout: 20_000 }).toBeGreaterThan(0);
+  const loaded = frameLoads;
+  expect(loaded, "framed once on open").toBe(1);
+
+  // Coming back to the tab mints a fresh token; the page in the frame must stay put.
+  const minted = page.waitForResponse((r) => r.url().includes("/manage/preview-token"));
+  await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+  await minted;
+  await page.waitForTimeout(1500);
+  expect(frameLoads, "no reload for a new token").toBe(loaded);
+  await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+});
+
 test("on-page outline: a block opened in the outline is pointed at on the page and edited in place (#151)", async ({ page }) => {
   await login(page);
   const me = await page.request.get("/api/v1/auth/me");
