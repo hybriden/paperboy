@@ -55,7 +55,7 @@ describe("a shared form field block binds the form", () => {
     }
 
     consentId = await create("FormConsentField", "Shared consent");
-    await save(consentId, { name: "consent", label: "I agree that my message may be stored.", required: true });
+    await save(consentId, { name: "consent", label: "I agree that my message may be stored." });
     await publish(consentId);
 
     formId = await create("Form", "Contact (shared consent)");
