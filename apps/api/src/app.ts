@@ -15,12 +15,8 @@ import {
   PG_UNIQUE_VIOLATION,
   audit,
   createDb,
-  getAccessContext,
-  getSessionUser,
-  userSiteIds,
-  getSiteById,
   pgErrorCode,
-  readSession,
+  resolveSessionRequest,
   runAuditRetention,
   runScheduledPublish,
   runSessionRetention,
@@ -188,24 +184,18 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   app.addHook("onRequest", async (req) => {
     const token = req.cookies[app.cookieName];
     if (!token) return;
-    const sess = await readSession(db, token);
-    if (!sess) return;
-    req.sessionToken = token;
-    req.sessionCsrf = sess.csrfToken;
     // Active site (multisite): the admin site switcher sends x-paperboy-site.
-    // Validate it exists AND the user can open it; an unknown, absent or
-    // closed site falls back to the user's home site (a one-site Admin's own).
+    // Honoured only when it exists AND the user can open it; an unknown, absent
+    // or closed site falls back to the user's home site (a one-site Admin's own).
     const siteHeader = req.headers["x-paperboy-site"];
-    let activeSiteId: string | undefined;
-    if (typeof siteHeader === "string" && siteHeader) {
-      const site = await getSiteById(db, siteHeader);
-      const open = site ? await userSiteIds(db, sess.userId) : [];
-      if (site && (open === "all" || open.includes(site.id))) activeSiteId = site.id;
-    }
-    req.user = await getSessionUser(db, sess.userId, activeSiteId);
+    const auth = await resolveSessionRequest(db, token, typeof siteHeader === "string" && siteHeader ? siteHeader : undefined);
+    if (!auth) return;
+    req.sessionToken = token;
+    req.sessionCsrf = auth.csrfToken;
+    req.user = auth.user;
     // via:"web" — session writes are human; the MCP server tags its ctx "mcp".
     // Drives provenance (content_version.created_via) + the agent-review flag.
-    req.accessCtx = { ...(await getAccessContext(db, sess.userId, activeSiteId)), via: "web" };
+    req.accessCtx = { ...auth.accessCtx, via: "web" };
   });
 
   // Unified error handling.

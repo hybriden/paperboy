@@ -12,8 +12,8 @@ import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
-import { getDefaultSite, getSiteById, userSiteIds } from "./sites.js";
-import { DEFAULT_SITE_ID, auditLog, contentItem, deliveryKey, session, userRole, userScope, users } from "./schema.js";
+import { getSiteById } from "./sites.js";
+import { DEFAULT_SITE_ID, auditLog, contentItem, deliveryKey, session, site, userRole, userScope, users } from "./schema.js";
 import {
   decryptSecret,
   encryptSecret,
@@ -405,21 +405,45 @@ export async function changePassword(
   await db.delete(session).where(eq(session.userId, userId));
 }
 
+/**
+ * Everything a user's access is computed from, read in ONE parallel round trip
+ * (it runs on every admin request; one query after another it was ~10 round
+ * trips before the route did any work): all their roles and section scopes,
+ * and the sites in their stable order.
+ */
+interface Grants {
+  roleRows: Array<{ role: string; siteId: string | null }>;
+  scopeRows: Array<{ sectionId: string; siteId: string }>;
+  siteIds: string[];
+}
+async function loadGrants(db: Database, userId: string): Promise<Grants> {
+  const [roleRows, scopeRows, sites] = await Promise.all([
+    db.select({ role: userRole.role, siteId: userRole.siteId }).from(userRole).where(eq(userRole.userId, userId)),
+    db.select({ sectionId: userScope.sectionId, siteId: userScope.siteId }).from(userScope).where(eq(userScope.userId, userId)),
+    db.select({ id: site.id }).from(site).orderBy(asc(site.createdAt), asc(site.slug)),
+  ]);
+  return { roleRows, scopeRows, siteIds: sites.map((r) => r.id) };
+}
+
+/** The sites a user can open (same rule as userSiteIds in sites.ts). */
+function openSitesOf(g: Grants): string[] | "all" {
+  if (g.roleRows.some((r) => r.siteId === null)) return "all";
+  const held = new Set(g.roleRows.map((r) => r.siteId));
+  return g.siteIds.filter((id) => held.has(id));
+}
+
 /** The roles a user holds in `siteId`: their every-site roles plus that site's own. */
-async function rolesIn(db: Database, userId: string, siteId: string): Promise<Array<{ role: RoleName; everySite: boolean }>> {
-  const rows = await db
-    .select()
-    .from(userRole)
-    .where(and(eq(userRole.userId, userId), or(isNull(userRole.siteId), eq(userRole.siteId, siteId))));
-  return rows.map((r) => ({ role: r.role as RoleName, everySite: r.siteId === null }));
+function rolesIn(g: Grants, siteId: string): Array<{ role: RoleName; everySite: boolean }> {
+  return g.roleRows.filter((r) => r.siteId === null || r.siteId === siteId).map((r) => ({ role: r.role as RoleName, everySite: r.siteId === null }));
 }
 
 /** Where a request with no site choice lands: the Default site, unless the
  *  user only holds roles in other sites — then the first of those. */
-async function homeSiteId(db: Database, userId: string): Promise<string> {
-  const ids = await userSiteIds(db, userId);
+function homeSiteId(g: Grants): string {
+  const ids = openSitesOf(g);
   if (ids !== "all" && ids.length > 0 && !ids.includes(DEFAULT_SITE_ID)) return ids[0]!;
-  return (await getDefaultSite(db)).id;
+  if (!g.siteIds.includes(DEFAULT_SITE_ID)) throw Errors.notFound("Default site"); // 0012 guarantees it exists
+  return DEFAULT_SITE_ID;
 }
 
 export async function getAccessContext(
@@ -427,10 +451,14 @@ export async function getAccessContext(
   userId: string,
   activeSiteId?: string,
 ): Promise<AccessContext> {
+  return accessContextFrom(userId, await loadGrants(db, userId), activeSiteId);
+}
+
+function accessContextFrom(userId: string, g: Grants, activeSiteId?: string): AccessContext {
   // The active site: an explicit choice (admin site switcher, Phase 3) or the
   // user's home site. Roles and section scopes both depend on it.
-  const siteId = activeSiteId ?? (await homeSiteId(db, userId));
-  const grants = await rolesIn(db, userId, siteId);
+  const siteId = activeSiteId ?? homeSiteId(g);
+  const grants = rolesIn(g, siteId);
   const roles = grants.map((g) => g.role);
   const permissions = new Set<Permission>();
   for (const g of grants) {
@@ -444,34 +472,57 @@ export async function getAccessContext(
   // writer — see AccessContext.siteWide. Author alone is section-scoped for both.
   const siteWide = roles.some((r) => r === "Admin" || r === "Editor");
   const readSiteWide = siteWide || roles.includes("Viewer");
-  const scopeRows = await db
-    .select()
-    .from(userScope)
-    .where(and(eq(userScope.userId, userId), eq(userScope.siteId, siteId)));
   return {
     userId,
     permissions: [...permissions],
     siteId,
     siteWide,
     readSiteWide,
-    sections: scopeRows.map((s) => s.sectionId),
+    sections: g.scopeRows.filter((s) => s.siteId === siteId).map((s) => s.sectionId),
+  };
+}
+
+async function loadUser(db: Database, userId: string) {
+  const rows = await db.select({ id: users.id, email: users.email, name: users.name, totpEnabled: users.totpEnabled }).from(users).where(eq(users.id, userId)).limit(1);
+  if (!rows[0]) throw Errors.unauthorized();
+  return rows[0];
+}
+function sessionUserFrom(user: Awaited<ReturnType<typeof loadUser>>, g: Grants, ctx: AccessContext): SessionUser {
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    roles: [...new Set(rolesIn(g, ctx.siteId).map((r) => r.role))],
+    permissions: ctx.permissions,
+    mfaEnabled: user.totpEnabled,
   };
 }
 
 /** The signed-in user as the admin sees them: roles and permissions IN the active site. */
 export async function getSessionUser(db: Database, userId: string, activeSiteId?: string): Promise<SessionUser> {
-  const rows = await db.select().from(users).where(eq(users.id, userId)).limit(1);
-  if (!rows[0]) throw Errors.unauthorized();
-  const ctx = await getAccessContext(db, userId, activeSiteId);
-  const roles = [...new Set((await rolesIn(db, userId, ctx.siteId)).map((g) => g.role))];
-  return {
-    id: rows[0].id,
-    email: rows[0].email,
-    name: rows[0].name,
-    roles,
-    permissions: ctx.permissions,
-    mfaEnabled: rows[0].totpEnabled,
-  };
+  const [user, g] = await Promise.all([loadUser(db, userId), loadGrants(db, userId)]);
+  return sessionUserFrom(user, g, accessContextFrom(userId, g, activeSiteId));
+}
+
+/**
+ * A browser request's whole auth state, in two round trips: the session
+ * (checked and slid in one statement), then the user and their grants at once.
+ * `siteHeader` (the admin's site switcher) is honoured only for a site that
+ * exists AND that the user can open; otherwise the request lands on their home
+ * site. Same rules as readSession + getSessionUser + getAccessContext.
+ */
+export async function resolveSessionRequest(
+  db: Database,
+  token: string,
+  siteHeader: string | undefined,
+): Promise<{ userId: string; csrfToken: string; user: SessionUser; accessCtx: AccessContext } | null> {
+  const sess = await readSession(db, token);
+  if (!sess) return null;
+  const [user, g] = await Promise.all([loadUser(db, sess.userId), loadGrants(db, sess.userId)]);
+  const open = openSitesOf(g);
+  const activeSiteId = siteHeader && g.siteIds.includes(siteHeader) && (open === "all" || open.includes(siteHeader)) ? siteHeader : undefined;
+  const accessCtx = accessContextFrom(sess.userId, g, activeSiteId);
+  return { ...sess, user: sessionUserFrom(user, g, accessCtx), accessCtx };
 }
 
 /* --------------------------- two-factor (TOTP) ---------------------------- */
@@ -606,20 +657,18 @@ export async function readSession(
   token: string,
 ): Promise<{ userId: string; csrfToken: string } | null> {
   const id = sha256(token);
-  const rows = await db.select().from(session).where(eq(session.id, id)).limit(1);
-  const s = rows[0];
-  if (!s) return null;
   const now = new Date();
-  if (s.expiresAt < now || s.idleExpiresAt < now) {
-    await db.delete(session).where(eq(session.id, id));
-    return null;
-  }
-  // Slide the idle window.
-  await db
+  // Check and slide the idle window in ONE statement (this runs on every
+  // admin request): only a live session is touched and returned.
+  const rows = await db
     .update(session)
-    .set({ idleExpiresAt: new Date(Date.now() + SESSION_IDLE_MINUTES * 60_000) })
-    .where(eq(session.id, id));
-  return { userId: s.userId, csrfToken: s.csrfToken };
+    .set({ idleExpiresAt: new Date(now.getTime() + SESSION_IDLE_MINUTES * 60_000) })
+    .where(and(eq(session.id, id), gte(session.expiresAt, now), gte(session.idleExpiresAt, now)))
+    .returning({ userId: session.userId, csrfToken: session.csrfToken });
+  if (rows[0]) return rows[0];
+  // Missing or expired: an expired row is removed (a no-op for a missing one).
+  await db.delete(session).where(eq(session.id, id));
+  return null;
 }
 
 export async function destroySession(db: Database, token: string): Promise<void> {
