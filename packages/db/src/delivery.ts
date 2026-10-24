@@ -174,10 +174,10 @@ class DeliveryCtx {
   }
 
   // The site's live A/B experiments, loaded once per request (usually none).
-  private _experiments = new Map<Perspective, LiveExperiment[]>();
+  private _experiments = new Map<Perspective, Promise<LiveExperiment[]>>();
   async experimentsOn(perspective: Perspective, documentId: string, loc: string): Promise<LiveExperiment[]> {
-    if (!this._experiments.has(perspective)) this._experiments.set(perspective, await liveExperiments(this.db, this.siteId, perspective === "preview"));
-    return this._experiments.get(perspective)!.filter((e) => e.documentId === documentId && e.locale === loc);
+    if (!this._experiments.has(perspective)) this._experiments.set(perspective, liveExperiments(this.db, this.siteId, perspective === "preview"));
+    return (await this._experiments.get(perspective)!).filter((e) => e.documentId === documentId && e.locale === loc);
   }
 
   // Every content type, read in ONE query on the first lookup (a page with
@@ -216,10 +216,19 @@ class DeliveryCtx {
    * an error still surfaces where it is used; here it is only kept from being
    * an unhandled rejection.
    */
-  warm(opts: { siteSettings?: boolean } = {}): this {
+  warm(perspective: Perspective, opts: { page?: boolean } = {}): this {
     const started: Promise<unknown>[] = [this.loadTypes(), this.loadLocales()];
-    // A page's SEO block needs the site's name and identity; a global doesn't.
-    if (opts.siteSettings !== false) started.push(this.siteSettingsRows());
+    // A page's SEO block needs the site's name and identity (the SiteSettings
+    // document and its versions, primed as soon as its id is known), and a page
+    // may carry experiments; a global needs neither.
+    if (opts.page !== false) {
+      started.push(
+        this.siteSettingsRows().then(async (rows) => {
+          if (rows[0]) await Promise.all([this.primeItems([rows[0].documentId]), this.primeVersions([rows[0].documentId], perspective)]);
+        }),
+        this.experimentsOn(perspective, "", ""),
+      );
+    }
     for (const p of started) p.catch(() => undefined);
     return this;
   }
@@ -1009,6 +1018,9 @@ export async function resolveContent(
   loc: string,
   depth: number,
 ): Promise<DeliveryContent | null> {
+  // The document, its ancestors (for urlPath) and their versions in two round
+  // trips; priming never touches maxCv, only variantRow does.
+  await ctx.primeAncestors([documentId], perspective);
   // Item first: a cross-site or trashed document is not part of this
   // representation, so its rows must not reach variantRow's maxCv bump.
   const item = await ctx.item(documentId);
@@ -1181,7 +1193,7 @@ export async function deliveryGetById(
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId).warm();
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   return resolveContent(ctx, perspective, documentId, loc, clampDepth(populate));
 }
 
@@ -1193,7 +1205,7 @@ export async function deliveryGetBySlug(
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId).warm();
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   // Find candidate variants by slug, then re-resolve via the chokepoint so the
   // perspective filter (not the slug lookup) decides visibility.
   //
@@ -1599,7 +1611,7 @@ export async function deliveryGetByPath(
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId).warm();
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   const cleaned = segments.filter((s) => s.length > 0);
   if (cleaned.length === 0) return null;
 
@@ -1657,7 +1669,7 @@ export async function deliveryStartPage(
   const rows = await db.select({ id: site.startPageId }).from(site).where(eq(site.id, siteId)).limit(1);
   const id = rows[0]?.id;
   if (!id) return null;
-  const ctx = new DeliveryCtx(db, siteId).warm();
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   return resolveContent(ctx, perspective, id, loc, clampDepth(populate));
 }
 
@@ -1669,7 +1681,7 @@ export async function deliveryGlobal(
   typeName: string,
   loc: string,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId).warm({ siteSettings: false });
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective, { page: false });
   const items = await db
     .select({ documentId: contentItem.documentId })
     .from(contentItem)
