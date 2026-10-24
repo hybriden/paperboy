@@ -370,7 +370,7 @@ export function PreviewPane({
           is gone from preview mode: an instruction that never leaves becomes
           furniture, and click-to-edit is learned in one sitting. On-page mode
           keeps its instruction, because that mode is entered deliberately. */}
-      <div className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium ${mode === "edit" ? "bg-accent/15 text-accent-700" : "bg-draft/15 text-draft"}`} role="status">
+      <div className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium ${mode === "edit" ? "bg-canvas text-muted" : "bg-draft/15 text-draft"}`} role="status">
         <span className={`h-2 w-2 rounded-full ${mode === "edit" ? "bg-accent" : "bg-draft"}`} />
         {mode === "edit"
           ? "On-page editing — click an element to edit it right here"

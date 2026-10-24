@@ -1373,7 +1373,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                you did not know when you started typing. */
             filtered.map((g) => (
               <section key={g.group} className="space-y-5">
-                <p className="border-b border-line pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-muted">
+                <p className="border-b border-line pb-1.5 group-label">
                   {g.group}
                 </p>
                 {g.fields.map((f) => (
@@ -1534,8 +1534,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             </MenuContent>
           </Menu>
           {!mobile && (
-            // Episerver-style view trio: form / side-by-side / on-page edit.
-            <div className="flex rounded border border-line p-0.5" role="group" aria-label="Editor view">
+            // The view trio: form / side-by-side / on-page edit. A segmented
+            // track: one grey fill, the active view a white pill, no frame.
+            <div className="flex rounded-(--radius) bg-line/70 p-0.5" role="group" aria-label="Editor view">
               {(
                 [
                   ["props", "Properties", "All-properties form"],
@@ -1557,8 +1558,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 return (
                   <button
                     key={v}
-                    className={`rounded px-2 py-0.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
-                      effectiveView === v ? "bg-accent/15 font-semibold text-accent-700" : "text-muted hover:bg-canvas"
+                    className={`rounded-[calc(var(--radius)-2px)] px-2.5 py-1 text-sm disabled:cursor-not-allowed disabled:opacity-40 ${
+                      effectiveView === v ? "bg-panel font-medium text-fg shadow-panel" : "text-muted hover:text-fg"
                     }`}
                     aria-pressed={effectiveView === v}
                     disabled={!enabled}
@@ -1574,10 +1575,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           {/* The state and the button that changes it are ONE decision, so they sit
               together. This pill used to live at the far left of the toolbar,
               ~900px from Publish. */}
-          <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
-            form.status === "published" ? "bg-published/10 text-published" : "bg-draft/10 text-draft"
+          <span className={`inline-flex items-center gap-1.5 text-sm ${
+            form.status === "published" && !form.hasUnpublishedChanges ? "text-muted" : "font-medium text-draft"
           }`}>
-            <span className={`h-2 w-2 rounded-full ${form.status === "published" ? "bg-published" : "bg-draft"}`} />
+            <span className={`h-2 w-2 rounded-full ${form.status === "published" && !form.hasUnpublishedChanges ? "bg-published" : "bg-draft"}`} />
             {form.status === "published" ? (form.hasUnpublishedChanges ? "Published · changes" : "Published") : "Draft"}
           </span>
           {canPublish && (
@@ -1804,7 +1805,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           <Popover>
             <PopoverTrigger className="btn-subtle min-w-0 max-w-[45%] gap-1.5 px-2.5 py-1 text-xs"
               aria-label="URL settings" title={form.urlPath ?? undefined}>
-              <span className="truncate font-mono">{form.urlPath ?? "—"}</span>
+              <span className="truncate">{form.urlPath ?? "—"}</span>
               <Icon.ChevronDown width={13} height={13} className="shrink-0 text-muted" />
             </PopoverTrigger>
             <PopoverContent className="w-80 space-y-3">
@@ -1819,7 +1820,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 <span>Display in navigation (menus)</span>
               </label>
               <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">URL (from page hierarchy)</div>
+                <div className="mb-1 group-label">URL (from page hierarchy)</div>
                 <code className="block truncate rounded bg-line/60 px-2 py-1 font-mono text-xs text-fg" title={form.urlPath ?? ""}>
                   {form.urlPath ?? "—"}
                 </code>
@@ -1861,7 +1862,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         <div className="ml-auto flex min-w-0 items-center gap-2 text-sm">
           <TypeIcon name={type?.icon} fallback={form.kind === "block" ? "blocks" : "file"} width={15} height={15} className="shrink-0 text-muted" />
           <span className="truncate font-medium">{type?.displayName ?? form.type}</span>
-          <code className="rounded bg-line/70 px-1 text-[11px] text-muted" title={form.documentId}>{form.documentId.slice(0, 10)}…</code>
+          <code className="text-xs text-muted" title={form.documentId}>{form.documentId.slice(0, 10)}…</code>
         </div>
       </div>
 
@@ -2571,7 +2572,7 @@ function CompareView({
       <div className="max-h-[60vh] space-y-3 overflow-auto pr-1">
         {shown.map((f) => (
           <div key={f.key} className={`rounded border px-3 py-2 ${f.changed ? "border-line" : "border-line/50 opacity-70"}`}>
-            <div className="mb-1 flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+            <div className="mb-1 flex items-center gap-2 group-label">
               {f.label}
               {!f.changed && <span className="rounded bg-line px-1 text-[10px] normal-case text-muted">unchanged</span>}
             </div>
@@ -2719,7 +2720,7 @@ function OverlayAi({
   return (
     <div className="mt-3 border-t border-line pt-2.5">
       <div className="flex items-center gap-1.5">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted">Writing assistant</span>
+        <span className="group-label">Writing assistant</span>
         <button type="button" className="btn-subtle px-2 py-0.5 text-xs" disabled={!!busy || !current.trim()} onClick={() => void run("improve")}>
           {busy === "improve" ? "Improving…" : "Improve"}
         </button>

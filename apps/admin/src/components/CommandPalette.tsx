@@ -201,7 +201,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
 /** Newspaper section slug: small caps with a hairline rule running to the edge. */
 function GroupHeading({ children }: { children: React.ReactNode }) {
   return (
-    <span className="flex items-center gap-2.5 px-2 pb-1.5 pt-3 text-[10.5px] font-semibold uppercase tracking-[0.14em] text-muted">
+    <span className="flex items-center gap-2.5 px-2 pb-1.5 pt-3 group-label">
       <span className="shrink-0">{children}</span>
       <span aria-hidden className="h-px flex-1 bg-line" />
     </span>

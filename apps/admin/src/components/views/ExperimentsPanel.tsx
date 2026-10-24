@@ -34,7 +34,7 @@ export function ExperimentsPanel() {
   return (
     <>
       <section className="mb-8">
-        <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Experiments</h2>
+        <h2 className="mb-2 pane-title">Experiments</h2>
         <p className="mb-2 text-xs text-muted">
           A/B tests of one content area each. Set one up from a page’s content area (“A/B test this area”); open a row to see its results.
         </p>
@@ -97,7 +97,7 @@ function PrivacySettings() {
   if (!s) return null;
   return (
     <section className="mb-8">
-      <h2 className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Privacy and run length</h2>
+      <h2 className="mb-2 pane-title">Privacy and run length</h2>
       <Surface elevation={1} padding="lg" className="flex flex-col gap-3 text-sm">
         <fieldset disabled={!canManage || save.isPending}>
           <legend className="field-label">How visitors are counted</legend>

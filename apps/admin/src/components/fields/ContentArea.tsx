@@ -75,6 +75,11 @@ function isTeaserRef(block: BlockInstance, types: ContentTypeDef[]): boolean {
   return block.ref !== null && types.find((t) => t.name === block.blockType)?.kind === "page";
 }
 
+/** Row tools (drag handle, display, actions) show on hover or focus within the
+ *  row, on devices that can hover; touch screens always show them. Hidden
+ *  visually only: they stay in the tab order and keep their names. */
+const ONDEMAND = "transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/row:opacity-100 [@media(hover:hover)]:group-focus-within/row:opacity-100 [@media(hover:hover)]:focus-visible:opacity-100";
+
 export function ContentArea({ field, value, onChange, types, sharedBlocks, disabled = false, depth = 0, openPath, onOpenPath }: Props) {
   // The shared-block picker positions itself from a rect; the menu item that
   // opens it has unmounted by then, so the anchor is the row it sat in.
@@ -460,7 +465,7 @@ function ImageBlockPicker({
         className="fixed z-50 w-52 rounded-(--radius) border border-line bg-panel p-1 shadow-pop"
         style={{ left: Math.min(at.x, window.innerWidth - 220), top: Math.min(at.y, window.innerHeight - 40 * candidates.length - 16) }}
       >
-        <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Insert image as…</p>
+        <p className="px-2 py-1 group-label">Insert image as…</p>
         {candidates.map((t) => (
           <button
             key={t.name}
@@ -609,11 +614,11 @@ function SortableBlock({
         rowRef.current = node;
       }}
       style={style}
-      className={`rounded-(--radius-field) border ${
+      className={`group/row rounded-(--radius-field) border ${
         // Open = one recessed surface: canvas-toned body under panel-white
-        // inputs, tinted header and end cap bracketing it. The old cue was this
-        // border alone at /40, which nobody could see.
-        isOpen ? "border-accent/45 bg-canvas shadow-panel" : "border-line bg-panel"
+        // inputs, a stronger edge and a header bracketing it. Neutral, not
+        // accent: colour is for what is active, and an open row is just open.
+        isOpen ? "border-fg/20 bg-canvas shadow-panel" : "border-line bg-panel"
       } ${isDragging ? "opacity-60 ring-2 ring-accent" : ""}`}
     >
       {/* While the block's fields are on screen its header stays pinned to the
@@ -622,10 +627,10 @@ function SortableBlock({
           level), so the stack reads as a breadcrumb of open scopes. Sticky
           survives dnd-kit because the row is only transformed WHILE dragging. */}
       <div
-        className={`flex items-center gap-1.5 px-1.5 ${isOpen ? "sticky z-10 rounded-t-[calc(var(--radius-field)-1px)] border-b border-accent/20 bg-accent-50" : ""}`}
+        className={`flex items-center gap-1.5 px-1.5 ${isOpen ? "sticky z-10 rounded-t-[calc(var(--radius-field)-1px)] border-b border-line bg-panel" : ""}`}
         style={isOpen ? { top: depth * OPEN_HEADER_PX, height: OPEN_HEADER_PX } : undefined}
       >
-        <button {...attributes} {...listeners} className="cursor-grab p-1 text-muted active:cursor-grabbing" aria-label="Drag to reorder">
+        <button {...attributes} {...listeners} className={`${isOpen ? "" : ONDEMAND} cursor-grab p-1 text-muted active:cursor-grabbing`} aria-label="Drag to reorder">
           <Icon.Grip width={16} height={16} />
         </button>
 
@@ -644,7 +649,7 @@ function SortableBlock({
             <Icon.Chevron
               width={14}
               height={14}
-              className={`shrink-0 transition-transform ${isOpen ? "rotate-90 text-accent-700" : "text-muted"}`}
+              className={`shrink-0 transition-transform ${isOpen ? "rotate-90 text-fg" : "text-muted"}`}
             />
 <TypeIcon name={type?.icon} fallback={isTeaser ? "file" : "blocks"} width={15} height={15} className="shrink-0 text-muted" />
             <span className="shrink-0 text-[13px] font-medium text-fg">{rowName}</span>
@@ -686,14 +691,14 @@ function SortableBlock({
         )}
 
         {block.display !== "automatic" && (
-          <span className="shrink-0 rounded bg-line px-1.5 py-0.5 text-[11px] text-muted">{block.display}</span>
+          <span className={`${isOpen ? "" : ONDEMAND} shrink-0 text-xs text-muted`}>{block.display}</span>
         )}
 
         <Menu>
           <MenuTrigger asChild>
             <button
               type="button"
-              className="shrink-0 rounded p-1 text-muted hover:bg-line"
+              className={`${isOpen ? "" : ONDEMAND} shrink-0 rounded p-1 text-muted hover:bg-line`}
               // rowName, not the type: on a reference row the menu now offers
               // "Edit page", and "Actions for Landing Page" does not say WHICH.
               // Identical to the old label for an inline block.

@@ -54,7 +54,7 @@ export function App() {
   if (loading) {
     return (
       <div className="grid h-full place-items-center bg-canvas">
-        <div className="masthead animate-fade-in text-3xl text-fg">Paperboy</div>
+        <div className="wordmark animate-fade-in text-3xl text-fg">Paperboy</div>
       </div>
     );
   }

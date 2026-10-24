@@ -116,7 +116,7 @@ function QuestionPreview({ spec }: { spec: FormFieldSpec }) {
   const boxKinds = new Set(["checkbox", "consent"]);
   return (
     <div data-testid="question-preview" className="rounded-(--radius) border border-line bg-canvas/60 px-3 pb-3 pt-2">
-      <p className="eyebrow mb-2 text-[10px]">As the visitor sees it</p>
+      <p className="eyebrow mb-2">As the visitor sees it</p>
       <div aria-hidden>
         {spec.kind === "static" ? (
           <>

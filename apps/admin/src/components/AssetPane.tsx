@@ -77,7 +77,7 @@ export function AssetPane({
   return (
     <aside className="flex h-full w-full flex-col border-l border-line bg-panel">
       <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
-        <h2 className="text-[13px] font-bold uppercase tracking-wide text-muted">Assets</h2>
+        <h2 className="pane-title">Assets</h2>
         <div className="flex items-center gap-1">
           {canCreate && tab === "blocks" && (
             <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setCreating(true)} aria-label="New shared block">

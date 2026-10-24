@@ -148,7 +148,7 @@ export function BuildFromBriefDialog({
 
             {created.length > 0 && (
               <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Drafts created</div>
+                <div className="mb-1 group-label">Drafts created</div>
                 <ul className="space-y-1">
                   {created.map((c) => (
                     <li key={c.documentId}>
@@ -172,7 +172,7 @@ export function BuildFromBriefDialog({
 
             {touched.length > 0 && (
               <div>
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Existing content edited</div>
+                <div className="mb-1 group-label">Existing content edited</div>
                 <ul className="space-y-1">
                   {touched.map((t) => (
                     <li key={`${t.documentId}:${t.locale}`}>

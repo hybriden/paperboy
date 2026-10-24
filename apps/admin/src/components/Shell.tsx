@@ -79,7 +79,7 @@ function TopBar({
   return (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-panel px-3 text-fg">
       <div className="flex shrink-0 items-baseline gap-2 pr-2">
-        <span className="masthead text-[22px] leading-none text-fg">Paperboy</span>
+        <span className="wordmark text-[22px] leading-none text-fg">Paperboy</span>
         <span className="hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-muted sm:inline">CMS</span>
       </div>
 
@@ -110,7 +110,7 @@ function TopBar({
         >
           <Icon.Search width={15} height={15} className="shrink-0" />
           <span className="hidden leading-none md:inline">Search…</span>
-          <kbd className="hidden rounded border border-line px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted md:inline">
+          <kbd className="hidden font-sans text-xs leading-none text-muted md:inline">
             {IS_MAC ? "⌘K" : "Ctrl K"}
           </kbd>
         </button>
@@ -167,7 +167,7 @@ function UserMenu() {
   return (
     <Menu>
       <MenuTrigger className="ml-1 flex shrink-0 items-center gap-2 rounded-(--radius) py-1 pl-1 pr-2 hover:bg-line/60" aria-label="Account menu">
-        <span className="grid h-7 w-7 place-items-center rounded-full bg-accent text-xs font-bold text-accent-fg">{initials}</span>
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-line text-xs font-semibold text-fg">{initials}</span>
         <Icon.ChevronDown width={14} height={14} className="text-muted" />
       </MenuTrigger>
       <MenuContent>
@@ -176,7 +176,7 @@ function UserMenu() {
           <div className="text-xs text-muted">{user.email}</div>
           <div className="mt-1.5 flex flex-wrap gap-1">
             {user.roles.map((r) => (
-              <span key={r} className="rounded bg-accent/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-700">{r}</span>
+              <span key={r} className="rounded bg-line px-1.5 py-0.5 text-[11px] font-medium text-muted">{r}</span>
             ))}
           </div>
         </div>
@@ -200,7 +200,7 @@ function Rail() {
               to={it.to}
               aria-label={it.label}
               className={`grid h-10 w-10 place-items-center rounded-(--radius) transition-colors ${
-                isActive ? "bg-accent text-accent-fg shadow-panel" : "text-muted hover:bg-line/60 hover:text-fg"
+                isActive ? "bg-line text-fg" : "text-muted hover:bg-line/60 hover:text-fg"
               }`}
             >
               <it.icon />
