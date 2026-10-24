@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUILTIN_TYPE_TEMPLATES, ContentTypeDef, generalBlockTypes, isFormFieldType } from "@paperboy/shared";
+import { BUILTIN_TYPE_TEMPLATES, ContentTypeDef, generalBlockTypes, isFormFieldType, partTypeNames } from "@paperboy/shared";
 
 /**
  * AVAILABILITY: a type that is only ever a PART of another one.
@@ -51,6 +51,13 @@ describe("generalBlockTypes", () => {
   it("treats a definition with no flag as a general block", () => {
     // Same reason as above: pre-flag definitions must not vanish from palettes.
     expect(generalBlockTypes([{ name: "OldBlock", kind: "block" }]).map((x) => x.name)).toEqual(["OldBlock"]);
+  });
+});
+
+describe("partTypeNames", () => {
+  it("names exactly the nestedOnly types; a definition with no flag is not a part", () => {
+    const types = [{ name: "HeroBlock" }, { name: "FormDateField", nestedOnly: true }, { name: "Faq", nestedOnly: false }];
+    expect([...partTypeNames(types)]).toEqual(["FormDateField"]);
   });
 });
 

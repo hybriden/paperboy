@@ -18,7 +18,7 @@ import { CSS } from "@dnd-kit/utilities";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { duplicateFieldKeys, fieldKeyFromLabel, isFormFieldType } from "@paperboy/shared";
+import { duplicateFieldKeys, fieldKeyFromLabel, isFormFieldType, partTypeNames } from "@paperboy/shared";
 import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { allowedBlockTypesFor } from "../../lib/area-add.js";
 import { newBlock } from "../../lib/block-drop.js";
@@ -86,7 +86,7 @@ export function ContentArea({ field, value, onChange, types, sharedBlocks, disab
   // that silently drops a question the editor filled in and published is the
   // authoring-side version of garbage-in-success-out. Empty elsewhere.
   const duplicateKeys = duplicateFieldKeys(blocks);
-  const nestedOnlyTypes = useMemo(() => new Set(types.filter((t) => t.nestedOnly).map((t) => t.name)), [types]);
+  const nestedOnlyTypes = useMemo(() => partTypeNames(types), [types]);
   // One home with the on-page add-block overlay (lib/area-add): declared
   // allow-list order, else any general block (parts excluded).
   const allowed = allowedBlockTypesFor(field, types);
