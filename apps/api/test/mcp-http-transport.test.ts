@@ -161,7 +161,7 @@ describe("MCP over Streamable HTTP (harmonix's real transport)", () => {
     expect(res.status).toBe(400);
     const body = (await res.json()) as { error: string };
     expect(body.error).toContain('"contnet"');
-    expect(body.error).toContain("content, delivery, schema, redirects, forms, admin");
+    expect(body.error).toContain("content, delivery, schema, redirects, experiments, forms, admin");
   });
 
   it("a wrong bearer is 401 (no fallthrough)", async () => {
