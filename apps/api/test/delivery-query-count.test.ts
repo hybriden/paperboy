@@ -15,7 +15,9 @@ import { type Suite, TEST_DB, setupApi } from "./helpers.js";
 describe("delivery query count does not grow with the number of images and shared blocks", () => {
   let s: Suite;
   let queries = 0;
-  const counting = createDb(TEST_DB, { logger: { logQuery: () => void queries++ } });
+  // Content type reads are left out: the per-process type cache re-reads a
+  // definition when another test file (running in parallel) writes one.
+  const counting = createDb(TEST_DB, { logger: { logQuery: (q) => void (/from "content_type"/.test(q) || queries++) } });
 
   const page = async (n: number): Promise<string> => {
     const sql = counting.sql;
