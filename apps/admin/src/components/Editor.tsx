@@ -1322,8 +1322,10 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // full-width phone column.
   const formSection = (
     <section className="h-full overflow-auto">
-      {/* tabs */}
-      <div className="flex gap-1 overflow-x-auto border-b border-line bg-panel px-4" role="tablist" aria-label="Property groups">
+      {/* tabs: the rule runs the pane's full width, the labels sit in the
+          form's column so the first tab starts on the fields' left edge. */}
+      <div className="overflow-x-auto border-b border-line bg-panel">
+      <div className="mx-auto flex max-w-3xl gap-1 px-1 sm:px-3" role="tablist" aria-label="Property groups">
         {groups.map((g) => (
           <button key={g} role="tab" aria-selected={tab === g}
             className={`whitespace-nowrap border-b-2 px-3 py-2.5 text-sm font-medium ${tab === g ? "border-accent text-accent-700" : "border-transparent text-muted hover:text-ink"}`}
@@ -1332,12 +1334,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           </button>
         ))}
       </div>
+      </div>
 
       {/* Filtering answers "which group is that field in?" better than any
           amount of tidying does. Hidden on the submissions tab, which is a table
           rather than a form. */}
       {tab !== SUBMISSIONS_TAB && (type?.fields.length ?? 0) > 6 && (
-        <div className="flex items-center gap-2 border-b border-line bg-canvas px-4 py-2">
+        <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 pt-4 sm:px-6">
           <input
             className="field-input-dense max-w-[18rem]"
             type="search"
@@ -1488,7 +1491,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
               {/* The writing assistant polishes copy, writes headlines and
                   standfirsts, and drafts on a brief. */}
               <MenuTrigger className="btn-subtle" aria-label="Writing assistant" disabled={ai.isPending}>
-                <Icon.Edit width={14} height={14} aria-hidden /> {ai.isPending ? "Working…" : "Writing assistant"}
+                <Icon.Edit width={14} height={14} aria-hidden /> <span className="hidden min-[1500px]:inline">{ai.isPending ? "Working…" : "Writing assistant"}</span>
               </MenuTrigger>
               <MenuContent>
                 {canCreate && (
