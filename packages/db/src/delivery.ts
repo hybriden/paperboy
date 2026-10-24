@@ -150,9 +150,13 @@ class DeliveryCtx {
   // jsonLd publisher. Cached per request; resolved through the same perspective
   // so a draft sitename never leaks into a published seo block.
   private _siteName: string | null | undefined;
+  // warm()'s priming of the SiteSettings rows; awaited before reading them, or a
+  // read racing it fetches the same rows a second time.
+  private siteSettingsPrimed: Promise<void> | undefined;
   async siteName(perspective: Perspective, loc: string): Promise<string | null> {
     if (this._siteName !== undefined) return this._siteName;
     const rows = await this.siteSettingsRows();
+    await this.siteSettingsPrimed?.catch(() => undefined);
     let name: string | null = null;
     if (rows[0]) {
       const found = await variantRow(this, perspective, rows[0].documentId, loc);
@@ -189,6 +193,7 @@ class DeliveryCtx {
     if (this._siteIdentity !== undefined) return this._siteIdentity;
     this._siteIdentity = null;
     const rows = await this.siteSettingsRows();
+    await this.siteSettingsPrimed?.catch(() => undefined);
     if (rows[0]) this._siteIdentity = (await resolveContent(this, perspective, rows[0].documentId, loc, 0))?.jsonLd ?? null;
     return this._siteIdentity;
   }
@@ -237,12 +242,10 @@ class DeliveryCtx {
     // document and its versions, primed as soon as its id is known), and a page
     // may carry experiments; a global needs neither.
     if (opts.page !== false) {
-      started.push(
-        this.siteSettingsRows().then(async (rows) => {
-          if (rows[0]) await Promise.all([this.primeItems([rows[0].documentId]), this.primeVersions([rows[0].documentId], perspective)]);
-        }),
-        this.experimentsOn(perspective, "", ""),
-      );
+      this.siteSettingsPrimed = this.siteSettingsRows().then(async (rows) => {
+        if (rows[0]) await Promise.all([this.primeItems([rows[0].documentId]), this.primeVersions([rows[0].documentId], perspective)]);
+      });
+      started.push(this.siteSettingsPrimed, this.experimentsOn(perspective, "", ""));
     }
     for (const p of started) p.catch(() => undefined);
     return this;
