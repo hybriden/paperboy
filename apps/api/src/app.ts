@@ -25,6 +25,7 @@ import {
   runScheduledPublish,
   runSessionRetention,
   runRedirectRetention,
+  runExperimentTicker,
   runSubmissionRetention,
   runWebhookDeliveryRetention,
 } from "@paperboy/db";
@@ -44,6 +45,7 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerDeliveryRoutes } from "./routes/delivery.js";
 import { registerSubmitRoutes } from "./routes/submit.js";
 import { registerRedirectRoutes } from "./routes/redirects.js";
+import { registerExperimentRoutes } from "./routes/experiments.js";
 import { registerTrafficRoutes } from "./routes/traffic.js";
 import { oauthConfigFrom, registerOAuthRoutes } from "./routes/oauth.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -246,6 +248,7 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   await app.register(registerAuthRoutes, { prefix: "/api/v1/auth" });
   await app.register(registerManageRoutes, { prefix: "/api/v1/manage" });
   await app.register(registerRedirectRoutes, { prefix: "/api/v1/manage" });
+  await app.register(registerExperimentRoutes, { prefix: "/api/v1/manage" });
   await app.register(registerAiRoutes, { prefix: "/api/v1/ai" });
   await app.register(registerDeliveryRoutes, { prefix: "/api/v1/delivery" });
   // Public form submissions. Registered SEPARATELY from the delivery routes
@@ -293,6 +296,18 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
       "scheduled publish",
       async () => {
         await runScheduledPublish(db);
+      },
+      60_000,
+    );
+
+    // A/B experiments end themselves at ends_at, and when their page or area
+    // goes away (the page then shows its control again).
+    ticker(
+      "experiments",
+      async () => {
+        const { ended, statsSwept } = await runExperimentTicker(db);
+        for (const e of ended) await audit(db, { siteId: e.siteId, action: "experiment.end", documentId: e.documentId, detail: { id: e.id, reason: e.reason } });
+        if (statsSwept > 0) app.log.info({ deleted: statsSwept }, "old experiment counts pruned");
       },
       60_000,
     );

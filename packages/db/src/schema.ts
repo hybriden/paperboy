@@ -3,6 +3,8 @@ import {
   bigint,
   bigserial,
   boolean,
+  date,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -84,6 +86,9 @@ export const site = pgTable("site", {
   // Migration 0031: how the frontend prefixes locales in URLs ('always' |
   // 'except-default') — LocalePrefix in @paperboy/shared.
   localePrefix: text("locale_prefix").notNull().default("always"),
+  /** A/B privacy mode (migration 0033): 'cookieless' | 'consent'. */
+  experimentMode: text("experiment_mode").notNull().default("cookieless"),
+  experimentWarnDays: integer("experiment_warn_days").notNull().default(30),
 });
 
 export const contentItem = pgTable(
@@ -382,6 +387,56 @@ export const notFoundPath = pgTable("not_found_path", {
   hits: integer("hits").notNull().default(0),
   firstSeen: timestamp("first_seen", { withTimezone: true }).notNull().defaultNow(),
   lastSeen: timestamp("last_seen", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** An A/B experiment on one content area (migration 0033). */
+export const experiment = pgTable(
+  "experiment",
+  {
+    id: serial("id").primaryKey(),
+    siteId: text("site_id").notNull(),
+    documentId: text("document_id").notNull(),
+    locale: text("locale").notNull(),
+    area: text("area").notNull(),
+    name: text("name").notNull(),
+    hypothesis: text("hypothesis"),
+    status: text("status").notNull().default("draft"),
+    goal: text("goal").notNull().default("form"),
+    baselineRate: doublePrecision("baseline_rate"),
+    mde: doublePrecision("mde"),
+    endsAt: timestamp("ends_at", { withTimezone: true }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    endReason: text("end_reason"),
+    winner: text("winner"),
+    cv: bigint("cv", { mode: "number" }).notNull().default(0),
+    needsReview: boolean("needs_review").notNull().default(false),
+    createdBy: text("created_by"),
+    createdVia: text("created_via"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    siteStatusIdx: index("experiment_site_status_idx").on(t.siteId, t.status),
+    documentIdx: index("experiment_document_idx").on(t.documentId),
+  }),
+);
+
+export const experimentArm = pgTable("experiment_arm", {
+  experimentId: integer("experiment_id").notNull(),
+  key: text("key").notNull(),
+  label: text("label"),
+  weight: integer("weight").notNull().default(50),
+  blocks: jsonb("blocks"),
+});
+
+/** Exposures and conversions per version per day — counts only. */
+export const experimentStat = pgTable("experiment_stat", {
+  experimentId: integer("experiment_id").notNull(),
+  arm: text("arm").notNull(),
+  day: date("day", { mode: "string" }).notNull(),
+  exposures: integer("exposures").notNull().default(0),
+  conversions: integer("conversions").notNull().default(0),
 });
 
 export const auditLog = pgTable(

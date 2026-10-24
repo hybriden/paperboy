@@ -21,4 +21,5 @@ export { seed, databaseHoldsData, type SeedResult } from "./seed.js";
 export * as schemaTables from "./schema.js";
 export * from "./oauth.js";
 export * from "./redirects.js";
+export * from "./experiments.js";
 export { isPgliteUrl, pgliteDataDir, startPglite, type PgliteServer } from "./pglite.js";

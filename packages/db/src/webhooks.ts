@@ -70,7 +70,8 @@ export type DeliveryChangeReason =
   | "asset"
   | "redirects"
   | "content-type"
-  | "locale";
+  | "locale"
+  | "experiment";
 
 export interface DeliveryChangedEvent {
   event: "delivery.changed";

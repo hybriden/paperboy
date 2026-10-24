@@ -1,3 +1,4 @@
+import { DeliveryExperiment } from "./experiments.js";
 import { z } from "zod";
 import { BlockDisplayOption, ContentKind } from "./content-types.js";
 import { AssetSourceMeta } from "./stock.js";
@@ -322,6 +323,11 @@ export const DeliveryContent = z.object({
    *  frontend renders from the schema instead of interpreting block payloads
    *  (and never receives pre-rendered markup it cannot restyle). */
   form: DeliveryFormSpec.optional(),
+  /** Running A/B experiments on this page's content areas (#125). The areas in
+   *  `data` stay the control (version A); a frontend that ignores this field
+   *  simply shows A. Pick a version with `assignArm`, or `applyExperiments` in
+   *  @paperboycms/client. Absent when none run. */
+  experiments: z.array(DeliveryExperiment).optional(),
 });
 export type DeliveryContent = z.infer<typeof DeliveryContent>;
 

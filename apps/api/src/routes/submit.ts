@@ -3,12 +3,13 @@ import {
   formSiteId,
   getSiteById,
   loadPublishedForm,
+  recordFormConversions,
   resolveDefaultLocale,
   submitForm,
   verifyDeliveryKey,
   audit,
 } from "@paperboy/db";
-import { MAX_ANSWER_LENGTH, checkSpamHeuristics } from "@paperboy/shared";
+import { EXPERIMENT_ARMS, MAX_ANSWER_LENGTH, checkSpamHeuristics } from "@paperboy/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { nanoid } from "nanoid";
@@ -52,6 +53,9 @@ const SubmitBody = z.object({
   /** Cloudflare Turnstile token, when the form requires a challenge. */
   turnstileToken: z.string().max(4096).optional(),
   locale: z.string().max(20).optional(),
+  /** The A/B versions the visitor was shown on this page (#125): a conversion
+   *  for each experiment whose goal is "form". Not stored on the submission. */
+  experiments: z.array(z.object({ id: z.number().int().positive(), arm: z.enum(EXPERIMENT_ARMS) })).max(10).optional(),
 });
 
 const SubmitOk = z.object({
@@ -254,6 +258,7 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
       }
 
       if (!result.replayed) {
+        if (body.experiments?.length) await recordFormConversions(app.db, resolved.siteId, body.experiments);
         await audit(app.db, {
           siteId: resolved.siteId,
           action: "form.submitted",

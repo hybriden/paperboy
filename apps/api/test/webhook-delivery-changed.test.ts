@@ -134,6 +134,17 @@ describe("delivery.changed: every change to what a site delivers reaches its web
     expect(await announced(from, "redirects")).toBeDefined();
   });
 
+  it("starting, pausing and ending an A/B experiment", async () => {
+    const card = { key: "b1", blockType: "CardBlock", display: "automatic", inline: { title: "Version B" }, ref: null };
+    const host = await page("Hook experiment");
+    const id = (await call("POST", "/experiments", { documentId: host, locale: "en", area: "mainArea", name: "Hook test", arms: [{ blocks: [card] }] })).json().id as number;
+    for (const step of ["start", "pause", "end"]) {
+      const from = stub.hits.length;
+      await call("POST", `/experiments/${id}/${step}`, step === "end" ? {} : undefined);
+      expect((await announced(from, "experiment"))?.body, step).toMatchObject({ siteId: "site_default", documentId: host });
+    }
+  });
+
   it("changing a content type (a field's delivery visibility, say) reaches every site", async () => {
     const type = (await s.app.inject({ method: "GET", url: "/api/v1/manage/content-types/ArticlePage", headers: authHeaders(admin) })).json();
     const from = stub.hits.length;
