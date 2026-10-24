@@ -150,6 +150,8 @@ services:
       ADMIN_ORIGINS: ${ADMIN_ORIGINS:-}
       SITE_ORIGIN: ${SITE_ORIGIN:-}
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
+      PAPERBOY_AB_MODE: ${PAPERBOY_AB_MODE:-}
+      PAPERBOY_AB_CONSENT_COOKIE: ${PAPERBOY_AB_CONSENT_COOKIE:-}
     depends_on:
       api:
         condition: service_healthy

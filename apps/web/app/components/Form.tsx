@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormField, type FormSpec, fieldAttrs, formTimer, formToolAttrs, honeypotAttrs } from "@paperboycms/client";
+import { type ExperimentExposure, type FormField, type FormSpec, fieldAttrs, formTimer, formToolAttrs, honeypotAttrs } from "@paperboycms/client";
 import { useMemo, useRef, useState } from "react";
 
 /**
@@ -35,6 +35,9 @@ export interface FormProps {
   /** Cloudflare Turnstile SITE key (public). Needed only when `spec.turnstile`;
    *  without it the form says so instead of rendering a widget that never loads. */
   turnstileSiteKey?: string;
+  /** The A/B versions the page showed, sent with the submission (a form goal's
+   *  conversion). Server-rendered props, never stored in the browser. */
+  experiments?: ExperimentExposure[];
   /** POSTs to the CMS. Server action or route handler; keeps the key server-side. */
   action: (input: {
     formId: string;
@@ -43,6 +46,7 @@ export interface FormProps {
     honeypot: string;
     turnstileToken?: string;
     idempotencyKey: string;
+    experiments?: ExperimentExposure[];
   }) => Promise<{ ok: true; confirmation: { type: string; text?: unknown } } | { ok: false; fields: Record<string, string> }>;
 }
 
@@ -63,7 +67,7 @@ function newIdempotencyKey(): string {
     : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export function Form({ spec, formId, action, turnstileSiteKey }: FormProps) {
+export function Form({ spec, formId, action, turnstileSiteKey, experiments }: FormProps) {
   const timer = useMemo(() => formTimer(), []);
   const honeypot = honeypotAttrs(spec);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -94,6 +98,7 @@ export function Form({ spec, formId, action, turnstileSiteKey }: FormProps) {
       // The Turnstile widget injects this hidden input into its container.
       turnstileToken: spec.turnstile ? fieldText(data.get("cf-turnstile-response")) : undefined,
       idempotencyKey,
+      experiments: experiments?.length ? experiments : undefined,
     });
     if (res.ok) {
       setErrors({});

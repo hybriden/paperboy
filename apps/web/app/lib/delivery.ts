@@ -1,4 +1,4 @@
-import { createClient, type DeliveryContent } from "@paperboycms/client";
+import { createClient, type DeliveryContent, type ExperimentExposure } from "@paperboycms/client";
 
 const API = process.env.PAPERBOY_API_URL ?? "http://localhost:8091";
 const PUBLIC_KEY = process.env.PAPERBOY_PUBLIC_KEY ?? "pk_live_seed_public_key_value";
@@ -56,6 +56,7 @@ export async function submitForm(input: {
   turnstileToken?: string;
   locale?: string;
   idempotencyKey?: string;
+  experiments?: ExperimentExposure[];
 }): Promise<
   { ok: true; submissionId: string; confirmation: { type: "message" | "redirect"; text?: unknown } }
   | { ok: false; fields: Record<string, string> }
@@ -67,8 +68,19 @@ export async function submitForm(input: {
     turnstileToken: input.turnstileToken,
     locale: input.locale,
     idempotencyKey: input.idempotencyKey,
+    experiments: input.experiments,
   });
   return res.ok
     ? { ok: true, submissionId: res.submissionId, confirmation: res.confirmation as { type: "message" | "redirect"; text?: unknown } }
     : res;
+}
+
+/**
+ * Count the A/B versions this page view showed. PUBLIC key, server-side, and
+ * fire-and-forget: run it from Next's `after()` so the render never waits on it,
+ * and swallow failures, since a lost count must never break a page.
+ */
+export async function reportExposures(exposures: ExperimentExposure[]): Promise<void> {
+  if (!exposures.length) return;
+  await published.reportTraffic({ exposures }).catch(() => undefined);
 }

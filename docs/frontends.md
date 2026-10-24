@@ -183,6 +183,40 @@ The generated URLs use `{canonicalBaseUrl}/{locale}{urlPath}`, or no prefix for
 the default locale when Settings → General → Language in URLs says so. A site
 with another URL scheme builds its own sitemap from `GET /api/v1/delivery/pages`.
 
+## 7. A/B experiments
+
+A page under test carries `experiments`; its areas in `data` stay version A.
+Pick the version on the SERVER before rendering (swapping in the browser
+flickers), and count it after the response:
+
+```ts
+import { applyExperiments } from "@paperboycms/client";
+
+const { item, exposures } = applyExperiments(page, {
+  visitorKey,                                        // below; none → version A
+  force: preview ? url.searchParams.get("pbab") : null, // the admin's version picker, preview only
+});
+render(item, exposures);                             // forms send exposures on submit
+if (!preview) waitUntil(cms.reportTraffic({ exposures }).catch(() => {})); // public key, never awaited
+```
+
+- **Visitor key.** By default a fresh random value per page view: nothing is
+  stored on the device, so only a goal on the same page (a form) is attributed.
+  To keep a visitor on one version, use a first-party random id cookie (at most
+  13 months), set **only after consent**: in Norway a cookie that remembers the
+  version needs consent (ekomloven §3-15), so never list it as strictly
+  necessary. Without consent, fall back to the per-view key.
+- **Robots get A.** Never branch on the user agent; that is cloaking.
+- **Forms carry the exposures**: `submitForm(id, { …, experiments: exposures })`
+  counts a conversion for experiments whose goal is `form`. Other goals report
+  `conversions` through `reportTraffic`.
+- **Cache privately.** A page under test is `Cache-Control: private` (or puts
+  the version in the cache key); a shared cache would pin one version for all.
+
+apps/web is the reference: `app/lib/ab.ts` (`PAPERBOY_AB_MODE` =
+`cookieless` | `consent`, consent cookie `PAPERBOY_AB_CONSENT_COOKIE`, default
+`pb_consent`), the page route and `proxy.ts`.
+
 ## Checklist
 
 - [ ] Pages answer at `/{locale}{urlPath}`, and the start page at `/{locale}`.
@@ -192,4 +226,5 @@ with another URL scheme builds its own sitemap from `GET /api/v1/delivery/pages`
 - [ ] The preview bridge and `data-pb-*` attributes appear in preview only.
 - [ ] A 404 consults `matchRedirect` before answering 404.
 - [ ] The four public files are proxied.
+- [ ] A/B versions are picked server-side, reported, sent with forms, and cached privately; a remembering cookie only with consent.
 - [ ] Neither delivery key nor `PREVIEW_SECRET` reaches the browser.
