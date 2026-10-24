@@ -218,7 +218,7 @@ docker run -d -p 8090:8091 -v paperboy:/data \
 
 That is a localhost demo. Exposed, use HTTPS settings and real seed values as below. It is one
 Postgres session, so writes queue: fine for a small site, not for heavy traffic. Expect ~0.5 GB of
-memory. Back it up by stopping the container and copying the volume.
+memory. Back it up with [`ops/backup-pglite.sh`](ops/backup-pglite.sh), which stops the container for a few seconds, archives the volume and starts it again.
 
 **Accounts.** Your admin login is what `setup.sh` printed. The demo logins (`editor@`, `author@`,
 `viewer@`, passwords `<Role>!Passw0rd`) are development fixtures: a production seed creates only the

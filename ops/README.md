@@ -49,6 +49,27 @@ If a request demands erasure from backups as well, the honest options are to
 restore-scrub-redump, or to shorten the rotation. Don't claim immediate
 deletion that the backup set contradicts.
 
+## PGlite mode
+
+A container running with `DATABASE_URL=pglite:///data/db` keeps the database
+and uploads in one volume and has no Postgres to `pg_dump` from.
+`backup-pglite.sh` stops the container, archives the whole volume to
+`~/paperboy-backups/paperboy-pglite-<stamp>.tar.gz` (mode 600), starts it again
+even if the archive fails, refuses an archive with no database in it, and keeps
+the newest 14:
+
+```
+30 3 * * *  PAPERBOY_CONTAINER=paperboy PAPERBOY_VOLUME=pbdata <checkout>/ops/backup-pglite.sh >> $HOME/.local/state/paperboy/backup.log 2>&1
+```
+
+To restore, extract into a NEW volume and start the container on it (it
+migrates and never reseeds a database that holds data):
+
+```
+docker volume create pbdata-restored
+docker run --rm -v pbdata-restored:/data -v ~/paperboy-backups:/backup alpine tar xzf /backup/paperboy-pglite-<stamp>.tar.gz -C /data
+```
+
 ## Restore
 
 ⚠️ **This procedure REPLACES live data.** Read it through first, and use the same
