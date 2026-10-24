@@ -1437,6 +1437,16 @@ const PAGE_DESCRIPTION_FIELDS = ["teaserText", "metaDescription", "summary", "in
  * URL, and noticing when publishing or moving a page changed its URL. Same
  * chokepoint walk, so it agrees with what delivery actually serves.
  */
+/**
+ * Record the rows a page listing already read (same filter as ctx.item(): this
+ * site, not deleted). A page's ancestors are pages of the same site, so the
+ * listing holds every chain urlPathOf walks: it used to run one recursive
+ * query per page and locale (~100 in a row for a sitemap of 50 pages).
+ */
+function rememberItems(ctx: DeliveryCtx, items: Array<{ documentId: string; type: string; kind: string; parentId: string | null }>): void {
+  for (const { documentId, ...item } of items) if (!ctx.items.has(documentId)) ctx.items.set(documentId, item);
+}
+
 export async function publishedPagePaths(
   db: Database,
   siteId: string,
@@ -1447,7 +1457,11 @@ export async function publishedPagePaths(
   const locales = await db.select({ code: locale.code }).from(locale).where(eq(locale.enabled, true)).orderBy(asc(locale.sortIndex));
   const conditions = [isNull(contentItem.deletedAt), eq(contentItem.siteId, siteId), eq(contentItem.kind, "page")];
   if (documentIds) conditions.push(inArray(contentItem.documentId, documentIds));
-  const items = await db.select({ documentId: contentItem.documentId }).from(contentItem).where(and(...conditions));
+  const items = await db
+    .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
+    .from(contentItem)
+    .where(and(...conditions));
+  rememberItems(ctx, items);
   await ctx.primeVersions(items.map((i) => i.documentId), "published");
   const out: { documentId: string; locale: string; urlPath: string }[] = [];
   for (const { code } of locales) {
@@ -1469,10 +1483,11 @@ export async function deliveryPages(
   const ctx = new DeliveryCtx(db, siteId);
   const locales = await db.select({ code: locale.code }).from(locale).where(eq(locale.enabled, true)).orderBy(asc(locale.sortIndex));
   const items = await db
-    .select({ documentId: contentItem.documentId, type: contentItem.type })
+    .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
     .from(contentItem)
     .where(and(isNull(contentItem.deletedAt), eq(contentItem.siteId, siteId), eq(contentItem.kind, "page")))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
+  rememberItems(ctx, items);
   await ctx.primeVersions(items.map((i) => i.documentId), perspective);
 
   const publicFieldsByType = new Map<string, Set<string>>();
