@@ -71,6 +71,7 @@ async function clearFailedAuth(db: Database, userId: string): Promise<void> {
 // inactivity alone never logs you out before the absolute cap is reached.
 export const SESSION_ABSOLUTE_HOURS = 24 * 30; // 30 days
 const SESSION_IDLE_MINUTES = 60 * 24 * 30; // 30 days
+const SESSION_SLIDE_STEP_MS = 60_000; // readSession moves the idle window at most once a minute
 
 /** Argon2id parameters (OWASP-recommended baseline). */
 const ARGON2_OPTS: argon2.HashOptions = {
@@ -658,14 +659,21 @@ export async function readSession(
 ): Promise<{ userId: string; csrfToken: string } | null> {
   const id = sha256(token);
   const now = new Date();
-  // Check and slide the idle window in ONE statement (this runs on every
-  // admin request): only a live session is touched and returned.
-  const rows = await db
-    .update(session)
-    .set({ idleExpiresAt: new Date(now.getTime() + SESSION_IDLE_MINUTES * 60_000) })
-    .where(and(eq(session.id, id), gte(session.expiresAt, now), gte(session.idleExpiresAt, now)))
-    .returning({ userId: session.userId, csrfToken: session.csrfToken });
-  if (rows[0]) return rows[0];
+  const slid = new Date(now.getTime() + SESSION_IDLE_MINUTES * 60_000);
+  // Check the session and slide its idle window in ONE statement (this runs on
+  // every admin request). The window only moves when it is more than a minute
+  // behind: a write is a durable commit, and against a 30-day window a minute
+  // is invisible, so most requests write (and wait for) nothing.
+  const rows = (await db.execute(sql`
+    WITH live AS (
+      SELECT user_id, csrf_token FROM session
+      WHERE id = ${id} AND expires_at >= ${now.toISOString()}::timestamptz AND idle_expires_at >= ${now.toISOString()}::timestamptz
+    ), slide AS (
+      UPDATE session SET idle_expires_at = ${slid.toISOString()}::timestamptz
+      WHERE id = ${id} AND idle_expires_at < ${new Date(slid.getTime() - SESSION_SLIDE_STEP_MS).toISOString()}::timestamptz AND EXISTS (SELECT 1 FROM live)
+    )
+    SELECT user_id, csrf_token FROM live`)) as unknown as Array<{ user_id: string; csrf_token: string }>;
+  if (rows[0]) return { userId: rows[0].user_id, csrfToken: rows[0].csrf_token };
   // Missing or expired: an expired row is removed (a no-op for a missing one).
   await db.delete(session).where(eq(session.id, id));
   return null;
