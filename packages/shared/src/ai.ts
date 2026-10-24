@@ -71,10 +71,10 @@ export interface AiConfig {
   model: string;
   /** openai only: the endpoint base ("https://api.openai.com/v1", "http://localhost:11434/v1", …). */
   baseUrl?: string;
-  /** openai dialect only for now: sent as `reasoning_effort`, degrading to
-   *  GLM-style `thinking:{type}` where that name is rejected. The anthropic
-   *  dialect ignores it — extended thinking changes the response shape (thinking
-   *  blocks, tool-loop echo rules) and is not wired up. */
+  /** openai: sent as `reasoning_effort`, degrading to GLM-style `thinking:{type}`
+   *  where that name is rejected. anthropic: `output_config.effort` (minimal →
+   *  low), plus adaptive thinking at medium/high; dropped for a model that
+   *  rejects it. The agent echoes thinking blocks back verbatim (agent.ts). */
   reasoningEffort?: AiReasoningEffort;
 }
 
@@ -134,20 +134,47 @@ export async function postAnthropicMessages(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const ac = new AbortController();
-  const timer = setTimeout(() => ac.abort(), timeoutMs);
-  try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": requireKey(cfg), "anthropic-version": "2023-06-01" },
-      body: JSON.stringify(payload),
-      signal: signal ? AbortSignal.any([ac.signal, signal]) : ac.signal,
-    });
-    if (!res.ok) throw new Error(`Anthropic ${res.status}${errExcerpt(await res.text().catch(() => ""))}`);
-    return (await res.json()) as Record<string, unknown>;
-  } finally {
-    clearTimeout(timer);
+  const key = requireKey(cfg);
+  const attempt = async (body: Record<string, unknown>): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; status: number; text: string }> => {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify(body),
+        signal: signal ? AbortSignal.any([ac.signal, signal]) : ac.signal,
+      });
+      if (!res.ok) return { ok: false, status: res.status, text: await res.text().catch(() => "") };
+      return { ok: true, data: (await res.json()) as Record<string, unknown> };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+  // The effort preference degrades like the openai dialect's: a model that
+  // rejects effort or adaptive thinking (an older one) costs the preference,
+  // never the task. Thinking tokens count against max_tokens, so a thinking
+  // request gets room for the answer too.
+  const effort = cfg.reasoningEffort;
+  const thinks = effort === "medium" || effort === "high";
+  const shapes: Array<Record<string, unknown>> = effort
+    ? [
+        {
+          ...payload,
+          output_config: { effort: effort === "minimal" ? "low" : effort },
+          ...(thinks ? { thinking: { type: "adaptive" }, max_tokens: Math.max(Number(payload.max_tokens) || 0, 4096) } : {}),
+        },
+        payload,
+      ]
+    : [payload];
+  let last: { status: number; text: string } | null = null;
+  for (const shape of shapes) {
+    const res = await attempt(shape);
+    if (res.ok) return res.data;
+    last = res;
+    if (!(res.status === 400 && /effort|output_config|thinking/i.test(res.text))) break;
   }
+  throw new Error(`Anthropic ${last!.status}${errExcerpt(last!.text)}`);
 }
 
 /**

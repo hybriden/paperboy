@@ -89,6 +89,40 @@ describe("aiTranslateBatch — refuses without a key", () => {
   });
 });
 
+describe("Anthropic reasoning effort (#93)", () => {
+  const CFG = { provider: "anthropic" as const, apiKey: "sk-ant-test", model: "claude-test" };
+  const ok = (content: unknown[]) => ({ ok: true, json: async () => ({ content }) });
+  const bodyOf = (m: ReturnType<typeof vi.fn>, i: number) => JSON.parse((m.mock.calls[i]![1] as { body: string }).body) as Record<string, unknown>;
+
+  it("maps each level to output_config.effort; medium/high also turn on adaptive thinking; unset sends neither", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok([{ type: "text", text: "ok" }]));
+    vi.stubGlobal("fetch", fetchMock);
+    for (const reasoningEffort of ["minimal", "low", "medium", "high"] as const) await aiAssist({ task: "improve", input: "x" }, { ...CFG, reasoningEffort });
+    await aiAssist({ task: "improve", input: "x" }, CFG);
+    const sent = [0, 1, 2, 3, 4].map((i) => bodyOf(fetchMock, i));
+    expect(sent.map((b) => b.output_config)).toEqual([{ effort: "low" }, { effort: "low" }, { effort: "medium" }, { effort: "high" }, undefined]);
+    expect(sent.map((b) => b.thinking)).toEqual([undefined, undefined, { type: "adaptive" }, { type: "adaptive" }, undefined]);
+    // Thinking tokens count against max_tokens: a thinking request gets room for an answer too.
+    expect(sent[3]!.max_tokens as number).toBeGreaterThanOrEqual(4096);
+  });
+
+  it("drops the preference when the model rejects it (an older model), never the task", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => '{"error":{"message":"output_config.effort: not supported on this model"}}' })
+      .mockResolvedValueOnce(ok([{ type: "text", text: "ok" }]));
+    vi.stubGlobal("fetch", fetchMock);
+    expect((await aiAssist({ task: "improve", input: "x" }, { ...CFG, reasoningEffort: "high" })).result).toBe("ok");
+    expect(bodyOf(fetchMock, 1).output_config).toBeUndefined();
+    expect(bodyOf(fetchMock, 1).thinking).toBeUndefined();
+  });
+
+  it("never returns thinking as content", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ok([{ type: "thinking", thinking: "private reasoning", signature: "sig" }, { type: "text", text: "Better text." }])));
+    expect((await aiAssist({ task: "improve", input: "x" }, { ...CFG, reasoningEffort: "high" })).result).toBe("Better text.");
+  });
+});
+
 describe("OpenAI-compatible provider (dialect mapping)", () => {
   const CFG = { provider: "openai" as const, apiKey: "sk-oai-test", model: "gpt-test", baseUrl: "https://llm.example/v1/" };
   const okText = (text: string) => ({ ok: true, json: async () => ({ choices: [{ message: { content: text } }] }) });

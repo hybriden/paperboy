@@ -176,6 +176,23 @@ describe("AI content agent (build from brief)", () => {
       expect(events.at(-1)?.type).toBe("error");
       expect(events.at(-1)?.created).toHaveLength(1); // the tool that already ran is reported for review
     });
+
+    it("echoes the model's turn back exactly as received, thinking blocks included (#93)", async () => {
+      // A thinking model's assistant turn must come back unmodified on the next
+      // request; rebuilding it from text + tool_use dropped the thinking block.
+      const thinkingTurn = { content: [{ type: "thinking", thinking: "", signature: "sig-abc" }, ...createTurn("Thought first").content], stop_reason: "tool_use" };
+      const bodies: Array<{ messages: Array<{ role: string; content: unknown }>; output_config?: unknown }> = [];
+      globalThis.fetch = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        if (new URL(url instanceof Request ? url.url : String(url)).hostname !== "api.anthropic.com") return realFetch(url as never, init as never);
+        bodies.push(JSON.parse(typeof init?.body === "string" ? init.body : "{}"));
+        const turn = bodies.length === 1 ? thinkingTurn : { content: [{ type: "text", text: "Done." }], stop_reason: "end_turn" };
+        return new Response(JSON.stringify(turn), { status: 200, headers: { "content-type": "application/json" } });
+      }) as typeof fetch;
+      await runContentAgent({ db: s.app.db, ctx: await editorCtx(), cfg: { ...cfg, reasoningEffort: "high" }, emit: () => {} }, "Create one article page called Thought first.", { parentId: null, locale: "en" });
+      expect(bodies).toHaveLength(2);
+      expect(bodies[0]!.output_config).toEqual({ effort: "high" });
+      expect(bodies[1]!.messages[1]).toEqual({ role: "assistant", content: thinkingTurn.content });
+    });
   });
 
   it("runs a scripted loop: creates a draft via the real tools and streams events", async () => {
