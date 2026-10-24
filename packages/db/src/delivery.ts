@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { type ContentTypeDef, type DeliveryContent, type ExperimentArmKey, type ExperimentStatus, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, parseStoredContentTypeDef, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
@@ -86,7 +86,17 @@ class DeliveryCtx {
       .where(
         perspective === "published"
           ? and(inArray(contentVersion.documentId, documentIds), eq(contentVersion.isCurrentPublished, true))
-          : inArray(contentVersion.documentId, documentIds),
+          : // Preview selects (per locale) the draft, else the live row, else the
+            // latest version (selectRow): only those rows, never the history
+            // (a page with 60 old versions shipped all their data every request).
+            and(
+              inArray(contentVersion.documentId, documentIds),
+              or(
+                eq(contentVersion.status, "draft"),
+                eq(contentVersion.isCurrentPublished, true),
+                sql`${contentVersion.versionNumber} = (select max(v2.version_number) from content_version v2 where v2.document_id = ${contentVersion.documentId} and v2.locale = ${contentVersion.locale})`,
+              ),
+            ),
       );
   }
 
@@ -1620,8 +1630,8 @@ export async function deliveryGetByPath(
   let currentDoc: string | null = null;
   for (let depth = 0; depth < cleaned.length; depth++) {
     const segment = cleaned[depth]!;
-    const children: { documentId: string }[] = await db
-      .select({ documentId: contentItem.documentId })
+    const children: Array<{ documentId: string; type: string; kind: string; parentId: string | null }> = await db
+      .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
       .from(contentItem)
       .where(
         and(
@@ -1633,6 +1643,9 @@ export async function deliveryGetByPath(
       )
       .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
 
+    // Same filter as ctx.item(), so the matched chain is already known when the
+    // page resolves (no second lookup of the document or its ancestors).
+    for (const c of children) if (!ctx.items.has(c.documentId)) ctx.items.set(c.documentId, { type: c.type, kind: c.kind, parentId: c.parentId });
     await ctx.primeVersions(children.map((c) => c.documentId), perspective); // batch this level's sibling versions
     let matched: string | null = null;
     for (const child of children) {
@@ -1683,7 +1696,7 @@ export async function deliveryGlobal(
 ): Promise<DeliveryContent | null> {
   const ctx = new DeliveryCtx(db, siteId).warm(perspective, { page: false });
   const items = await db
-    .select({ documentId: contentItem.documentId })
+    .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
     .from(contentItem)
     .where(
       and(
@@ -1696,5 +1709,7 @@ export async function deliveryGlobal(
     .orderBy(asc(contentItem.id))
     .limit(1);
   if (!items[0]) return null;
-  return resolveContent(ctx, perspective, items[0].documentId, loc, 1);
+  const { documentId, ...item } = items[0];
+  ctx.items.set(documentId, item); // same filter as ctx.item()
+  return resolveContent(ctx, perspective, documentId, loc, 1);
 }
