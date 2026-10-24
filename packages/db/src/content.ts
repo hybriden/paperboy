@@ -438,45 +438,49 @@ export async function getTree(
   requirePermission(ctx, "content.read");
   // The content pane is the PAGE tree. Blocks are assets and
   // are listed separately (listBlocks); globals are config, not in the tree.
-  const items = await db
-    .select()
-    .from(contentItem)
-    .where(
-      and(
-        parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
-        eq(contentItem.kind, "page"),
-        isNull(contentItem.deletedAt),
-        eq(contentItem.siteId, ctx.siteId), // multisite: only the active site's tree
-      ),
-    )
-    .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
+  // The level and the parent's declared child ordering at once. 'manual' keeps
+  // the sortIndex order the query already applied; a computed rule re-sorts
+  // this level below.
+  const [items, rule] = await Promise.all([
+    db
+      .select()
+      .from(contentItem)
+      .where(
+        and(
+          parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
+          eq(contentItem.kind, "page"),
+          isNull(contentItem.deletedAt),
+          eq(contentItem.siteId, ctx.siteId), // multisite: only the active site's tree
+        ),
+      )
+      .orderBy(asc(contentItem.sortIndex), asc(contentItem.id)),
+    parentId
+      ? db.select({ cs: contentItem.childSort }).from(contentItem).where(eq(contentItem.documentId, parentId)).limit(1).then((r) => r[0]?.cs ?? "manual")
+      : Promise.resolve("manual"),
+  ]);
 
   const visible = items.filter(
     (i) => ctx.readSiteWide || ctx.sections.includes(i.sectionId ?? i.documentId),
   );
-
-  // The parent's declared child ordering. 'manual' keeps the sortIndex order the
-  // query already applied; a computed rule re-sorts this level below.
-  const rule = parentId
-    ? ((await db.select({ cs: contentItem.childSort }).from(contentItem).where(eq(contentItem.documentId, parentId)).limit(1))[0]?.cs ?? "manual")
-    : "manual";
   const bareRule = rule.startsWith("-") ? rule.slice(1) : rule;
   const dataField = bareRule.startsWith("data.") ? bareRule.slice(5) : null;
-  // data.<field> values are read from the working version, preferring the site's
-  // default locale — the same variant whose name the tree displays.
-  const defaultLocale = dataField ? await resolveDefaultLocale(db, ctx.siteId) : null;
 
-  // Two batched reads instead of 2 per node: all variant states in one query,
-  // and one grouped count of which of these nodes have page children.
+  // Batched reads instead of 2 per node, all at once: every variant state, one
+  // grouped count of which nodes have page children, and (for a data.<field>
+  // rule) the site's default locale, whose working version the value is read
+  // from — the same variant whose name the tree displays.
   const visibleIds = visible.map((i) => i.documentId);
-  const statesById = await variantStatesBatch(db, visibleIds, dataField !== null);
-  const childCounts = visibleIds.length
-    ? await db
-        .select({ parentId: contentItem.parentId, c: sql<number>`count(*)::int` })
-        .from(contentItem)
-        .where(and(inArray(contentItem.parentId, visibleIds), eq(contentItem.kind, "page"), isNull(contentItem.deletedAt)))
-        .groupBy(contentItem.parentId)
-    : [];
+  const [defaultLocale, statesById, childCounts] = await Promise.all([
+    dataField ? resolveDefaultLocale(db, ctx.siteId) : Promise.resolve(null),
+    variantStatesBatch(db, visibleIds, dataField !== null),
+    visibleIds.length
+      ? db
+          .select({ parentId: contentItem.parentId, c: sql<number>`count(*)::int` })
+          .from(contentItem)
+          .where(and(inArray(contentItem.parentId, visibleIds), eq(contentItem.kind, "page"), isNull(contentItem.deletedAt)))
+          .groupBy(contentItem.parentId)
+      : Promise.resolve([]),
+  ]);
   const childCountBy = new Map(childCounts.map((r) => [r.parentId, r.c]));
 
   const rows: { node: TreeNode; createdAt: string; dataValue: unknown }[] = [];
