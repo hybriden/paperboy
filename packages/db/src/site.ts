@@ -116,10 +116,9 @@ export async function setSiteFilesConfig(
 /** Read-only site config surface for the admin (the ACTIVE site's start page + preview URL). */
 export async function getSiteConfig(db: Database, ctx: AccessContext): Promise<{ startPageId: string | null; previewBaseUrl: string }> {
   requirePermission(ctx, "content.read");
-  const previewBaseUrl = await getPreviewBaseUrl(db, ctx.siteId);
+  const [previewBaseUrl, id] = await Promise.all([getPreviewBaseUrl(db, ctx.siteId), getStartPageId(db, ctx.siteId)]);
   // If the configured start page was trashed/deleted/moved out of the site, report
   // null so the UI/web fall back.
-  const id = await getStartPageId(db, ctx.siteId);
   if (!id) return { startPageId: null, previewBaseUrl };
   const rows = await db
     .select({ id: contentItem.id })

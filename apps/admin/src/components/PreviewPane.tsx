@@ -330,8 +330,14 @@ export function PreviewPane({
   // Never framed against a guessed host: targetOrigin is null until the site
   // query resolves (the token query can win that race) and when no preview URL
   // is configured — and this URL carries the token.
-  const src = usableToken && targetOrigin
-    ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(usableToken.token)}&n=${nonce}${extraQuery}`
+  // Keep the token already in the frame's URL while it is usable: every fresh
+  // mint (mount, focus, interval) changed src and reloaded the whole page, a
+  // full server render on the frontend for nothing.
+  const framedTokenRef = useRef<typeof usableToken>(undefined);
+  if (!framedTokenRef.current || !previewTokenUsable(framedTokenRef.current.expiresAt)) framedTokenRef.current = usableToken;
+  const framedToken = framedTokenRef.current;
+  const src = framedToken && targetOrigin
+    ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(framedToken.token)}&n=${nonce}${extraQuery}`
     : null;
   // Every navigation restarts the not-yet-loaded window postToPreview guards.
   useEffect(() => setFrameLoaded(false), [src]);

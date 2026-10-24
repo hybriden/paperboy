@@ -1,11 +1,12 @@
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, type ExperimentArmKey, type ExperimentStatus, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, parseStoredContentTypeDef, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
+import { type SQLWrapper, and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { type ContentTypeDef, type DeliveryContent, type ExperimentArmKey, type ExperimentStatus, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type LiveExperiment, liveExperiments } from "./experiments.js";
-import { asset, contentItem, contentType, contentVersion, locale, site } from "./schema.js";
+import { asset, contentItem, contentVersion, locale, site } from "./schema.js";
+import { currentContentTypes } from "./type-cache.js";
 
 /**
  * The Delivery read chokepoint. EVERY public/preview read — including every
@@ -79,14 +80,26 @@ class DeliveryCtx {
    * PREVIEW still needs everything: its last-resort fallback is "the latest
    * version of any status".
    */
-  private selectableVersions(documentIds: string[], perspective: Perspective) {
+  // `documentIds` may be a subquery, so the versions of a set can be read in
+  // the same round trip as the set itself (see cacheVersions).
+  selectableVersions(documentIds: string[] | SQLWrapper, perspective: Perspective) {
     return this.db
       .select()
       .from(contentVersion)
       .where(
         perspective === "published"
-          ? and(inArray(contentVersion.documentId, documentIds), eq(contentVersion.isCurrentPublished, true))
-          : inArray(contentVersion.documentId, documentIds),
+          ? and(inArray(contentVersion.documentId, documentIds as string[]), eq(contentVersion.isCurrentPublished, true))
+          : // Preview selects (per locale) the draft, else the live row, else the
+            // latest version (selectRow): only those rows, never the history
+            // (a page with 60 old versions shipped all their data every request).
+            and(
+              inArray(contentVersion.documentId, documentIds as string[]),
+              or(
+                eq(contentVersion.status, "draft"),
+                eq(contentVersion.isCurrentPublished, true),
+                sql`${contentVersion.versionNumber} = (select max(v2.version_number) from content_version v2 where v2.document_id = ${contentVersion.documentId} and v2.locale = ${contentVersion.locale})`,
+              ),
+            ),
       );
   }
 
@@ -98,6 +111,13 @@ class DeliveryCtx {
     const rows = await this.selectableVersions([documentId], perspective);
     this.versionsByDoc.set(key, rows);
     return rows;
+  }
+
+  /** Cache already-read selectable rows for these documents (as primeVersions would). */
+  cacheVersions(documentIds: string[], rows: (typeof contentVersion.$inferSelect)[], perspective: Perspective): void {
+    const grouped = new Map<string, (typeof contentVersion.$inferSelect)[]>(documentIds.map((id) => [id, []]));
+    for (const r of rows) grouped.get(r.documentId)?.push(r);
+    for (const [id, rs] of grouped) if (!this.versionsByDoc.has(`${perspective}:${id}`)) this.versionsByDoc.set(`${perspective}:${id}`, rs);
   }
 
   /** Bulk-prime version rows for many documents in ONE query (batches the N+1). */
@@ -174,24 +194,19 @@ class DeliveryCtx {
   }
 
   // The site's live A/B experiments, loaded once per request (usually none).
-  private _experiments = new Map<Perspective, LiveExperiment[]>();
+  private _experiments = new Map<Perspective, Promise<LiveExperiment[]>>();
   async experimentsOn(perspective: Perspective, documentId: string, loc: string): Promise<LiveExperiment[]> {
-    if (!this._experiments.has(perspective)) this._experiments.set(perspective, await liveExperiments(this.db, this.siteId, perspective === "preview"));
-    return this._experiments.get(perspective)!.filter((e) => e.documentId === documentId && e.locale === loc);
+    if (!this._experiments.has(perspective)) this._experiments.set(perspective, liveExperiments(this.db, this.siteId, perspective === "preview"));
+    return (await this._experiments.get(perspective)!).filter((e) => e.documentId === documentId && e.locale === loc);
   }
 
   // Every content type, read in ONE query on the first lookup (a page with
   // twenty block types used to cost twenty round trips; the table is small).
   private typesLoaded: Promise<void> | null = null;
   private loadTypes(): Promise<void> {
-    this.typesLoaded ??= this.db
-      .select()
-      .from(contentType)
-      .then((rows) => {
-        // Inject the reserved SEO group (page kinds) so delivery's sanitize +
-        // computeSeo see the SEO fields even for types that don't store them.
-        for (const r of rows) this.types.set(r.name, parseStoredContentTypeDef(r.definition));
-      });
+    this.typesLoaded ??= currentContentTypes(this.db).then((types) => {
+      for (const t of types) this.types.set(t.name, t.def);
+    });
     return this.typesLoaded;
   }
   async type(name: string): Promise<ContentTypeDef | null> {
@@ -216,10 +231,19 @@ class DeliveryCtx {
    * an error still surfaces where it is used; here it is only kept from being
    * an unhandled rejection.
    */
-  warm(opts: { siteSettings?: boolean } = {}): this {
+  warm(perspective: Perspective, opts: { page?: boolean } = {}): this {
     const started: Promise<unknown>[] = [this.loadTypes(), this.loadLocales()];
-    // A page's SEO block needs the site's name and identity; a global doesn't.
-    if (opts.siteSettings !== false) started.push(this.siteSettingsRows());
+    // A page's SEO block needs the site's name and identity (the SiteSettings
+    // document and its versions, primed as soon as its id is known), and a page
+    // may carry experiments; a global needs neither.
+    if (opts.page !== false) {
+      started.push(
+        this.siteSettingsRows().then(async (rows) => {
+          if (rows[0]) await Promise.all([this.primeItems([rows[0].documentId]), this.primeVersions([rows[0].documentId], perspective)]);
+        }),
+        this.experimentsOn(perspective, "", ""),
+      );
+    }
     for (const p of started) p.catch(() => undefined);
     return this;
   }
@@ -1009,6 +1033,9 @@ export async function resolveContent(
   loc: string,
   depth: number,
 ): Promise<DeliveryContent | null> {
+  // The document, its ancestors (for urlPath) and their versions in two round
+  // trips; priming never touches maxCv, only variantRow does.
+  await ctx.primeAncestors([documentId], perspective);
   // Item first: a cross-site or trashed document is not part of this
   // representation, so its rows must not reach variantRow's maxCv bump.
   const item = await ctx.item(documentId);
@@ -1181,7 +1208,7 @@ export async function deliveryGetById(
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId).warm();
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   return resolveContent(ctx, perspective, documentId, loc, clampDepth(populate));
 }
 
@@ -1193,7 +1220,7 @@ export async function deliveryGetBySlug(
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId).warm();
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   // Find candidate variants by slug, then re-resolve via the chokepoint so the
   // perspective filter (not the slug lookup) decides visibility.
   //
@@ -1599,7 +1626,7 @@ export async function deliveryGetByPath(
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId).warm();
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   const cleaned = segments.filter((s) => s.length > 0);
   if (cleaned.length === 0) return null;
 
@@ -1608,20 +1635,26 @@ export async function deliveryGetByPath(
   let currentDoc: string | null = null;
   for (let depth = 0; depth < cleaned.length; depth++) {
     const segment = cleaned[depth]!;
-    const children: { documentId: string }[] = await db
-      .select({ documentId: contentItem.documentId })
-      .from(contentItem)
-      .where(
-        and(
-          parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
-          eq(contentItem.kind, "page"),
-          isNull(contentItem.deletedAt),
-          eq(contentItem.siteId, siteId), // multisite: only this site's pages match the path
-        ),
-      )
-      .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
+    const level = and(
+      parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
+      eq(contentItem.kind, "page"),
+      isNull(contentItem.deletedAt),
+      eq(contentItem.siteId, siteId), // multisite: only this site's pages match the path
+    );
+    // The level and its versions in ONE round trip (the versions by subquery).
+    const [children, levelVersions] = await Promise.all([
+      db
+        .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
+        .from(contentItem)
+        .where(level)
+        .orderBy(asc(contentItem.sortIndex), asc(contentItem.id)),
+      ctx.selectableVersions(db.select({ id: contentItem.documentId }).from(contentItem).where(level), perspective),
+    ]);
 
-    await ctx.primeVersions(children.map((c) => c.documentId), perspective); // batch this level's sibling versions
+    // Same filter as ctx.item(), so the matched chain is already known when the
+    // page resolves (no second lookup of the document or its ancestors).
+    for (const c of children) if (!ctx.items.has(c.documentId)) ctx.items.set(c.documentId, { type: c.type, kind: c.kind, parentId: c.parentId });
+    ctx.cacheVersions(children.map((c) => c.documentId), levelVersions, perspective);
     let matched: string | null = null;
     for (const child of children) {
       // Resolve through the perspective chokepoint — draft-only children are
@@ -1657,7 +1690,7 @@ export async function deliveryStartPage(
   const rows = await db.select({ id: site.startPageId }).from(site).where(eq(site.id, siteId)).limit(1);
   const id = rows[0]?.id;
   if (!id) return null;
-  const ctx = new DeliveryCtx(db, siteId).warm();
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   return resolveContent(ctx, perspective, id, loc, clampDepth(populate));
 }
 
@@ -1669,20 +1702,21 @@ export async function deliveryGlobal(
   typeName: string,
   loc: string,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId).warm({ siteSettings: false });
-  const items = await db
-    .select({ documentId: contentItem.documentId })
-    .from(contentItem)
-    .where(
-      and(
-        eq(contentItem.type, typeName),
-        eq(contentItem.kind, "global"),
-        isNull(contentItem.deletedAt),
-        eq(contentItem.siteId, siteId),
-      ),
-    )
-    .orderBy(asc(contentItem.id))
-    .limit(1);
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective, { page: false });
+  const ofType = and(eq(contentItem.type, typeName), eq(contentItem.kind, "global"), isNull(contentItem.deletedAt), eq(contentItem.siteId, siteId));
+  // The global and its versions in ONE round trip (the versions by subquery).
+  const [items, versions] = await Promise.all([
+    db
+      .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
+      .from(contentItem)
+      .where(ofType)
+      .orderBy(asc(contentItem.id))
+      .limit(1),
+    ctx.selectableVersions(db.select({ id: contentItem.documentId }).from(contentItem).where(ofType), perspective),
+  ]);
   if (!items[0]) return null;
-  return resolveContent(ctx, perspective, items[0].documentId, loc, 1);
+  const { documentId, ...item } = items[0];
+  ctx.items.set(documentId, item); // same filter as ctx.item()
+  ctx.cacheVersions([documentId], versions, perspective);
+  return resolveContent(ctx, perspective, documentId, loc, 1);
 }
