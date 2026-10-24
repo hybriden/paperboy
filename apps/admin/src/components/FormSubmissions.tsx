@@ -15,7 +15,7 @@ import { useToast } from "./ui/toast.js";
  * What visitors sent through one Form, and the two ways to get rid of it.
  *
  * Reachable from the Form document's own "Submissions" tab (Editor) and from
- * Settings → Form submissions, which lists every form first. Both hosts pass a
+ * the Forms page (/submissions), which lists every form first. Both hosts pass a
  * `formId` — a submissions list is always ABOUT a form, so there is no
  * everything-at-once view and no bulk export of the whole site.
  */

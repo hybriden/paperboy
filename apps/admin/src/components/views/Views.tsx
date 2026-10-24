@@ -143,7 +143,7 @@ export function DashboardView() {
   // themselves, not a bare count) — only trash and webhooks stay simple rows.
   const housekeepingItems = hk
     ? ([
-        { label: hk.trash === 1 ? "item in trash" : "items in trash", count: hk.trash, to: "/settings#trash" },
+        { label: hk.trash === 1 ? "item in trash" : "items in trash", count: hk.trash, to: "/trash" },
         ...(hk.failingWebhooks != null
           ? [{ label: hk.failingWebhooks === 1 ? "failing webhook" : "failing webhooks", count: hk.failingWebhooks, to: "/settings#webhooks", alarm: true }]
           : []),
@@ -329,6 +329,26 @@ export function DashboardView() {
   );
 }
 
+/** Form submissions and Trash: everyday site work, so they live in the main nav, not Settings. */
+function SitePage({ title, children }: { title: string; children: React.ReactNode }) {
+  const { setCrumb } = useOutletContext<ShellOutlet>();
+  useEffect(() => setCrumb(null), [setCrumb]);
+  return (
+    <div className="h-full overflow-auto">
+      <div className="mx-auto max-w-4xl animate-slide-up p-4 sm:p-8">
+        <header className="mb-6 border-b border-line pb-4">
+          <div className="eyebrow">Site</div>
+          <h1 className="section-title mt-1.5">{title}</h1>
+        </header>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export const SubmissionsView = () => <SitePage title="Form submissions"><FormSubmissionsPanel /></SitePage>;
+export const TrashView = () => <SitePage title="Trash"><TrashPanel /></SitePage>;
+
 interface SettingsTab {
   key: string;
   label: string;
@@ -351,10 +371,8 @@ export function SettingsView() {
     // Grouped by what a tab applies to: the active site, what every site shares, the instance, or you.
     { key: "site", label: "General", group: "Site", show: has("site.manage"), render: () => <SiteGeneralPanel /> },
     { key: "redirects", label: "Redirects", group: "Site", show: true, render: () => <RedirectsPanel /> },
-    { key: "submissions", label: "Form submissions", group: "Site", show: has("submission.read"), render: () => <FormSubmissionsPanel /> },
     { key: "keys", label: "Delivery keys", group: "Site", show: has("deliverykey.manage"), render: () => <DeliveryKeysPanel /> },
     { key: "webhooks", label: "Webhooks", group: "Site", show: has("webhook.manage"), render: () => <WebhooksPanel /> },
-    { key: "trash", label: "Trash", group: "Site", show: true, render: () => <TrashPanel /> },
     { key: "model", label: "Content types", group: "Content model", show: true, render: () => <ContentTypesPanel /> },
     { key: "templates", label: "Type templates", group: "Content model", show: has("contenttype.manage"), render: () => <TypeTemplatesPanel /> },
     { key: "languages", label: "Languages", group: "Content model", show: true, render: () => <LanguagesPanel /> },

@@ -55,6 +55,8 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
   const gotos = [
     { label: "Edit", to: "/edit", icon: <Icon.Edit width={15} height={15} /> },
     { label: "Dashboard", to: "/dashboard", icon: <Icon.Dashboard width={15} height={15} /> },
+    { label: "Form submissions", to: "/submissions", icon: <Icon.Inbox width={15} height={15} /> },
+    { label: "Trash", to: "/trash", icon: <Icon.Trash width={15} height={15} /> },
     { label: "Settings", to: "/settings", icon: <Icon.Settings width={15} height={15} /> },
   ].filter((c) => match(c.label));
   const themes = [

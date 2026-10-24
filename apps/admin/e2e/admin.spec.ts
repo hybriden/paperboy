@@ -456,7 +456,7 @@ test("Settings is tabbed and exposes the admin sections for an Admin", async ({ 
   // Default tab = Content types.
   await expect(page.getByRole("heading", { name: "Content types" }).first()).toBeVisible();
   // Each section is a tab in the left nav; clicking it shows that section.
-  for (const tab of ["General", "Delivery keys", "Webhooks", "Trash", "Sites", "Users & roles", "Agent access", "AI provider", "Audit log", "Sign-in & security", "Connected apps", "Languages"]) {
+  for (const tab of ["General", "Delivery keys", "Webhooks", "Sites", "Users & roles", "Agent access", "AI provider", "Audit log", "Sign-in & security", "Connected apps", "Languages"]) {
     await page.getByRole("button", { name: tab, exact: true }).click();
     await expect(page.getByRole("heading", { name: tab }).first()).toBeVisible();
   }
@@ -464,6 +464,19 @@ test("Settings is tabbed and exposes the admin sections for an Admin", async ({ 
   // must not exist here at all.
   await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toHaveCount(0);
   await page.screenshot({ path: `${SHOT}/08-admin-panels.png` });
+});
+
+test("Trash and Form submissions are main-nav pages, not Settings tabs", async ({ page }) => {
+  await login(page);
+  await page.getByRole("link", { name: "Trash" }).click();
+  await expect(page).toHaveURL(/\/trash$/);
+  await expect(page.getByRole("heading", { name: "Trash", level: 1 })).toBeVisible();
+  await page.getByRole("link", { name: "Forms" }).click();
+  await expect(page.getByRole("heading", { name: "Form submissions", level: 1 })).toBeVisible();
+  await page.getByRole("link", { name: "Settings" }).click();
+  const nav = page.getByRole("navigation", { name: "Settings sections" });
+  await expect(nav).toBeVisible();
+  for (const gone of ["Trash", "Form submissions"]) await expect(nav.getByRole("button", { name: gone, exact: true })).toHaveCount(0);
 });
 
 test("content-type editor offers the new field types (datetime, select, link)", async ({ page }) => {
@@ -1967,10 +1980,10 @@ test.describe("mobile (390×844)", () => {
     // panel in a ~165px sliver here, which is the bug this suite pins).
     await expect(page.getByRole("heading", { name: "Content types" })).toHaveCount(0);
 
-    await nav.getByRole("button", { name: "Trash" }).click();
-    // .first(): the section title AND the panel's own heading both say "Trash".
+    await nav.getByRole("button", { name: "Redirects" }).click();
+    // .first(): the section title AND the panel's own heading both say "Redirects".
     // Drilling in moves focus to the incoming panel's h2 heading.
-    const panelHeading = page.getByRole("heading", { name: "Trash", level: 2 }).first();
+    const panelHeading = page.getByRole("heading", { name: "Redirects", level: 2 }).first();
     await expect(panelHeading).toBeVisible();
     await expect(panelHeading).toBeFocused();
     await expect(nav).toHaveCount(0);
@@ -1983,15 +1996,15 @@ test.describe("mobile (390×844)", () => {
     await expect(nav).toBeVisible();
     await expect(listHeading).toBeVisible();
     await expect(listHeading).toBeFocused();
-    await expect(page.getByRole("heading", { name: "Trash" })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Redirects" })).toHaveCount(0);
 
     // A hash deep-link (how the dashboard and site switcher arrive) lands on
     // the panel directly — with the back control available. Hop through
-    // another route first: settings → settings#trash alone is a same-document
+    // another route first: settings → settings#redirects alone is a same-document
     // fragment change that never remounts, which is not how deep-links arrive.
     await page.goto("/dashboard");
-    await page.goto("/settings#trash");
-    const deepHeading = page.getByRole("heading", { name: "Trash", level: 2 }).first();
+    await page.goto("/settings#redirects");
+    const deepHeading = page.getByRole("heading", { name: "Redirects", level: 2 }).first();
     await expect(deepHeading).toBeVisible();
     await expect(deepHeading).toBeFocused();
     await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toBeVisible();
@@ -2008,7 +2021,7 @@ test.describe("mobile (390×844)", () => {
     await page.goto("/settings");
     await expect(page.getByRole("navigation", { name: "Settings sections" })).toBeVisible();
     await axeClean(page, "settings-mobile-list");
-    await page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "Trash" }).click();
+    await page.getByRole("navigation", { name: "Settings sections" }).getByRole("button", { name: "Redirects" }).click();
     await expect(page.getByRole("button", { name: "Back to settings", exact: true })).toBeVisible();
     await paneSettled(page);
     await axeClean(page, "settings-mobile-panel");
