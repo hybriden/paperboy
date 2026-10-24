@@ -16,6 +16,7 @@
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
+    "@electric-sql/pglite": "0.5.11",
     "@paperboy/shared": "workspace:*",
     "argon2": "^0.45.1",
     "drizzle-orm": "^0.45.4",

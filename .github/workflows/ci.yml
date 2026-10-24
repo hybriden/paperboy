@@ -127,6 +127,56 @@ jobs:
         if: failure()
         run: docker compose logs --no-color --tail=200
 
+  # PGlite mode (#124): Postgres compiled to WASM, in the api process. The same
+  # suite runs against it so the two can't drift, and the published image must
+  # boot from nothing but a data folder.
+  pglite:
+    name: PGlite mode (suite + image boot)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: API tests against PGlite
+        run: |
+          pnpm --filter @paperboy/db exec tsx -e 'import("./src/pglite.ts").then((m) => m.startPglite(undefined, 54329))' &
+          timeout 60 bash -c 'until (echo > /dev/tcp/127.0.0.1/54329) 2>/dev/null; do sleep 1; done'
+          pnpm --filter @paperboy/api test
+        env:
+          TEST_DATABASE_URL: postgresql://postgres@127.0.0.1:54329/postgres
+          TEST_PGLITE: "1"
+
+      - name: The image boots from a data folder (no Postgres server)
+        run: |
+          docker build -t paperboy-app --target app .
+          docker run -d --name pb -p 8091:8091 -v pbdata:/data \
+            -e DATABASE_URL=pglite:///data/db \
+            -e SESSION_SECRET=ci-pglite-session-secret-not-a-placeholder \
+            -e CSRF_SECRET=ci-pglite-csrf-secret-not-a-placeholder \
+            -e COOKIE_SECURE=false -e ALLOW_INSECURE_COOKIES=true -e ALLOW_DEMO_CREDENTIALS=true \
+            paperboy-app
+          curl --retry 30 --retry-delay 2 --retry-all-errors -fsS http://localhost:8091/health/ready
+          login() { curl -fsS -X POST -H 'content-type: application/json' -d '{"email":"admin@paperboy.test","password":"Admin!Passw0rd"}' http://localhost:8091/api/v1/auth/login | jq -r .user.id; }
+          before=$(login)
+          # A restart keeps the data and never reseeds (a reseed regenerates ids).
+          docker restart pb
+          curl --retry 30 --retry-delay 2 --retry-all-errors -fsS http://localhost:8091/health/ready
+          test "$(login)" = "$before"
+
+      - name: Show logs on failure
+        if: failure()
+        run: docker logs --tail=200 pb || true
+
   e2e:
     name: e2e (Playwright vs composed stack)
     runs-on: ubuntu-latest

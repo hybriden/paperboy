@@ -204,6 +204,22 @@ Run **one replica**: rate limits and the publish/retention timers are in-process
 boot. Create the first admin by running the image once with `pnpm --filter @paperboy/db seed` and real
 `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD`, `PAPERBOY_PUBLIC_KEY`, `PAPERBOY_PREVIEW_KEY`.
 
+**Without a Postgres server.** For a demo or a small site, `DATABASE_URL=pglite:///data/db` runs
+Postgres inside the container ([PGlite](https://pglite.dev), the same schema and migrations) with the
+database in a folder. Seeded on first boot, never reseeded:
+
+```bash
+docker run -d -p 8090:8091 -v paperboy:/data \
+  -e DATABASE_URL=pglite:///data/db -e UPLOADS_DIR=/data/uploads \
+  -e SESSION_SECRET=$(openssl rand -hex 32) -e CSRF_SECRET=$(openssl rand -hex 32) \
+  -e COOKIE_SECURE=false -e ALLOW_INSECURE_COOKIES=true -e ALLOW_DEMO_CREDENTIALS=true \
+  ghcr.io/hybriden/paperboy-app   # http://localhost:8090, admin@paperboy.test / Admin!Passw0rd
+```
+
+That is a localhost demo. Exposed, use HTTPS settings and real seed values as below. It is one
+Postgres session, so writes queue: fine for a small site, not for heavy traffic. Expect ~0.5 GB of
+memory. Back it up by stopping the container and copying the volume.
+
 **Accounts.** Your admin login is what `setup.sh` printed. The demo logins (`editor@`, `author@`,
 `viewer@`, passwords `<Role>!Passw0rd`) are development fixtures: a production seed creates only the
 admin unless `ALLOW_DEMO_CREDENTIALS=true`.
