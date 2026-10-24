@@ -2904,10 +2904,10 @@ export async function searchContent(
     locale: r.locale,
     urlPath: null,
   }));
-  // Hierarchical URL only for the (bounded) page hits.
-  for (const h of hits) {
+  // Hierarchical URL only for the (bounded) page hits, all at once.
+  await Promise.all(hits.map(async (h) => {
     if (h.kind === "page") h.urlPath = await computePath(db, h.documentId, h.locale);
-  }
+  }));
   return hits;
 }
 

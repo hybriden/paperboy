@@ -150,9 +150,13 @@ class DeliveryCtx {
   // jsonLd publisher. Cached per request; resolved through the same perspective
   // so a draft sitename never leaks into a published seo block.
   private _siteName: string | null | undefined;
+  // warm()'s priming of the SiteSettings rows; awaited before reading them, or a
+  // read racing it fetches the same rows a second time.
+  private siteSettingsPrimed: Promise<void> | undefined;
   async siteName(perspective: Perspective, loc: string): Promise<string | null> {
     if (this._siteName !== undefined) return this._siteName;
     const rows = await this.siteSettingsRows();
+    await this.siteSettingsPrimed?.catch(() => undefined);
     let name: string | null = null;
     if (rows[0]) {
       const found = await variantRow(this, perspective, rows[0].documentId, loc);
@@ -189,6 +193,7 @@ class DeliveryCtx {
     if (this._siteIdentity !== undefined) return this._siteIdentity;
     this._siteIdentity = null;
     const rows = await this.siteSettingsRows();
+    await this.siteSettingsPrimed?.catch(() => undefined);
     if (rows[0]) this._siteIdentity = (await resolveContent(this, perspective, rows[0].documentId, loc, 0))?.jsonLd ?? null;
     return this._siteIdentity;
   }
@@ -237,12 +242,10 @@ class DeliveryCtx {
     // document and its versions, primed as soon as its id is known), and a page
     // may carry experiments; a global needs neither.
     if (opts.page !== false) {
-      started.push(
-        this.siteSettingsRows().then(async (rows) => {
-          if (rows[0]) await Promise.all([this.primeItems([rows[0].documentId]), this.primeVersions([rows[0].documentId], perspective)]);
-        }),
-        this.experimentsOn(perspective, "", ""),
-      );
+      this.siteSettingsPrimed = this.siteSettingsRows().then(async (rows) => {
+        if (rows[0]) await Promise.all([this.primeItems([rows[0].documentId]), this.primeVersions([rows[0].documentId], perspective)]);
+      });
+      started.push(this.siteSettingsPrimed, this.experimentsOn(perspective, "", ""));
     }
     for (const p of started) p.catch(() => undefined);
     return this;
@@ -1054,7 +1057,7 @@ export async function resolveContent(
     found.usedLocale,
     loc,
   );
-  await primeReferences(ctx, perspective, item.type, data, depth);
+  await primeReferences(ctx, perspective, [[item.type, data]], depth);
   const sanitized = await sanitize(ctx, perspective, item.type, data, found.usedLocale, depth);
   const urlPath = await urlPathOf(ctx, perspective, documentId, loc);
   const def = await ctx.type(item.type);
@@ -1149,7 +1152,7 @@ async function deliveredExperiments(
  * round trip). Same filters as the one-at-a-time lookups, so the output is
  * identical; only the number of round trips changes.
  */
-async function primeReferences(ctx: DeliveryCtx, perspective: Perspective, typeName: string, data: Record<string, unknown>, depth: number): Promise<void> {
+async function primeReferences(ctx: DeliveryCtx, perspective: Perspective, roots: Array<[typeName: string, data: Record<string, unknown>]>, depth: number): Promise<void> {
   let docs: string[] = [];
   let assets: string[] = [];
   const walk = async (name: string, values: Record<string, unknown>, level: number): Promise<void> => {
@@ -1171,7 +1174,7 @@ async function primeReferences(ctx: DeliveryCtx, perspective: Perspective, typeN
       }
     }
   };
-  await walk(typeName, data, 0);
+  for (const [typeName, data] of roots) await walk(typeName, data, 0);
   // Level by level through the graph the response will resolve (populate
   // depth): what the referenced documents point at is primed in the NEXT single
   // round trip, not one per document. Their selectable rows are walked (a
@@ -1437,6 +1440,16 @@ const PAGE_DESCRIPTION_FIELDS = ["teaserText", "metaDescription", "summary", "in
  * URL, and noticing when publishing or moving a page changed its URL. Same
  * chokepoint walk, so it agrees with what delivery actually serves.
  */
+/**
+ * Record the rows a page listing already read (same filter as ctx.item(): this
+ * site, not deleted). A page's ancestors are pages of the same site, so the
+ * listing holds every chain urlPathOf walks: it used to run one recursive
+ * query per page and locale (~100 in a row for a sitemap of 50 pages).
+ */
+function rememberItems(ctx: DeliveryCtx, items: Array<{ documentId: string; type: string; kind: string; parentId: string | null }>): void {
+  for (const { documentId, ...item } of items) if (!ctx.items.has(documentId)) ctx.items.set(documentId, item);
+}
+
 export async function publishedPagePaths(
   db: Database,
   siteId: string,
@@ -1447,7 +1460,11 @@ export async function publishedPagePaths(
   const locales = await db.select({ code: locale.code }).from(locale).where(eq(locale.enabled, true)).orderBy(asc(locale.sortIndex));
   const conditions = [isNull(contentItem.deletedAt), eq(contentItem.siteId, siteId), eq(contentItem.kind, "page")];
   if (documentIds) conditions.push(inArray(contentItem.documentId, documentIds));
-  const items = await db.select({ documentId: contentItem.documentId }).from(contentItem).where(and(...conditions));
+  const items = await db
+    .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
+    .from(contentItem)
+    .where(and(...conditions));
+  rememberItems(ctx, items);
   await ctx.primeVersions(items.map((i) => i.documentId), "published");
   const out: { documentId: string; locale: string; urlPath: string }[] = [];
   for (const { code } of locales) {
@@ -1469,10 +1486,11 @@ export async function deliveryPages(
   const ctx = new DeliveryCtx(db, siteId);
   const locales = await db.select({ code: locale.code }).from(locale).where(eq(locale.enabled, true)).orderBy(asc(locale.sortIndex));
   const items = await db
-    .select({ documentId: contentItem.documentId, type: contentItem.type })
+    .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
     .from(contentItem)
     .where(and(isNull(contentItem.deletedAt), eq(contentItem.siteId, siteId), eq(contentItem.kind, "page")))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
+  rememberItems(ctx, items);
   await ctx.primeVersions(items.map((i) => i.documentId), perspective);
 
   const publicFieldsByType = new Map<string, Set<string>>();
@@ -1557,7 +1575,7 @@ export async function deliverySearch(
       .map((w) => w.slice(1))
       .join(" "),
   );
-  const ctx = new DeliveryCtx(db, siteId);
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   const chain = await ctx.localeChain(loc, perspective);
   const max = Math.min(Math.max(limit, 1), 100);
   // The SQL prefilter scans the WHOLE version row (incl. delivery:"private" field
@@ -1584,7 +1602,20 @@ export async function deliverySearch(
     ORDER BY rank DESC
     LIMIT ${max * 5}
   `)) as unknown as { id: string; rank: number }[];
-  await ctx.primeVersions(rows.map((r) => r.id), perspective);
+  // Every candidate, its ancestors (for urlPath) and their versions in two
+  // round trips, not two per candidate as each resolves below.
+  await ctx.primeAncestors(rows.map((r) => r.id), perspective);
+  // ...and what they all point at, in one more (their selectable rows walked
+  // without variantRow, which would move ctx.maxCv and so each hit's cv).
+  const roots: Array<[string, Record<string, unknown>]> = [];
+  for (const r of rows) {
+    const it = ctx.items.get(r.id);
+    if (!it) continue;
+    for (const row of await ctx.docVersions(r.id, perspective)) {
+      if ((row.status === "draft" || row.isCurrentPublished) && row.data && typeof row.data === "object") roots.push([it.type, row.data as Record<string, unknown>]);
+    }
+  }
+  await primeReferences(ctx, perspective, roots, 0);
   // Query terms under the 'simple' config (lowercase, word-token split, no
   // stemming/stop-words). A candidate is kept only if every positive term appears
   // in its public text and no negated term does — both directions decided on
