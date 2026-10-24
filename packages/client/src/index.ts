@@ -77,6 +77,86 @@ export interface DeliveryContent {
   /** schema.org node of a GLOBAL whose type declares a schemaType — a
    *  SiteSettings typed "Organization" is the site's identity. Absent otherwise. */
   jsonLd?: Record<string, unknown>;
+  /** Running A/B experiments on this page's content areas. The areas in `data`
+   *  are version A (the control); `applyExperiments` swaps in the visitor's
+   *  version. Absent when none run. */
+  experiments?: DeliveryExperiment[];
+}
+
+/* ----------------------------- A/B experiments ----------------------------- */
+
+/** One A/B experiment on a page: alternative versions of one content area. */
+export interface DeliveryExperiment {
+  id: number;
+  /** The content area under test. */
+  area: string;
+  /** "form" (a form on the page) or "event:<name>" (report it as a conversion). */
+  goal: string;
+  /** Preview only: drafts and paused experiments ship there too. */
+  status?: "draft" | "running" | "paused" | "ended";
+  /** Version A has no blocks: it is the area itself. */
+  arms: Array<{ key: "a" | "b" | "c" | "d"; weight: number; blocks?: unknown[] }>;
+}
+
+/** What a frontend reports back for the A/B counts (see `reportTraffic`). */
+export interface ExperimentExposure {
+  experimentId: number;
+  arm: "a" | "b" | "c" | "d";
+}
+
+/** 32-bit FNV-1a, identical to @paperboy/shared's (client-experiments.test.ts pins them). */
+function fnv1a(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+/**
+ * The version a visitor sees: deterministic for (experiment, visitor). No
+ * visitor key → the control, which is also what robots get (never decide by
+ * user agent: showing crawlers something else is cloaking).
+ */
+export function assignArm(experimentId: number | string, visitorKey: string | null | undefined, arms: ReadonlyArray<{ key: string; weight: number }>): string {
+  const control = arms.find((a) => a.key === "a")?.key ?? arms[0]?.key ?? "a";
+  const total = arms.reduce((s, a) => s + Math.max(0, a.weight), 0);
+  if (!visitorKey || total <= 0) return control;
+  const bucket = (fnv1a(`${experimentId}:${visitorKey}`) % 10_000) / 10_000;
+  let edge = 0;
+  for (const a of arms) {
+    edge += Math.max(0, a.weight) / total;
+    if (bucket < edge) return a.key;
+  }
+  return arms[arms.length - 1]!.key;
+}
+
+/**
+ * Swap each experiment's area for the visitor's version, so the render helpers
+ * (`contentAreas`, `blockData`) work unchanged. Returns the exposures to report
+ * with `reportTraffic` (server-side, after rendering, never awaited by it).
+ *
+ * - `visitorKey`: in consent mode, a first-party random id set ONLY after the
+ *   visitor consented; in cookieless mode, a fresh random value per page view.
+ *   Omitted → everyone sees A and nothing is counted.
+ * - `force`: preview's `?pbab=<experimentId>:<arm>[,…]`, honoured only when
+ *   you passed the preview check. Forced views are never counted.
+ */
+export function applyExperiments<T extends DeliveryContent>(item: T, opts: { visitorKey?: string | null; force?: string | null } = {}): { item: T; exposures: ExperimentExposure[] } {
+  if (!item.experiments?.length) return { item, exposures: [] };
+  const forced = new Map((opts.force ?? "").split(",").map((p) => p.trim().split(":") as [string, string]).filter(([id, arm]) => id && arm));
+  const data = { ...item.data };
+  const exposures: ExperimentExposure[] = [];
+  for (const e of item.experiments) {
+    const pick = forced.get(String(e.id));
+    const arm = e.arms.find((a) => a.key === (pick ?? assignArm(e.id, opts.visitorKey, e.arms))) ?? e.arms[0];
+    if (!arm) continue;
+    if (arm.blocks) data[e.area] = arm.blocks;
+    // Count real visitors in running experiments only: not forced previews, not keyless (all-A) traffic.
+    if (!pick && opts.visitorKey && (e.status === undefined || e.status === "running")) exposures.push({ experimentId: e.id, arm: arm.key });
+  }
+  return { item: { ...item, data }, exposures };
 }
 
 /* ------------------------------- forms ----------------------------------- */
@@ -445,7 +525,7 @@ export function createClient(options: PaperboyClientOptions) {
     },
 
     /**
-     * Submit a form. The only WRITE this client makes.
+     * Submit a form. One of two writes this client makes (with `reportTraffic`).
      *
      * `elapsedMs` is how long the visitor had the form open — send the real
      * number (see `formTimer`), because an implausibly fast submission is
@@ -465,6 +545,9 @@ export function createClient(options: PaperboyClientOptions) {
         turnstileToken?: string;
         locale?: string;
         idempotencyKey?: string;
+        /** The A/B versions this page showed (`applyExperiments` exposures):
+         *  a conversion for experiments whose goal is "form". */
+        experiments?: ExperimentExposure[];
       },
     ): Promise<FormSubmitResult> {
       const url = `${base}/api/v1/delivery/forms/${encodeURIComponent(formId)}/submissions`;
@@ -483,6 +566,7 @@ export function createClient(options: PaperboyClientOptions) {
           honeypot: input.honeypot ?? "",
           turnstileToken: input.turnstileToken,
           locale: input.locale,
+          experiments: input.experiments?.map((e) => ({ id: e.experimentId, arm: e.arm })),
         }),
       });
       if (!res.ok) {
@@ -508,12 +592,19 @@ export function createClient(options: PaperboyClientOptions) {
     },
 
     /**
-     * Report what this frontend saw: rule ids it applied (hit counts) and paths
-     * that answered 404 (the 404 log in Settings → Redirects). Call it
+     * Report what this frontend saw: rule ids it applied (hit counts), paths
+     * that answered 404 (the 404 log in Settings → Redirects), and A/B
+     * exposures (from `applyExperiments`) and conversions (`goal`:
+     * "event:<name>"; form goals count through `submitForm`). Call it
      * server-side with the PUBLIC key, fire-and-forget (e.g. a Worker's
      * `ctx.waitUntil`). Paths only — the query string is stripped server-side.
      */
-    async reportTraffic(events: { redirectHits?: number[]; notFound?: string[] }): Promise<void> {
+    async reportTraffic(events: {
+      redirectHits?: number[];
+      notFound?: string[];
+      exposures?: ExperimentExposure[];
+      conversions?: Array<ExperimentExposure & { goal?: string }>;
+    }): Promise<void> {
       const res = await doFetch(`${base}/api/v1/delivery/traffic`, {
         ...options.fetchInit,
         method: "POST",
