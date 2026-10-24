@@ -273,12 +273,14 @@ interface NeutralToolCall {
 }
 type NeutralTurn =
   | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string; toolCalls: NeutralToolCall[] }
+  | { kind: "assistant"; text: string; toolCalls: NeutralToolCall[]; raw?: unknown[] }
   | { kind: "toolResults"; results: Array<{ id: string; content: string; isError: boolean }> };
 
 interface ModelTurn {
   text: string;
   toolCalls: NeutralToolCall[];
+  /** anthropic: the response content as received, echoed back verbatim next turn. */
+  raw?: unknown[];
 }
 
 function toolJsonSchema(t: AgentTool): Record<string, unknown> {
@@ -291,6 +293,9 @@ async function callAnthropicModel(cfg: AiConfig, transcript: NeutralTurn[], sign
   type Block = { type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> };
   const messages = transcript.map((t) => {
     if (t.kind === "user") return { role: "user", content: t.text };
+    // A thinking model's turn goes back exactly as received (thinking blocks and
+    // their signatures included); rebuilding it would drop them (#93).
+    if (t.kind === "assistant" && t.raw) return { role: "assistant", content: t.raw };
     if (t.kind === "assistant") {
       const blocks: unknown[] = [];
       if (t.text) blocks.push({ type: "text", text: t.text });
@@ -306,6 +311,7 @@ async function callAnthropicModel(cfg: AiConfig, transcript: NeutralTurn[], sign
   const data = await postAnthropicMessages(cfg, { model: cfg.model, max_tokens: 8192, system: SYSTEM, tools, messages }, CALL_TIMEOUT_MS, signal);
   const content = (data.content ?? []) as Block[];
   return {
+    raw: content,
     text: content.filter((b) => b.type === "text").map((b) => b.text ?? "").join("\n").trim(),
     toolCalls: content
       .filter((b) => b.type === "tool_use")
@@ -445,7 +451,7 @@ export async function runContentAgent(
       return;
     }
 
-    transcript.push({ kind: "assistant", text: resp.text, toolCalls: resp.toolCalls });
+    transcript.push({ kind: "assistant", text: resp.text, toolCalls: resp.toolCalls, raw: resp.raw });
     const results: Array<{ id: string; content: string; isError: boolean }> = [];
     for (const tu of resp.toolCalls) {
       if (cancelled()) return;
