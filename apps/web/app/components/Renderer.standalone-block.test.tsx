@@ -80,5 +80,9 @@ describe("standalone block preview", () => {
     expect(html).toContain("Your name");
     expect(html).toContain("Email");
     expect(html).toContain("Send");
+    // WebMCP (#119): the form is an agent tool, and the honeypot stays out of it.
+    expect(html).toContain('toolname="contact_us"');
+    expect(html).not.toContain("toolautosubmit");
+    expect(html.match(/<input[^>]*name="pb_contact_reason"[^>]*>/)?.[0]).toContain('readOnly=""');
   });
 });
