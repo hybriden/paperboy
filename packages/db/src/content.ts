@@ -9,6 +9,7 @@ import {
   requirePermission,
 } from "./scope.js";
 import { DEFAULT_SITE_ID, auditLog, contentItem, contentReference, contentType, contentVersion, locale, site } from "./schema.js";
+import { currentContentTypes } from "./type-cache.js";
 import { getAgentReviewRequired } from "./site.js";
 import { announceDeliveryChange, dispatchWebhooks } from "./webhooks.js";
 import { trackUrlChanges } from "./redirects.js";
@@ -1042,8 +1043,12 @@ export async function getContent(
   loc: string,
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.read");
-  const item = await loadAuthorized(db, ctx, documentId, "read");
+  return contentDetail(db, await loadAuthorized(db, ctx, documentId, "read"), loc);
+}
 
+/** getContent's body, for an item this request has already authorized. */
+async function contentDetail(db: Database, item: typeof contentItem.$inferSelect, loc: string): Promise<ContentDetail> {
+  const documentId = item.documentId;
   // The versions and the page's URL at once (independent reads).
   const urlPathP = item.kind === "page" ? computePath(db, documentId, loc) : Promise.resolve(null);
   urlPathP.catch(() => undefined); // awaited below unless the variant is missing
@@ -1257,17 +1262,10 @@ interface TypeRegistry {
 }
 
 async function loadTypeRegistry(db: Database): Promise<TypeRegistry> {
-  const rows = await db
-    .select({ name: contentType.name, kind: contentType.kind, definition: contentType.definition })
-    .from(contentType)
-    .orderBy(asc(contentType.name));
+  // Parsed once per process and re-read only when a row changes (type-cache.ts).
+  const rows = await currentContentTypes(db);
   const known = new Map<string, { kind: string; nestedOnly: boolean; def: ContentTypeDef }>();
-  for (const r of rows) {
-    // Same normalization as getContentType (SEO group injected), so a def read
-    // here validates and coerces exactly like one read there.
-    const def = parseStoredContentTypeDef(r.definition);
-    known.set(r.name, { kind: r.kind, nestedOnly: def.nestedOnly === true, def });
-  }
+  for (const r of rows) known.set(r.name, { kind: r.kind, nestedOnly: r.def.nestedOnly === true, def: r.def });
   // The hint lists what an area with no allow-list actually accepts: general
   // blocks and pages. A PART would be refused two checks later, so naming it
   // here sent the caller straight into the next refusal.
@@ -1683,8 +1681,8 @@ async function updateContentOnce(
   req: UpdateContentRequest,
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.update");
-  const item = await loadAuthorized(db, ctx, documentId);
-  const reg = await loadTypeRegistry(db);
+  // The (instance-wide) type registry loads while the item is authorized.
+  const [item, reg] = await Promise.all([loadAuthorized(db, ctx, documentId), loadTypeRegistry(db)]);
   const type = requireType(reg, item.type);
 
   // Merge mode: shallow-merge the patch over the current working data so a
@@ -1848,7 +1846,8 @@ async function updateContentOnce(
 
     await rebuildReferences(tx, documentId, loc, type, data, reg.blockTypes);
   });
-  return getContent(db, ctx, documentId, loc);
+  // Authorized for WRITE above (stricter than getContent's read); no re-check.
+  return contentDetail(db, item, loc);
 }
 
 async function nextVersionNumber(db: Queryable, documentId: string, loc: string): Promise<number> {

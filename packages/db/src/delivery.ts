@@ -1,11 +1,12 @@
 import { type SQLWrapper, and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, type ExperimentArmKey, type ExperimentStatus, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, parseStoredContentTypeDef, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, type ExperimentArmKey, type ExperimentStatus, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type LiveExperiment, liveExperiments } from "./experiments.js";
-import { asset, contentItem, contentType, contentVersion, locale, site } from "./schema.js";
+import { asset, contentItem, contentVersion, locale, site } from "./schema.js";
+import { currentContentTypes } from "./type-cache.js";
 
 /**
  * The Delivery read chokepoint. EVERY public/preview read — including every
@@ -203,8 +204,8 @@ class DeliveryCtx {
   // twenty block types used to cost twenty round trips; the table is small).
   private typesLoaded: Promise<void> | null = null;
   private loadTypes(): Promise<void> {
-    this.typesLoaded ??= currentTypes(this.db).then((types) => {
-      for (const [name, def] of types) this.types.set(name, def);
+    this.typesLoaded ??= currentContentTypes(this.db).then((types) => {
+      for (const t of types) this.types.set(t.name, t.def);
     });
     return this.typesLoaded;
   }
@@ -1190,43 +1191,6 @@ async function primeReferences(ctx: DeliveryCtx, perspective: Perspective, typeN
       }
     }
   }
-}
-
-/**
- * Every content type, parsed, shared by the requests of this process. Each
- * request still asks the database what is current, but only for each row's
- * name and xmin (a few bytes, where the definitions are ~160 kB of JSON to
- * parse and validate); a definition is re-read only when its xmin moved (any
- * write changes it, from this process or another, e.g. the MCP server). A row
- * gone from the table is gone from the result. Cached definitions are frozen,
- * so nothing can change one for the next request.
- */
-const parsedTypes = new WeakMap<Database, Map<string, { xmin: string; def: ContentTypeDef }>>();
-async function currentTypes(db: Database): Promise<Map<string, ContentTypeDef>> {
-  let cache = parsedTypes.get(db);
-  if (!cache) parsedTypes.set(db, (cache = new Map()));
-  const rows = await db.select({ name: contentType.name, xmin: sql<string>`xmin::text` }).from(contentType);
-  const stale = rows.filter((r) => cache.get(r.name)?.xmin !== r.xmin);
-  if (stale.length) {
-    const defs = await db.select({ name: contentType.name, definition: contentType.definition }).from(contentType).where(inArray(contentType.name, stale.map((r) => r.name)));
-    const xminOf = new Map(stale.map((r) => [r.name, r.xmin]));
-    // Inject the reserved SEO group (page kinds) so delivery's sanitize +
-    // computeSeo see the SEO fields even for types that don't store them.
-    for (const d of defs) cache.set(d.name, { xmin: xminOf.get(d.name)!, def: deepFreeze(parseStoredContentTypeDef(d.definition)) });
-  }
-  const out = new Map<string, ContentTypeDef>();
-  for (const r of rows) {
-    const hit = cache.get(r.name);
-    if (hit) out.set(r.name, hit.def);
-  }
-  return out;
-}
-function deepFreeze<T>(value: T): T {
-  if (value && typeof value === "object" && !Object.isFrozen(value)) {
-    Object.freeze(value);
-    for (const v of Object.values(value)) deepFreeze(v);
-  }
-  return value;
 }
 
 /* ------------------------------ public API -------------------------------- */
