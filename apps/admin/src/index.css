@@ -207,17 +207,25 @@
 }
 
 @utility eyebrow {
-  /* Editorial header system — a small "dateline" eyebrow over a serif title,
-     the newsroom voice carried consistently across every screen. */
-  @apply text-[11px] font-semibold uppercase tracking-[0.16em] text-muted;
+  /* A small context label over a title. Sentence case at a readable size:
+     tracked uppercase labels shouted louder than the content they introduce. */
+  @apply text-xs font-medium text-muted;
 }
-
+/* One type scale for the whole admin: 12 (meta) / 14 (body, controls) /
+   16 (section) / 20-24 (titles). One grotesk; the serif is the wordmark only. */
 @utility page-title {
-  @apply font-display text-[1.75rem] font-semibold leading-[1.1] tracking-[-0.01em] text-fg;
+  @apply text-2xl font-semibold leading-tight tracking-[-0.01em] text-fg;
 }
-
 @utility section-title {
-  @apply font-display text-2xl font-semibold leading-tight tracking-[-0.01em] text-fg;
+  @apply text-xl font-semibold leading-tight tracking-[-0.01em] text-fg;
+}
+/* A pane's or panel's heading ("Content", "Assets", "Fields"). */
+@utility pane-title {
+  @apply text-sm font-semibold text-fg;
+}
+/* A label for a group of rows or a column (menu groups, table headers). */
+@utility group-label {
+  @apply text-xs font-medium text-muted;
 }
 
 @layer utilities {
@@ -233,12 +241,13 @@
     --font-mono:
       'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', monospace;
 
-    /* Light — clean warm near-white (lifted from the old cream newsprint) */
-    --c-canvas: 251 250 248;
+    /* Light: cool neutral. One white plane on a barely-grey ground, so panel
+       edges recede instead of stacking tones. */
+    --c-canvas: 249 250 251;
     --c-panel: 255 255 255;
-    --c-fg: 26 26 24;
-    --c-muted: 90 99 110;
-    --c-line: 230 226 218;
+    --c-fg: 17 17 17;
+    --c-muted: 85 92 102;
+    --c-line: 229 231 235;
 
     --c-chrome: 22 28 36;
     --c-chrome-light: 32 41 51;
@@ -271,13 +280,15 @@
     --c-danger-subtle: 250 232 232;
     --c-ring: 34 87 214;
 
-    --radius: 9px;
-    --radius-lg: 14px;
+    /* Tight radii, chosen once: 6 on controls, 8 on cards. */
+    --radius: 6px;
+    --radius-lg: 8px;
     /* Forms get their own, smaller radius: --radius is tuned for cards and
        buttons, and at control height it reads as a pill rather than a box. */
     --radius-field: 6px;
-    --shadow-panel:
-      0 1px 2px rgb(16 24 40 / 0.04), 0 6px 16px -6px rgb(16 24 40 / 0.1);
+    /* A resting panel is separated by its border; the shadow is barely there.
+       Real depth is for what floats (--shadow-pop). */
+    --shadow-panel: 0 1px 2px rgb(16 24 40 / 0.04);
     --shadow-pop:
       0 10px 30px -10px rgb(16 24 40 / 0.28), 0 2px 8px rgb(16 24 40 / 0.1);
     --dur: 160ms;
@@ -285,15 +296,14 @@
   }
 
   [data-theme='dark'] {
-    /* Dark newsprint — a subtly warm charcoal (r≥g≥b), echoing the light
-     theme's warmth instead of the old cool blue-gray. Clear step from the
-     app background (canvas) to raised surfaces (panel) so cards/shell read
-     by tone, not shadow (shadows barely register on dark). */
-    --c-canvas: 23 22 20;
-    --c-panel: 32 31 28;
-    --c-fg: 237 234 226;
-    --c-muted: 162 156 146;
-    --c-line: 46 44 40;
+    /* Dark: true neutral greys (no warm or navy cast). A clear step from the
+     app background (canvas) to raised surfaces (panel), so cards and shell
+     read by tone, not shadow (shadows barely register on dark). */
+    --c-canvas: 18 18 18;
+    --c-panel: 28 28 28;
+    --c-fg: 237 237 237;
+    --c-muted: 168 168 168;
+    --c-line: 48 48 48;
 
     --c-chrome: 11 12 16;
     --c-chrome-light: 24 26 32;
@@ -362,9 +372,14 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* Editorial masthead wordmark. */
-  .masthead {
+  /* The wordmark: the one place the serif lives. */
+  .wordmark {
     font-family: var(--font-display);
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  /* Large titles and figures: the grotesk, semibold. */
+  .masthead {
     font-weight: 600;
     letter-spacing: -0.01em;
   }

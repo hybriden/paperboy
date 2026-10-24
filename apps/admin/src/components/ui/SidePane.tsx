@@ -33,7 +33,7 @@ export function PinButton({ pinned, onToggle }: { pinned: boolean; onToggle: () 
       onClick={onToggle}
       aria-pressed={pinned}
       title={pinned ? "Auto-hide this panel" : "Keep this panel open"}
-      className={`grid h-7 w-7 place-items-center rounded ${pinned ? "text-accent-700 hover:bg-accent/10" : "text-muted hover:bg-line/60"}`}
+      className={`grid h-7 w-7 place-items-center rounded ${pinned ? "text-fg hover:bg-line/60" : "text-muted hover:bg-line/60"}`}
     >
       {pinned ? <Icon.Pin width={15} height={15} /> : <Icon.PinOff width={15} height={15} />}
     </button>
@@ -96,7 +96,7 @@ export function AutoHideRail({
         className="flex flex-1 flex-col items-center gap-2 py-3 text-muted hover:bg-line/40 hover:text-fg"
       >
         <Icon.Chevron width={14} height={14} className={isLeft ? "" : "rotate-180"} />
-        <span className="text-[11px] font-bold uppercase tracking-wider [writing-mode:vertical-rl]">{label}</span>
+        <span className="text-xs font-medium [writing-mode:vertical-rl]">{label}</span>
       </button>
       {/* Flyout overlay — rolls out on hover; rolls back into the edge 1.5s after
           the pointer leaves (transform only, no fade — see .pb-flyout). */}

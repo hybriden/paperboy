@@ -428,7 +428,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
         </div>
 
         <div className="mt-4 mb-1.5 flex items-center justify-between">
-          <h4 className="text-[13px] font-bold uppercase tracking-wide text-muted">Fields</h4>
+          <h4 className="pane-title">Fields</h4>
           <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setFields((p) => [...p, newField()])}>
             <Icon.Plus width={14} height={14} /> Add field
           </button>
@@ -508,7 +508,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
         </div>
 
         <div className="mt-4 rounded-(--radius) border border-line bg-canvas/40 p-3">
-            <h4 className="text-[13px] font-bold uppercase tracking-wide text-muted">SEO &amp; schema.org</h4>
+            <h4 className="pane-title">SEO &amp; schema.org</h4>
             <p className="mb-3 mt-1 text-xs text-muted">
               {kind === "page"
                 ? "Optional. Delivery builds the SEO / JSON-LD block automatically from field-name conventions — set these only to override that guess (e.g. force a schema.org type, or point a role at a differently-named field)."
@@ -658,7 +658,7 @@ function OptionsEditor({
   return (
     <div className="mt-2 border-t border-line pt-2">
       <div className="mb-1 flex items-center justify-between gap-3">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Options</span>
+        <span className="group-label">Options</span>
         <span className="flex items-center gap-3">
           {/* Tag-style fields: every write is normalized to a URL-safe slug
               ("AI"/"Llama.CPP" → "ai"/"llama-cpp") so tag pages and sitemaps
@@ -708,7 +708,7 @@ function ValidationEditor({
   const num = (s: string) => (s === "" ? undefined : Number(s));
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-line pt-2">
-      <span className="text-[11px] font-semibold uppercase tracking-wide text-muted">Validation</span>
+      <span className="group-label">Validation</span>
       {type === "text" ? (
         <>
           <input className="field-input w-24 py-1" type="number" placeholder="min len" value={v.minLength ?? ""} aria-label="Minimum length"
@@ -746,7 +746,7 @@ function ChipSelect({
   const toggle = (o: string) => onChange(value.includes(o) ? value.filter((x) => x !== o) : [...value, o]);
   return (
     <div className="mt-2 border-t border-line pt-2">
-      <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">
+      <div className="mb-1 group-label">
         {label} <span className="font-normal normal-case text-muted/80">({value.length ? value.join(", ") : empty})</span>
       </div>
       <div className="flex flex-wrap gap-1.5">

@@ -26,7 +26,7 @@ function PanelShell({ title, hint, action, children }: { title?: string; hint?: 
     <section className="mb-8">
       {(title || action) && (
         <div className="mb-2 flex items-center justify-between gap-2">
-          {title && <h2 className="text-xs font-bold uppercase tracking-wide text-muted">{title}</h2>}
+          {title && <h2 className="pane-title">{title}</h2>}
           <div className="ml-auto">{action}</div>
         </div>
       )}
@@ -378,7 +378,7 @@ function NewTypeDialog({
             if (list.length === 0) return null;
             return (
               <div key={key}>
-                <h4 className="mb-1.5 text-[13px] font-bold uppercase tracking-wide text-muted">{label}</h4>
+                <h4 className="mb-1.5 pane-title">{label}</h4>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {list.map((t) => (
                     <div key={t.name} className="flex flex-col gap-1.5 rounded-(--radius) border border-line bg-canvas/60 p-3">

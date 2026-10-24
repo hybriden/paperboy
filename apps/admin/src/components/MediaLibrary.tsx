@@ -135,7 +135,7 @@ export function MediaTab() {
         <div className="flex gap-1" role="tablist" aria-label="Image source">
           {([["library", `${visible?.length ?? 0} images`], ["stock", "Stock"]] as const).map(([key, label]) => (
             <button key={key} type="button" role="tab" aria-selected={mode === key}
-              className={`rounded px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide ${mode === key ? "bg-accent/15 text-accent-700" : "text-muted hover:bg-line/60"}`}
+              className={`rounded px-2 py-0.5 text-xs font-medium ${mode === key ? "bg-accent/15 text-accent-700" : "text-muted hover:bg-line/60"}`}
               onClick={() => setMode(key)}>
               {label}
             </button>

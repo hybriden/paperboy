@@ -35,8 +35,8 @@ function scheduleTime(iso: string): string {
 function DashSection({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
     <section>
-      <h2 className="eyebrow mb-2">{title}</h2>
-      {hint && <p className="-mt-1 mb-2 text-xs text-muted">{hint}</p>}
+      <h2 className="mb-1 text-base font-semibold text-fg">{title}</h2>
+      {hint && <p className="mb-2 text-sm text-muted">{hint}</p>}
       <Surface elevation={1} className="overflow-hidden">{children}</Surface>
     </section>
   );
@@ -496,7 +496,7 @@ export function SettingsView() {
               if (!items.length) return null;
               return (
                 <div key={g} className="mb-3">
-                  <div className="px-2 pb-1 text-[10px] font-bold uppercase tracking-wide text-muted">{g === "Site" && activeSiteName ? `Site · ${activeSiteName}` : g}</div>
+                  <div className="px-2 pb-1 group-label">{g === "Site" && activeSiteName ? `Site · ${activeSiteName}` : g}</div>
                   {items.map((t) => (
                     <button
                       key={t.key}

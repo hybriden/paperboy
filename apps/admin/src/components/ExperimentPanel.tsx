@@ -361,7 +361,7 @@ function Results({ exp }: { exp: ExperimentDetail }) {
   const days = [...new Set(exp.daily.map((d) => d.day))];
   return (
     <section aria-label="Results" className="flex flex-col gap-2">
-      <h3 className="text-xs font-bold uppercase tracking-wide text-muted">Results</h3>
+      <h3 className="pane-title">Results</h3>
       <p role="status" className="font-medium text-fg">{exp.verdict.summary}</p>
       {exp.estimate.daysLeft != null && exp.estimate.perDay != null && (
         <p className="text-xs text-muted">
@@ -374,7 +374,7 @@ function Results({ exp }: { exp: ExperimentDetail }) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
+            <tr className="border-b border-line text-left text-xs text-muted">
               <th className="px-2 py-1.5 font-semibold">Version</th>
               <th className="px-2 py-1.5 text-right font-semibold">Visitors</th>
               <th className="px-2 py-1.5 text-right font-semibold">Conversions</th>

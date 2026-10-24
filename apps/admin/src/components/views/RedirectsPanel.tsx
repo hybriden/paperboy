@@ -412,7 +412,7 @@ export function RedirectsPanel() {
   return (
     <section className="mb-8">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-xs font-bold uppercase tracking-wide text-muted">Redirects</h2>
+        <h2 className="pane-title">Redirects</h2>
         {canWrite && (
           <div className="flex gap-1.5">
             <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setImporting(true)}>Import CSV</button>
@@ -464,7 +464,7 @@ export function RedirectsPanel() {
               <div className="relative overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-muted">
+                    <tr className="border-b border-line text-left text-xs text-muted">
                       {canWrite && (
                         <th className="w-8 px-3 py-1.5">
                           <input type="checkbox" aria-label="Select all shown" checked={allVisibleSelected} onChange={() => setSelected(allVisibleSelected ? new Set() : new Set(visible.map((r) => r.id)))} />

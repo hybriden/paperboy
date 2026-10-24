@@ -196,7 +196,7 @@ export function Tree({ selectedId, onSelect, canCreate, canDelete, types, locale
   return (
     <div className="flex h-full flex-col">
       <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
-        <h2 className="text-[13px] font-bold uppercase tracking-wide text-muted">Content</h2>
+        <h2 className="pane-title">Content</h2>
         <div className="flex items-center gap-1">
           {canCreate && (
             <button className="btn-subtle px-2 py-1 text-xs" onClick={() => setCreating({ parentId: null })} aria-label="Create new content">
@@ -519,7 +519,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
               e.dataTransfer.effectAllowed = "copy";
             }}
             className={`group flex cursor-pointer items-center gap-1 rounded-(--radius) py-1.5 pr-1.5 text-sm transition-colors ${
-              overInside ? "bg-accent/15 ring-2 ring-inset ring-accent" : isSelected ? "bg-accent/15 font-medium text-fg" : "text-fg hover:bg-line/50"
+              overInside ? "bg-accent/15 ring-2 ring-inset ring-accent" : isSelected ? "bg-line font-medium text-fg" : "text-fg hover:bg-line/50"
             }`}
             style={{ paddingLeft: indent }}
             title={`${node.name} · ${node.type}`}
@@ -539,7 +539,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
             <TypeIcon name={iconName} fallback={node.kind === "block" ? "blocks" : "file"} width={15} height={15} className="shrink-0 text-muted" />
             <span className={`truncate ${ind.translated ? "" : "italic text-muted"}`}>{node.name}</span>
             {isStartPage && (
-              <span className="shrink-0 rounded bg-accent/15 px-1 text-[10px] font-semibold text-accent-700" title="Served at / (site start page)">/</span>
+              <span className="shrink-0 rounded bg-line px-1 text-[11px] font-medium text-muted" title="Served at / (site start page)">/</span>
             )}
             {dragEnabled && (
               <button
@@ -555,12 +555,16 @@ function Row(props: LevelProps & { node: TreeNode }) {
               </button>
             )}
             {ind.translated ? (
-              <span
-                role="img"
-                aria-label={statusLabel}
-                title={statusLabel}
-                className={`${dragEnabled ? "" : "ml-auto"} h-2 w-2 shrink-0 rounded-full ${loc?.status === "published" ? "bg-published" : "bg-draft"}`}
-              />
+              loc?.status === "published" && !loc.hasUnpublishedChanges ? (
+                <span className="sr-only">{statusLabel}</span>
+              ) : (
+                <span
+                  role="img"
+                  aria-label={statusLabel}
+                  title={statusLabel}
+                  className={`${dragEnabled ? "" : "ml-auto"} h-2 w-2 shrink-0 rounded-full bg-draft`}
+                />
+              )
             ) : (
               <span
                 className={`${dragEnabled ? "" : "ml-auto"} shrink-0 rounded bg-line/60 px-1 text-[10px] font-medium uppercase leading-tight text-muted`}
