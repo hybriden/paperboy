@@ -945,9 +945,10 @@ test("visual editing: a field INSIDE a block opens the on-page overlay scoped to
   );
   await expect(page.getByText("Edit on page")).toBeVisible({ timeout: 5000 });
   // The overlay edits the BLOCK's own field (HeroBlock.title); the form panel
-  // stays unmounted — dropping to side-by-side would render #pb-block-0.
+  // stays unmounted — dropping to side-by-side would render its property tabs.
+  // (The outline lists the blocks, but leaves the clicked row closed: one editor per field.)
   await expect(page.getByRole("textbox", { name: "Title" })).toBeVisible();
-  await expect(page.locator("#pb-block-0")).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "Property groups" })).toHaveCount(0);
 });
 
 test("visual editing: a shared block edits On-page on its standalone preview (#99)", async ({ page }) => {

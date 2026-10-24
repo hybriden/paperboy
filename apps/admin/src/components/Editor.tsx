@@ -1074,7 +1074,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         };
         if (action.target === "name") setOpe({ field: "name", ...anchor });
         else if (action.target === "block" && blockField && d.blockIndex != null) {
-          setBlockPath(blockField.path ?? [{ field: blockField.area, key: blockField.key }]);
+          // The overlay owns a field click; the outline row stays as it was,
+          // or the same field would have two editors at once.
           setOpe({ field: blockField.name, block: { area: blockField.area, index: d.blockIndex }, path: blockField.path, ...anchor });
         } else if (def) setOpe({ field: def.name, ...anchor });
         return;
