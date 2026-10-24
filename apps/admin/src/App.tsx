@@ -5,7 +5,7 @@ import type { SessionUser } from "@paperboy/shared";
 import { Login } from "./components/Login.js";
 import { OAuthConsent } from "./components/OAuthConsent.js";
 import { Shell } from "./components/Shell.js";
-import { DashboardView, SettingsView } from "./components/views/Views.js";
+import { DashboardView, SettingsView, SubmissionsView, TrashView } from "./components/views/Views.js";
 import { EditView } from "./components/views/EditView.js";
 import { ACTIVE_SITE_KEY, api, setActiveSite, setCsrf, setUnauthorizedHandler } from "./lib/api.js";
 import { UserContext } from "./lib/user.js";
@@ -70,6 +70,8 @@ export function App() {
           <Route path="edit" element={<EditView />} />
           <Route path="edit/:documentId" element={<EditView />} />
           <Route path="dashboard" element={<DashboardView />} />
+          <Route path="submissions" element={user.permissions.includes("submission.read") ? <SubmissionsView /> : <Navigate to="/edit" replace />} />
+          <Route path="trash" element={<TrashView />} />
           <Route path="settings" element={<SettingsView />} />
           <Route path="*" element={<Navigate to="/edit" replace />} />
         </Route>

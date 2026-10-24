@@ -172,7 +172,7 @@ test("duplicate a page produces a (copy)", async ({ page }) => {
   await trashFromTree(page, name);
 });
 
-test("trash a page, then restore it from Settings → Trash", async ({ page }) => {
+test("trash a page, then restore it from Trash", async ({ page }) => {
   const name = await createPage(page, { area: "trash", type: "ArticlePage" });
 
   await openContentActions(page);
@@ -180,9 +180,8 @@ test("trash a page, then restore it from Settings → Trash", async ({ page }) =
   await expect(page.getByText("Moved to trash").first()).toBeVisible({ timeout: 10_000 });
   await expect(SEL.treeItem(page, name)).toHaveCount(0, { timeout: 10_000 });
 
-  // Restore from Settings → Trash.
-  await page.getByRole("link", { name: "Settings" }).click();
-  await page.getByRole("button", { name: "Trash", exact: true }).click();
+  // Restore from Trash (main nav).
+  await page.getByRole("link", { name: "Trash" }).click();
   const trashRow = page.getByText(name, { exact: true }).locator("xpath=ancestor::div[contains(@class,'items-center')][1]");
   await expect(trashRow).toBeVisible({ timeout: 10_000 });
   await trashRow.getByRole("button", { name: "Restore" }).click();

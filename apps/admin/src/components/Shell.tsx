@@ -20,8 +20,15 @@ const IS_MAC = /mac|iP(hone|ad|od)/i.test(platform);
 const RAIL = [
   { to: "/dashboard", icon: Icon.Dashboard, label: "Dashboard" },
   { to: "/edit", icon: Icon.Edit, label: "Content" },
+  { to: "/submissions", icon: Icon.Inbox, label: "Forms", permission: "submission.read" },
+  { to: "/trash", icon: Icon.Trash, label: "Trash" },
   { to: "/settings", icon: Icon.Settings, label: "Settings" },
 ];
+
+function useRail() {
+  const { user } = useUser();
+  return RAIL.filter((it) => !it.permission || user.permissions.includes(it.permission as never));
+}
 
 export function Shell() {
   const [crumb, setCrumb] = useState<string | null>(null);
@@ -30,7 +37,7 @@ export function Shell() {
   const isMobile = useIsMobile();
 
   const section =
-    location.pathname.startsWith("/dashboard") ? "Dashboard" : location.pathname.startsWith("/settings") ? "Settings" : "Edit";
+    RAIL.find((it) => it.to !== "/edit" && location.pathname.startsWith(it.to))?.label ?? "Edit";
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -182,9 +189,10 @@ function UserMenu() {
 
 function Rail() {
   const { pathname } = useLocation();
+  const rail = useRail();
   return (
     <nav className="flex w-14 shrink-0 flex-col items-center gap-1 border-r border-line bg-panel py-3" aria-label="Main">
-      {RAIL.map((it) => {
+      {rail.map((it) => {
         const isActive = pathname === it.to || pathname.startsWith(`${it.to}/`);
         return (
           <Tooltip key={it.to} label={it.label} side="right">
@@ -207,9 +215,10 @@ function Rail() {
 /** Phone navigation: the side rail laid out as a touch-friendly bottom tab bar. */
 function BottomNav() {
   const { pathname } = useLocation();
+  const rail = useRail();
   return (
     <nav className="flex shrink-0 items-stretch border-t border-line bg-panel" aria-label="Main">
-      {RAIL.map((it) => {
+      {rail.map((it) => {
         const isActive = pathname === it.to || pathname.startsWith(`${it.to}/`);
         return (
           <NavLink

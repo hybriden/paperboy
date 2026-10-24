@@ -430,7 +430,7 @@ function Row(props: LevelProps & { node: TreeNode }) {
       void qc.invalidateQueries({ queryKey: ["blocks"] });
       void qc.invalidateQueries({ queryKey: ["trash"] });
       void qc.invalidateQueries({ queryKey: ["dashboard"] });
-      toast.success("Moved to trash", "Restore it from Settings → Trash.");
+      toast.success("Moved to trash", "Restore it from Trash in the side bar.");
     },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
   });

@@ -60,7 +60,7 @@ export function AssetPane({
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["trash"] });
       void qc.invalidateQueries({ queryKey: ["dashboard"] });
-      toast.success("Moved to trash", "Restore it from Settings → Trash.");
+      toast.success("Moved to trash", "Restore it from Trash in the side bar.");
     },
     onError: (e) => toast.error("Couldn’t delete block", (e as Error).message),
   });
@@ -167,7 +167,7 @@ export function AssetPane({
                       className="invisible shrink-0 px-0.5 text-muted hover:text-danger group-hover:visible"
                       title="Move block to trash"
                       disabled={trash.isPending}
-                      onClick={() => { if (window.confirm(`Move “${b.name}” to trash? Restore it later from Settings → Trash.`)) trash.mutate(b.documentId); }}
+                      onClick={() => { if (window.confirm(`Move “${b.name}” to trash? Restore it later from Trash in the side bar.`)) trash.mutate(b.documentId); }}
                     >
                       <Icon.Trash width={13} height={13} />
                     </button>

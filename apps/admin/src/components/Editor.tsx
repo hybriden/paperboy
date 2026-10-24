@@ -69,7 +69,7 @@ type EditorView = "props" | "split" | "onpage";
  * Submissions are visitor data, not properties of the block, but they ride the
  * same tab strip on purpose — a Form is a `block`-kind document, so an editor
  * looking for "where did the replies go?" opens the form itself. A separate
- * screen would mean finding the form twice. Settings → Form submissions is the
+ * screen would mean finding the form twice. the Forms page (/submissions) is the
  * cross-form entry point for the same panel.
  */
 const SUBMISSIONS_TAB = "Submissions";
@@ -655,7 +655,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["blocks"] });
       void qc.invalidateQueries({ queryKey: ["dashboard"] });
-      toast.success("Moved to trash", "Restore it from Settings → Trash.");
+      toast.success("Moved to trash", "Restore it from Trash in the side bar.");
       void navigate("/edit");
     },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
