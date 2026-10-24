@@ -261,7 +261,7 @@ waitUntil(cms.reportTraffic({ exposures }));     // server-side, public key, nev
   attributed). With consent, a first-party random id you keep at most 13
   months. In Norway a cookie that remembers the version needs consent
   (ekomloven §3-15); don't label it "strictly necessary".
-- **Robots** get no key, so they see A: never branch on the user agent.
+- **Robots** are treated like any visitor (in cookieless mode they get a random version; with no key they get A). Never branch on the user agent: showing crawlers something else is cloaking.
 - **Conversions.** A form on the page: pass the exposures to
   `submitForm(id, { …, experiments: exposures })`. Anything else: report
   `conversions: [{ experimentId, arm, goal: "event:signup" }]` with the
