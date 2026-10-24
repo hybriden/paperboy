@@ -602,6 +602,11 @@ export function generalBlockTypes<T extends { kind: string; nestedOnly?: boolean
   return types.filter((t) => t.kind === "block" && !t.nestedOnly);
 }
 
+/** The other half of the PARTS rule: names of the types only ever nested inside another. */
+export function partTypeNames(types: Array<{ name: string; nestedOnly?: boolean }>): Set<string> {
+  return new Set(types.filter((t) => t.nestedOnly).map((t) => t.name));
+}
+
 /**
  * Canonical URL-safe slug for a tag-style select value. Deterministic and
  * shared by every write path (and mirrorable by frontends for tag URLs):

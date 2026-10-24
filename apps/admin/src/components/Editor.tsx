@@ -9,6 +9,7 @@ import {
   isFormFieldType,
   isFormType,
   type Locale,
+  partTypeNames,
   SEO_CONVENTION,
   SEO_FIELD_NAMES,
   type SessionUser,
@@ -89,7 +90,7 @@ interface EditorProps {
 }
 
 export function Editor({ documentId, locale, setLocale, locales, types, user, onName, widePreview = false, mobile = false }: EditorProps) {
-  const nestedOnlyTypeNames = useMemo(() => new Set(types.filter((t) => t.nestedOnly).map((t) => t.name)), [types]);
+  const nestedOnlyTypeNames = useMemo(() => partTypeNames(types), [types]);
   const qc = useQueryClient();
   const toast = useToast();
   const navigate = useNavigate();
@@ -2707,7 +2708,7 @@ function AddBlockCard({
   onClose: () => void;
 }) {
   const allowed = allowedBlockTypesFor(def, types);
-  const nestedOnlyTypes = useMemo(() => new Set(types.filter((t) => t.nestedOnly).map((t) => t.name)), [types]);
+  const nestedOnlyTypes = useMemo(() => partTypeNames(types), [types]);
   // Pages placeable as teasers — same source the sidebar picker uses.
   const pages = useQuery({ queryKey: ["pages"], queryFn: ({ signal }) => api.pages(signal) });
   const [picker, setPicker] = useState<{ x: number; y: number } | null>(null);
