@@ -129,12 +129,14 @@ async function ListBlockTeasers({ d, locale, preview, edit }: { d: Record<string
   );
 }
 
-function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; locale: string; preview: boolean }) {
+function Block({ b, index, locale, preview }: { b: AreaBlock; index: number | null; locale: string; preview: boolean }) {
   const d = blockData(b);
   // ATTR markers let the editor's preview map a click back to this block. Only
   // the attributes declared in @paperboycms/preview's ATTR contract — a former
-  // "shared" marker was undeclared and read by nothing (L5).
-  const edit = { [ATTR.blockIndex]: index, [ATTR.blockType]: b.blockType };
+  // "shared" marker was undeclared and read by nothing (L5). No index = the
+  // block IS the previewed document (standalone): no marker, so its fields
+  // report as the document's own and On-page edits them directly (#99).
+  const edit = index == null ? {} : { [ATTR.blockIndex]: index, [ATTR.blockType]: b.blockType };
   if (b.blockType === "HeroBlock") {
     const img = d.heroImage as { url?: string; alt?: string } | null | undefined;
     // Two HeroBlock shapes exist: the seed's (title/subtitle/ctaUrl/heroImage) and
@@ -207,7 +209,7 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number; loc
 export function StandaloneBlock({ content, locale, preview }: { content: DeliveryContent; locale: string; preview: boolean }) {
   return (
     <main className="wrap" data-document-id={content.documentId}>
-      <Block b={standaloneAreaBlock(content)} index={0} locale={locale} preview={preview} />
+      <Block b={standaloneAreaBlock(content)} index={null} locale={locale} preview={preview} />
     </main>
   );
 }

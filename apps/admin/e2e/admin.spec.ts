@@ -950,6 +950,47 @@ test("visual editing: a field INSIDE a block opens the on-page overlay scoped to
   await expect(page.locator("#pb-block-0")).toHaveCount(0);
 });
 
+test("visual editing: a shared block edits On-page on its standalone preview (#99)", async ({ page }) => {
+  await login(page);
+  const me = await page.request.get("/api/v1/auth/me");
+  const headers = { "x-csrf-token": ((await me.json()) as { csrfToken: string }).csrfToken, origin: "http://localhost:8090" };
+  const created = await page.request.post("/api/v1/manage/content", {
+    headers,
+    data: { type: "CardBlock", parentId: null, locale: "en", name: `OPE Card ${Date.now().toString(36)}`, data: { title: "Before" } },
+  });
+  expect(created.ok(), `create card: ${created.status()} ${await created.text()}`).toBe(true);
+  const { documentId } = (await created.json()) as { documentId: string };
+
+  await page.goto(`/edit/${documentId}`);
+  await page.getByRole("button", { name: "On-page" }).click();
+  await expect(page.getByRole("button", { name: "On-page" })).toHaveAttribute("aria-pressed", "true");
+  const frame = await waitPreviewFrame(page);
+  await expect.poll(() => frame.url(), { timeout: 15_000 }).toContain(`/preview/block/${documentId}`);
+  // A REAL click through the bridge: the standalone route renders no block
+  // marker, so the field reports as this document's own (blockIndex null).
+  await frame.locator('[data-pb-field="title"]').click();
+  await expect(page.getByText("Edit on page")).toBeVisible({ timeout: 5000 });
+  await page.getByRole("textbox", { name: "Title" }).fill("After on-page");
+  await expect
+    .poll(async () => ((await (await page.request.get(`/api/v1/manage/content/${documentId}?locale=en`)).json()) as { data: { title?: string } }).data.title, { timeout: 10_000 })
+    .toBe("After on-page");
+  // An older standalone route that still marks the root block reports the
+  // same click as block 0 of no area: still THIS document's title.
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("Edit on page")).toHaveCount(0);
+  // Closing reloads the frame (saves were made), so post until it lands.
+  await expect(async () => {
+    await frame.evaluate(() =>
+      window.parent.postMessage(
+        { type: "paperboy:edit", field: "title", blockIndex: 0, blockType: "CardBlock", rect: { x: 40, y: 40, w: 240, h: 28 }, click: { x: 60, y: 54 } },
+        "*",
+      ),
+    );
+    await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue("After on-page", { timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
+  await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+});
+
 test("visual editing: an add-block message from the preview opens the area palette and appends", async ({ page }) => {
   await login(page);
   const me = await page.request.get("/api/v1/auth/me");
@@ -1838,8 +1879,9 @@ test.describe("forms builder", () => {
     const { documentId, headers } = await createForm(page);
     await page.goto(`/edit/${documentId}`);
     await expect(page.getByTestId("content-area-fields")).toBeVisible({ timeout: 20_000 });
-    // On-page stays page-only; Side by side is live and STANDALONE by default.
-    await expect(page.getByRole("button", { name: "On-page" })).toBeDisabled();
+    // Side by side is live and STANDALONE by default. On-page is offered (the
+    // standalone frame is this document, #99) but only when picked HERE.
+    await expect(page.getByRole("button", { name: "On-page" })).toHaveAttribute("aria-pressed", "false");
     await expect(page.getByRole("button", { name: "Side by side" })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByText("Standalone", { exact: true })).toBeVisible();
     await expect
@@ -1899,25 +1941,33 @@ test.describe("forms builder", () => {
 
     // Reload the form: the header names the host page (click = open it), and
     // Side by side defaults to the STANDALONE preview — picking the host page
-    // in the preview-target picker borrows it. On-page stays page-only.
+    // in the preview-target picker borrows it. On-page works on the standalone
+    // frame only: a borrowed page's clicks describe that page (#99).
     await page.goto(`/edit/${documentId}`);
     // exact: the tree's reorder grip is now named "Drag to reorder <page>" too.
     await expect(page.getByRole("button", { name: pageName, exact: true })).toBeVisible({ timeout: 20_000 });
     const split = page.getByRole("button", { name: "Side by side" });
     await expect(split).toBeEnabled();
-    await expect(page.getByRole("button", { name: "On-page" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "On-page" })).toBeEnabled();
     await split.click();
     const src = async () => (await page.locator("iframe").first().getAttribute("src")) ?? "";
     await expect.poll(src, { timeout: 15_000 }).toContain(`/preview/block/${documentId}`);
     await page.getByRole("combobox", { name: "Preview target" }).selectOption({ label: `on ${pageName}` });
-    // Now the iframe carries the host page's path.
+    // Now the iframe carries the host page's path, and the bridge is read-only.
     await expect.poll(src, { timeout: 15_000 }).toContain("/form-host");
+    await expect(page.getByRole("button", { name: "On-page" })).toBeDisabled();
+    const hostFrame = await waitPreviewFrame(page);
+    await hostFrame.evaluate(() =>
+      window.parent.postMessage({ type: "paperboy:add-block", field: "mainArea", rect: { x: 10, y: 10, w: 100, h: 100 } }, "*"),
+    );
+    await page.waitForTimeout(600);
+    await expect(page.getByRole("dialog", { name: /Add block|Edit property/ })).toHaveCount(0);
 
     await page.request.delete(`/api/v1/manage/content/${host.documentId}`, { headers });
     await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
   });
 
-  test("standalone block preview stays read-only: an add-block message is dropped", async ({ page }) => {
+  test("standalone block preview is this document: an add-block on its own area opens the palette", async ({ page }) => {
     await login(page);
     const { documentId, headers } = await createForm(page);
     await page.goto(`/edit/${documentId}`);
@@ -1925,16 +1975,15 @@ test.describe("forms builder", () => {
     const src = async () => (await page.locator("iframe").first().getAttribute("src")) ?? "";
     await expect.poll(src, { timeout: 15_000 }).toContain(`/preview/block/${documentId}`);
     const frame = await waitPreviewFrame(page);
-    // The standalone frame's coordinates describe THAT render, not this
-    // document — the externalPreview guard must drop add-block like edit/drop.
+    // The standalone route renders the block with no block marker, so its
+    // areas are this document's own (#99): "fields" is the Form's area.
     await frame.evaluate(() =>
       window.parent.postMessage(
         { type: "paperboy:add-block", field: "fields", rect: { x: 10, y: 10, w: 100, h: 100 } },
         "*",
       ),
     );
-    await page.waitForTimeout(600);
-    await expect(page.getByRole("dialog", { name: /Add block|Edit property/ })).toHaveCount(0);
+    await expect(page.getByRole("dialog", { name: "Add block" })).toBeVisible({ timeout: 5000 });
     await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
   });
 
