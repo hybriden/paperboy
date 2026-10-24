@@ -605,13 +605,12 @@ async function localeFallbackChain(db: Database, loc: string): Promise<string[]>
  * a nb page under an en-only parent was live on the site while the editor
  * claimed "No URL yet" (2026-06-07).
  */
-async function workingSlugAlongChain(db: Database, documentId: string, chain: string[]): Promise<string | null> {
+function workingSlugAlongChain(
+  docRows: Array<{ locale: string; status: string; isCurrentPublished: boolean; slug: string | null }>,
+  chain: string[],
+): string | null {
   for (const code of chain) {
-    const rows = await db
-      .select()
-      .from(contentVersion)
-      .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, code)))
-      .orderBy(desc(contentVersion.versionNumber));
+    const rows = docRows.filter((r) => r.locale === code); // newest first
     if (!rows.length) continue;
     const row = rows.find((r) => r.status === "draft") ?? rows.find((r) => r.isCurrentPublished) ?? rows[0];
     return row?.slug ?? null;
@@ -673,28 +672,42 @@ export async function resolveRequestedLocale(
  * e.g. /home/about/team. Pages only; returns null for blocks/globals. Cycle-safe.
  */
 export async function computePath(db: Database, documentId: string, loc: string): Promise<string | null> {
+  // The locale chain and the ancestor chain at once, then every slug the walk
+  // can need in one query: three queries whatever the depth (it was two per
+  // ancestor, and this runs for every editor load and publish).
+  const [chain, items] = await Promise.all([
+    localeFallbackChain(db, loc),
+    db.execute(sql`
+      WITH RECURSIVE up AS (
+        SELECT document_id, kind, parent_id FROM content_item WHERE document_id = ${documentId}
+        UNION
+        SELECT c.document_id, c.kind, c.parent_id FROM content_item c JOIN up ON c.document_id = up.parent_id
+      ) SELECT document_id, kind, parent_id FROM up`) as unknown as Promise<Array<{ document_id: string; kind: string; parent_id: string | null }>>,
+  ]);
+  const byId = new Map(items.map((r) => [r.document_id, r]));
+  const versions = items.length && chain.length
+    ? await db
+        .select({ documentId: contentVersion.documentId, locale: contentVersion.locale, status: contentVersion.status, isCurrentPublished: contentVersion.isCurrentPublished, slug: contentVersion.slug })
+        .from(contentVersion)
+        .where(and(inArray(contentVersion.documentId, [...byId.keys()]), inArray(contentVersion.locale, chain)))
+        .orderBy(desc(contentVersion.versionNumber))
+    : [];
   const segments: string[] = [];
   const guard = new Set<string>();
-  const chain = await localeFallbackChain(db, loc);
   let cur: string | null = documentId;
   while (cur && !guard.has(cur)) {
     guard.add(cur);
-    const rows: (typeof contentItem.$inferSelect)[] = await db
-      .select()
-      .from(contentItem)
-      .where(eq(contentItem.documentId, cur))
-      .limit(1);
-    const item = rows[0];
+    const item = byId.get(cur);
     if (!item || item.kind !== "page") return null;
     // Resolve each segment along the locale fallback chain — PARITY with
     // delivery's urlPathOf. A nb page under an en-only parent has a real URL.
-    const slug = await workingSlugAlongChain(db, cur, chain);
+    const slug = workingSlugAlongChain(versions.filter((v) => v.documentId === cur), chain);
     // No slug → NO URL (null), matching delivery's urlPathOf. Skipping the
     // segment instead made a slugless child claim its PARENT's path — a fresh
     // draft post "previewed" as the blog list page.
     if (!slug) return null;
     segments.unshift(slug);
-    cur = item.parentId;
+    cur = item.parent_id;
   }
   return `/${segments.join("/")}`;
 }
@@ -1027,6 +1040,9 @@ export async function getContent(
   requirePermission(ctx, "content.read");
   const item = await loadAuthorized(db, ctx, documentId, "read");
 
+  // The versions and the page's URL at once (independent reads).
+  const urlPathP = item.kind === "page" ? computePath(db, documentId, loc) : Promise.resolve(null);
+  urlPathP.catch(() => undefined); // awaited below unless the variant is missing
   const rows = await db
     .select()
     .from(contentVersion)
@@ -1076,7 +1092,7 @@ export async function getContent(
     };
   }
 
-  const urlPath = item.kind === "page" ? await computePath(db, documentId, loc) : null;
+  const urlPath = await urlPathP;
   return {
     documentId: item.documentId,
     type: item.type,
