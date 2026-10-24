@@ -4,6 +4,8 @@ The browser-side **on-page-editing bridge** for the [Paperboy](https://github.co
 
 It is the single source of truth for the message protocol between the CMS admin (parent window) and a frontend rendered inside the preview iframe — so frontends and the admin can't drift.
 
+**Changes in 0.8.0**: `paperboy:focus` takes an optional `path` (the same `{field, blockIndex}` steps `paperboy:edit` reports), so the admin can point at one exact block when several areas or nested areas share an index. With a path, an empty `field` flashes the block itself. An older bridge ignores `path` and keeps using `blockIndex`.
+
 **Changes in 0.6.0** — supports inserting blocks at a specific position (`index?: number` on `paperboy:drop` and `paperboy:add-block`), displays an insertion indicator line during drag-over, and positions the "Add block" chip between blocks on hover.
 
 **Changes in 0.5.0** — tracks anchored elements when opening overlays (such as the Add block palette) and re-emits `paperboy:rect` updates throttled by `requestAnimationFrame` on preview scroll/resize so anchored overlays follow their targets; stops tracking when receiving `paperboy:rect` with `rect: null`.

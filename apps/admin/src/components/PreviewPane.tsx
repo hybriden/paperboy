@@ -111,7 +111,7 @@ export function PreviewPane({
   /** Content kind — a PAGE with no urlPath has nothing to preview (see below). */
   kind?: string;
   refreshSignal?: number;
-  focusField?: { field: string; blockIndex?: number; n: number } | null;
+  focusField?: { field: string; blockIndex?: number; path?: { field: string; blockIndex: number }[]; n: number } | null;
   /** inspect = click focuses the sidebar field (classic); edit = on-page overlay. */
   mode?: PreviewMode;
   /** Anchored on-page editor: rect + click offset from the bridge, content from
@@ -150,7 +150,7 @@ export function PreviewPane({
   useEffect(() => { if (refreshSignal > 0) setNonce((n) => n + 1); }, [refreshSignal]);
   // Editor → preview: when a property is focused, scroll to + highlight its region.
   useEffect(() => {
-    if (focusField?.field) postToPreview(focusMessage(focusField.field, { blockIndex: focusField.blockIndex }));
+    if (focusField?.field || focusField?.path?.length) postToPreview(focusMessage(focusField.field, { blockIndex: focusField.blockIndex, path: focusField.path }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusField, targetOrigin]);
   // Dragging a shared block from the Assets pane: a CROSS-ORIGIN preview iframe

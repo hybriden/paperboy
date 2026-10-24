@@ -121,6 +121,10 @@ export interface FocusMessage {
    *  The bridge falls back to flashing the block root when the field itself
    *  isn't tagged in the markup. Absent → first matching field on the page. */
   blockIndex?: number | null;
+  /** Ancestor pairs of [data-pb-area] / [data-pb-block-index], outermost first,
+   *  naming the block exactly (0.8+; an older bridge ignores it and uses
+   *  blockIndex). With a path, an empty or untagged `field` flashes the block. */
+  path?: PreviewBlockPathStep[];
 }
 
 /** A drag started in the admin (Assets pane). Broadcast to the iframe so the
@@ -251,10 +255,11 @@ export const patchMessage = (
   ...(opts?.blockIndex != null ? { blockIndex: opts.blockIndex } : {}),
 });
 
-export const focusMessage = (field: string, opts?: { blockIndex?: number | null }): FocusMessage => ({
+export const focusMessage = (field: string, opts?: { blockIndex?: number | null; path?: PreviewBlockPathStep[] }): FocusMessage => ({
   type: "paperboy:focus",
   field,
   ...(opts?.blockIndex != null ? { blockIndex: opts.blockIndex } : {}),
+  ...(opts?.path?.length ? { path: opts.path } : {}),
 });
 
 export const dragSourceMessage = (payload: unknown): DragSourceMessage => ({ type: "paperboy:dragsource", payload });

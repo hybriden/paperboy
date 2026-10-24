@@ -116,6 +116,34 @@ describe("initPreviewBridge", () => {
     teardown();
   });
 
+  it("paperboy:focus with a path finds the block among same-indexed blocks in other areas and nested areas (0.8)", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `
+      <div data-pb-area="hero"><section data-pb-block-index="0" id="hero0">Hero</section></div>
+      <div data-pb-area="main">
+        <section data-pb-block-index="0" id="main0">First</section>
+        <section data-pb-block-index="1" id="main1">
+          <div data-pb-area="items">
+            <article data-pb-block-index="0" id="item0"><h3 data-pb-field="title">Q1</h3></article>
+            <article data-pb-block-index="1" id="item1"><h3 data-pb-field="title">Q2</h3></article>
+          </div>
+        </section>
+      </div>`;
+    const teardown = initPreviewBridge({ target, badge: false });
+    const focus = (data: object) => window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:focus", ...data }, source: target }));
+    // blockIndex alone hits the first block 0 on the page (the hero); the path reaches main's.
+    focus({ field: "", path: [{ field: "main", blockIndex: 0 }] });
+    expect(document.getElementById("main0")!.classList.contains("pb-focus")).toBe(true);
+    expect(document.getElementById("hero0")!.classList.contains("pb-focus")).toBe(false);
+    // A nested block, and a field inside it.
+    focus({ field: "title", path: [{ field: "main", blockIndex: 1 }, { field: "items", blockIndex: 1 }] });
+    expect(document.querySelector("#item1 [data-pb-field='title']")!.classList.contains("pb-focus")).toBe(true);
+    expect(document.querySelector("#item0 [data-pb-field='title']")!.classList.contains("pb-focus")).toBe(false);
+    // A path the page doesn't have changes nothing.
+    focus({ field: "", path: [{ field: "nope", blockIndex: 0 }] });
+    teardown();
+  });
+
   it("answers paperboy:ping with preview-ready (liveness probe)", () => {
     const target = makeTarget();
     const teardown = initPreviewBridge({ target, badge: false });

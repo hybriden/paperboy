@@ -174,6 +174,23 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     return steps;
   };
 
+  /** The block a path names: each step's area, then its own (direct) block at
+   *  that index. Null when the page has no such block. */
+  const blockAtPath = (path: PreviewBlockPathStep[]): HTMLElement | null => {
+    let scope: HTMLElement | null = null;
+    for (const step of path) {
+      const areas = Array.from(doc.querySelectorAll<HTMLElement>(`[${ATTR.area}="${CSS.escape(step.field)}"]`))
+        .filter((a) => (a.parentElement?.closest<HTMLElement>(`[${ATTR.blockIndex}]`) ?? null) === scope);
+      const area = areas[0];
+      if (!area) return null;
+      const direct = Array.from(area.querySelectorAll<HTMLElement>(`[${ATTR.blockIndex}]`))
+        .filter((b) => b.parentElement?.closest(`[${ATTR.area}]`) === area);
+      scope = direct.find((b) => Number(b.getAttribute(ATTR.blockIndex)) === step.blockIndex) ?? direct[step.blockIndex] ?? null;
+      if (!scope) return null;
+    }
+    return scope;
+  };
+
   const describe = (el: HTMLElement) => {
     // A field rendered INSIDE a block carries data-pb-field while the enclosing
     // block root carries data-pb-block-index — report both so the admin can
@@ -526,10 +543,14 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       // blockIndex scopes the highlight to that block; a field the markup does
       // not tag falls back to flashing the block root itself, so the editor's
       // form always answers with SOME visible anchor on the page.
-      const blockEl = msg.blockIndex != null ? doc.querySelector<HTMLElement>(`[${ATTR.blockIndex}="${msg.blockIndex}"]`) : null;
+      // A path names the block exactly (the same steps paperboy:edit reports);
+      // blockIndex alone matches the first block with that index on the page.
+      const byPath = msg.path?.length ? blockAtPath(msg.path) : undefined;
+      if (byPath === null) return; // the page doesn't have that block (yet)
+      const blockEl = byPath ?? (msg.blockIndex != null ? doc.querySelector<HTMLElement>(`[${ATTR.blockIndex}="${msg.blockIndex}"]`) : null);
       const el =
-        (blockEl ?? doc).querySelector<HTMLElement>(`[${ATTR.field}="${CSS.escape(msg.field)}"]`) ??
-        (msg.blockIndex != null ? blockEl : null);
+        (msg.field ? (blockEl ?? doc).querySelector<HTMLElement>(`[${ATTR.field}="${CSS.escape(msg.field)}"]`) : null) ??
+        (byPath || msg.blockIndex != null ? blockEl : null);
       if (!el) return;
       el.scrollIntoView({ behavior: "smooth", block: "center" });
       el.classList.add("pb-focus");
