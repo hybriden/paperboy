@@ -207,8 +207,37 @@ export function honeypotAttrs(spec: FormSpec): {
   return {
     name: spec.honeypotField,
     wrapperStyle: "position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden",
-    input: { name: spec.honeypotField, type: "text", tabIndex: -1, autoComplete: "off", "aria-hidden": "true" },
+    // readOnly keeps it out of a WebMCP form tool's schema (Chrome 156 leaves out
+    // readonly and disabled controls only; aria-hidden and display:none are still
+    // offered) while it is still submitted and still set by a script-filling bot.
+    // An agent filling it would drop a real enquiry as spam behind a 202.
+    input: { name: spec.honeypotField, type: "text", tabIndex: -1, autoComplete: "off", "aria-hidden": "true", readOnly: true },
   };
+}
+
+/**
+ * WebMCP: the two attributes that make a rendered `<form>` a tool an in-browser
+ * AI agent can fill (`toolname`, `tooldescription`), from the Form's own title
+ * and intro so editors control the wording. Spread them on the `<form>`.
+ *
+ * Deliberately no `toolautosubmit`: the agent pre-fills and the visitor still
+ * clicks Send. Field descriptions come from each control's `<label>`, which
+ * `fieldAttrs` already wires up.
+ */
+export function formToolAttrs(spec: FormSpec): { toolname: string; tooldescription: string } {
+  const title = spec.title.trim() || "Form";
+  // Tool names allow letters, digits, _ - . (max 128).
+  const toolname = title.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 128) || "form";
+  const intro = (typeof spec.intro === "string" ? spec.intro : rtPlainText(spec.intro)).trim();
+  return { toolname, tooldescription: intro ? `${title}: ${intro}` : `Fill in the "${title}" form` };
+}
+
+/** The text of a TipTap doc, blocks separated by a space. */
+function rtPlainText(v: unknown): string {
+  const node = v as RtNode | null;
+  if (!node || typeof node !== "object") return "";
+  if (typeof node.text === "string") return node.text;
+  return (node.content ?? []).map(rtPlainText).filter(Boolean).join(node.type === "paragraph" ? "" : " ");
 }
 
 export interface PaperboyClientOptions {

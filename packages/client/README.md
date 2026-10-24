@@ -3,10 +3,10 @@
 The typed Delivery API client. Thin, zero dependencies, end-to-end typed from
 the same Zod schemas the server serializes with — no codegen step.
 
-**Changes in 0.4.1** — `fetchInit.headers` given as a `Headers` instance or an
-entries array is now merged (it used to be dropped); `renderRichText` refuses
-protocol-relative (`//host`) link and image URLs; a 422 with a non-JSON body
-throws `PaperboyError` instead of a `SyntaxError`.
+**Changes in 0.7.0** — `formToolAttrs(spec)` makes a rendered form a
+[WebMCP](https://developer.chrome.com/docs/ai/webmcp) tool, and the honeypot from
+`honeypotAttrs` is now `readOnly`, which keeps it out of that tool (see
+[WebMCP](#webmcp-forms-as-agent-tools)).
 
 ```ts
 import { createClient } from "@paperboycms/client";
@@ -182,6 +182,25 @@ if (!res.ok) {
   404, 413, 429…); invalid input is the `ok: false` branch, never a throw.
 - Field kinds: `text` `email` `textarea` `number` `date` `select` `radio`
   `checkbox` `consent` `static`. Render by `kind`, never by guessing.
+
+### WebMCP: forms as agent tools
+
+Chrome's [WebMCP](https://developer.chrome.com/docs/ai/webmcp) lets an in-browser
+AI agent fill a form through a declared tool instead of guessing at the DOM.
+Spread `formToolAttrs(spec)` on the `<form>`:
+
+```tsx
+<form {...formToolAttrs(spec)} onSubmit={onSubmit}>   // toolname="contact_us" tooldescription="Contact us: …"
+```
+
+- The name and description come from the Form's title and intro, so editors
+  control the wording. Each field's description is its `<label>`.
+- **No `toolautosubmit`:** the agent pre-fills, and the visitor still clicks Send.
+- **Spread `honeypot.input` as is.** Chrome offers every named control to the
+  agent, including ones hidden with `aria-hidden` or `display:none`; it leaves
+  out only `readonly` and `disabled` ones. An agent that filled the honeypot
+  would have a real enquiry dropped as spam behind a 202, so the input is
+  `readOnly` (still submitted, still set by bots that fill by script).
 
 `apps/web/app/components/Form.tsx` + `app/actions/submit-form.ts` in the Paperboy
 repo are the worked example — accessible by construction (`label for`,

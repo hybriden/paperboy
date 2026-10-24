@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormField, type FormSpec, fieldAttrs, formTimer, honeypotAttrs } from "@paperboycms/client";
+import { type FormField, type FormSpec, fieldAttrs, formTimer, formToolAttrs, honeypotAttrs } from "@paperboycms/client";
 import { useMemo, useRef, useState } from "react";
 
 /**
@@ -123,7 +123,7 @@ export function Form({ spec, formId, action, turnstileSiteKey }: FormProps) {
   const summary = Object.entries(errors);
 
   return (
-    <form className="pb-form" onSubmit={onSubmit} noValidate>
+    <form className="pb-form" onSubmit={onSubmit} noValidate {...formToolAttrs(spec)}>
       <h2>{spec.title}</h2>
 
       {summary.length > 0 && (
@@ -155,7 +155,7 @@ export function Form({ spec, formId, action, turnstileSiteKey }: FormProps) {
       {/* Hidden from sight AND from assistive technology, never focusable. */}
       <div aria-hidden="true" style={{ position: "absolute", left: "-9999px", width: 1, height: 1, overflow: "hidden" }}>
         <label htmlFor="pb-hp">Leave this field empty</label>
-        <input id="pb-hp" name={honeypot.name} type="text" tabIndex={-1} autoComplete="off" aria-hidden="true" />
+        <input id="pb-hp" {...honeypot.input} />
       </div>
 
       {spec.turnstile &&
