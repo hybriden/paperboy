@@ -1,12 +1,16 @@
 import type { Metadata } from "next";
-import { draftMode } from "next/headers";
+import { cookies, draftMode } from "next/headers";
 import { notFound } from "next/navigation";
+import { after } from "next/server";
 import { cache } from "react";
 import { PreviewBridge } from "../../components/PreviewBridge";
 import { Renderer } from "../../components/Renderer";
-import { fetchByPath, fetchList, fetchStart } from "../../lib/delivery";
+import { experimentView, visitorKey } from "../../lib/ab";
+import { fetchByPath, fetchList, fetchStart, reportExposures } from "../../lib/delivery";
 import { isPreviewRequest } from "../../lib/preview";
 
+// Dynamic rendering also makes Next send `Cache-Control: private, no-cache,
+// no-store`, which an A/B page needs: a shared cache must never pin one version.
 export const dynamic = "force-dynamic";
 
 /** Public origin used to absolutize the relative URLs in the delivered `seo`
@@ -121,8 +125,14 @@ export default async function ContentPage({
 }) {
   const { locale, path } = await params;
   const urlPath = urlPathOf(path);
-  const preview = await isPreviewRequest((await draftMode()).isEnabled, await searchParams);
-  const content = await resolve(locale, urlPath, preview);
+  const sp = await searchParams;
+  const preview = await isPreviewRequest((await draftMode()).isEnabled, sp);
+  const resolved = await resolve(locale, urlPath, preview);
+  // A/B: pick the version server-side before rendering; count it after the response.
+  const jar = await cookies();
+  const ab = resolved ? experimentView(resolved, { preview, pbab: sp.pbab, visitorKey: () => visitorKey(jar) }) : null;
+  const content = ab?.item ?? null;
+  if (ab?.exposures.length) after(() => reportExposures(ab.exposures));
 
   // A ListPage lists its children of the configured type, in the order delivery
   // already applies (the container's declared child_sort) — behavior comes from
@@ -151,7 +161,7 @@ export default async function ContentPage({
       <div className="langbar">
         Language: <strong>{content.locale}</strong> · URL <strong>/{locale}{urlPath || " (start page)"}</strong> · cv {content.cv}
       </div>
-      <Renderer content={content} posts={posts} locale={locale} basePath={urlPath} preview={preview} />
+      <Renderer content={content} posts={posts} locale={locale} basePath={urlPath} preview={preview} experiments={ab?.exposures} />
       {/* ADMIN_ORIGINS is the same env var that drives the CSP frame-ancestors; its
           first entry is the admin that embeds this preview. */}
       {preview && <PreviewBridge parentOrigin={process.env.ADMIN_ORIGINS?.split(",")[0]?.trim() || undefined} />}

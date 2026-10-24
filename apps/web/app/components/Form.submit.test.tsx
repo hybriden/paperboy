@@ -76,4 +76,12 @@ describe("Form — submit", () => {
     expect(fieldset.getAttribute("aria-invalid")).toBe("true");
     for (const radio of container.querySelectorAll('input[type="radio"]')) expect(radio.hasAttribute("aria-invalid")).toBe(false);
   });
+
+  it("sends the page's A/B exposures with the submission (a form goal's conversion)", async () => {
+    const action = vi.fn().mockResolvedValue(accepted);
+    const experiments = [{ experimentId: 7, arm: "b" as const }];
+    await act(async () => root.render(<Form spec={spec} formId="f1" action={action} experiments={experiments} />));
+    await submit(container.querySelector("form")!);
+    expect(action.mock.calls[0]?.[0]).toMatchObject({ experiments });
+  });
 });

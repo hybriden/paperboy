@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { VISITOR_COOKIE, VISITOR_COOKIE_MAX_AGE, visitorCookieAction } from "./app/lib/ab";
 import { buildContentSecurityPolicy, frameAncestorsFor } from "./app/lib/csp";
 
 /** Next.js Draft Mode's bypass cookie — set once /api/draft has been entered, and
@@ -17,7 +18,23 @@ const DRAFT_COOKIE = "__prerender_bypass";
  * unconditionally. A customer frontend adopting this pattern must drop it too.
  */
 export function proxy(req: NextRequest) {
-  const res = NextResponse.next();
+  // A/B consent mode: mint `pb_vid` on the REQUEST too, so this very render
+  // already sees it; drop it once consent is gone (see app/lib/ab.ts).
+  const vid = visitorCookieAction(req.cookies);
+  const newId = vid === "set" ? crypto.randomUUID() : null;
+  if (newId) req.cookies.set(VISITOR_COOKIE, newId);
+  const res = NextResponse.next(newId ? { request: { headers: req.headers } } : undefined);
+  if (newId) {
+    res.cookies.set(VISITOR_COOKIE, newId, {
+      maxAge: VISITOR_COOKIE_MAX_AGE,
+      sameSite: "lax",
+      httpOnly: true,
+      path: "/",
+      secure: req.nextUrl.protocol === "https:" || req.headers.get("x-forwarded-proto") === "https",
+    });
+  } else if (vid === "delete") {
+    res.cookies.delete(VISITOR_COOKIE);
+  }
   const hostname = (req.headers.get("host") ?? "").split(":")[0] ?? "";
   const ancestors = frameAncestorsFor({
     secFetchDest: req.headers.get("sec-fetch-dest"),

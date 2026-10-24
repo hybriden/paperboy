@@ -1,4 +1,4 @@
-import { blockData, contentAreas, pbAreaAttrs, renderRichText, type AreaBlock, type DeliveryContent } from "@paperboycms/client";
+import { blockData, contentAreas, pbAreaAttrs, renderRichText, type AreaBlock, type DeliveryContent, type ExperimentExposure } from "@paperboycms/client";
 import { ATTR } from "@paperboycms/preview/protocol";
 import { standaloneAreaBlock } from "../lib/standalone-block";
 import { DEFAULT_LOCALE } from "../lib/locale";
@@ -129,7 +129,7 @@ async function ListBlockTeasers({ d, locale, preview, edit }: { d: Record<string
   );
 }
 
-function Block({ b, index, locale, preview }: { b: AreaBlock; index: number | null; locale: string; preview: boolean }) {
+function Block({ b, index, locale, preview, experiments }: { b: AreaBlock; index: number | null; locale: string; preview: boolean; experiments?: ExperimentExposure[] }) {
   const d = blockData(b);
   // ATTR markers let the editor's preview map a click back to this block. Only
   // the attributes declared in @paperboycms/preview's ATTR contract — a former
@@ -178,7 +178,7 @@ function Block({ b, index, locale, preview }: { b: AreaBlock; index: number | nu
     // built without this NEXT_PUBLIC_ var (see .env.example), so Next never inlines it.
     return (
       <div className={`block block--${b.display}`} data-block="Form" {...edit}>
-        <Form spec={b.content.form} formId={b.content.documentId} action={submitFormAction} turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY} />
+        <Form spec={b.content.form} formId={b.content.documentId} action={submitFormAction} experiments={experiments} turnstileSiteKey={process.env.NEXT_PUBLIC_TURNSTILE_SITE_KEY} />
       </div>
     );
   }
@@ -260,7 +260,7 @@ function PostList({ posts, locale, basePath }: { posts: DeliveryContent[]; local
   );
 }
 
-export function Renderer({ content, posts, locale = DEFAULT_LOCALE, basePath = "", preview = false }: { content: DeliveryContent; posts?: DeliveryContent[]; locale?: string; basePath?: string; preview?: boolean }) {
+export function Renderer({ content, posts, locale = DEFAULT_LOCALE, basePath = "", preview = false, experiments }: { content: DeliveryContent; posts?: DeliveryContent[]; locale?: string; basePath?: string; preview?: boolean; experiments?: ExperimentExposure[] }) {
   if (content.type === "BlogPost") return <BlogPostView content={content} />;
 
   const data = content.data as Record<string, unknown>;
@@ -290,10 +290,10 @@ export function Renderer({ content, posts, locale = DEFAULT_LOCALE, basePath = "
         // plain div with no editor markers.
         preview ? (
           <div {...pbAreaAttrs(areaField, preview)}>
-            {area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} />)}
+            {area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} experiments={experiments} />)}
           </div>
         ) : (
-          area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} />)
+          area.map((b, i) => <Block key={i} b={b} index={i} locale={locale} preview={preview} experiments={experiments} />)
         )
       ) : preview && areas.length > 0 ? (
         // Empty content area: render a visible, clickable target ONLY in preview

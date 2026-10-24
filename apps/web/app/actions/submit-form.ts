@@ -1,5 +1,6 @@
 "use server";
 
+import type { ExperimentExposure } from "@paperboycms/client";
 import { submitForm } from "../lib/delivery";
 
 /**
@@ -27,6 +28,8 @@ export async function submitFormAction(input: {
   turnstileToken?: string;
   locale?: string;
   idempotencyKey: string;
+  /** The A/B versions the page showed: a conversion for "form"-goal experiments. */
+  experiments?: ExperimentExposure[];
 }): Promise<
   { ok: true; confirmation: { type: string; text?: unknown } } | { ok: false; fields: Record<string, string> }
 > {

@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { DeliveryContent } from "@paperboycms/client";
 
-vi.mock("next/headers", () => ({ draftMode: async () => ({ isEnabled: false }) }));
+vi.mock("next/headers", () => ({ draftMode: async () => ({ isEnabled: false }), cookies: async () => ({ get: () => undefined }) }));
 vi.mock("next/navigation", () => ({
   notFound: () => {
     throw new Error("NEXT_NOT_FOUND");
