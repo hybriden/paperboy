@@ -26,9 +26,12 @@ import { Dialog, DialogContent } from "./dialog.js";
 export interface ConfirmRequest {
   title: string;
   description: string;
-  /** Label of the destructive button. Say what will happen, not "OK". */
+  /** Label of the confirming button. Say what will happen, not "OK". */
   confirmLabel: string;
   onConfirm: () => void;
+  /** "danger" (default) for what can't be undone; "primary" for a deliberate,
+   *  reversible step that still deserves a pause (starting an A/B test). */
+  tone?: "danger" | "primary";
 }
 
 export interface ConfirmApi {
@@ -50,7 +53,7 @@ export function useConfirm(): ConfirmApi {
           </button>
           <button
             type="button"
-            className="btn-danger"
+            className={pending.tone === "primary" ? "btn-primary" : "btn-danger"}
             onClick={() => {
               const { onConfirm } = pending;
               setPending(null);

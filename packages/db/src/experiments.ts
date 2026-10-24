@@ -7,6 +7,7 @@ import {
   type ExperimentMode,
   type ExperimentStatus,
   type ExperimentVerdict,
+  estimateDaysLeft,
   experimentVerdict,
   parseStoredContentTypeDef,
 } from "@paperboy/shared";
@@ -88,6 +89,9 @@ export interface ExperimentView {
   arms: { key: string; label: string | null; weight: number; blocks: unknown[] | null }[];
   results: ArmResult[];
   verdict: ExperimentVerdict;
+  /** Traffic so far and, with a plan, the days until every version has enough
+   *  visitors. perDay counts from the start, paused days included. */
+  estimate: { perDay: number | null; daysLeft: number | null };
 }
 
 const iso = (d: Date | null): string | null => (d ? d.toISOString() : null);
@@ -133,6 +137,10 @@ async function viewsOf(db: Database, rows: ExperimentRow[]): Promise<ExperimentV
     const own = arms.get(r.id) ?? [];
     const counted = own.map((a) => ({ key: a.key, weight: a.weight, ...(totals.get(`${r.id}:${a.key}`) ?? { exposures: 0, conversions: 0 }) }));
     const { verdict, results } = experimentVerdict(counted, { baselineRate: r.baselineRate, mde: r.mde });
+    const total = counted.reduce((s, a) => s + a.exposures, 0);
+    const days = r.startedAt ? Math.max(1, ((r.endedAt ?? new Date()).getTime() - r.startedAt.getTime()) / 86_400_000) : null;
+    const perDay = days && total ? Math.round((total / days) * 10) / 10 : null;
+    const daysLeft = r.status === "ended" || verdict.complete ? null : estimateDaysLeft(verdict.needed, counted, perDay);
     return {
       id: r.id,
       documentId: r.documentId,
@@ -157,6 +165,7 @@ async function viewsOf(db: Database, rows: ExperimentRow[]): Promise<ExperimentV
       arms: own.map((a) => ({ key: a.key, label: a.label, weight: a.weight, blocks: (a.blocks as unknown[] | null) ?? null })),
       results,
       verdict,
+      estimate: { perDay, daysLeft },
     };
   });
 }

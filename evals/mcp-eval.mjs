@@ -533,7 +533,63 @@ function scenarios(stamp) {
       },
       expect: { parentName: "Blog", locale: "nb", minDocs: 1 },
     },
+    {
+      id: "ab-test",
+      title: `Eval AB ${stamp}`,
+      // The experiments toolset (#125): set up, start and read an A/B test. It
+      // makes no page, so it brings its own checks of the resulting state.
+      toolsets: "content,experiments",
+      setup: async () => {
+        await endLiveExperiments(await findTopLevel(harness, "Home"));
+        return {};
+      },
+      task: (title) =>
+        [
+          'Set up an A/B test on the main content area (field "mainArea") of the "Home" page, in English.',
+          `Version B is the area as it is now with one extra card at the top whose title is "${title}".`,
+          "Plan it for today's conversion rate of 5 % and a smallest lift worth detecting of 20 %.",
+          "Start it, then read its results and tell me the verdict.",
+        ].join(" "),
+      script: async (mcp, _loc, title) => {
+        const rec = recorder(mcp);
+        const home = await findTopLevel(mcp, "Home");
+        const page = await rec.call("get_content", { documentId: home, locale: "en" });
+        const area = Array.isArray(page.json?.data?.mainArea) ? page.json.data.mainArea : [];
+        const card = { key: "eval_ab_b", blockType: "CardBlock", display: "automatic", inline: { title }, ref: null };
+        const exp = await rec.call("create_experiment", { documentId: home, locale: "en", area: "mainArea", name: title, baselineRate: 0.05, mde: 0.2, arms: [{ label: "Extra card", blocks: [card, ...area] }] });
+        const id = exp.json?.id;
+        if (id) {
+          await rec.call("start_experiment", { id });
+          await rec.call("get_experiment", { id });
+        }
+        return rec.telemetry();
+      },
+      expect: { minDocs: 0 },
+      check: async (title) => {
+        const home = await findTopLevel(harness, "Home");
+        const listed = await harness.call("list_experiments", { documentId: home, status: "running" });
+        const exp = (Array.isArray(listed.json) ? listed.json : []).find((e) => e.area === "mainArea");
+        const b = exp?.arms?.find((a) => a.key === "b");
+        const checks = [
+          { label: "a running experiment on Home's mainArea", pass: Boolean(exp), detail: exp ? `id ${exp.id}` : "none running" },
+          { label: `version B carries the card "${title}"`, pass: Boolean(b?.blocks?.some((x) => x?.inline?.title === title)), detail: b ? `${b.blocks?.length ?? 0} block(s)` : "no version B" },
+          { label: "planned: 5 % baseline, +20 % lift", pass: Math.abs((exp?.baselineRate ?? 0) - 0.05) < 1e-9 && Math.abs((exp?.mde ?? 0) - 0.2) < 1e-9, detail: exp ? `${exp.baselineRate} / ${exp.mde}` : "" },
+          { label: "the verdict names the sample size, no winner", pass: Boolean(exp?.verdict?.needed) && exp?.verdict?.leader == null, detail: exp?.verdict?.summary ?? "" },
+        ];
+        await endLiveExperiments(home);
+        return checks;
+      },
+    },
   ];
+}
+
+/** End any live experiment on a page, so each run starts from the control. */
+async function endLiveExperiments(documentId) {
+  if (!documentId) return;
+  for (const status of ["running", "paused", "draft"]) {
+    const res = await harness.call("list_experiments", { documentId, status });
+    for (const e of Array.isArray(res.json) ? res.json : []) await harness.call("end_experiment", { id: e.id, apply: "none" });
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -541,6 +597,10 @@ function scenarios(stamp) {
  * ------------------------------------------------------------------ */
 async function runScenario(mcp, tools, scenario, loc) {
   await scenario.setup(mcp, loc);
+  if (scenario.check) {
+    const telemetry = MOCK ? await scenario.script(mcp, loc, scenario.title) : await runAgent(mcp, tools, scenario.task(scenario.title));
+    return { scenario, telemetry, docResults: [{ documentId: scenario.id, checks: await scenario.check(scenario.title) }], produced: [], producedEnough: true };
+  }
   // setup may have created the parent list page — snapshot AFTER setup so it
   // is excluded from "produced by the model".
   const afterSetup = await pageIdSet(mcp);
@@ -670,7 +730,18 @@ async function main() {
     const results = [];
     for (const s of all) {
       console.log(`\n[eval] running scenario: ${s.id}`);
-      results.push(await runScenario(mcp, tools, s, loc));
+      if (!s.toolsets) {
+        results.push(await runScenario(mcp, tools, s, loc));
+        continue;
+      }
+      // A scenario that needs more than the default listing gets its own connection.
+      const extra = new McpClient({ ...env, PAPERBOY_TOOLSETS: s.toolsets });
+      try {
+        await extra.initialize();
+        results.push(await runScenario(extra, (await extra.listTools()).map(toAnthropicTool), s, loc));
+      } finally {
+        extra.kill();
+      }
     }
 
     let allPass = true;

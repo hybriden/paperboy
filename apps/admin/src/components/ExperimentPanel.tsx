@@ -32,6 +32,7 @@ export function ExperimentPanel({
   onOpen,
   onClose,
   onEnded,
+  beforeEnd,
 }: {
   id: number | null;
   documentId: string;
@@ -45,6 +46,10 @@ export function ExperimentPanel({
   onClose: () => void;
   /** Ended; a winner may now be the area's draft. */
   onEnded: () => void;
+  /** Saves the editor's pending edits before a winner rewrites the area's draft
+   *  (else the later autosave is refused as a conflict and the edits are lost).
+   *  Resolves false when that save failed. */
+  beforeEnd: () => Promise<boolean>;
 }) {
   const detail = useQuery({
     queryKey: ["experiment", id],
@@ -70,6 +75,7 @@ export function ExperimentPanel({
             sharedBlocks={sharedBlocks}
             onOpen={onOpen}
             onEnded={onEnded}
+            beforeEnd={beforeEnd}
           />
         )}
       </DialogContent>
@@ -103,6 +109,7 @@ function ExperimentForm({
   sharedBlocks,
   onOpen,
   onEnded,
+  beforeEnd,
 }: {
   exp: ExperimentDetail | null;
   documentId: string;
@@ -113,6 +120,7 @@ function ExperimentForm({
   sharedBlocks: BlockSummary[];
   onOpen: (id: number) => void;
   onEnded: () => void;
+  beforeEnd: () => Promise<boolean>;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -322,6 +330,7 @@ function ExperimentForm({
               title: status === "paused" ? "Resume the experiment?" : "Start the experiment?",
               description: `Visitors to the live page are split between versions ${arms.map((a) => a.key.toUpperCase()).join(", ")} by the shares set here. While it runs the versions can’t be edited; pause it to edit.`,
               confirmLabel: status === "paused" ? "Resume experiment" : "Start experiment",
+              tone: "primary",
               onConfirm: () => start.mutate(),
             })}
           >
@@ -342,7 +351,7 @@ function ExperimentForm({
           <button type="button" className="btn-subtle" disabled={busy} onClick={() => setEnding(true)}>End…</button>
         )}
       </div>
-      {ending && exp && <EndDialog exp={exp} onDone={(n) => { refresh(n); setEnding(false); onEnded(); }} onClose={() => setEnding(false)} />}
+      {ending && exp && <EndDialog exp={exp} beforeEnd={beforeEnd} onDone={(n) => { refresh(n); setEnding(false); onEnded(); }} onClose={() => setEnding(false)} />}
       {confirm.dialog}
     </div>
   );
@@ -354,6 +363,11 @@ function Results({ exp }: { exp: ExperimentDetail }) {
     <section aria-label="Results" className="flex flex-col gap-2">
       <h3 className="text-xs font-bold uppercase tracking-wide text-muted">Results</h3>
       <p role="status" className="font-medium text-fg">{exp.verdict.summary}</p>
+      {exp.estimate.daysLeft != null && exp.estimate.perDay != null && (
+        <p className="text-xs text-muted">
+          About {exp.estimate.daysLeft.toLocaleString()} more {exp.estimate.daysLeft === 1 ? "day" : "days"} at the traffic so far ({exp.estimate.perDay.toLocaleString()} visitors a day).
+        </p>
+      )}
       {exp.verdict.srmWarning && (
         <Callout tone="critical" title="The split doesn’t match the shares">Visitors aren’t divided between the versions as set (sample ratio mismatch), so no result can be trusted. Look for caching or bots pinning one version.</Callout>
       )}
@@ -410,13 +424,16 @@ function Results({ exp }: { exp: ExperimentDetail }) {
   );
 }
 
-function EndDialog({ exp, onDone, onClose }: { exp: ExperimentView; onDone: (next: ExperimentView) => void; onClose: () => void }) {
+function EndDialog({ exp, beforeEnd, onDone, onClose }: { exp: ExperimentView; beforeEnd: () => Promise<boolean>; onDone: (next: ExperimentView) => void; onClose: () => void }) {
   const toast = useToast();
   const qc = useQueryClient();
   const offerWinner = exp.verdict.complete;
   const [winner, setWinner] = useState(exp.verdict.leader ?? "b");
   const end = useMutation({
-    mutationFn: (apply: WinnerApply) => api.endExperiment(exp.id, apply === "none" ? { winner: null, apply: "none" } : { winner, apply }),
+    mutationFn: async (apply: WinnerApply) => {
+      if (apply !== "none" && !(await beforeEnd())) throw new Error("Your latest edits to this page could not be saved, so the experiment was not ended. Fix them and try again.");
+      return api.endExperiment(exp.id, apply === "none" ? { winner: null, apply: "none" } : { winner, apply });
+    },
     onSuccess: (r) => {
       onDone(r.experiment);
       // The winner landed in the page's area (draft, maybe published).
