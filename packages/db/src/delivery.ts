@@ -1054,7 +1054,7 @@ export async function resolveContent(
     found.usedLocale,
     loc,
   );
-  await primeReferences(ctx, perspective, item.type, data, depth);
+  await primeReferences(ctx, perspective, [[item.type, data]], depth);
   const sanitized = await sanitize(ctx, perspective, item.type, data, found.usedLocale, depth);
   const urlPath = await urlPathOf(ctx, perspective, documentId, loc);
   const def = await ctx.type(item.type);
@@ -1149,7 +1149,7 @@ async function deliveredExperiments(
  * round trip). Same filters as the one-at-a-time lookups, so the output is
  * identical; only the number of round trips changes.
  */
-async function primeReferences(ctx: DeliveryCtx, perspective: Perspective, typeName: string, data: Record<string, unknown>, depth: number): Promise<void> {
+async function primeReferences(ctx: DeliveryCtx, perspective: Perspective, roots: Array<[typeName: string, data: Record<string, unknown>]>, depth: number): Promise<void> {
   let docs: string[] = [];
   let assets: string[] = [];
   const walk = async (name: string, values: Record<string, unknown>, level: number): Promise<void> => {
@@ -1171,7 +1171,7 @@ async function primeReferences(ctx: DeliveryCtx, perspective: Perspective, typeN
       }
     }
   };
-  await walk(typeName, data, 0);
+  for (const [typeName, data] of roots) await walk(typeName, data, 0);
   // Level by level through the graph the response will resolve (populate
   // depth): what the referenced documents point at is primed in the NEXT single
   // round trip, not one per document. Their selectable rows are walked (a
@@ -1572,7 +1572,7 @@ export async function deliverySearch(
       .map((w) => w.slice(1))
       .join(" "),
   );
-  const ctx = new DeliveryCtx(db, siteId);
+  const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   const chain = await ctx.localeChain(loc, perspective);
   const max = Math.min(Math.max(limit, 1), 100);
   // The SQL prefilter scans the WHOLE version row (incl. delivery:"private" field
@@ -1599,7 +1599,20 @@ export async function deliverySearch(
     ORDER BY rank DESC
     LIMIT ${max * 5}
   `)) as unknown as { id: string; rank: number }[];
-  await ctx.primeVersions(rows.map((r) => r.id), perspective);
+  // Every candidate, its ancestors (for urlPath) and their versions in two
+  // round trips, not two per candidate as each resolves below.
+  await ctx.primeAncestors(rows.map((r) => r.id), perspective);
+  // ...and what they all point at, in one more (their selectable rows walked
+  // without variantRow, which would move ctx.maxCv and so each hit's cv).
+  const roots: Array<[string, Record<string, unknown>]> = [];
+  for (const r of rows) {
+    const it = ctx.items.get(r.id);
+    if (!it) continue;
+    for (const row of await ctx.docVersions(r.id, perspective)) {
+      if ((row.status === "draft" || row.isCurrentPublished) && row.data && typeof row.data === "object") roots.push([it.type, row.data as Record<string, unknown>]);
+    }
+  }
+  await primeReferences(ctx, perspective, roots, 0);
   // Query terms under the 'simple' config (lowercase, word-token split, no
   // stemming/stop-words). A candidate is kept only if every positive term appears
   // in its public text and no negated term does — both directions decided on
