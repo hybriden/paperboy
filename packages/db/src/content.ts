@@ -1554,6 +1554,26 @@ async function rebuildReferences(
 }
 
 /**
+ * An A/B experiment version (#125) is an alternative value for one content
+ * area, so it gets exactly the verdict that area would: coercion, draft
+ * validation with self-teaching errors, allowed blocks and reference targets.
+ * Returns the coerced blocks.
+ */
+export async function prepareAreaBlocks(db: Database, typeName: string, siteId: string, loc: string, area: string, blocks: unknown): Promise<unknown[]> {
+  const reg = await loadTypeRegistry(db);
+  const type = requireType(reg, typeName);
+  const areas = type.fields.filter((f) => f.type === "contentArea").map((f) => f.name);
+  if (!areas.includes(area)) {
+    throw Errors.validation(`'${area}' is not a content area of ${type.name}. ${areas.length ? `Its content areas: ${areas.join(", ")}.` : "It has no content areas."}`, ["area"]);
+  }
+  const data = coerceData(type, { [area]: blocks }, loc, reg.blockTypes, await localeCodes(db));
+  const parsed = dataSchemaFor(type, false, reg.blockTypes).safeParse(data);
+  if (!parsed.success) throw Errors.validation(formatDataValidation(parsed.error, type), failedFields(parsed.error));
+  await assertAllowedTypes(db, type, data, siteId, reg);
+  return Array.isArray(data[area]) ? (data[area] as unknown[]) : [];
+}
+
+/**
  * The ONE path from a caller's raw field map to storable draft data: tolerant
  * coercion, relaxed (draft) validation with self-teaching errors, placement
  * rules, and the agent language guard. Shared by create and update so a value

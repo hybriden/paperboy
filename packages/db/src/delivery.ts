@@ -1,9 +1,10 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, parseStoredContentTypeDef, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, type ExperimentArmKey, type ExperimentStatus, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, parseStoredContentTypeDef, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
+import { type LiveExperiment, liveExperiments } from "./experiments.js";
 import { asset, contentItem, contentType, contentVersion, locale, site } from "./schema.js";
 
 /**
@@ -165,6 +166,13 @@ class DeliveryCtx {
       .limit(1);
     if (rows[0]) this._siteIdentity = (await resolveContent(this, perspective, rows[0].documentId, loc, 0))?.jsonLd ?? null;
     return this._siteIdentity;
+  }
+
+  // The site's live A/B experiments, loaded once per request (usually none).
+  private _experiments = new Map<Perspective, LiveExperiment[]>();
+  async experimentsOn(perspective: Perspective, documentId: string, loc: string): Promise<LiveExperiment[]> {
+    if (!this._experiments.has(perspective)) this._experiments.set(perspective, await liveExperiments(this.db, this.siteId, perspective === "preview"));
+    return this._experiments.get(perspective)!.filter((e) => e.documentId === documentId && e.locale === loc);
   }
 
   async type(name: string): Promise<ContentTypeDef | null> {
@@ -954,6 +962,7 @@ export async function resolveContent(
   const form = isFormType(item.type)
     ? formSpecFrom(sanitized, { sharedBlock: await sharedFormFields(ctx, perspective, data, found.usedLocale) })
     : undefined;
+  const experiments = item.kind === "page" ? await deliveredExperiments(ctx, perspective, item.type, documentId, found.usedLocale, depth) : [];
   return {
     documentId,
     type: item.type,
@@ -973,7 +982,47 @@ export async function resolveContent(
     seo,
     ...(jsonLd ? { jsonLd } : {}),
     ...(form ? { form } : {}),
+    ...(experiments.length ? { experiments } : {}),
   };
+}
+
+/**
+ * A page's A/B experiments (#125) as delivery ships them: each alternative
+ * version goes through `sanitize` exactly as the area would, so a private field
+ * in a version can't leak, and its shared blocks resolve under the same
+ * perspective and budget. A version of a non-public area is never shipped.
+ * The experiment's cv folds into the page's, so starting or ending one changes
+ * the ETag. SEO is computed from the control before this runs.
+ */
+async function deliveredExperiments(
+  ctx: DeliveryCtx,
+  perspective: Perspective,
+  typeName: string,
+  documentId: string,
+  loc: string,
+  depth: number,
+): Promise<NonNullable<DeliveryContent["experiments"]>> {
+  const out: NonNullable<DeliveryContent["experiments"]> = [];
+  for (const e of await ctx.experimentsOn(perspective, documentId, loc)) {
+    const arms: NonNullable<DeliveryContent["experiments"]>[number]["arms"] = [];
+    let isPublicArea = true;
+    for (const a of e.arms) {
+      if (a.key === "a" || !a.blocks) {
+        arms.push({ key: a.key as ExperimentArmKey, weight: a.weight });
+        continue;
+      }
+      const delivered = (await sanitize(ctx, perspective, typeName, { [e.area]: a.blocks }, loc, depth))[e.area];
+      if (!Array.isArray(delivered)) {
+        isPublicArea = false;
+        break;
+      }
+      arms.push({ key: a.key as ExperimentArmKey, weight: a.weight, blocks: delivered });
+    }
+    if (!isPublicArea) continue;
+    ctx.maxCv = Math.max(ctx.maxCv, e.cv);
+    out.push({ id: e.id, area: e.area, goal: e.goal, arms, ...(perspective === "preview" ? { status: e.status as ExperimentStatus } : {}) });
+  }
+  return out;
 }
 
 /* ------------------------------ public API -------------------------------- */

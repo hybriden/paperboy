@@ -1,4 +1,5 @@
-import { recordTraffic, verifyDeliveryKey } from "@paperboy/db";
+import { recordExperimentEvents, recordTraffic, verifyDeliveryKey } from "@paperboy/db";
+import { EXPERIMENT_ARMS } from "@paperboy/shared";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -20,6 +21,10 @@ const TrafficBody = z.object({
   redirectHits: z.array(z.number().int().positive()).max(100).optional(),
   /** Request paths that answered 404. */
   notFound: z.array(z.string().max(2000)).max(100).optional(),
+  /** A/B versions shown (#125): one entry per page view that rendered a version. */
+  exposures: z.array(z.object({ experimentId: z.number().int().positive(), arm: z.enum(EXPERIMENT_ARMS) })).max(100).optional(),
+  /** A/B goals reached; `goal` is "form" or "event:<name>" and must be the experiment's own. */
+  conversions: z.array(z.object({ experimentId: z.number().int().positive(), arm: z.enum(EXPERIMENT_ARMS), goal: z.string().max(80).optional() })).max(100).optional(),
 });
 
 function deliveryKeyOf(req: FastifyRequest): string {
@@ -44,7 +49,12 @@ export async function registerTrafficRoutes(appBase: FastifyInstance): Promise<v
         summary: "Report applied redirects and 404 paths (server-side, public key)",
         body: TrafficBody,
         response: {
-          202: z.object({ hits: z.number(), notFound: z.number() }),
+          202: z.object({
+            hits: z.number(),
+            notFound: z.number(),
+            /** Unknown, ended or mismatched experiment events are ignored and counted here, never an error. */
+            experiments: z.object({ exposures: z.number(), conversions: z.number(), ignored: z.number() }),
+          }),
           401: z.object({ error: z.string(), message: z.string() }),
           403: z.object({ error: z.string(), message: z.string() }),
         },
@@ -58,7 +68,8 @@ export async function registerTrafficRoutes(appBase: FastifyInstance): Promise<v
         return reply.code(403).send({ error: "forbidden", message: "Report traffic with the PUBLIC delivery key — preview traffic is editors, not visitors." });
       }
       const counted = await recordTraffic(app.db, resolved.siteId, req.body);
-      return reply.code(202).send(counted);
+      const experiments = await recordExperimentEvents(app.db, resolved.siteId, req.body);
+      return reply.code(202).send({ ...counted, experiments });
     },
   );
 }
