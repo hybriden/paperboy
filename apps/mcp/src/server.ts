@@ -84,6 +84,13 @@ import {
   listRedirects,
   testRedirect,
   updateRedirect,
+  createExperiment,
+  endExperiment,
+  getExperiment,
+  listExperiments,
+  pauseExperiment,
+  startExperiment,
+  updateExperiment,
    softDelete,
    updateTypeTemplate,
   unpublishContent,
@@ -379,6 +386,7 @@ const TOOLSETS = {
     "delete_type_template", "instantiate_type_template", "export_type_templates", "import_type_templates",
   ],
   redirects: ["list_redirects", "create_redirect", "update_redirect", "delete_redirect", "test_redirect", "list_not_found"],
+  experiments: ["list_experiments", "get_experiment", "create_experiment", "update_experiment", "start_experiment", "pause_experiment", "end_experiment"],
   forms: ["list_forms", "list_form_submissions", "export_form_submissions", "erase_form_submissions"],
   admin: [
     "set_start_page", "list_users", "create_user", "update_user", "delete_user", "list_delivery_keys", "create_delivery_key",
@@ -442,6 +450,8 @@ const SITE_ARG = z
 const DESTRUCTIVE_TOOLS = new Set([
   "unpublish_content", "discard_draft", "copy_variant", "restore_version", "delete_asset", "erase_form_submissions",
   "delete_type_template", "delete_redirect", "delete_user", "revoke_delivery_key", "delete_webhook",
+  // Ends a test for good; with apply it rewrites the page's area.
+  "end_experiment",
   // Replace a whole definition or list: what the call leaves out is gone.
   "update_content_type", "update_type_template", "update_user", "import_type_templates", "instantiate_type_template",
 ]);
@@ -449,6 +459,7 @@ const DESTRUCTIVE_TOOLS = new Set([
 const IDEMPOTENT_TOOLS = new Set([
   "update_content", "set_field", "move_content", "update_content_type", "update_type_template",
   "update_asset_alt", "set_start_page", "update_redirect", "update_user", "rename_delivery_key",
+  "update_experiment", "start_experiment", "pause_experiment",
 ]);
 /** Tools that reach a service outside this CMS (stock provider, AI model, arbitrary URL). */
 const OPEN_WORLD_TOOLS = new Set(["search_stock_images", "upload_asset", "assist_writing"]);
@@ -1183,6 +1194,93 @@ tool(
   "List URL paths visitors hit that answered 404 on the website, as reported by the frontend: path (no query string), hits, firstSeen, lastSeen, and coveredBy — the id of a redirect rule that now answers it, or null. Most hits first, up to 2000. Use it after a migration or slug change: create_redirect for uncovered paths with real traffic, then test_redirect to verify. No visitor data is stored, and entries older than 90 days are dropped.",
   {},
   () => listNotFound(db, ctx()),
+);
+
+/* ---------------------------- A/B experiments --------------------------- */
+const EXPERIMENT_ID_ARG = z.number().int().positive().describe("The experiment's id, from list_experiments or create_experiment.");
+const EXPERIMENT_ARMS_ARG = z
+  .array(
+    z.object({
+      key: z.enum(["a", "b", "c", "d"]).optional().describe("'b', 'c' or 'd' for an alternative (assigned in order when omitted); 'a' only to set the control's weight."),
+      label: z.string().nullable().optional().describe("A short name editors see, e.g. 'Benefit headline'."),
+      weight: z.number().int().min(0).max(100).optional().describe("Share of visitors, relative to the other versions (default 50)."),
+      blocks: z.array(z.record(z.string(), z.unknown())).optional().describe("The version's block instances, exactly as the content area holds them: [{key, blockType, display: 'automatic', inline: {…fields…}, ref: null}], or a shared block {…, inline: null, ref: '<documentId>'}. Read the area with get_content first and change a copy."),
+    }),
+  )
+  .min(1)
+  .max(4)
+  .describe("The alternatives to the page's own area (version A): 1–3 versions, optionally plus {key: 'a', weight} for the control's share.");
+const EXPERIMENT_NAME_ARG = z.string().describe("What is tested, e.g. 'Hero headline: benefit vs. feature'.");
+const EXPERIMENT_HYPOTHESIS_ARG = z.string().nullable().optional().describe("Why the change should win, in one sentence.");
+const EXPERIMENT_GOAL_ARG = z.string().optional().describe("'form' (default: a form on the page is submitted) or 'event:<name>' that the frontend reports, e.g. 'event:signup'.");
+const EXPERIMENT_BASELINE_ARG = z.number().nullable().optional().describe("Today's conversion rate as a fraction, e.g. 0.04. With mde it sets the sample size no winner is named before.");
+const EXPERIMENT_MDE_ARG = z.number().nullable().optional().describe("Smallest RELATIVE lift worth detecting, e.g. 0.2 for +20 %.");
+const EXPERIMENT_ENDS_ARG = z.string().nullable().optional().describe("ISO date-time when it ends by itself (no winner), e.g. '2026-12-01T00:00:00Z'.");
+tool(
+  "list_experiments", "content.read",
+  "List this site's A/B experiments (tests of one content area of a page against up to three alternative versions), newest change first, each with its status (draft, running, paused, ended), versions and results so far, plus a plain-language verdict. Filter by status or page. For one experiment's daily numbers use get_experiment.",
+  { status: z.enum(["draft", "running", "paused", "ended"]).optional().describe("Only experiments in this state."), documentId: z.string().optional().describe("Only experiments on this page.") },
+  (a) => listExperiments(db, ctx(), a),
+);
+tool(
+  "get_experiment", "content.read",
+  "One A/B experiment: its plan, versions (with their blocks), exposures and conversions per version, the comparison of each version with A, daily counts, and verdict.summary, which never names a winner before every version has the planned number of visitors ('Not conclusive yet: 420 of 1600'). Read verdict.summary rather than judging the rates yourself.",
+  { id: EXPERIMENT_ID_ARG },
+  ({ id }) => getExperiment(db, ctx(), id),
+);
+tool(
+  "create_experiment", "content.update",
+  "Set up an A/B test (as a draft) of one content area of a published page: version A is the area as published, and you give 1–3 alternative block lists. Each version is validated exactly like the area (allowed blocks, field formats), with errors naming the version. Plan it with baselineRate and mde so the result can be trusted. Nothing changes for visitors until start_experiment. Created by an agent it is flagged for review: with agent review on, a human must start it.",
+  {
+    documentId: z.string().describe("The page's documentId."),
+    locale: z.string().describe("The language branch under test, e.g. 'en'."),
+    area: z.string().describe("The content-area field name, e.g. 'mainArea' (list_content_types shows a type's fields)."),
+    name: EXPERIMENT_NAME_ARG,
+    hypothesis: EXPERIMENT_HYPOTHESIS_ARG,
+    goal: EXPERIMENT_GOAL_ARG,
+    baselineRate: EXPERIMENT_BASELINE_ARG,
+    mde: EXPERIMENT_MDE_ARG,
+    endsAt: EXPERIMENT_ENDS_ARG,
+    arms: EXPERIMENT_ARMS_ARG,
+  },
+  async (a) => { const e = await createExperiment(db, ctx(), a); await mcpAudit("experiment.create", e.documentId, e.locale, { id: e.id, area: e.area }); return e; },
+);
+tool(
+  "update_experiment", "content.update",
+  "Change a draft or paused A/B experiment: its name, plan, goal, end date or versions (arms replaces all of them). A running experiment is refused, so call pause_experiment first: changing versions mid-test would mix two tests in one count. An ended experiment is history and can't change.",
+  {
+    id: EXPERIMENT_ID_ARG,
+    name: EXPERIMENT_NAME_ARG.optional(),
+    hypothesis: EXPERIMENT_HYPOTHESIS_ARG,
+    goal: EXPERIMENT_GOAL_ARG,
+    baselineRate: EXPERIMENT_BASELINE_ARG,
+    mde: EXPERIMENT_MDE_ARG,
+    endsAt: EXPERIMENT_ENDS_ARG,
+    arms: EXPERIMENT_ARMS_ARG.optional(),
+  },
+  async ({ id, ...patch }) => { const e = await updateExperiment(db, ctx(), id, patch); await mcpAudit("experiment.update", e.documentId, e.locale, { id }); return e; },
+);
+tool(
+  "start_experiment", "content.publish",
+  "Start (or resume) an A/B experiment: from the frontend's next fetch, visitors are split between the versions and counted. The page must be published, and an area has one live experiment at a time. If an agent set it up and the site requires agent review, it waits for a human to start it.",
+  { id: EXPERIMENT_ID_ARG },
+  async ({ id }) => { const e = await startExperiment(db, ctx(), id); await mcpAudit("experiment.start", e.documentId, e.locale, { id }); return e; },
+);
+tool(
+  "pause_experiment", "content.publish",
+  "Pause a running A/B experiment: every visitor sees version A and nothing is counted until start_experiment resumes it. Pausing is also how to edit its versions (update_experiment refuses a running one). The counts so far are kept.",
+  { id: EXPERIMENT_ID_ARG },
+  async ({ id }) => { const e = await pauseExperiment(db, ctx(), id); await mcpAudit("experiment.pause", e.documentId, e.locale, { id }); return e; },
+);
+tool(
+  "end_experiment", "content.publish",
+  "End an A/B experiment for good; visitors see the page's area again. winner names the version that won (leave it out when the result was inconclusive). With a winner other than 'a', apply 'draft' (default) writes its blocks into the area as a draft for review, 'publish' also publishes it, and 'none' only records it. Losing versions and results are kept. Check get_experiment's verdict first and don't name a winner it doesn't support.",
+  {
+    id: EXPERIMENT_ID_ARG,
+    winner: z.enum(["a", "b", "c", "d"]).nullable().optional().describe("The winning version, or omit for none."),
+    apply: z.enum(["draft", "publish", "none"]).optional().describe("What to do with a winner other than A: 'draft' (default), 'publish' or 'none'."),
+  },
+  async ({ id, ...opts }) => { const r = await endExperiment(db, ctx(), id, opts); await mcpAudit("experiment.end", r.experiment.documentId, r.experiment.locale, { id, winner: r.experiment.winner, applied: r.applied }); return r; },
 );
 
 /* ---------------------------- platform admin --------------------------- */
