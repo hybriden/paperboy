@@ -15,7 +15,7 @@ import {
   type SessionUser,
 } from "@paperboy/shared";
 import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError, type AiTask } from "../lib/api.js";
 import { fieldWidthClass } from "../lib/field-width.js";
 import { blockAtPath, resolveBlockPath, updateBlockAtPath, type BlockPath } from "../lib/block-path.js";
@@ -37,6 +37,8 @@ import { ResizeHandle } from "./ui/resize.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
 import { BuildFromBriefDialog } from "./BuildFromBrief.js";
+import { ExperimentPanel } from "./ExperimentPanel.js";
+import { experimentBadge, experimentFor, pbabParam, versionName } from "../lib/experiments.js";
 import { FormSubmissions } from "./FormSubmissions.js";
 import { ContentArea } from "./fields/ContentArea.js";
 import { FieldControl } from "./fields/FieldControl.js";
@@ -279,7 +281,28 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       ? blockOnPage && !previewPage ? "onpage" : "split"
       : "props";
   const blockFrame = blockPreview && effectiveView !== "props";
-  const externalPreview = blockFrame && !!previewPage;
+  // A/B experiments on this page (#125), and the version the preview forces.
+  // A version other than A is READ-ONLY in the preview, like a borrowed page:
+  // its block indexes describe that version, not the page's area.
+  const experiments = useQuery({
+    queryKey: ["experiments", { documentId }],
+    queryFn: ({ signal }) => api.experiments({ documentId }, signal),
+    enabled: previewable,
+  });
+  const pageExperiments = useMemo(() => (experiments.data ?? []).filter((e) => e.locale === locale && e.status !== "ended"), [experiments.data, locale]);
+  const [previewArm, setPreviewArm] = useState<{ id: number; arm: string } | null>(null);
+  const forcedArm = previewArm && pageExperiments.some((e) => e.id === previewArm.id) ? previewArm : null;
+  const [experimentPanel, setExperimentPanel] = useState<{ id: number | null; area: string } | null>(null);
+  // Deep link from Settings → Experiments and the dashboard: /edit/:id?experiment=<id>.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedExperiment = Number(searchParams.get("experiment"));
+  useEffect(() => {
+    const e = experiments.data?.find((x) => x.id === linkedExperiment);
+    if (!e) return;
+    setExperimentPanel({ id: e.id, area: e.area });
+    setSearchParams((p) => { p.delete("experiment"); return p; }, { replace: true });
+  }, [experiments.data, linkedExperiment, setSearchParams]);
+  const externalPreview = (blockFrame && !!previewPage) || !!forcedArm;
   // Assigned in an effect, not during render: React may replay or discard a
   // render, and the handler that reads this fires post-commit anyway.
   const externalPreviewRef = useRef(false);
@@ -300,7 +323,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // ---- On-page edit (Optimizely-style OPE) ----------------------------------
   // Derived from the view: in "onpage" the preview clicks open anchored overlay
   // editors; in "split" they focus the sidebar field (classic side-by-side).
-  const opeMode: PreviewMode = effectiveView === "onpage" ? "edit" : "inspect";
+  const opeMode: PreviewMode = effectiveView === "onpage" && !forcedArm ? "edit" : "inspect";
   // The open overlay: which field, anchored where. `rect` is the element's
   // bridge-reported rect; `ox`/`oy` is the CLICK offset within the element, so
   // the card opens where the editor clicked — a 2000px-tall richtext body
@@ -1226,6 +1249,26 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   }
 
   const isPage = form.kind === "page";
+  // A content area's experiment entry: its badge when one exists, else the
+  // "A/B test this area" action for whoever may prepare one.
+  const experimentAction = (f: FieldDef): React.ReactNode => {
+    if (!isPage || f.type !== "contentArea") return undefined;
+    const e = experimentFor(pageExperiments, f.name, locale);
+    if (e) {
+      return (
+        <button type="button" className="ml-auto rounded-full" title="Open the experiment" onClick={() => setExperimentPanel({ id: e.id, area: f.name })}>
+          <Badge tone={e.status === "running" ? "primary" : "caution"}>{experimentBadge(e)}</Badge>
+        </button>
+      );
+    }
+    if (!canEdit) return undefined;
+    return (
+      <button type="button" className="btn-subtle ml-auto px-2 py-0.5 text-xs" onClick={() => setExperimentPanel({ id: null, area: f.name })}>
+        A/B test this area
+      </button>
+    );
+  };
+  const experimentArea = experimentPanel ? type?.fields.find((f) => f.name === experimentPanel.area && f.type === "contentArea") : undefined;
   // Publishing is only an ACTION when there is something to publish; the API
   // 409s otherwise ("Nothing to publish (no draft changes)").
   const nothingToPublish = form.status === "published" && !form.hasUnpublishedChanges;
@@ -1345,6 +1388,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                       error={fieldErrors[f.name]}
                       openPath={blockPath}
                       onOpenPath={setBlockPath}
+                      areaAction={experimentAction(f)}
                     />
                   </div>
                 ))}
@@ -1373,6 +1417,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                       error={fieldErrors[f.name]}
                       openPath={blockPath}
                       onOpenPath={setBlockPath}
+                      areaAction={experimentAction(f)}
                     />
                   </div>
                 ))}
@@ -1563,6 +1608,16 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                   {form.hasUnpublishedChanges && (
                     <>
                       <MenuItem onSelect={() => { setVersionsMode("review"); setShowVersions(true); }}>Review changes…</MenuItem>
+                      <MenuSeparator />
+                    </>
+                  )}
+                  {pageExperiments.length > 0 && (
+                    <>
+                      {pageExperiments.map((e) => (
+                        <MenuItem key={e.id} onSelect={() => setExperimentPanel({ id: e.id, area: e.area })}>
+                          {pageExperiments.length === 1 ? "View experiment" : `View experiment: ${e.name}`}
+                        </MenuItem>
+                      ))}
                       <MenuSeparator />
                     </>
                   )}
@@ -1840,8 +1895,32 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 ) : (
                   <span className="text-xs text-muted">Standalone</span>
                 )
+              ) : pageExperiments.length > 0 ? (
+                <>
+                  <select
+                    className="field-input-dense max-w-[200px]"
+                    aria-label="Preview version"
+                    value={forcedArm ? `${forcedArm.id}:${forcedArm.arm}` : ""}
+                    onChange={(e) => {
+                      closeOpeRef.current?.(); // another version has no On-page; drop an open overlay
+                      const [id, arm] = e.target.value.split(":");
+                      setPreviewArm(arm ? { id: Number(id), arm } : null);
+                    }}
+                  >
+                    <option value="">Version A (the page)</option>
+                    {pageExperiments.flatMap((e) =>
+                      e.arms.filter((a) => a.key !== "a").map((a) => (
+                        <option key={`${e.id}:${a.key}`} value={`${e.id}:${a.key}`}>
+                          {pageExperiments.length > 1 ? `${e.name}: ` : ""}{versionName(a.key)}{a.label ? ` · ${a.label}` : ""}
+                        </option>
+                      )),
+                    )}
+                  </select>
+                  {forcedArm && <span className="text-xs text-muted">On-page editing is off: edit version {forcedArm.arm.toUpperCase()} in the experiment panel.</span>}
+                </>
               ) : undefined
             }
+            extraQuery={forcedArm ? pbabParam(forcedArm.id, forcedArm.arm) : ""}
             overlay={(() => {
               if (!ope || !type) return null;
               // "＋ Add block" from the preview's area chip: an anchored palette
@@ -2099,6 +2178,25 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           locale={locale}
           open={showBrief}
           onOpenChange={setShowBrief}
+        />
+      )}
+
+      {experimentPanel && experimentArea && (
+        <ExperimentPanel
+          id={experimentPanel.id}
+          documentId={documentId}
+          locale={locale}
+          area={experimentArea}
+          areaBlocks={(form.data[experimentArea.name] as BlockInstance[] | undefined) ?? []}
+          types={types}
+          sharedBlocks={sharedBlocks.data ?? []}
+          onOpen={(id) => setExperimentPanel({ id, area: experimentArea.name })}
+          onClose={() => setExperimentPanel(null)}
+          onEnded={() => {
+            // Ending with a winner may have rewritten the area's draft: re-seed the form.
+            loadedKey.current = null;
+            void qc.invalidateQueries({ queryKey: ["content", documentId, locale] });
+          }}
         />
       )}
 
@@ -2668,6 +2766,7 @@ function Field({
   error,
   openPath,
   onOpenPath,
+  areaAction,
 }: {
   field: FieldDef;
   value: unknown;
@@ -2679,6 +2778,8 @@ function Field({
   /** Which block row is open, and how to change it — see Editor's `blockPath`. */
   openPath?: BlockPath;
   onOpenPath?: (next: BlockPath) => void;
+  /** A content area's header action: the A/B experiment entry or its badge. */
+  areaAction?: React.ReactNode;
 }) {
   const id = `f-${field.name}`;
   if (field.type === "contentArea") {
@@ -2687,6 +2788,7 @@ function Field({
         <div className="field-label flex items-center gap-2">
           {field.displayName}
           {field.delivery === "private" && <span className="rounded bg-line px-1 text-[10px] text-muted">private</span>}
+          {areaAction}
         </div>
         <ContentArea
           field={field}

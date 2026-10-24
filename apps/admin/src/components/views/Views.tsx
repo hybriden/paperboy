@@ -16,6 +16,8 @@ import { useToast } from "../ui/toast.js";
 import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, FormSubmissionsPanel, LanguagesPanel, McpConnectionsPanel,
   AgentReviewPanel, McpTokensPanel, PasswordPanel, SiteGeneralPanel, SitesPanel, StockImagesPanel, TrashPanel, TypeTemplatesPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
 import { RedirectsPanel } from "./RedirectsPanel.js";
+import { ExperimentsPanel, experimentLink } from "./ExperimentsPanel.js";
+import { experimentBadge } from "../../lib/experiments.js";
 
 function StatCard({ label, value }: { label: string; value: number | string }) {
   return (
@@ -132,6 +134,11 @@ export function DashboardView() {
   const types = useQuery({ queryKey: ["content-types"], queryFn: ({ signal }) => api.contentTypes(signal) });
   const locales = useQuery({ queryKey: ["locales"], queryFn: ({ signal }) => api.locales(signal) });
   const dash = useQuery({ queryKey: ["dashboard"], queryFn: ({ signal }) => api.dashboard(signal) });
+  const experiments = useQuery({ queryKey: ["experiments", "all"], queryFn: ({ signal }) => api.experiments({}, signal) });
+  const experimentSettings = useQuery({ queryKey: ["experiment-settings"], queryFn: ({ signal }) => api.experimentSettings(signal) });
+  // Running ones, plus agent-made ones waiting for a human to review and start.
+  const liveExperiments = (experiments.data ?? []).filter((e) => e.status === "running" || (e.needsReview && e.status !== "ended"));
+  const overdue = new Set(experimentSettings.data?.overdue ?? []);
 
   const nodes = tree.data ?? [];
   const pages = nodes.filter((n) => n.kind === "page");
@@ -324,6 +331,29 @@ export function DashboardView() {
             ))}
           </DashSection>
         </div>
+
+        <div className="mt-8">
+          <DashSection title="Running experiments" hint="A/B tests live on the site, and agent-made ones waiting for review.">
+            {experiments.isLoading && skeleton(2)}
+            {experiments.isSuccess && liveExperiments.length === 0 && <EmptyRow>No experiments running.</EmptyRow>}
+            {liveExperiments.map((e) => (
+              <button
+                key={e.id}
+                onClick={() => navigate(experimentLink(e))}
+                className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 border-b border-line px-4 py-3 text-left text-sm transition-colors last:border-0 hover:bg-canvas"
+              >
+                <Icon.File width={16} height={16} className="shrink-0 text-muted" />
+                <span className="min-w-0 flex-1 truncate">
+                  <span className="font-medium text-fg">{e.name}</span>
+                  <span className="text-muted"> · {e.pageName ?? e.documentId}</span>
+                </span>
+                {overdue.has(e.id) && <Badge tone="critical">running over {experimentSettings.data?.warnDays} days</Badge>}
+                {e.needsReview && <Badge tone="caution">agent-made · needs review</Badge>}
+                <Badge tone={e.status === "running" ? "primary" : "caution"}>{experimentBadge(e)}</Badge>
+              </button>
+            ))}
+          </DashSection>
+        </div>
       </div>
     </div>
   );
@@ -371,6 +401,7 @@ export function SettingsView() {
     // Grouped by what a tab applies to: the active site, what every site shares, the instance, or you.
     { key: "site", label: "General", group: "Site", show: has("site.manage"), render: () => <SiteGeneralPanel /> },
     { key: "redirects", label: "Redirects", group: "Site", show: true, render: () => <RedirectsPanel /> },
+    { key: "experiments", label: "Experiments", group: "Site", show: true, render: () => <ExperimentsPanel /> },
     { key: "keys", label: "Delivery keys", group: "Site", show: has("deliverykey.manage"), render: () => <DeliveryKeysPanel /> },
     { key: "webhooks", label: "Webhooks", group: "Site", show: has("webhook.manage"), render: () => <WebhooksPanel /> },
     { key: "model", label: "Content types", group: "Content model", show: true, render: () => <ContentTypesPanel /> },

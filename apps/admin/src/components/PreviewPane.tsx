@@ -100,6 +100,7 @@ export function PreviewPane({
   overlay,
   livePatch,
   toolbarExtra,
+  extraQuery = "",
 }: {
   /** The preview iframe. Owned by the Editor, which authenticates inbound
    *  bridge messages against this frame's window (lib/preview-origin). */
@@ -123,6 +124,8 @@ export function PreviewPane({
   /** Extra toolbar content (e.g. the borrowed-page picker when a block
    *  previews on a page that uses it). */
   toolbarExtra?: React.ReactNode;
+  /** Appended to the framed URL, e.g. `&pbab=12:b` to force an A/B version. */
+  extraQuery?: string;
 }) {
   const [device, setDevice] = useState<Device>("desktop");
   const [nonce, setNonce] = useState(0);
@@ -328,7 +331,7 @@ export function PreviewPane({
   // query resolves (the token query can win that race) and when no preview URL
   // is configured — and this URL carries the token.
   const src = usableToken && targetOrigin
-    ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(usableToken.token)}&n=${nonce}`
+    ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(usableToken.token)}&n=${nonce}${extraQuery}`
     : null;
   // Every navigation restarts the not-yet-loaded window postToPreview guards.
   useEffect(() => setFrameLoaded(false), [src]);

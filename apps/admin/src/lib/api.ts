@@ -1,6 +1,11 @@
 import type {
   AiResult,
+  ArmResult,
   Asset,
+  BlockInstance,
+  ExperimentMode,
+  ExperimentStatus,
+  ExperimentVerdict,
   BlockSummary,
   ContentDetail,
   ContentTypeDef,
@@ -600,9 +605,72 @@ export const api = {
   deleteSite: (id: string, confirmSlug: string) =>
     request<{ ok: boolean; contentItems: number; assets: number; deliveryKeys: number }>("DELETE", `/manage/sites/${id}?confirm=${encodeURIComponent(confirmSlug)}`),
 
+  // A/B experiments (#125), for the active site.
+  experiments: (opts: { status?: ExperimentStatus; documentId?: string } = {}, signal?: AbortSignal) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(opts)) if (v) qs.set(k, v);
+    return request<ExperimentView[]>("GET", `/manage/experiments?${qs}`, undefined, signal);
+  },
+  experiment: (id: number, signal?: AbortSignal) => request<ExperimentDetail>("GET", `/manage/experiments/${id}`, undefined, signal),
+  createExperiment: (body: ExperimentInput & { documentId: string; locale: string; area: string }) => request<ExperimentView>("POST", "/manage/experiments", body),
+  updateExperiment: (id: number, body: Partial<ExperimentInput>) => request<ExperimentView>("PATCH", `/manage/experiments/${id}`, body),
+  startExperiment: (id: number) => request<ExperimentView>("POST", `/manage/experiments/${id}/start`),
+  pauseExperiment: (id: number) => request<ExperimentView>("POST", `/manage/experiments/${id}/pause`),
+  endExperiment: (id: number, body: { winner?: string | null; apply?: WinnerApply }) =>
+    request<{ experiment: ExperimentView; applied: WinnerApply }>("POST", `/manage/experiments/${id}/end`, body),
+  experimentSettings: (signal?: AbortSignal) => request<ExperimentSettings>("GET", "/manage/experiments/settings", undefined, signal),
+  setExperimentSettings: (body: { mode?: ExperimentMode; warnDays?: number }) => request<ExperimentSettings>("PUT", "/manage/experiments/settings", body),
+
   // dashboard
   dashboard: (signal?: AbortSignal) => request<DashboardData>("GET", "/manage/dashboard", undefined, signal),
 };
+
+/** An A/B experiment (#125): versions A–D ("arms" in code); A is the page's published area. */
+export interface ExperimentView {
+  id: number;
+  documentId: string;
+  locale: string;
+  area: string;
+  pageName: string | null;
+  name: string;
+  hypothesis: string | null;
+  status: ExperimentStatus;
+  /** "form" or "event:<name>". */
+  goal: string;
+  baselineRate: number | null;
+  mde: number | null;
+  endsAt: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  endReason: string | null;
+  winner: string | null;
+  needsReview: boolean;
+  createdVia: string | null;
+  createdAt: string;
+  updatedAt: string;
+  arms: { key: string; label: string | null; weight: number; blocks: BlockInstance[] | null }[];
+  results: ArmResult[];
+  verdict: ExperimentVerdict;
+}
+export interface ExperimentDetail extends ExperimentView {
+  daily: { day: string; arm: string; exposures: number; conversions: number }[];
+}
+export interface ExperimentInput {
+  name: string;
+  hypothesis?: string | null;
+  goal?: string;
+  baselineRate?: number | null;
+  mde?: number | null;
+  endsAt?: string | null;
+  arms: { key?: string; label?: string | null; weight?: number; blocks?: BlockInstance[] }[];
+}
+export type WinnerApply = "draft" | "publish" | "none";
+export interface ExperimentSettings {
+  mode: ExperimentMode;
+  warnDays: number;
+  /** Running experiments past warnDays. */
+  overdue: number[];
+}
 
 export interface DashboardData {
   wip: { documentId: string; name: string; type: string; kind: string; locale: string; change: "new" | "updated"; at: string }[];
