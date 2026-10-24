@@ -128,3 +128,21 @@ export function blockSummary(block: BlockInstance, type?: ContentTypeDef): strin
   }
   return "";
 }
+
+/**
+ * The inverse of resolveBlockPath: a key-based path as the positions the
+ * preview bridge counts ({ field, blockIndex }[]), so the admin can point the
+ * preview at one exact block (paperboy:focus with a path). Null when stale.
+ */
+export function indexPathOf(data: Record<string, unknown>, path: BlockPath): { field: string; blockIndex: number }[] | null {
+  let current = data;
+  const out: { field: string; blockIndex: number }[] = [];
+  for (const step of path) {
+    const blocks = areaOf(current, step.field);
+    const blockIndex = blocks.findIndex((b) => b.key === step.key);
+    if (blockIndex < 0) return null;
+    out.push({ field: step.field, blockIndex });
+    current = blocks[blockIndex]!.inline ?? {};
+  }
+  return out;
+}

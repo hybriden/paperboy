@@ -111,7 +111,7 @@ export function PreviewPane({
   /** Content kind — a PAGE with no urlPath has nothing to preview (see below). */
   kind?: string;
   refreshSignal?: number;
-  focusField?: { field: string; blockIndex?: number; n: number } | null;
+  focusField?: { field: string; blockIndex?: number; path?: { field: string; blockIndex: number }[]; n: number } | null;
   /** inspect = click focuses the sidebar field (classic); edit = on-page overlay. */
   mode?: PreviewMode;
   /** Anchored on-page editor: rect + click offset from the bridge, content from
@@ -150,7 +150,7 @@ export function PreviewPane({
   useEffect(() => { if (refreshSignal > 0) setNonce((n) => n + 1); }, [refreshSignal]);
   // Editor → preview: when a property is focused, scroll to + highlight its region.
   useEffect(() => {
-    if (focusField?.field) postToPreview(focusMessage(focusField.field, { blockIndex: focusField.blockIndex }));
+    if (focusField?.field || focusField?.path?.length) postToPreview(focusMessage(focusField.field, { blockIndex: focusField.blockIndex, path: focusField.path }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusField, targetOrigin]);
   // Dragging a shared block from the Assets pane: a CROSS-ORIGIN preview iframe
@@ -365,28 +365,26 @@ export function PreviewPane({
 
   return (
     <div className="flex h-full flex-col">
-      {/* Persistent "viewing drafts" banner (editors must know). The STATE stays —
-          it is a correctness signal, not a hint — but the "click any element" tail
-          is gone from preview mode: an instruction that never leaves becomes
-          furniture, and click-to-edit is learned in one sitting. On-page mode
-          keeps its instruction, because that mode is entered deliberately. */}
-      <div className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium ${mode === "edit" ? "bg-canvas text-muted" : "bg-draft/15 text-draft"}`} role="status">
-        <span className={`h-2 w-2 rounded-full ${mode === "edit" ? "bg-accent" : "bg-draft"}`} />
-        {mode === "edit"
-          ? "On-page editing — click an element to edit it right here"
-          : "Preview · showing drafts"}
-      </div>
-      <div className="flex items-center gap-2 border-b border-line bg-panel px-3 py-2">
-        <div className="flex rounded border border-line p-0.5">
+      {/* ONE bar over the frame: device, refresh, the frame's size, and the
+          state. The "viewing drafts" state stays (a correctness signal, not a
+          hint) but as text at the bar's end, not a banner of its own: a strip
+          that never changes becomes furniture. On-page mode keeps its short
+          instruction, because that mode is entered deliberately. */}
+      <div className="flex items-center gap-2 border-b border-line bg-panel px-3 py-1.5">
+        <div className="flex rounded-(--radius) bg-line/70 p-0.5" role="group" aria-label="Preview size">
           {(["desktop", "tablet", "mobile"] as Device[]).map((d) => (
-            <button key={d} className={`rounded px-2 py-0.5 text-xs capitalize ${device === d ? "bg-accent/15 font-semibold text-accent-700" : "text-muted hover:bg-canvas"}`}
+            <button key={d} aria-pressed={device === d} className={`rounded-[calc(var(--radius)-2px)] px-2.5 py-0.5 text-sm capitalize ${device === d ? "bg-panel font-medium text-fg shadow-panel" : "text-muted hover:text-fg"}`}
               onClick={() => setDevice(d)}>{d}</button>
           ))}
         </div>
-        <button className="btn-subtle px-2 py-0.5 text-xs" onClick={() => setNonce((n) => n + 1)}>Refresh</button>
+        <button className="btn-ghost px-2 py-1 text-sm" onClick={() => setNonce((n) => n + 1)}>Refresh</button>
         {toolbarExtra}
-        <span className="text-[11px] tabular-nums text-muted">{target}px · {Math.round(scale * 100)}%</span>
-        <span className="ml-auto truncate text-xs text-muted">/{locale}{path}</span>
+        <span className="tnum hidden whitespace-nowrap text-xs text-muted min-[1500px]:inline">{target}px · {Math.round(scale * 100)}%</span>
+        <span role="status" className={`ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs ${mode === "edit" ? "text-muted" : "font-medium text-draft"}`}>
+          <span className={`h-2 w-2 rounded-full ${mode === "edit" ? "bg-accent" : "bg-draft"}`} />
+          {mode === "edit" ? "On-page editing: click an element to edit it" : "Showing drafts"}
+        </span>
+        <span className="hidden min-w-0 truncate text-xs text-muted min-[1500px]:inline">/{locale}{path}</span>
       </div>
       <div ref={stageRef} className="relative min-h-0 flex-1 overflow-hidden bg-canvas">
         {kind === "page" && !urlPath && !isStart ? (

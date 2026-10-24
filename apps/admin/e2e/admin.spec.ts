@@ -945,9 +945,10 @@ test("visual editing: a field INSIDE a block opens the on-page overlay scoped to
   );
   await expect(page.getByText("Edit on page")).toBeVisible({ timeout: 5000 });
   // The overlay edits the BLOCK's own field (HeroBlock.title); the form panel
-  // stays unmounted — dropping to side-by-side would render #pb-block-0.
+  // stays unmounted — dropping to side-by-side would render its property tabs.
+  // (The outline lists the blocks, but leaves the clicked row closed: one editor per field.)
   await expect(page.getByRole("textbox", { name: "Title" })).toBeVisible();
-  await expect(page.locator("#pb-block-0")).toHaveCount(0);
+  await expect(page.getByRole("tablist", { name: "Property groups" })).toHaveCount(0);
 });
 
 test("visual editing: a shared block edits On-page on its standalone preview (#99)", async ({ page }) => {
@@ -988,6 +989,50 @@ test("visual editing: a shared block edits On-page on its standalone preview (#9
     );
     await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue("After on-page", { timeout: 1000 });
   }).toPass({ timeout: 15_000 });
+  await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
+});
+
+test("on-page outline: a block opened in the outline is pointed at on the page and edited in place (#151)", async ({ page }) => {
+  await login(page);
+  const me = await page.request.get("/api/v1/auth/me");
+  const headers = { "x-csrf-token": ((await me.json()) as { csrfToken: string }).csrfToken, origin: "http://localhost:8090" };
+  const created = await page.request.post("/api/v1/manage/content", { headers, data: { type: "LandingPage", parentId: null, locale: "en", name: `Outline ${Date.now().toString(36)}` } });
+  expect(created.ok(), await created.text()).toBe(true);
+  const { documentId } = (await created.json()) as { documentId: string };
+  const hero = { key: "oh1", blockType: "HeroBlock", display: "full", ref: null, inline: { title: "Outline hero" } };
+  expect((await page.request.put(`/api/v1/manage/content/${documentId}?locale=en`, { headers, data: { data: { heading: "Outline page", mainArea: [hero] } } })).ok()).toBe(true);
+
+  await page.goto(`/edit/${documentId}`);
+  await page.getByRole("button", { name: "On-page", exact: true }).click();
+  const outline = page.getByRole("complementary", { name: "Page outline" });
+  await expect(outline).toBeVisible({ timeout: 20_000 });
+  const toggle = page.getByRole("button", { name: "Outline", exact: true });
+  await expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+  // Opening the hero's row points the preview at that exact block (focus by path).
+  const frame = await waitPreviewFrame(page);
+  await expect.poll(() => frame.locator('[data-pb-field="title"]').count(), { timeout: 20_000 }).toBeGreaterThan(0);
+  await outline.getByRole("button", { name: /Hero/ }).first().click();
+  await expect(frame.locator(".pb-focus")).toHaveCount(1, { timeout: 5000 });
+
+  // Its fields are edited right in the outline, and the page follows.
+  await outline.getByRole("textbox", { name: "Title", exact: true }).fill("Edited from the outline");
+  await expect
+    .poll(async () => ((await (await page.request.get(`/api/v1/manage/content/${documentId}?locale=en`)).json()) as { data: { mainArea: Array<{ inline: { title?: string } }> } }).data.mainArea[0]!.inline.title, { timeout: 10_000 })
+    .toBe("Edited from the outline");
+  await expect(frame.getByText("Edited from the outline").first()).toBeVisible({ timeout: 15_000 });
+  // The admin's own chrome; the framed page is the frontend's (its colours aren't ours to check here).
+  const scan = await new AxeBuilder({ page }).exclude('iframe[title="Content preview"]').analyze();
+  expect(scan.violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id), "on-page outline").toEqual([]);
+
+  // The outline folds away by keyboard, and the choice is remembered.
+  await toggle.focus();
+  await page.keyboard.press("Enter");
+  await expect(outline).toHaveCount(0);
+  await page.reload();
+  await page.getByRole("button", { name: "On-page", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Outline", exact: true })).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "Outline", exact: true }).click();
   await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
 });
 

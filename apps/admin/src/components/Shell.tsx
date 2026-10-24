@@ -77,7 +77,7 @@ function TopBar({
   onOpenPalette: () => void;
 }) {
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-panel px-3 text-fg">
+    <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-panel px-3 text-fg">
       <div className="flex shrink-0 items-baseline gap-2 pr-2">
         <span className="wordmark text-[22px] leading-none text-fg">Paperboy</span>
         <span className="hidden text-[10px] font-semibold uppercase tracking-[0.2em] text-muted sm:inline">CMS</span>
