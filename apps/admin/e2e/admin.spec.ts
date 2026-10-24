@@ -974,6 +974,20 @@ test("visual editing: a shared block edits On-page on its standalone preview (#9
   await expect
     .poll(async () => ((await (await page.request.get(`/api/v1/manage/content/${documentId}?locale=en`)).json()) as { data: { title?: string } }).data.title, { timeout: 10_000 })
     .toBe("After on-page");
+  // An older standalone route that still marks the root block reports the
+  // same click as block 0 of no area: still THIS document's title.
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("Edit on page")).toHaveCount(0);
+  // Closing reloads the frame (saves were made), so post until it lands.
+  await expect(async () => {
+    await frame.evaluate(() =>
+      window.parent.postMessage(
+        { type: "paperboy:edit", field: "title", blockIndex: 0, blockType: "CardBlock", rect: { x: 40, y: 40, w: 240, h: 28 }, click: { x: 60, y: 54 } },
+        "*",
+      ),
+    );
+    await expect(page.getByRole("textbox", { name: "Title" })).toHaveValue("After on-page", { timeout: 1000 });
+  }).toPass({ timeout: 15_000 });
   await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
 });
 

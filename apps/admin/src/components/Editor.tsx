@@ -283,9 +283,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Assigned in an effect, not during render: React may replay or discard a
   // render, and the handler that reads this fires post-commit anyway.
   const externalPreviewRef = useRef(false);
+  const standaloneRef = useRef(false);
   useEffect(() => {
     externalPreviewRef.current = externalPreview;
-  }, [externalPreview]);
+    standaloneRef.current = blockFrame && !externalPreview;
+  }, [externalPreview, blockFrame]);
   // Read in the preview-message handler (whose effect doesn't re-run on user
   // changes) — permissions are session-stable, the ref just keeps it honest.
   const canEditRef = useRef(false);
@@ -804,8 +806,19 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       // nothing. The origin alone is the customer's PUBLIC site, so the sender
       // must also be the preview iframe's own window.
       if (!isFromPreviewFrame(e, previewOrigin(site.data), previewFrameRef.current?.contentWindow)) return;
-      const msg = parsePreviewMessage(e.data);
-      if (!msg) return; // unknown/garbage (and forward-compat: future message types)
+      const parsed = parsePreviewMessage(e.data);
+      if (!parsed) return; // unknown/garbage (and forward-compat: future message types)
+      // A standalone route that still wraps the block in its own marker (older
+      // frontends) reports the document's fields as block 0 of no area. That is
+      // this document, never "block 0 of one of its areas" (#99).
+      const msg =
+        standaloneRef.current &&
+        (parsed.type === "paperboy:edit" || parsed.type === "paperboy:rect") &&
+        parsed.blockIndex === 0 &&
+        !("path" in parsed && parsed.path?.length) &&
+        (parsed.type === "paperboy:rect" || parsed.blockType == null || parsed.blockType === type?.name)
+          ? { ...parsed, blockIndex: null }
+          : parsed;
       // Block preview (standalone route or a borrowed page): the bridge
       // reports the FRAMED render's fields/indexes — routing its edit/drop
       // messages into this document would write to the wrong fields.
