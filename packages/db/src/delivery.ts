@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { type SQLWrapper, and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { type ContentTypeDef, type DeliveryContent, type ExperimentArmKey, type ExperimentStatus, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, parseStoredContentTypeDef, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
@@ -79,18 +79,20 @@ class DeliveryCtx {
    * PREVIEW still needs everything: its last-resort fallback is "the latest
    * version of any status".
    */
-  private selectableVersions(documentIds: string[], perspective: Perspective) {
+  // `documentIds` may be a subquery, so the versions of a set can be read in
+  // the same round trip as the set itself (see cacheVersions).
+  selectableVersions(documentIds: string[] | SQLWrapper, perspective: Perspective) {
     return this.db
       .select()
       .from(contentVersion)
       .where(
         perspective === "published"
-          ? and(inArray(contentVersion.documentId, documentIds), eq(contentVersion.isCurrentPublished, true))
+          ? and(inArray(contentVersion.documentId, documentIds as string[]), eq(contentVersion.isCurrentPublished, true))
           : // Preview selects (per locale) the draft, else the live row, else the
             // latest version (selectRow): only those rows, never the history
             // (a page with 60 old versions shipped all their data every request).
             and(
-              inArray(contentVersion.documentId, documentIds),
+              inArray(contentVersion.documentId, documentIds as string[]),
               or(
                 eq(contentVersion.status, "draft"),
                 eq(contentVersion.isCurrentPublished, true),
@@ -108,6 +110,13 @@ class DeliveryCtx {
     const rows = await this.selectableVersions([documentId], perspective);
     this.versionsByDoc.set(key, rows);
     return rows;
+  }
+
+  /** Cache already-read selectable rows for these documents (as primeVersions would). */
+  cacheVersions(documentIds: string[], rows: (typeof contentVersion.$inferSelect)[], perspective: Perspective): void {
+    const grouped = new Map<string, (typeof contentVersion.$inferSelect)[]>(documentIds.map((id) => [id, []]));
+    for (const r of rows) grouped.get(r.documentId)?.push(r);
+    for (const [id, rs] of grouped) if (!this.versionsByDoc.has(`${perspective}:${id}`)) this.versionsByDoc.set(`${perspective}:${id}`, rs);
   }
 
   /** Bulk-prime version rows for many documents in ONE query (batches the N+1). */
@@ -1630,23 +1639,26 @@ export async function deliveryGetByPath(
   let currentDoc: string | null = null;
   for (let depth = 0; depth < cleaned.length; depth++) {
     const segment = cleaned[depth]!;
-    const children: Array<{ documentId: string; type: string; kind: string; parentId: string | null }> = await db
-      .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
-      .from(contentItem)
-      .where(
-        and(
-          parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
-          eq(contentItem.kind, "page"),
-          isNull(contentItem.deletedAt),
-          eq(contentItem.siteId, siteId), // multisite: only this site's pages match the path
-        ),
-      )
-      .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
+    const level = and(
+      parentId === null ? isNull(contentItem.parentId) : eq(contentItem.parentId, parentId),
+      eq(contentItem.kind, "page"),
+      isNull(contentItem.deletedAt),
+      eq(contentItem.siteId, siteId), // multisite: only this site's pages match the path
+    );
+    // The level and its versions in ONE round trip (the versions by subquery).
+    const [children, levelVersions] = await Promise.all([
+      db
+        .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
+        .from(contentItem)
+        .where(level)
+        .orderBy(asc(contentItem.sortIndex), asc(contentItem.id)),
+      ctx.selectableVersions(db.select({ id: contentItem.documentId }).from(contentItem).where(level), perspective),
+    ]);
 
     // Same filter as ctx.item(), so the matched chain is already known when the
     // page resolves (no second lookup of the document or its ancestors).
     for (const c of children) if (!ctx.items.has(c.documentId)) ctx.items.set(c.documentId, { type: c.type, kind: c.kind, parentId: c.parentId });
-    await ctx.primeVersions(children.map((c) => c.documentId), perspective); // batch this level's sibling versions
+    ctx.cacheVersions(children.map((c) => c.documentId), levelVersions, perspective);
     let matched: string | null = null;
     for (const child of children) {
       // Resolve through the perspective chokepoint — draft-only children are
@@ -1695,21 +1707,20 @@ export async function deliveryGlobal(
   loc: string,
 ): Promise<DeliveryContent | null> {
   const ctx = new DeliveryCtx(db, siteId).warm(perspective, { page: false });
-  const items = await db
-    .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
-    .from(contentItem)
-    .where(
-      and(
-        eq(contentItem.type, typeName),
-        eq(contentItem.kind, "global"),
-        isNull(contentItem.deletedAt),
-        eq(contentItem.siteId, siteId),
-      ),
-    )
-    .orderBy(asc(contentItem.id))
-    .limit(1);
+  const ofType = and(eq(contentItem.type, typeName), eq(contentItem.kind, "global"), isNull(contentItem.deletedAt), eq(contentItem.siteId, siteId));
+  // The global and its versions in ONE round trip (the versions by subquery).
+  const [items, versions] = await Promise.all([
+    db
+      .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
+      .from(contentItem)
+      .where(ofType)
+      .orderBy(asc(contentItem.id))
+      .limit(1),
+    ctx.selectableVersions(db.select({ id: contentItem.documentId }).from(contentItem).where(ofType), perspective),
+  ]);
   if (!items[0]) return null;
   const { documentId, ...item } = items[0];
   ctx.items.set(documentId, item); // same filter as ctx.item()
+  ctx.cacheVersions([documentId], versions, perspective);
   return resolveContent(ctx, perspective, documentId, loc, 1);
 }
