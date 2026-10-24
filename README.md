@@ -103,7 +103,8 @@ Every rule below exists because a real agent run broke without it.
 - **Content types are data** — pages, blocks and globals are defined in the admin, not in code. Content areas hold inline or shared blocks; a built-in template library covers the essentials.
 - **Multisite** — several sites in one instance, each with its own delivery keys, media, preview URL and start page. Types, languages and users are shared.
 - **Multi-language** with a fallback chain, hierarchical URLs from the page tree, version history, trash. Translation gaps show in the tree and on the dashboard.
-- **Forms with submissions in _your_ database** — a form is content. Delivery ships it as a schema, submissions are validated server-side against the published form, and errors come back per field. Spam checks on by default, retention runs, erase-by-email is one audited action.
+- **Forms with submissions in _your_ database** — a form is content. Delivery ships it as a schema, submissions are validated server-side against the published form, and errors come back per field. Spam checks on by default, retention runs, erase-by-email is one audited action. One spread makes a form a [WebMCP](https://developer.chrome.com/docs/ai/webmcp) tool for in-browser agents.
+- **A/B experiments** — test a content area of a page against up to three other versions. The frontend picks a version server-side (no flicker), counts are stored per day with no visitor data, cookieless by default, and no winner is named before the planned sample size. The winner becomes the area's draft.
 
 **Delivery**
 - **One read path, no leaks** — public keys see published content, preview keys see drafts, private fields never serialize. Lists filter, sort, paginate and search; every item carries `fieldTypes` so frontends switch on schema.
@@ -276,6 +277,7 @@ media). The rest is opt-in, so an agent writing a page isn't choosing among user
 | `delivery` | what the public website receives (published output, search) |
 | `schema` | content types and type templates |
 | `redirects` | redirect rules and the 404 log |
+| `experiments` | A/B tests of a page's content area: set up, start, pause, read results, end |
 | `forms` | form submissions (export, erasure) |
 | `admin` | users, delivery keys, webhooks, audit log, start page |
 
@@ -308,7 +310,8 @@ const src = post?.data.image && mediaUrl(post.data.image.url, { w: 640, format: 
 ```
 
 Also `getByPath`, `startPage`, `global`, `search`, render helpers that follow `fieldTypes`,
-`matchRedirect`, preview-token verification and an optional ETag cache. 404s return `null`, other
+`matchRedirect`, `applyExperiments` for A/B tests, `formToolAttrs` for WebMCP forms,
+preview-token verification and an optional ETag cache. 404s return `null`, other
 errors throw `PaperboyError`. [Full README](packages/client/README.md).
 
 **[`@paperboycms/preview`](packages/preview)** — zero-dependency bridge that makes any frontend

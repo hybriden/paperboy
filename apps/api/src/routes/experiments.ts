@@ -48,6 +48,7 @@ const ExperimentOut = z.object({
   arms: z.array(z.object({ key: z.string(), label: z.string().nullable(), weight: z.number(), blocks: z.array(z.unknown()).nullable() })),
   results: z.array(z.object({ key: z.string(), exposures: z.number(), conversions: z.number(), rate: z.number().nullable(), comparison: Comparison.nullable() })),
   verdict: z.object({ summary: z.string(), complete: z.boolean(), leader: z.string().nullable(), srmWarning: z.boolean(), needed: z.number().nullable() }),
+  estimate: z.object({ perDay: z.number().nullable(), daysLeft: z.number().nullable() }),
 });
 const ExperimentDetail = ExperimentOut.extend({ daily: z.array(z.object({ day: z.string(), arm: z.string(), exposures: z.number(), conversions: z.number() })) });
 

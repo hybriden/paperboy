@@ -651,6 +651,8 @@ export interface ExperimentView {
   arms: { key: string; label: string | null; weight: number; blocks: BlockInstance[] | null }[];
   results: ArmResult[];
   verdict: ExperimentVerdict;
+  /** Traffic since the start and, with a plan, days until enough visitors. */
+  estimate: { perDay: number | null; daysLeft: number | null };
 }
 export interface ExperimentDetail extends ExperimentView {
   daily: { day: string; arm: string; exposures: number; conversions: number }[];

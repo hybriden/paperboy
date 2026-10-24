@@ -1591,7 +1591,19 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             <div className="flex items-stretch">
               <button
                 className={`${nothingToPublish ? "btn-inert" : "btn-primary"} rounded-r-none`}
-                onClick={() => publish.mutate()}
+                onClick={() => {
+                  // Version A of a running test is the PUBLISHED area: publishing
+                  // mid-test changes the control and mixes two tests in one count.
+                  const running = pageExperiments.filter((e) => e.status === "running");
+                  if (!running.length) return publish.mutate();
+                  const areas = running.map((e) => type?.fields.find((f) => f.name === e.area)?.displayName ?? e.area).join(", ");
+                  confirm.ask({
+                    title: "Publish while an A/B test runs?",
+                    description: `An experiment is running on ${areas}. Its version A is the published area, so if you changed it, visitors in version A see the new content from now on and the results mix two tests. Pause or end the experiment first if that matters, or publish anyway.`,
+                    confirmLabel: "Publish anyway",
+                    onConfirm: () => publish.mutate(),
+                  });
+                }}
                 disabled={publish.isPending || !canEdit || nothingToPublish}
                 title={nothingToPublish ? "Nothing to publish — the live version already matches this draft." : undefined}
               >
@@ -2192,6 +2204,12 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           sharedBlocks={sharedBlocks.data ?? []}
           onOpen={(id) => setExperimentPanel({ id, area: experimentArea.name })}
           onClose={() => setExperimentPanel(null)}
+          beforeEnd={async () => {
+            // Like publish: the pending edits land first, so the winner merges
+            // over them instead of the autosave being refused afterwards.
+            if (timer.current) clearTimeout(timer.current);
+            return (saveState === "dirty" || saveState === "saving") && formRef.current ? queueSave() : true;
+          }}
           onEnded={() => {
             // Ending with a winner may have rewritten the area's draft: re-seed the form.
             loadedKey.current = null;

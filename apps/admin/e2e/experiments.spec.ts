@@ -83,6 +83,8 @@ test("an editor runs an A/B experiment on a content area, end to end", async ({ 
   await page.keyboard.press("Enter");
   const confirmStart = page.getByRole("dialog", { name: "Start the experiment?" });
   await expect(confirmStart).toContainText("Visitors to the live page are split");
+  // Starting is deliberate but reversible: the primary button, not the red one.
+  await expect(confirmStart.getByRole("button", { name: "Start experiment" })).toHaveClass(/btn-primary/);
   await confirmStart.getByRole("button", { name: "Start experiment" }).click();
   await expect(dialog.getByRole("status").first()).toHaveText("Experiment running · not conclusive");
   await expect(dialog.getByText("Pause it to edit.")).toBeVisible();
@@ -91,6 +93,15 @@ test("an editor runs an A/B experiment on a content area, end to end", async ({ 
 
   // 4. The area badge and the publish menu.
   await expect(page.getByRole("button", { name: "Experiment running · not conclusive" })).toBeVisible();
+  // Publishing mid-test changes version A: the editor says so first (#146).
+  await page.getByRole("textbox", { name: "Heading" }).fill("Edited during the test");
+  await expect(page.getByText("All changes saved").first()).toBeVisible({ timeout: 10_000 });
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  const warn = page.getByRole("dialog", { name: "Publish while an A/B test runs?" });
+  await expect(warn).toContainText("Main content area");
+  await warn.getByRole("button", { name: "Cancel" }).click();
+  const stillLive = (await (await page.request.get(`/api/v1/delivery/content/${documentId}?locale=en`, { headers: { authorization: `Bearer ${publicKey}` } })).json()) as { data: { heading: string } };
+  expect(stillLive.data.heading).toBe("Original heading");
   await page.getByRole("button", { name: "More publish actions" }).click();
   await page.getByRole("menuitem", { name: "View experiment" }).click();
   await expect(dialog).toBeVisible();
@@ -111,7 +122,12 @@ test("an editor runs an A/B experiment on a content area, end to end", async ({ 
   await dialog.getByRole("button", { name: "Resume" }).click();
   await page.getByRole("dialog", { name: "Resume the experiment?" }).getByRole("button", { name: "Resume experiment" }).click();
   await expect(dialog.getByRole("status").first()).toHaveText("Experiment running · not conclusive");
-  await count(page.request, publicKey, experimentId, { a: [20, 4], b: [20, 18] });
+  await count(page.request, publicKey, experimentId, { a: [4, 1], b: [4, 2] });
+  await dialog.getByRole("button", { name: "Close" }).click();
+  await page.getByRole("button", { name: "Experiment running · not conclusive" }).click();
+  // 8 visitors since the start → 4 a day per version, 12 more each → 3 days.
+  await expect(dialog.getByText("About 3 more days at the traffic so far (8 visitors a day).")).toBeVisible();
+  await count(page.request, publicKey, experimentId, { a: [16, 3], b: [16, 16] });
   await dialog.getByRole("button", { name: "Close" }).click();
   await page.reload();
   await expect(page.getByRole("button", { name: "Experiment running · B leads · conclusive" })).toBeVisible({ timeout: 20_000 });
@@ -167,4 +183,47 @@ test("the dashboard lists running experiments", async ({ page }) => {
   await expect(page.getByText("On-page editing is off: edit version B in the experiment panel.")).toBeVisible();
   await expect(page.locator("iframe").first()).toHaveAttribute("src", new RegExp(`pbab=${id}%3Ab`), { timeout: 20_000 });
   await page.request.post(`/api/v1/manage/experiments/${id}/end`, { headers, data: {} });
+});
+
+test("ending with a winner first saves the edits still pending in the editor (#146)", async ({ page }) => {
+  const { headers } = await signIn(page);
+  const created = await page.request.post("/api/v1/manage/content", { headers, data: { type: "LandingPage", parentId: null, locale: "en", name: `AB flush ${run}` } });
+  const documentId = ((await created.json()) as { documentId: string }).documentId;
+  await page.request.put(`/api/v1/manage/content/${documentId}?locale=en`, { headers, data: { data: { heading: "Before" } } });
+  await page.request.post(`/api/v1/manage/content/${documentId}/publish?locale=en`, { headers });
+  const card = { key: "kb", blockType: "CardBlock", display: "automatic", inline: { title: "Flush B card" }, ref: null };
+  const exp = await page.request.post("/api/v1/manage/experiments", { headers, data: { documentId, locale: "en", area: "mainArea", name: `Flush ${run}`, baselineRate: 0.5, mde: 1, arms: [{ blocks: [card] }] } });
+  expect(exp.ok(), await exp.text()).toBe(true);
+  const experimentId = ((await exp.json()) as { id: number }).id;
+  expect((await page.request.post(`/api/v1/manage/experiments/${experimentId}/start`, { headers })).ok()).toBe(true);
+  const keyRes = await page.request.post("/api/v1/manage/delivery-keys", { headers, data: { name: `ab-flush-${run}`, type: "public" } });
+  await count(page.request, ((await keyRes.json()) as { key: string }).key, experimentId, { a: [20, 4], b: [20, 18] });
+
+  await page.goto(`/edit/${documentId}`);
+  await expect(page.getByRole("button", { name: "Experiment running · B leads · conclusive" })).toBeVisible({ timeout: 20_000 });
+  // Hold the editor's next save in flight, so it is still pending when End runs.
+  let release!: () => void;
+  const held = new Promise<void>((r) => (release = r));
+  await page.route(`**/api/v1/manage/content/${documentId}?locale=en`, async (route) => {
+    if (route.request().method() === "PUT") await held;
+    await route.continue();
+  });
+  await page.getByRole("textbox", { name: "Heading" }).fill("Typed just before ending");
+  await expect(page.getByText(/Saving/).first()).toBeVisible({ timeout: 5000 });
+  await page.getByRole("button", { name: "Experiment running · B leads · conclusive" }).click();
+  const dialog = page.getByRole("dialog", { name: `Flush ${run}` });
+  await dialog.getByRole("button", { name: "End…" }).click();
+  const end = page.getByRole("dialog", { name: "End the experiment?" });
+  await end.getByRole("button", { name: "Winner as draft" }).click();
+  setTimeout(release, 1500);
+  await expect(dialog.getByRole("status").first()).toHaveText("Experiment ended", { timeout: 15_000 });
+  await dialog.getByRole("button", { name: "Close" }).click();
+
+  // Both survive: the heading typed before End, and the winner's block.
+  await expect(page.getByText("Someone else changed this page")).toHaveCount(0);
+  await expect(page.getByRole("textbox", { name: "Heading" })).toHaveValue("Typed just before ending");
+  await expect(page.getByTestId("content-area-mainArea")).toContainText("Flush B card");
+  const saved = (await (await page.request.get(`/api/v1/manage/content/${documentId}?locale=en`)).json()) as { data: { heading: string; mainArea: Array<{ inline: { title: string } }> } };
+  expect(saved.data.heading).toBe("Typed just before ending");
+  expect(saved.data.mainArea[0]!.inline.title).toBe("Flush B card");
 });

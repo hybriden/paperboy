@@ -137,6 +137,23 @@ export function sampleRatioPValue(observed: number[], weights: number[]): number
   return 1 - erf(Math.sqrt(x / 2)) + Math.sqrt((2 * x) / Math.PI) * Math.exp(-x / 2);
 }
 
+/**
+ * Days until every version reaches `needed`, at the traffic measured so far
+ * (`perDay`: exposures per day since the start, split by the weights). Null
+ * without a plan or before any traffic: there is no honest number to show.
+ */
+export function estimateDaysLeft(needed: number | null, arms: ReadonlyArray<{ weight: number; exposures: number }>, perDay: number | null): number | null {
+  const total = arms.reduce((s, a) => s + Math.max(0, a.weight), 0);
+  if (needed == null || !perDay || perDay <= 0 || total <= 0) return null;
+  let days = 0;
+  for (const a of arms) {
+    if (a.weight <= 0) continue;
+    const missing = needed - a.exposures;
+    if (missing > 0) days = Math.max(days, missing / ((perDay * a.weight) / total));
+  }
+  return Math.ceil(days);
+}
+
 export interface ArmResult {
   key: string;
   exposures: number;

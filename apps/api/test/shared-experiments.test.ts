@@ -1,4 +1,4 @@
-import { assignArm, compareToControl, experimentVerdict, requiredSampleSize, sampleRatioPValue } from "@paperboy/shared";
+import { assignArm, compareToControl, estimateDaysLeft, experimentVerdict, requiredSampleSize, sampleRatioPValue } from "@paperboy/shared";
 import { describe, expect, it } from "vitest";
 
 /** The pure half of A/B experiments (#125): assignment and the statistics. */
@@ -85,5 +85,19 @@ describe("experimentVerdict never names a winner early", () => {
   it("asks for a plan before reading a winner", () => {
     const { verdict } = experimentVerdict([{ key: "a", weight: 50, exposures: 10, conversions: 1 }, { key: "b", weight: 50, exposures: 10, conversions: 2 }], {});
     expect(verdict.summary).toMatch(/No sample size planned/);
+  });
+});
+
+describe("estimateDaysLeft", () => {
+  it("days until the slowest version reaches the sample size, at the measured traffic", () => {
+    // 100 visitors a day split 50/50 → 50 per version per day; B needs 1000 − 400 = 600 more → 12 days.
+    expect(estimateDaysLeft(1000, [{ weight: 50, exposures: 500 }, { weight: 50, exposures: 400 }], 100)).toBe(12);
+    // A smaller share takes longer: 20 % of 100 a day → 20/day for 600 → 30 days.
+    expect(estimateDaysLeft(1000, [{ weight: 80, exposures: 800 }, { weight: 20, exposures: 400 }], 100)).toBe(30);
+    expect(estimateDaysLeft(1000, [{ weight: 50, exposures: 1000 }, { weight: 50, exposures: 1200 }], 100)).toBe(0);
+  });
+  it("is null without a plan or without traffic", () => {
+    expect(estimateDaysLeft(null, [{ weight: 50, exposures: 1 }], 10)).toBeNull();
+    expect(estimateDaysLeft(1000, [{ weight: 50, exposures: 0 }], null)).toBeNull();
   });
 });

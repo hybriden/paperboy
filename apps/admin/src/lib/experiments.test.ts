@@ -6,7 +6,7 @@ const exp = (over: Partial<ExperimentView>): ExperimentView => ({
   id: 1, documentId: "d", locale: "en", area: "mainArea", pageName: null, name: "x", hypothesis: null, status: "draft", goal: "form",
   baselineRate: null, mde: null, endsAt: null, startedAt: null, endedAt: null, endReason: null, winner: null, needsReview: false,
   createdVia: "web", createdAt: "", updatedAt: "", arms: [], results: [],
-  verdict: { summary: "", complete: false, leader: null, srmWarning: false, needed: null }, ...over,
+  verdict: { summary: "", complete: false, leader: null, srmWarning: false, needed: null }, estimate: { perDay: null, daysLeft: null }, ...over,
 });
 
 describe("experiment helpers", () => {

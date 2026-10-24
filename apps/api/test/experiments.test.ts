@@ -152,6 +152,8 @@ describe("A/B experiments", () => {
     expect(got.verdict).toMatchObject({ complete: false, leader: null, needed: 1600 });
     expect(got.verdict.summary).toBe("Not conclusive yet: 1 of 1600 visitors per version.");
     expect(got.daily).toHaveLength(2);
+    // 3 visitors on the first day (counted as a whole day) → 1.5 per version a day → (1600 − 1) / 1.5.
+    expect(got.estimate).toEqual({ perDay: 3, daysLeft: 1066 });
   });
 
   it("ending with a winner writes it as a draft, or publishes it; losers are kept", async () => {
