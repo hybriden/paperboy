@@ -248,8 +248,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       return "props";
     } catch { return "props"; }
   });
+  // On-page for a BLOCK only when picked for it here, never from the
+  // remembered preference: a Form's standalone render has nothing to click, and
+  // a remembered On-page once hid its builder entirely.
+  const [blockOnPage, setBlockOnPage] = useState(false);
   const setView = (next: EditorView) => {
     setViewState(next);
+    setBlockOnPage(next === "onpage");
     if (next !== "onpage") closeOpeRef.current?.();
     try { localStorage.setItem("pb-editor-view", next); } catch { /* ignore */ }
   };
@@ -257,23 +262,24 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Side by side always: the STANDALONE preview route (part of the frontend
   // contract) frames the block on its own — so even an unplaced form previews
   // while it is built — and the toolbar picker can borrow a page that embeds
-  // it instead. A GLOBAL edits in the form only. On-page stays page-only: its
-  // click-to-edit binds to the open document. A remembered page view coerces
+  // it instead. A GLOBAL edits in the form only. A remembered view coerces
   // (never clobbering the stored preference; the next PAGE restores it).
   //
-  // Either block preview is READ-ONLY at the bridge: the framed page's
-  // paperboy:edit/drop coordinates (block indexes, area fields) describe THAT
-  // page's render — standalone frames the block at index 0 of no area, a
-  // borrowed page frames its own areas — so routing them into this document
+  // The STANDALONE frame IS this document: the route renders the block without
+  // a block marker, so its fields report as the document's own (blockIndex
+  // null) and On-page works as on a page (#99). A BORROWED page is READ-ONLY at
+  // the bridge: its paperboy:edit/drop coordinates (block indexes, area
+  // fields) describe THAT page's render, so routing them into this document
   // would edit the wrong thing. The guard below drops them.
   const previewable = type?.kind === "page";
   const blockPreview = type?.kind === "block";
   const effectiveView: EditorView = previewable
     ? view
     : blockPreview && view !== "props"
-      ? "split"
+      ? blockOnPage && !previewPage ? "onpage" : "split"
       : "props";
-  const externalPreview = blockPreview && effectiveView === "split";
+  const blockFrame = blockPreview && effectiveView !== "props";
+  const externalPreview = blockFrame && !!previewPage;
   // Assigned in an effect, not during render: React may replay or discard a
   // render, and the handler that reads this fires post-commit anyway.
   const externalPreviewRef = useRef(false);
@@ -1482,11 +1488,11 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 // Disabled rather than hidden: the trio explains the system,
                 // and the title says WHY a view doesn't apply here. Blocks get
                 // Side by side always (standalone preview, or borrow a page
-                // that embeds it); On-page stays page-only — click-to-edit
-                // binds to the page.
-                const enabled = previewable || v === "props" || (v === "split" && blockPreview);
+                // that embeds it) and On-page on the standalone preview only —
+                // a borrowed page's clicks describe that page, not this block.
+                const enabled = previewable || v === "props" || (blockPreview && (v === "split" || !previewPage));
                 const disabledTitle = blockPreview
-                  ? "On-page editing works from a page that uses this block — open one from “Used on”."
+                  ? "On-page editing works on the standalone preview — pick “Standalone” as the preview target."
                   : "A global renders across the site. Editing happens right here.";
                 const enabledTitle =
                   v === "split" && !previewable ? "Preview this block on its own, or on a page that uses it" : title;
@@ -1789,26 +1795,29 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             frameRef={previewFrameRef}
             locale={locale}
             urlPath={
-              externalPreview
+              blockFrame
                 ? previewPage
                   ? (previewPageDetail.data?.urlPath ?? null)
                   : blockPreviewPath(documentId)
                 : form.urlPath
             }
             documentId={externalPreview && previewPage ? previewPage.documentId : documentId}
-            kind={externalPreview ? "page" : form.kind}
+            kind={blockFrame ? "page" : form.kind}
             refreshSignal={previewRefresh}
             focusField={externalPreview ? null : propFocus}
             mode={externalPreview ? "inspect" : opeMode}
             livePatch={externalPreview ? null : livePatch}
             toolbarExtra={
-              externalPreview ? (
+              blockFrame ? (
                 usingPages.length > 0 ? (
                   <select
                     className="field-input-dense max-w-[200px]"
                     aria-label="Preview target"
                     value={previewPage?.documentId ?? ""}
-                    onChange={(e) => setPreviewPageId(e.target.value || null)}
+                    onChange={(e) => {
+                      closeOpeRef.current?.(); // a borrowed page has no On-page; drop an open overlay
+                      setPreviewPageId(e.target.value || null);
+                    }}
                   >
                     <option value="">Standalone</option>
                     {usingPages.map((p) => (

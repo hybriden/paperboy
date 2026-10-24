@@ -49,6 +49,12 @@ describe("standalone block preview", () => {
     expect(html).toContain("Deliver anywhere");
   });
 
+  it("carries no block marker, so its fields report as the document's own (On-page, #99)", () => {
+    const html = renderToStaticMarkup(<StandaloneBlock content={blockDoc()} locale="en" preview />);
+    expect(html).not.toContain("data-pb-block-index");
+    expect(html).toContain('data-pb-field="title"');
+  });
+
   it("renders a FORM standalone — the real form, fields and all", () => {
     const doc = blockDoc({
       documentId: "form1",
