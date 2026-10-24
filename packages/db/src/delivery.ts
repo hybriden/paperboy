@@ -111,18 +111,28 @@ class DeliveryCtx {
     for (const [id, rs] of grouped) this.versionsByDoc.set(`${perspective}:${id}`, rs);
   }
 
+  // The site's SiteSettings global, looked up once per request (siteName and
+  // siteIdentity both need it).
+  private _siteSettings: Promise<Array<{ documentId: string }>> | undefined;
+  private siteSettingsRows(): Promise<Array<{ documentId: string }>> {
+    this._siteSettings ??= this.db
+      .select({ documentId: contentItem.documentId })
+      .from(contentItem)
+      .where(and(eq(contentItem.type, "SiteSettings"), eq(contentItem.kind, "global"), isNull(contentItem.deletedAt), eq(contentItem.siteId, this.siteId)))
+      .orderBy(asc(contentItem.id))
+      .limit(1)
+      // A real Promise: a drizzle query is a lazy thenable that runs again on every await.
+      .then((rows) => rows);
+    return this._siteSettings;
+  }
+
   // Site name from the SiteSettings global (public field), for og:siteName /
   // jsonLd publisher. Cached per request; resolved through the same perspective
   // so a draft sitename never leaks into a published seo block.
   private _siteName: string | null | undefined;
   async siteName(perspective: Perspective, loc: string): Promise<string | null> {
     if (this._siteName !== undefined) return this._siteName;
-    const rows = await this.db
-      .select({ documentId: contentItem.documentId })
-      .from(contentItem)
-      .where(and(eq(contentItem.type, "SiteSettings"), eq(contentItem.kind, "global"), isNull(contentItem.deletedAt), eq(contentItem.siteId, this.siteId)))
-      .orderBy(asc(contentItem.id))
-      .limit(1);
+    const rows = await this.siteSettingsRows();
     let name: string | null = null;
     if (rows[0]) {
       const found = await variantRow(this, perspective, rows[0].documentId, loc);
@@ -158,12 +168,7 @@ class DeliveryCtx {
   async siteIdentity(perspective: Perspective, loc: string): Promise<Record<string, unknown> | null> {
     if (this._siteIdentity !== undefined) return this._siteIdentity;
     this._siteIdentity = null;
-    const rows = await this.db
-      .select({ documentId: contentItem.documentId })
-      .from(contentItem)
-      .where(and(eq(contentItem.type, "SiteSettings"), eq(contentItem.kind, "global"), isNull(contentItem.deletedAt), eq(contentItem.siteId, this.siteId)))
-      .orderBy(asc(contentItem.id))
-      .limit(1);
+    const rows = await this.siteSettingsRows();
     if (rows[0]) this._siteIdentity = (await resolveContent(this, perspective, rows[0].documentId, loc, 0))?.jsonLd ?? null;
     return this._siteIdentity;
   }
@@ -175,19 +180,98 @@ class DeliveryCtx {
     return this._experiments.get(perspective)!.filter((e) => e.documentId === documentId && e.locale === loc);
   }
 
-  async type(name: string): Promise<ContentTypeDef | null> {
-    if (this.types.has(name)) return this.types.get(name)!;
-    const rows = await this.db
+  // Every content type, read in ONE query on the first lookup (a page with
+  // twenty block types used to cost twenty round trips; the table is small).
+  private typesLoaded: Promise<void> | null = null;
+  private loadTypes(): Promise<void> {
+    this.typesLoaded ??= this.db
       .select()
       .from(contentType)
-      .where(eq(contentType.name, name))
-      .limit(1);
-    if (!rows[0]) return null;
-    // Inject the reserved SEO group (page kinds) so delivery's sanitize +
-    // computeSeo see the SEO fields even for types that don't store them.
-    const def = parseStoredContentTypeDef(rows[0].definition);
-    this.types.set(name, def);
-    return def;
+      .then((rows) => {
+        // Inject the reserved SEO group (page kinds) so delivery's sanitize +
+        // computeSeo see the SEO fields even for types that don't store them.
+        for (const r of rows) this.types.set(r.name, parseStoredContentTypeDef(r.definition));
+      });
+    return this.typesLoaded;
+  }
+  async type(name: string): Promise<ContentTypeDef | null> {
+    if (this.types.has(name)) return this.types.get(name)!;
+    await this.loadTypes();
+    return this.types.get(name) ?? null;
+  }
+
+  private localesLoaded: Promise<(typeof locale.$inferSelect)[]> | null = null;
+  private loadLocales(): Promise<(typeof locale.$inferSelect)[]> {
+    this.localesLoaded ??= this.db
+      .select()
+      .from(locale)
+      .then((rows) => (this.locales = rows));
+    return this.localesLoaded;
+  }
+
+  /**
+   * Start the lookups almost every single-item response needs (all content
+   * types, the locales, the site's SiteSettings) at once, so they cost one
+   * round trip instead of three in a row. Consumers await the same promises, so
+   * an error still surfaces where it is used; here it is only kept from being
+   * an unhandled rejection.
+   */
+  warm(opts: { siteSettings?: boolean } = {}): this {
+    const started: Promise<unknown>[] = [this.loadTypes(), this.loadLocales()];
+    // A page's SEO block needs the site's name and identity; a global doesn't.
+    if (opts.siteSettings !== false) started.push(this.siteSettingsRows());
+    for (const p of started) p.catch(() => undefined);
+    return this;
+  }
+
+  /** Bulk-prime item rows for many documents in ONE query (same filter as item()). */
+  async primeItems(documentIds: string[]): Promise<void> {
+    const missing = [...new Set(documentIds)].filter((id) => !this.items.has(id));
+    if (!missing.length) return;
+    const rows = await this.db
+      .select({ documentId: contentItem.documentId, type: contentItem.type, kind: contentItem.kind, parentId: contentItem.parentId })
+      .from(contentItem)
+      .where(and(inArray(contentItem.documentId, missing), isNull(contentItem.deletedAt), eq(contentItem.siteId, this.siteId)));
+    for (const id of missing) this.items.set(id, null);
+    for (const r of rows) this.items.set(r.documentId, { type: r.type, kind: r.kind, parentId: r.parentId });
+  }
+
+  /**
+   * Bulk-prime the parent chains of these documents (items, then their
+   * selectable versions): one recursive query plus one version query, instead of
+   * two round trips per ancestor in urlPathOf and breadcrumbOf. Same filter as
+   * item(): this site, not deleted; a chain stops where item() would return null.
+   */
+  async primeAncestors(documentIds: string[], perspective: Perspective): Promise<void> {
+    const needed = documentIds.filter((id) => {
+      for (let cur: string | null = id, n = 0; cur && n < 64; n++) {
+        if (!this.items.has(cur)) return true;
+        cur = this.items.get(cur)?.parentId ?? null;
+      }
+      return false;
+    });
+    if (!needed.length) return;
+    const ids = sql.join([...new Set(needed)].map((id) => sql`${id}`), sql`, `);
+    const rows = (await this.db.execute(sql`
+      WITH RECURSIVE chain AS (
+        SELECT document_id, type, kind, parent_id FROM content_item
+          WHERE document_id IN (${ids}) AND deleted_at IS NULL AND site_id = ${this.siteId}
+        UNION
+        SELECT c.document_id, c.type, c.kind, c.parent_id FROM content_item c
+          JOIN chain ON c.document_id = chain.parent_id
+          WHERE c.deleted_at IS NULL AND c.site_id = ${this.siteId}
+      ) SELECT document_id, type, kind, parent_id FROM chain`)) as unknown as Array<{ document_id: string; type: string; kind: string; parent_id: string | null }>;
+    for (const r of rows) this.items.set(r.document_id, { type: r.type, kind: r.kind, parentId: r.parent_id });
+    await this.primeVersions(rows.map((r) => r.document_id), perspective);
+  }
+
+  /** Bulk-prime asset rows in ONE query (same filter as asset(): this site only). */
+  async primeAssets(documentIds: string[]): Promise<void> {
+    const missing = [...new Set(documentIds)].filter((id) => !this.assets.has(id));
+    if (!missing.length) return;
+    const rows = await this.db.select().from(asset).where(and(inArray(asset.documentId, missing), eq(asset.siteId, this.siteId)));
+    for (const id of missing) this.assets.set(id, null);
+    for (const r of rows) this.assets.set(r.documentId, r);
   }
 
   // documentId -> item row essentials (type/kind/parentId), cached.
@@ -211,17 +295,17 @@ class DeliveryCtx {
    * before it is switched on.
    */
   async localeChain(code: string, perspective: Perspective): Promise<string[]> {
-    if (!this.locales) this.locales = await this.db.select().from(locale);
-    const chain = localeChainFrom(this.locales, code);
+    const locales = this.locales ?? (await this.loadLocales());
+    const chain = localeChainFrom(locales, code);
     if (perspective === "preview") return chain;
-    const disabled = new Set(this.locales.filter((l) => !l.enabled).map((l) => l.code));
+    const disabled = new Set(locales.filter((l) => !l.enabled).map((l) => l.code));
     return chain.filter((c) => !disabled.has(c));
   }
 
   /** Every enabled locale code in stable (sortIndex) order. */
   async enabledLocaleCodes(): Promise<string[]> {
-    if (!this.locales) this.locales = await this.db.select().from(locale);
-    return [...this.locales]
+    const locales = this.locales ?? (await this.loadLocales());
+    return [...locales]
       .filter((l) => l.enabled)
       .sort((a, b) => a.sortIndex - b.sortIndex)
       .map((l) => l.code);
@@ -503,6 +587,7 @@ async function urlPathOf(
   documentId: string,
   loc: string,
 ): Promise<string | null> {
+  await ctx.primeAncestors([documentId], perspective);
   const item = await ctx.item(documentId);
   if (!item || item.kind !== "page") return null;
   const segments: string[] = [];
@@ -576,6 +661,7 @@ async function breadcrumbOf(
   documentId: string,
   loc: string,
 ): Promise<Array<{ name: string; urlPath: string | null }>> {
+  await ctx.primeAncestors([documentId], perspective);
   const chain: Array<{ name: string; slug: string | null }> = [];
   let cur: string | null = documentId;
   const guard = new Set<string>();
@@ -941,6 +1027,7 @@ export async function resolveContent(
     found.usedLocale,
     loc,
   );
+  await primeReferences(ctx, perspective, item.type, data, depth);
   const sanitized = await sanitize(ctx, perspective, item.type, data, found.usedLocale, depth);
   const urlPath = await urlPathOf(ctx, perspective, documentId, loc);
   const def = await ctx.type(item.type);
@@ -1025,6 +1112,60 @@ async function deliveredExperiments(
   return out;
 }
 
+/**
+ * Before a document is sanitized, load everything it points at in ONE round
+ * trip: the documents its content areas, references and page links name (their
+ * items and selectable versions) and the assets its image fields hold, at every
+ * level of its inline blocks. sanitize() then finds them in the request caches
+ * instead of asking for each one (a page with 24 images and 10 shared blocks
+ * made ~60 sequential queries; on a managed database every one is a network
+ * round trip). Same filters as the one-at-a-time lookups, so the output is
+ * identical; only the number of round trips changes.
+ */
+async function primeReferences(ctx: DeliveryCtx, perspective: Perspective, typeName: string, data: Record<string, unknown>, depth: number): Promise<void> {
+  let docs: string[] = [];
+  let assets: string[] = [];
+  const walk = async (name: string, values: Record<string, unknown>, level: number): Promise<void> => {
+    const def = await ctx.type(name);
+    if (!def || level > MAX_POPULATE_DEPTH + 2) return;
+    for (const f of def.fields) {
+      if (f.delivery !== "public") continue;
+      const v = values[f.name];
+      if (v == null) continue;
+      if ((f.type === "image" || f.type === "media") && typeof v === "string" && v) assets.push(v);
+      else if ((f.type === "reference" || f.type === "link") && typeof v === "object") {
+        const id = (v as { documentId?: unknown }).documentId;
+        if (typeof id === "string" && id) docs.push(id);
+      } else if (f.type === "contentArea" && Array.isArray(v)) {
+        for (const b of v as Array<Record<string, unknown>>) {
+          if (typeof b?.ref === "string" && b.ref) docs.push(b.ref);
+          else if (b?.inline && typeof b.inline === "object") await walk(scalarToString(b.blockType), b.inline as Record<string, unknown>, level + 1);
+        }
+      }
+    }
+  };
+  await walk(typeName, data, 0);
+  // Level by level through the graph the response will resolve (populate
+  // depth): what the referenced documents point at is primed in the NEXT single
+  // round trip, not one per document. Their selectable rows are walked (a
+  // superset of the one variantRow picks), which can only add cache entries.
+  for (let level = 0; level <= depth && (docs.length || assets.length); level++) {
+    const batch = [...new Set(docs)].filter((id) => !ctx.items.has(id));
+    await Promise.all([ctx.primeItems(docs), ctx.primeVersions(docs, perspective), ctx.primeAssets(assets)]);
+    docs = [];
+    assets = [];
+    if (level === depth) break;
+    for (const id of batch) {
+      const it = ctx.items.get(id);
+      if (!it) continue;
+      for (const row of await ctx.docVersions(id, perspective)) {
+        // Only rows variantRow can select (a draft or the live row), not history.
+        if ((row.status === "draft" || row.isCurrentPublished) && row.data && typeof row.data === "object") await walk(it.type, row.data as Record<string, unknown>, 0);
+      }
+    }
+  }
+}
+
 /* ------------------------------ public API -------------------------------- */
 
 function clampDepth(populate: number | undefined): number {
@@ -1040,7 +1181,7 @@ export async function deliveryGetById(
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId);
+  const ctx = new DeliveryCtx(db, siteId).warm();
   return resolveContent(ctx, perspective, documentId, loc, clampDepth(populate));
 }
 
@@ -1052,7 +1193,7 @@ export async function deliveryGetBySlug(
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId);
+  const ctx = new DeliveryCtx(db, siteId).warm();
   // Find candidate variants by slug, then re-resolve via the chokepoint so the
   // perspective filter (not the slug lookup) decides visibility.
   //
@@ -1458,7 +1599,7 @@ export async function deliveryGetByPath(
   loc: string,
   populate?: number,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId);
+  const ctx = new DeliveryCtx(db, siteId).warm();
   const cleaned = segments.filter((s) => s.length > 0);
   if (cleaned.length === 0) return null;
 
@@ -1516,7 +1657,7 @@ export async function deliveryStartPage(
   const rows = await db.select({ id: site.startPageId }).from(site).where(eq(site.id, siteId)).limit(1);
   const id = rows[0]?.id;
   if (!id) return null;
-  const ctx = new DeliveryCtx(db, siteId);
+  const ctx = new DeliveryCtx(db, siteId).warm();
   return resolveContent(ctx, perspective, id, loc, clampDepth(populate));
 }
 
@@ -1528,7 +1669,7 @@ export async function deliveryGlobal(
   typeName: string,
   loc: string,
 ): Promise<DeliveryContent | null> {
-  const ctx = new DeliveryCtx(db, siteId);
+  const ctx = new DeliveryCtx(db, siteId).warm({ siteSettings: false });
   const items = await db
     .select({ documentId: contentItem.documentId })
     .from(contentItem)
