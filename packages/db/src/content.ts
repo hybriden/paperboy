@@ -11,7 +11,7 @@ import {
 import { DEFAULT_SITE_ID, auditLog, contentItem, contentReference, contentType, contentVersion, locale, site } from "./schema.js";
 import { currentContentTypes, visibleIn } from "./type-cache.js";
 import { getAgentReviewRequired } from "./site.js";
-import { announceDeliveryChange, dispatchWebhooks } from "./webhooks.js";
+import { announceDeliveryChange, dispatchWebhooks, markDeliveryChanged } from "./webhooks.js";
 import { trackUrlChanges } from "./redirects.js";
 
 const isUniqueViolation = (err: unknown): boolean => pgErrorCode(err) === PG_UNIQUE_VIOLATION;
@@ -2457,6 +2457,7 @@ export async function schedulePublish(
       .update(contentVersion)
       .set({ expireAt: opts.expireAt ?? null })
       .where(eq(contentVersion.id, published.id));
+    markDeliveryChanged(db); // an expiry already past withdraws the live row now
   }
   if (!draft && !published) throw Errors.conflict("Nothing to schedule");
   return getContent(db, ctx, documentId, loc);

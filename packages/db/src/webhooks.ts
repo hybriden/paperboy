@@ -3,7 +3,7 @@ import { lookup } from "node:dns/promises";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { BlockList, isIP } from "node:net";
-import { and, desc, eq, lte } from "drizzle-orm";
+import { and, desc, eq, lte, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
@@ -89,11 +89,34 @@ export type AnyWebhookEvent = WebhookEvent | FormSubmittedEvent | DeliveryChange
  * (content types, locales). Lives in the query layer so REST and MCP both fire.
  */
 export function announceDeliveryChange(db: Database, siteId: string | null, reason: DeliveryChangeReason, documentId?: string): void {
+  markDeliveryChanged(db);
   void (async () => {
     const siteIds = siteId ? [siteId] : (await db.select({ id: site.id }).from(site)).map((r) => r.id);
     const at = new Date().toISOString();
     await Promise.all(siteIds.map((id) => dispatchWebhooks(db, { event: "delivery.changed", siteId: id, reason, ...(documentId ? { documentId } : {}), at })));
   })().catch((err: unknown) => console.error(`[paperboy] delivery.changed (${reason}) webhook dispatch failed:`, err));
+}
+
+const deliveryListeners = new Set<() => void>();
+
+/** Run `listener` the moment this process changes delivered output (the api's
+ *  delivery cache). Returns the unsubscribe. */
+export function onDeliveryChange(listener: () => void): () => void {
+  deliveryListeners.add(listener);
+  return () => deliveryListeners.delete(listener);
+}
+
+/** Delivered output may have changed: tell this process's listeners now, and
+ *  every other process through the delivery_epoch sequence (migration 0035). */
+export function markDeliveryChanged(db: Database): void {
+  for (const listener of deliveryListeners) listener();
+  void db.execute(sql`SELECT nextval('delivery_epoch')`).catch((err: unknown) => console.error("[paperboy] delivery_epoch bump failed:", err));
+}
+
+/** The current delivery epoch: it moves whenever any process announces a change. */
+export async function deliveryEpoch(db: Database): Promise<string> {
+  const rows = (await db.execute(sql`SELECT last_value FROM delivery_epoch`)) as unknown as { last_value: string | number }[];
+  return String(rows[0]?.last_value);
 }
 
 const WEBHOOK_TIMEOUT_MS = 5000;
@@ -338,6 +361,7 @@ export async function dispatchWebhooks(
   db: Database,
   payload: AnyWebhookEvent,
 ): Promise<{ id: number; status: number | null; ok: boolean }[]> {
+  if (payload.event !== "form.submitted") markDeliveryChanged(db);
   // Partitioned by site. Before this, one brand's hook received every brand's
   // events — and once form.submitted joined them, that meant another site's
   // visitors' personal data, which the delivery and management chokepoints

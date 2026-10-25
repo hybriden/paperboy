@@ -19,6 +19,11 @@ import { DeliveryContent, LocalePrefix, buildLlmsTxt, buildRobotsTxt, buildSecur
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
+import { type DeliveryCache, createDeliveryCache } from "../delivery-cache.js";
+
+/** Routes that answer text (or a body-hashed manifest) rather than an object
+ *  the cache can keep; they keep their own conditional GET. */
+const UNCACHED = new Set(["redirects", "robots.txt", "sitemap.xml", "llms.txt", "security.txt"]);
 
 /** Extract the bearer/x-api-key credential and resolve its perspective + site. */
 async function resolveCredential(
@@ -71,13 +76,16 @@ function notModified(req: FastifyRequest, perspective: Perspective, cv: number):
  * /start handlers that all share it.
  */
 function deliverItem<T extends { cv: number }>(
+  cache: DeliveryCache,
   req: FastifyRequest,
   reply: FastifyReply,
   perspective: Perspective,
   result: T,
 ): T | FastifyReply {
   setCacheHeaders(reply, perspective, result.cv);
+  cache.conditional(req);
   if (notModified(req, perspective, result.cv)) {
+    cache.store(req, reply, result);
     return reply.code(304 as 200).send(undefined as never);
   }
   return result;
@@ -93,10 +101,18 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   // onRequest resolver would answer every REJECTED key before the limiter ran —
   // unmetered key guessing against a DB lookup. preHandler still precedes every
   // handler, so nothing is read before the key is validated.
-  app.addHook("preHandler", async (req) => {
+  const cache = createDeliveryCache(app.db);
+  app.addHook("onClose", async () => cache.unsubscribe());
+  app.addHook("preHandler", async (req, reply) => {
     const { perspective, siteId } = await resolveCredential(app, req);
     req.perspective = perspective;
     req.deliverySiteId = siteId;
+    const cacheable = req.method === "GET" && perspective === "published" && !UNCACHED.has(req.routeOptions.url?.split("/").pop() ?? "");
+    if (cacheable && (await cache.serve(req, reply))) return reply;
+  });
+  app.addHook("preSerialization", async (req, reply, payload) => {
+    cache.store(req, reply, payload);
+    return payload;
   });
 
   app.get(
@@ -198,7 +214,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!));
       const result = await deliveryStartPage(app.db, perspective, req.deliverySiteId!, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No start page configured" });
-      return deliverItem(req, reply, perspective, result);
+      return deliverItem(cache, req, reply, perspective, result);
     },
   );
 
@@ -217,7 +233,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!));
       const result = await deliveryGetBySlug(app.db, perspective, req.deliverySiteId!, req.query.slug, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No published content for that slug" });
-      return deliverItem(req, reply, perspective, result);
+      return deliverItem(cache, req, reply, perspective, result);
     },
   );
 
@@ -237,7 +253,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const segments = req.query.path.split("/").filter(Boolean);
       const result = await deliveryGetByPath(app.db, perspective, req.deliverySiteId!, segments, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "No content at that path" });
-      return deliverItem(req, reply, perspective, result);
+      return deliverItem(cache, req, reply, perspective, result);
     },
   );
 
@@ -257,7 +273,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       const locale = req.query.locale ?? (await resolveDefaultLocale(app.db, req.deliverySiteId!));
       const result = await deliveryGetById(app.db, perspective, req.deliverySiteId!, req.params.documentId, locale, req.query.populate);
       if (!result) return reply.code(404).send({ error: "not_found", message: "Not found or not published" });
-      return deliverItem(req, reply, perspective, result);
+      return deliverItem(cache, req, reply, perspective, result);
     },
   );
 
