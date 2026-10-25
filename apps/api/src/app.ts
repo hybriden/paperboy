@@ -71,6 +71,14 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   };
   const app = Fastify(serverOpts).withTypeProvider<ZodTypeProvider>();
 
+  // Azure's front end forwards "203.0.113.7:9577". With the port, req.ip changed
+  // per connection, so per-IP limits counted connections. req.ip is computed from
+  // these headers on read, so strip ports before anything reads it.
+  app.addHook("onRequest", async (req) => {
+    const xff = req.headers["x-forwarded-for"];
+    if (typeof xff === "string" && xff.includes(":")) req.headers["x-forwarded-for"] = stripForwardedPorts(xff);
+  });
+
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
 
@@ -333,4 +341,12 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   }
 
   return app;
+}
+
+/** "203.0.113.7:9577, [2001:db8::1]:443" → "203.0.113.7, 2001:db8::1"; a bare IPv6 is left alone. */
+export function stripForwardedPorts(xff: string): string {
+  return xff
+    .split(",")
+    .map((hop) => hop.trim().replace(/^\[([^\]]+)\](?::\d+)?$/, "$1").replace(/^(\d{1,3}(?:\.\d{1,3}){3}):\d+$/, "$1"))
+    .join(", ");
 }
