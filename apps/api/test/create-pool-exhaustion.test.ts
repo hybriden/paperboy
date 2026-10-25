@@ -55,7 +55,7 @@ describe("concurrent createContent does not exhaust the connection pool", () => 
     // never resolved (every connection parked in a transaction waiting for one
     // more); a 300ms delay let the creates finish first on a fast machine,
     // degenerating the test into "listContentTypes works".
-    const unrelatedRead = listContentTypes(raw.db).then((t) => t.length);
+    const unrelatedRead = listContentTypes(raw.db, "site_default").then((t) => t.length);
 
     // A hard deadline: the original bug hung forever, so "slow" and "deadlocked" must
     // be distinguishable. 25s is far above the ~150ms this takes when healthy.

@@ -29,6 +29,7 @@ export const contentType = pgTable("content_type", {
   description: text("description").notNull().default(""),
   icon: text("icon").notNull().default("file"),
   definition: jsonb("definition").notNull(), // full ContentTypeDef
+  siteId: text("site_id"), // NULL = shared by every site (migration 0034)
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 

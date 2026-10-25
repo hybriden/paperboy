@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { ContentTypeDef, SEO_FIELD_NAMES, type ContentKind, type FieldOption, FieldType, type FieldValidation, type SchemaFieldGap, type SchemaFieldSuggestion, resolveSchemaSuggestions, schemaFieldGaps, seoRoleEligible } from "@paperboy/shared";
 import { api, ApiError } from "../lib/api.js";
@@ -211,6 +211,12 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
   const [description, setDescription] = useState(initial?.description ?? "");
   const [schemaType, setSchemaType] = useState(initial?.schemaType ?? "");
   const [nestedOnly, setNestedOnly] = useState(initial?.nestedOnly ?? false);
+  // Scope (#159): shared by every site, or only the active one. Offered once
+  // there is more than one site; templates are recipes and carry no scope.
+  const [siteId, setSiteId] = useState<string | null>(initial?.siteId ?? null);
+  const sites = useQuery({ queryKey: ["sites"], queryFn: () => api.sites(), staleTime: 60_000, enabled: target === "types" });
+  const activeSite = sites.data?.sites.find((s) => s.id === sites.data?.activeSiteId);
+  const showScope = target === "types" && Boolean(activeSite) && ((sites.data?.sites.length ?? 0) > 1 || siteId !== null);
   const [fields, setFields] = useState<DraftField[]>(
     // The reserved SEO group is injected on read but is system-managed — never
     // edited or stored here, so it can't be removed. Filter it out of the CRUD
@@ -329,6 +335,7 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
       icon,
       ...(schemaType.trim() ? { schemaType: schemaType.trim() } : {}),
       nestedOnly,
+      ...(target === "types" ? { siteId } : {}),
       fields: fields.map((f) => ({ ...stripKey(f), options: f.options.map(stripKey) })),
     };
     const parsed = ContentTypeDef.safeParse(def);
@@ -418,6 +425,19 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                 Parts are left out of the block palette and the reuse picker unless a content area names
                 them in its allowed blocks — how a form’s field blocks work. Turn this on for a block that
                 makes no sense on its own.
+              </p>
+            </div>
+          )}
+          {showScope && activeSite && (
+            <div className="col-span-2">
+              <label className="field-label" htmlFor="ct-scope">Available in</label>
+              <select id="ct-scope" className="field-input" value={siteId ?? ""} onChange={(e) => setSiteId(e.target.value || null)}>
+                <option value="">Every site (shared)</option>
+                <option value={activeSite.id}>Only {activeSite.name}</option>
+              </select>
+              <p className="mt-1 text-xs text-muted">
+                A type for one site only is left out of the other sites’ type pickers and block palettes. A type other
+                sites already use can’t be limited to this one.
               </p>
             </div>
           )}

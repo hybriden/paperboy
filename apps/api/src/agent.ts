@@ -96,13 +96,13 @@ export const TOOLS: AgentTool[] = [
     name: "list_content_types",
     description: "List all content types (name, kind, fields). ALWAYS call this first to learn the model.",
     schema: z.object({}),
-    run: (_a, d) => listContentTypes(d.db),
+    run: (_a, d) => listContentTypes(d.db, d.ctx.siteId),
   },
   {
     name: "get_content_type",
     description: "Get one content type definition by name (full field shapes).",
     schema: z.object({ name: z.string() }),
-    run: (a, d) => getContentType(d.db, a.name as string),
+    run: (a, d) => getContentType(d.db, a.name as string, d.ctx.siteId),
   },
   {
     name: "tree",

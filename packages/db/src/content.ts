@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { ChildSort, coerceData, dataSchemaFor, detectContentLanguage, duplicateFieldKeys, expectedLanguageForLocale, fieldFormatHint, generalBlockTypes, isFormType, MAX_INLINE_DEPTH, parseStoredContentTypeDef, sortByRule, stripSeoGroup, tiptapToPlainText, type BlockSummary, type BlockTypeResolver, type ContentDetail, type ContentTypeDef, type CreateContentRequest, type PageSummary, type TreeNode, type UpdateContentRequest, withSeoGroup } from "@paperboy/shared";
+import { ChildSort, coerceData, dataSchemaFor, detectContentLanguage, duplicateFieldKeys, expectedLanguageForLocale, fieldFormatHint, generalBlockTypes, isFormType, MAX_INLINE_DEPTH, parseStoredContentTypeDef, sortByRule, toStoredDefinition, tiptapToPlainText, type BlockSummary, type BlockTypeResolver, type ContentDetail, type ContentTypeDef, type CreateContentRequest, type PageSummary, type TreeNode, type UpdateContentRequest, withSeoGroup } from "@paperboy/shared";
 import type { Database, Queryable, Transaction } from "./client.js";
 import { Errors, PG_UNIQUE_VIOLATION, pgErrorCode } from "./errors.js";
 import {
@@ -9,7 +9,7 @@ import {
   requirePermission,
 } from "./scope.js";
 import { DEFAULT_SITE_ID, auditLog, contentItem, contentReference, contentType, contentVersion, locale, site } from "./schema.js";
-import { currentContentTypes } from "./type-cache.js";
+import { currentContentTypes, visibleIn } from "./type-cache.js";
 import { getAgentReviewRequired } from "./site.js";
 import { announceDeliveryChange, dispatchWebhooks } from "./webhooks.js";
 import { trackUrlChanges } from "./redirects.js";
@@ -18,10 +18,18 @@ const isUniqueViolation = (err: unknown): boolean => pgErrorCode(err) === PG_UNI
 
 /* ----------------------------- content types ----------------------------- */
 
-export async function listContentTypes(db: Database): Promise<ContentTypeDef[]> {
-  const rows = await db.select().from(contentType).orderBy(asc(contentType.name));
-  // Inject the reserved SEO group into every page kind (single read chokepoint).
-  return rows.map((r) => parseStoredContentTypeDef(r.definition));
+/** A stored row as callers see it: the normalized definition (the reserved SEO
+ *  group injected into every page kind) plus its scope. */
+function typeFromRow(r: { definition: unknown; siteId: string | null }): ContentTypeDef {
+  return { ...parseStoredContentTypeDef(r.definition), siteId: r.siteId };
+}
+
+/** A site sees the shared types plus its own (#159). */
+const visibleTo = (siteId: string) => or(isNull(contentType.siteId), eq(contentType.siteId, siteId));
+
+export async function listContentTypes(db: Database, siteId: string): Promise<ContentTypeDef[]> {
+  const rows = await db.select().from(contentType).where(visibleTo(siteId)).orderBy(asc(contentType.name));
+  return rows.map(typeFromRow);
 }
 
 /** Per-type usage: standalone items of that type, plus pages/blocks that embed
@@ -143,15 +151,75 @@ async function localeCodes(db: Database): Promise<string[]> {
 // real 2026-06-07 run). Hand them the actual names so one retry lands.
 const typeNotFound = (name: string, available: string[]) => Errors.notFound(`Content type '${name}' (available: ${available.join(", ")})`);
 
-export async function getContentType(db: Queryable, name: string): Promise<ContentTypeDef> {
-  const rows = await db.select().from(contentType).where(eq(contentType.name, name)).limit(1);
+/** A type by name; with `siteId`, only one that site can see (a type bound to
+ *  another site reads as not found there, like a cross-site document). */
+export async function getContentType(db: Queryable, name: string, siteId?: string): Promise<ContentTypeDef> {
+  const scope = siteId === undefined ? undefined : visibleTo(siteId);
+  const rows = await db.select().from(contentType).where(and(eq(contentType.name, name), scope)).limit(1);
   if (!rows[0]) {
-    const all = await db.select({ name: contentType.name }).from(contentType).orderBy(asc(contentType.name));
+    const all = await db.select({ name: contentType.name }).from(contentType).where(scope).orderBy(asc(contentType.name));
     throw typeNotFound(name, all.map((t) => t.name));
   }
-  // Inject the reserved SEO group (page kinds) — every consumer (validation,
-  // coercion, delivery writes, MCP get) sees SEO automatically.
-  return parseStoredContentTypeDef(rows[0].definition);
+  return typeFromRow(rows[0]);
+}
+
+const siteLabel = async (db: Queryable, ids: string[]): Promise<string> => {
+  const rows = ids.length ? await db.select({ id: site.id, slug: site.slug }).from(site).where(inArray(site.id, ids)) : [];
+  return ids.map((id) => rows.find((r) => r.id === id)?.slug ?? id).join(", ");
+};
+
+/** The scope a write asks for must name a real site, and a type bound to one
+ *  site may only allow shared blocks or that site's own (#159). */
+async function assertScope(db: Queryable, def: ContentTypeDef, siteId: string | null): Promise<void> {
+  if (siteId === null) return;
+  const found = await db.select({ id: site.id }).from(site).where(eq(site.id, siteId)).limit(1);
+  if (!found[0]) {
+    const all = await db.select({ id: site.id, slug: site.slug }).from(site).orderBy(asc(site.slug));
+    throw Errors.validation(
+      `siteId '${siteId}' is not a site. Use one of: ${all.map((s) => `"${s.id}" (${s.slug})`).join(", ")}, or null to share the type with every site.`,
+      ["siteId"],
+    );
+  }
+  const allowed = [...new Set(def.fields.flatMap((f) => (f.type === "contentArea" ? f.allowedBlocks : [])))];
+  if (!allowed.length) return;
+  const foreign = await db
+    .select({ name: contentType.name, siteId: contentType.siteId })
+    .from(contentType)
+    .where(and(inArray(contentType.name, allowed), isNotNull(contentType.siteId), ne(contentType.siteId, siteId)));
+  if (foreign.length) {
+    throw Errors.validation(
+      `'${def.name}' belongs to site ${await siteLabel(db, [siteId])}, so its content areas can't allow ${foreign.map((f) => f.name).join(", ")}, ` +
+        `which belong to site ${await siteLabel(db, [...new Set(foreign.map((f) => f.siteId!))])}. Remove them from allowedBlocks, or share those block types.`,
+      ["allowedBlocks"],
+    );
+  }
+}
+
+/** Binding a type to `siteId` must not strand what other sites already hold:
+ *  their documents or embedded blocks of the type (version history included,
+ *  since a restore brings it back), or their own types allowing it as a block. */
+async function assertUnusedOutside(db: Queryable, name: string, siteId: string): Promise<void> {
+  const items = await db
+    .selectDistinct({ siteId: contentItem.siteId })
+    .from(contentItem)
+    .where(and(eq(contentItem.type, name), ne(contentItem.siteId, siteId)));
+  const embedded = (await db.execute(sql`
+    SELECT DISTINCT ci.site_id FROM content_version cv JOIN content_item ci ON ci.document_id = cv.document_id
+    WHERE ci.site_id <> ${siteId} AND jsonb_path_exists(cv.data, '$.** ? (@.blockType == $t)', jsonb_build_object('t', ${name}::text))
+  `)) as unknown as { site_id: string }[];
+  const allowing = (await db
+    .select({ name: contentType.name, definition: contentType.definition })
+    .from(contentType)
+    .where(and(isNotNull(contentType.siteId), ne(contentType.siteId, siteId))))
+    .filter((t) => parseStoredContentTypeDef(t.definition).fields.some((f) => f.type === "contentArea" && f.allowedBlocks.includes(name)))
+    .map((t) => t.name);
+  const sites = [...new Set([...items.map((i) => i.siteId), ...embedded.map((e) => e.site_id)])];
+  if (!sites.length && !allowing.length) return;
+  const parts = [
+    sites.length ? `site ${await siteLabel(db, sites)} still holds content of it (trash and version history included)` : null,
+    allowing.length ? `${allowing.join(", ")} (bound to another site) allow it as a block` : null,
+  ].filter(Boolean);
+  throw Errors.conflict(`'${name}' can't be bound to site ${await siteLabel(db, [siteId])}: ${parts.join("; ")}. Keep it shared, or move or remove that content first.`);
 }
 
 /** Admin-only: create a new content type. The body must already be schema-valid. */
@@ -162,10 +230,16 @@ export async function createContentType(
 ): Promise<ContentTypeDef> {
   requirePermission(ctx, "contenttype.manage");
   const existing = await db.select().from(contentType).where(eq(contentType.name, def.name)).limit(1);
-  if (existing[0]) throw Errors.conflict(`Content type '${def.name}' already exists`);
+  if (existing[0]) {
+    // Names are instance-wide (content rows name their type), so say where the clash lives.
+    const where = existing[0].siteId ? ` (on site ${await siteLabel(db, [existing[0].siteId])}; names are unique across every site)` : "";
+    throw Errors.conflict(`Content type '${def.name}' already exists${where}`);
+  }
+  const siteId = def.siteId ?? null;
+  await assertScope(db, def, siteId);
   // The reserved SEO group is system-managed: strip it from what we store so
   // it's defined once (in shared) and injected on read — never duplicated/stale.
-  const stored = stripSeoGroup(def);
+  const stored = toStoredDefinition(def);
   await db.insert(contentType).values({
     name: stored.name,
     displayName: stored.displayName,
@@ -173,8 +247,9 @@ export async function createContentType(
     description: stored.description,
     icon: stored.icon,
     definition: stored,
+    siteId,
   });
-  return withSeoGroup(stored);
+  return { ...withSeoGroup(stored), siteId };
 }
 
 /**
@@ -194,7 +269,7 @@ export async function deleteContentType(db: Database, ctx: AccessContext, name: 
     throw Errors.conflict(`'${name}' is still in use (${parts.join(", ")}). Remove those first.`);
   }
   await db.delete(contentType).where(eq(contentType.name, name));
-  announceDeliveryChange(db, null, "content-type");
+  announceDeliveryChange(db, rows[0].siteId, "content-type");
 }
 
 /**
@@ -210,7 +285,9 @@ export async function updateContentType(
   def: ContentTypeDef,
 ): Promise<{ next: ContentTypeDef; prev: ContentTypeDef }> {
   const result = await applyContentTypeUpdate(db, ctx, name, def);
-  announceDeliveryChange(db, null, "content-type");
+  // Only that site hears a change to a type it alone has (before and after).
+  const only = result.next.siteId ?? null;
+  announceDeliveryChange(db, only !== null && only === result.prev.siteId ? only : null, "content-type");
   return result;
 }
 
@@ -226,15 +303,18 @@ export async function applyContentTypeUpdate(
   if (def.name !== name) throw Errors.badRequest("Content type name is immutable");
   const rows = await db.select().from(contentType).where(eq(contentType.name, name)).limit(1);
   if (!rows[0]) throw Errors.notFound(`Content type '${name}'`);
-  const prev = parseStoredContentTypeDef(rows[0].definition);
+  const prev = typeFromRow(rows[0]);
   if (def.kind !== prev.kind) throw Errors.conflict("Content type kind is immutable");
+  const siteId = def.siteId === undefined ? rows[0].siteId : def.siteId;
+  await assertScope(db, def, siteId);
+  if (siteId !== null && siteId !== rows[0].siteId) await assertUnusedOutside(db, name, siteId);
   // Strip the reserved SEO group before storing (system-managed, injected on read).
-  const stored = stripSeoGroup(def);
+  const stored = toStoredDefinition(def);
   await db
     .update(contentType)
-    .set({ displayName: stored.displayName, description: stored.description, icon: stored.icon, definition: stored })
+    .set({ displayName: stored.displayName, description: stored.description, icon: stored.icon, definition: stored, siteId })
     .where(eq(contentType.name, name));
-  return { next: withSeoGroup(stored), prev };
+  return { next: { ...withSeoGroup(stored), siteId }, prev };
 }
 
 /** Which public/private exposure flags changed between two type versions (for audit). */
@@ -953,7 +1033,7 @@ export async function createContent(
         `or pass allowTypeMismatch: true if a sub-page of another type is intended.`,
     );
   }
-  const reg = await loadTypeRegistry(db);
+  const reg = await loadTypeRegistry(db, ctx.siteId);
   const type = requireType(reg, typeName);
 
   const documentId = nanoid(24);
@@ -1261,9 +1341,11 @@ interface TypeRegistry {
   blockTypes: BlockTypeResolver;
 }
 
-async function loadTypeRegistry(db: Database): Promise<TypeRegistry> {
+/** The types a write in `siteId` may use: the shared ones plus that site's own,
+ *  so a type bound to another site is refused like an unknown one (#159). */
+async function loadTypeRegistry(db: Database, siteId: string): Promise<TypeRegistry> {
   // Parsed once per process and re-read only when a row changes (type-cache.ts).
-  const rows = await currentContentTypes(db);
+  const rows = visibleIn(await currentContentTypes(db), siteId);
   const known = new Map<string, { kind: string; nestedOnly: boolean; def: ContentTypeDef }>();
   for (const r of rows) known.set(r.name, { kind: r.kind, nestedOnly: r.def.nestedOnly === true, def: r.def });
   // The hint lists what an area with no allow-list actually accepts: general
@@ -1578,7 +1660,7 @@ async function rebuildReferences(
  * Returns the coerced blocks.
  */
 export async function prepareAreaBlocks(db: Database, typeName: string, siteId: string, loc: string, area: string, blocks: unknown): Promise<unknown[]> {
-  const reg = await loadTypeRegistry(db);
+  const reg = await loadTypeRegistry(db, siteId);
   const type = requireType(reg, typeName);
   const areas = type.fields.filter((f) => f.type === "contentArea").map((f) => f.name);
   if (!areas.includes(area)) {
@@ -1681,8 +1763,8 @@ async function updateContentOnce(
   req: UpdateContentRequest,
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.update");
-  // The (instance-wide) type registry loads while the item is authorized.
-  const [item, reg] = await Promise.all([loadAuthorized(db, ctx, documentId), loadTypeRegistry(db)]);
+  // The type registry loads while the item is authorized (in the same site).
+  const [item, reg] = await Promise.all([loadAuthorized(db, ctx, documentId), loadTypeRegistry(db, ctx.siteId)]);
   const type = requireType(reg, item.type);
 
   // Merge mode: shallow-merge the patch over the current working data so a
@@ -1908,7 +1990,7 @@ async function assertDraftPublishable(
   loc: string,
   draft: typeof contentVersion.$inferSelect,
 ): Promise<void> {
-  const reg = await loadTypeRegistry(db);
+  const reg = await loadTypeRegistry(db, item.siteId);
   const type = requireType(reg, item.type);
   const parsed = dataSchemaFor(type, true, reg.blockTypes).safeParse(draft.data);
   if (!parsed.success) {
@@ -2068,7 +2150,7 @@ export async function copyVariant(
   const slugFree =
     src.slug == null || !(await slugTakenBySibling(db, documentId, item.parentId, toLocale, src.slug));
   // Only declared fields travel: a stray stored key would be refused as unknown in the target (#79).
-  const names = new Set(requireType(await loadTypeRegistry(db), item.type).fields.map((f) => f.name));
+  const names = new Set(requireType(await loadTypeRegistry(db, ctx.siteId), item.type).fields.map((f) => f.name));
   const data = Object.fromEntries(Object.entries(src.data as Record<string, unknown>).filter(([k]) => names.has(k)));
   return updateContent(db, ctx, documentId, toLocale, {
     name: src.name,
@@ -3026,7 +3108,7 @@ export async function restoreVersion(
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.update");
   const item = await loadAuthorized(db, ctx, documentId);
-  const reg = await loadTypeRegistry(db);
+  const reg = await loadTypeRegistry(db, ctx.siteId);
   const type = requireType(reg, item.type);
 
   const srcRows = await db
@@ -3112,7 +3194,7 @@ export async function cloneContent(
 ): Promise<ContentDetail> {
   requirePermission(ctx, "content.create");
   const src = await loadAuthorized(db, ctx, documentId);
-  const reg = await loadTypeRegistry(db);
+  const reg = await loadTypeRegistry(db, ctx.siteId);
   const type = requireType(reg, src.type);
   await assertGlobalSingleton(db, type, src.siteId);
 

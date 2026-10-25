@@ -217,9 +217,10 @@ export async function getDashboard(db: Database, ctx: AccessContext): Promise<Da
       return { unusedBlocks, unusedBlocksList };
     })(),
     (async () => {
-    // Types with no standalone items AND no inline embeds anywhere — instance-
-    // global on purpose: content types are shared across sites (D2). Note that
-    // contentTypeUsage omits fully-unused types, so walk the full type list.
+    // Types this site can use (shared + its own) with no standalone items AND
+    // no inline embeds anywhere: usage stays instance-wide, since a shared
+    // type in use on another site is not empty. Note that contentTypeUsage
+    // omits fully-unused types, so walk the full type list.
     const usage = await contentTypeUsage(db);
     const typeRows = await db
       .select({
@@ -233,6 +234,7 @@ export async function getDashboard(db: Database, ctx: AccessContext): Promise<Da
         nestedOnly: sql<boolean>`coalesce((${contentType.definition} ->> 'nestedOnly')::boolean, false)`,
       })
       .from(contentType)
+      .where(or(isNull(contentType.siteId), eq(contentType.siteId, ctx.siteId)))
       .orderBy(asc(contentType.name));
     const emptyTypeRows = typeRows.filter((t) => {
       if (t.nestedOnly) return false;
