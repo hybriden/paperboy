@@ -1034,8 +1034,12 @@ test("on-page outline: a block opened in the outline is pointed at on the page a
   await page.goto(`/edit/${documentId}`);
   await page.getByRole("button", { name: "On-page", exact: true }).click();
   const outline = page.getByRole("complementary", { name: "Page outline" });
-  await expect(outline).toBeVisible({ timeout: 20_000 });
   const toggle = page.getByRole("button", { name: "Outline", exact: true });
+  // Off by default: the editor opens it.
+  await expect(toggle).toHaveAttribute("aria-pressed", "false", { timeout: 20_000 });
+  await expect(outline).toHaveCount(0);
+  await toggle.click();
+  await expect(outline).toBeVisible();
   await expect(toggle).toHaveAttribute("aria-pressed", "true");
 
   // Opening the hero's row points the preview at that exact block (focus by path).
@@ -1054,14 +1058,14 @@ test("on-page outline: a block opened in the outline is pointed at on the page a
   const scan = await new AxeBuilder({ page }).exclude('iframe[title="Content preview"]').analyze();
   expect(scan.violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id), "on-page outline").toEqual([]);
 
-  // The outline folds away by keyboard, and the choice is remembered.
+  // Opening it is remembered, and it folds away by keyboard.
+  await page.reload();
+  await page.getByRole("button", { name: "On-page", exact: true }).click();
+  await expect(toggle).toHaveAttribute("aria-pressed", "true", { timeout: 20_000 });
+  await expect(outline).toBeVisible();
   await toggle.focus();
   await page.keyboard.press("Enter");
   await expect(outline).toHaveCount(0);
-  await page.reload();
-  await page.getByRole("button", { name: "On-page", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Outline", exact: true })).toHaveAttribute("aria-pressed", "false");
-  await page.getByRole("button", { name: "Outline", exact: true }).click();
   await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
 });
 
