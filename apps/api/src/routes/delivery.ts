@@ -13,7 +13,7 @@ import {
   deliveryStartPage,
   getSiteById,
   resolveDefaultLocale,
-  verifyDeliveryKey,
+  verifyDeliveryKeyWithEpoch,
 } from "@paperboy/db";
 import { DeliveryContent, LocalePrefix, buildLlmsTxt, buildRobotsTxt, buildSecurityTxt, buildSitemapXml, parseSeoFilesConfig } from "@paperboy/shared";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
@@ -29,19 +29,19 @@ const UNCACHED = new Set(["redirects", "robots.txt", "sitemap.xml", "llms.txt", 
 async function resolveCredential(
   app: FastifyInstance,
   req: FastifyRequest,
-): Promise<{ perspective: Perspective; siteId: string }> {
+): Promise<{ perspective: Perspective; siteId: string; epoch: string }> {
   const auth = req.headers.authorization;
   let key = "";
   if (auth?.startsWith("Bearer ")) key = auth.slice(7).trim();
   else if (typeof req.headers["x-api-key"] === "string") key = req.headers["x-api-key"];
   // SECURITY: never accept credentials from the query string.
-  const resolved = await verifyDeliveryKey(app.db, key);
+  const resolved = await verifyDeliveryKeyWithEpoch(app.db, key);
   if (!resolved) {
     throw new AppError(401, "unauthorized", "Invalid or missing API key");
   }
   // public key -> only published; preview key -> draft-aware working view. The
   // key also pins the site (D1) — delivery is confined to it.
-  return { perspective: resolved.type === "public" ? "published" : "preview", siteId: resolved.siteId };
+  return { perspective: resolved.type === "public" ? "published" : "preview", siteId: resolved.siteId, epoch: resolved.epoch };
 }
 
 function setCacheHeaders(reply: FastifyReply, perspective: Perspective, cv: number): void {
@@ -101,14 +101,14 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   // onRequest resolver would answer every REJECTED key before the limiter ran —
   // unmetered key guessing against a DB lookup. preHandler still precedes every
   // handler, so nothing is read before the key is validated.
-  const cache = createDeliveryCache(app.db);
+  const cache = createDeliveryCache();
   app.addHook("onClose", async () => cache.unsubscribe());
   app.addHook("preHandler", async (req, reply) => {
-    const { perspective, siteId } = await resolveCredential(app, req);
+    const { perspective, siteId, epoch } = await resolveCredential(app, req);
     req.perspective = perspective;
     req.deliverySiteId = siteId;
     const cacheable = req.method === "GET" && perspective === "published" && !UNCACHED.has(req.routeOptions.url?.split("/").pop() ?? "");
-    if (cacheable && (await cache.serve(req, reply))) return reply;
+    if (cacheable && cache.serve(req, reply, epoch)) return reply;
   });
   app.addHook("preSerialization", async (req, reply, payload) => {
     cache.store(req, reply, payload);

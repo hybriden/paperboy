@@ -1,4 +1,4 @@
-import { type Database, deliveryEpoch, onDeliveryChange } from "@paperboy/db";
+import { onDeliveryChange } from "@paperboy/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 /**
@@ -29,7 +29,7 @@ interface Entry {
   payload: unknown;
 }
 
-export function createDeliveryCache(db: Database) {
+export function createDeliveryCache() {
   const entries = new Map<string, Entry>();
   const pending = new WeakMap<FastifyRequest, { key: string; token: string; conditional?: boolean }>();
   let token: string | null = null; // what the entries were built under
@@ -42,10 +42,10 @@ export function createDeliveryCache(db: Database) {
 
   return {
     unsubscribe,
-    /** Answer a published read from the cache (true), or mark it to be stored. */
-    async serve(req: FastifyRequest, reply: FastifyReply): Promise<boolean> {
-      const seen = local;
-      const now = `${await deliveryEpoch(db)}:${seen}`;
+    /** Answer a published read from the cache (true), or mark it to be stored.
+     *  `epoch` is delivery_epoch as read with the request's key. */
+    serve(req: FastifyRequest, reply: FastifyReply, epoch: string): boolean {
+      const now = `${epoch}:${local}`;
       if (now !== token) {
         entries.clear();
         token = now;
