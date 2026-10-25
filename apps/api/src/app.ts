@@ -68,16 +68,17 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     // parseTrustProxy explains why. (req.ip backs the IP rate-limits and audit
     // IPs, and request.host/protocol back generated URLs and cookie decisions.)
     trustProxy: parseTrustProxy(env.TRUST_PROXY),
+    // Azure's front end forwards "203.0.113.7:9577". With the port, req.ip changed
+    // per connection, so per-IP limits counted connections. req.ip is computed
+    // from this header on read; rewriteUrl runs before anything reads it, the
+    // "incoming request" log line included (an onRequest hook ran after it).
+    rewriteUrl: (raw) => {
+      const xff = raw.headers["x-forwarded-for"];
+      if (typeof xff === "string" && xff.includes(":")) raw.headers["x-forwarded-for"] = stripForwardedPorts(xff);
+      return raw.url ?? "/";
+    },
   };
   const app = Fastify(serverOpts).withTypeProvider<ZodTypeProvider>();
-
-  // Azure's front end forwards "203.0.113.7:9577". With the port, req.ip changed
-  // per connection, so per-IP limits counted connections. req.ip is computed from
-  // these headers on read, so strip ports before anything reads it.
-  app.addHook("onRequest", async (req) => {
-    const xff = req.headers["x-forwarded-for"];
-    if (typeof xff === "string" && xff.includes(":")) req.headers["x-forwarded-for"] = stripForwardedPorts(xff);
-  });
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
