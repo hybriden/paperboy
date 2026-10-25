@@ -615,10 +615,11 @@ function SortableBlock({
       }}
       style={style}
       className={`group/row rounded-(--radius-field) border ${
-        // Open = one recessed surface: canvas-toned body under panel-white
-        // inputs, a stronger edge and a header bracketing it. Neutral, not
-        // accent: colour is for what is active, and an open row is just open.
-        isOpen ? "border-fg/20 bg-canvas shadow-panel" : "border-line bg-panel"
+        // Open = one recessed surface: a grey body under panel-white inputs
+        // (deeper per nesting level), a blue-tinted header and end cap, and an
+        // accent edge down its left side, the same blue that frames this block
+        // in the preview, so mid-form you see where its fields start and end.
+        isOpen ? "border-accent/40 border-l-[3px] border-l-accent bg-fg/[0.04] shadow-panel" : "border-line bg-panel"
       } ${isDragging ? "opacity-60 ring-2 ring-accent" : ""}`}
     >
       {/* While the block's fields are on screen its header stays pinned to the
@@ -627,7 +628,7 @@ function SortableBlock({
           level), so the stack reads as a breadcrumb of open scopes. Sticky
           survives dnd-kit because the row is only transformed WHILE dragging. */}
       <div
-        className={`flex items-center gap-1.5 px-1.5 ${isOpen ? "sticky z-10 rounded-t-[calc(var(--radius-field)-1px)] border-b border-line bg-panel" : ""}`}
+        className={`flex items-center gap-1.5 px-1.5 ${isOpen ? "sticky z-10 rounded-t-[calc(var(--radius-field)-1px)] border-b border-accent/20 bg-accent-50" : ""}`}
         style={isOpen ? { top: depth * OPEN_HEADER_PX, height: OPEN_HEADER_PX } : undefined}
       >
         <button {...attributes} {...listeners} className={`${isOpen ? "" : ONDEMAND} cursor-grab p-1 text-muted active:cursor-grabbing`} aria-label="Drag to reorder">
