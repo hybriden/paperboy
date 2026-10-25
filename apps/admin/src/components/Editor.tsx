@@ -319,12 +319,13 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // the preview. The counter re-triggers even when the same field is re-focused.
   const [propFocus, setPropFocus] = useState<{ field: string; blockIndex?: number; path?: { field: string; blockIndex: number }[]; n: number } | null>(null);
   // The page outline beside the on-page preview (#151): its areas and blocks,
-  // edited with the same ContentArea as the form. Remembered per browser.
+  // edited with the same ContentArea as the form. Off until the editor opens it
+  // (the Outline button); remembered per browser.
   const [outlineOpen, setOutlineOpenState] = useState(() => {
     try {
-      return localStorage.getItem("pb-outline") !== "0";
+      return localStorage.getItem("pb-outline") === "1";
     } catch {
-      return true;
+      return false;
     }
   });
   const setOutlineOpen = (open: boolean) => {
