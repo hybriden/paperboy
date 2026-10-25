@@ -108,7 +108,11 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
     req.perspective = perspective;
     req.deliverySiteId = siteId;
     const cacheable = req.method === "GET" && perspective === "published" && !UNCACHED.has(req.routeOptions.url?.split("/").pop() ?? "");
-    if (cacheable && cache.serve(req, reply, epoch)) return reply;
+    const hit = cacheable && cache.serve(req, reply, epoch);
+    // On the "request completed" line, so a log analysis can split delivery
+    // traffic per site and see the cache's hit rate (the key and IP stay out).
+    reply.log = reply.log.child({ site: siteId, cache: hit ? "hit" : cacheable ? "miss" : "off" });
+    if (hit) return reply;
   });
   app.addHook("preSerialization", async (req, reply, payload) => {
     cache.store(req, reply, payload);
