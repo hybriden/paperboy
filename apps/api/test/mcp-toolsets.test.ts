@@ -79,10 +79,11 @@ describe("MCP toolsets", () => {
   it("tools over data every site shares don't offer a `site` they would ignore", async () => {
     const tools = await (await boot("all")).listTools();
     const hasSite = (name: string) => Object.hasOwn(tools.find((t) => t.name === name)!.inputSchema.properties ?? {}, "site");
-    for (const name of ["list_users", "create_user", "list_content_types", "update_content_type", "list_type_templates", "instantiate_type_template", "list_audit", "assist_writing"]) {
+    for (const name of ["list_users", "create_user", "update_content_type", "list_type_templates", "instantiate_type_template", "list_audit", "assist_writing"]) {
       expect(hasSite(name), name).toBe(false);
     }
-    for (const name of ["list_content", "list_tree", "create_content", "list_redirects", "list_webhooks", "list_sites"]) {
+    // list_content_types too: a site lists the shared types plus its own (#159).
+    for (const name of ["list_content", "list_tree", "create_content", "list_redirects", "list_webhooks", "list_sites", "list_content_types"]) {
       expect(hasSite(name), name).toBe(true);
     }
   }, 60_000);

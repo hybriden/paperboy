@@ -238,6 +238,7 @@ export function ContentTypesPanel() {
           <span className="font-medium text-fg">{t.displayName}</span>
           <code className="rounded bg-line/70 px-1 font-mono text-[11px] text-muted">{t.name}</code>
           <span className="rounded bg-canvas px-1.5 py-0.5 text-[11px] text-muted">{t.kind}</span>
+          {t.siteId && <Badge tone="default">this site only</Badge>}
           <span className="ml-auto flex items-center gap-3 text-xs text-muted">
             <span title="How many content items use this type">{usageLabel(t.kind, usage.data?.[t.name])}</span>
             <span className="text-line">·</span>

@@ -3,7 +3,7 @@ import { nanoid } from "nanoid";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
-import { DEFAULT_SITE_ID, asset, contentItem, contentReference, contentVersion, deliveryKey, folder, formSubmission, locale, site, userRole, userScope, webhook, webhookDelivery } from "./schema.js";
+import { DEFAULT_SITE_ID, asset, contentItem, contentReference, contentType, contentVersion, deliveryKey, folder, formSubmission, locale, site, userRole, userScope, webhook, webhookDelivery } from "./schema.js";
 
 /**
  * The `site` entity (multisite). Content, delivery keys, media and user scopes
@@ -171,6 +171,7 @@ export async function deleteSite(
     await tx.delete(userScope).where(eq(userScope.siteId, siteId));
     await tx.delete(userRole).where(eq(userRole.siteId, siteId)); // one-site roles only; every-site (NULL) roles stay
     await tx.delete(formSubmission).where(eq(formSubmission.siteId, siteId));
+    await tx.delete(contentType).where(eq(contentType.siteId, siteId)); // its own types; its content is gone above
     const hooks = await tx.delete(webhook).where(eq(webhook.siteId, siteId)).returning({ id: webhook.id });
     if (hooks.length > 0) await tx.delete(webhookDelivery).where(inArray(webhookDelivery.webhookId, hooks.map((h) => h.id)));
     await tx.delete(site).where(eq(site.id, siteId));

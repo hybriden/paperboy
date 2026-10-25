@@ -148,12 +148,12 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   app.get(
     "/content-types",
     { schema: { tags: ["manage"], response: { 200: z.array(ContentTypeDef) } } },
-    async () => listContentTypes(app.db),
+    async (req) => listContentTypes(app.db, req.accessCtx!.siteId),
   );
   app.get(
     "/content-types/:name",
     { schema: { tags: ["manage"], params: z.object({ name: z.string() }), response: { 200: ContentTypeDef } } },
-    async (req) => getContentType(app.db, req.params.name),
+    async (req) => getContentType(app.db, req.params.name, req.accessCtx!.siteId),
   );
   app.get(
     "/content-types-usage",

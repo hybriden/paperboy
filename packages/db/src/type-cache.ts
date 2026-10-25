@@ -17,7 +17,14 @@ const parsed = new WeakMap<Database, Map<string, { xmin: string; def: ContentTyp
 export interface CurrentType {
   name: string;
   kind: string;
+  /** null = shared by every site. */
+  siteId: string | null;
   def: ContentTypeDef;
+}
+
+/** The types a site can use: the shared ones plus its own. */
+export function visibleIn<T extends { siteId: string | null }>(types: T[], siteId: string): T[] {
+  return types.filter((t) => t.siteId === null || t.siteId === siteId);
 }
 
 /** All content types in name order (the database's collation, as before). */
@@ -25,7 +32,7 @@ export async function currentContentTypes(db: Database): Promise<CurrentType[]> 
   let cache = parsed.get(db);
   if (!cache) parsed.set(db, (cache = new Map()));
   const rows = await db
-    .select({ name: contentType.name, kind: contentType.kind, xmin: sql<string>`xmin::text` })
+    .select({ name: contentType.name, kind: contentType.kind, siteId: contentType.siteId, xmin: sql<string>`xmin::text` })
     .from(contentType)
     .orderBy(asc(contentType.name));
   const stale = rows.filter((r) => cache.get(r.name)?.xmin !== r.xmin);
@@ -42,7 +49,7 @@ export async function currentContentTypes(db: Database): Promise<CurrentType[]> 
   const out: CurrentType[] = [];
   for (const r of rows) {
     const hit = cache.get(r.name);
-    if (hit) out.push({ name: r.name, kind: r.kind, def: hit.def });
+    if (hit) out.push({ name: r.name, kind: r.kind, siteId: r.siteId, def: hit.def });
   }
   return out;
 }

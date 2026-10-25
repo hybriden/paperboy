@@ -261,6 +261,13 @@ const ContentTypeDefShape = z
      * subsystem and re-implements versioning and permissions around them.
      */
     nestedOnly: z.boolean().default(false),
+    /**
+     * SCOPE: the site this type belongs to, or null = shared by every site.
+     * A site sees the shared types plus its own; a type bound to another site
+     * is not offered, listed or writable there. Kept in its own column, never
+     * in the stored definition. On update, omitted = unchanged.
+     */
+    siteId: z.string().max(80).nullable().optional(),
   });
 
 /** The cross-field rules every definition must satisfy, strict or stored. */
@@ -294,7 +301,7 @@ const ContentTypeDefStored = withTypeRules(ContentTypeDefShape.extend({ fields: 
 /**
  * The reserved SEO field group — INTRINSIC to every page. Defined ONCE here,
  * never stored in a type's definition: injected at read time (withSeoGroup) and
- * stripped at write time (stripSeoGroup). So every page kind has it
+ * stripped at write time (toStoredDefinition). So every page kind has it
  * automatically (incl. custom types), it can't be removed, and it can't drift.
  * These are the OUTPUT-control fields (meta/og/twitter/canonical/noindex); the
  * CONTENT fields a type author defines (heading/title/…) carry the seoRoles.
@@ -328,9 +335,11 @@ export function withSeoGroup(def: ContentTypeDef): ContentTypeDef {
   return { ...def, fields };
 }
 
-/** Write-time: drop the reserved SEO fields so they're never persisted per type. */
-export function stripSeoGroup(def: ContentTypeDef): ContentTypeDef {
-  return { ...def, fields: def.fields.filter((f) => !SEO_FIELD_NAMES.has(f.name)) };
+/** Write-time: what a definition stores. The reserved SEO fields are injected
+ *  on read and the scope (`siteId`) lives in its own column, so neither is persisted. */
+export function toStoredDefinition(def: ContentTypeDef): ContentTypeDef {
+  const { siteId: _scope, ...rest } = def;
+  return { ...rest, fields: def.fields.filter((f) => !SEO_FIELD_NAMES.has(f.name)) };
 }
 
 /**

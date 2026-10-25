@@ -4,7 +4,7 @@ import {
   BUILTIN_TYPE_TEMPLATES,
   ContentTypeDef,
   parseStoredContentTypeDef,
-  stripSeoGroup,
+  toStoredDefinition,
 } from "@paperboy/shared";
 import type { Database, Queryable } from "./client.js";
 import { AppError, Errors } from "./errors.js";
@@ -74,7 +74,7 @@ export async function createTypeTemplate(
   if (existing[0]) throw Errors.conflict(`Type template '${def.name}' already exists`);
   // The reserved SEO group is system-managed (stripped at write, injected on
   // read) — exactly like content_type, so a template can never drift from it.
-  const stored = stripSeoGroup(def);
+  const stored = toStoredDefinition(def);
   await db.insert(typeTemplate).values({
     name: stored.name,
     displayName: stored.displayName,
@@ -111,7 +111,7 @@ export async function updateTypeTemplate(
   }
   const prev = parseStoredContentTypeDef(rows[0].definition);
   if (def.kind !== prev.kind) throw Errors.conflict("Template kind is immutable");
-  const stored = stripSeoGroup(def);
+  const stored = toStoredDefinition(def);
   await db
     .update(typeTemplate)
     .set({ displayName: stored.displayName, description: stored.description, icon: stored.icon, definition: stored })
@@ -338,7 +338,7 @@ export async function importTypeTemplates(
  *  self-teaching bad-request the rest of the API uses (naming the rule). */
 function ContentTypeDefOrReject(def: unknown, templateName: string): ContentTypeDef {
   try {
-    return stripSeoGroup(ContentTypeDef.parse(def));
+    return toStoredDefinition(ContentTypeDef.parse(def));
   } catch (e) {
     throw Errors.badRequest(
       `asName is not a valid content type name for template '${templateName}' — ` +

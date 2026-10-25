@@ -419,10 +419,12 @@ const bootToolsets = (() => {
   }
 })();
 
-/** Tools over data every site shares (content types, templates, users, the audit
- *  log, the AI config): a `site` argument would be ignored, so they don't offer one. */
+/** Tools over data every site shares (writing content types, templates, users,
+ *  the audit log, the AI config): a `site` argument would be ignored, so they
+ *  don't offer one. A type's own scope is its `siteId`; listing types is per
+ *  site (the shared ones plus that site's own). */
 const INSTANCE_WIDE_TOOLS = new Set([
-  "list_content_types", "create_content_type", "update_content_type", "list_type_templates", "create_type_template",
+  "create_content_type", "update_content_type", "list_type_templates", "create_type_template",
   "update_type_template", "delete_type_template", "instantiate_type_template", "export_type_templates", "import_type_templates",
   "list_users", "create_user", "update_user", "delete_user", "list_audit", "assist_writing",
 ]);
@@ -863,20 +865,20 @@ function withFieldFormats<T extends { fields: FieldDef[] }>(def: T): T & { field
 }
 tool(
   "list_content_types", "content.read",
-  "Read the content model (instance-wide, shared by all sites). Pass name to get ONE type's definition — name, kind, displayName, schemaType and fields (name, type, required, options, allowed blocks of a content area…); an unknown name is refused with the list of real names. Call this before writing content of a type. " +
+  "Read the content model of a site: the types every site shares plus the site's own (`siteId` null = shared). Pass name to get ONE type's definition — name, kind, displayName, schemaType and fields (name, type, required, options, allowed blocks of a content area…); an unknown name is refused with the list of real names. Call this before writing content of a type. " +
     "Each field carries valueFormat + valueExample: the exact JSON shape create_content/update_content expect. These are LIVE types editors fill in; reusable type recipes (templates) live in the schema toolset. Omit name to get every full definition, which is large, so prefer name.",
   { name: z.string().optional().describe("Content type name, PascalCase, e.g. 'BlogPost' (as in a content item's `type`). Omit to list all.") },
   async ({ name }) => {
-    return name === undefined ? (await listContentTypes(db)).map(withFieldFormats) : withFieldFormats(await getContentType(db, name));
+    return name === undefined ? (await listContentTypes(db, ctx().siteId)).map(withFieldFormats) : withFieldFormats(await getContentType(db, name, ctx().siteId));
   });
 tool(
   "create_content_type", "contenttype.manage",
-  "Create a new content type (the schema editors fill in) from a full ContentTypeDef. Content types are instance-wide, shared by every site, so this needs a token not limited to one site. Faster for common shapes: list_type_templates + instantiate_type_template. The definition is validated and a bad one is refused with the offending path; an existing name is refused (409) — change that type with update_content_type. Returns the stored definition.",
+  "Create a new content type (the schema editors fill in) from a full ContentTypeDef. Set definition.siteId to a site id (see list_sites) for a type only that site uses, or leave it out/null to share it with every site. Names are unique across every site, and designing types needs a token not limited to one site. Faster for common shapes: list_type_templates + instantiate_type_template. The definition is validated and a bad one is refused with the offending path; an existing name is refused (409) — change that type with update_content_type. Returns the stored definition.",
   { definition: z.record(z.string(), z.unknown()).describe("A ContentTypeDef: {name: 'PascalCase', kind: 'page'|'block'|'global', fields: [{name, type, …}], …}. Copy the shape of an existing one from list_content_types {name}.") },
   async ({ definition }) => { requireCrossSiteToken("Content-type design"); const def = ContentTypeDef.parse(withoutFieldFormats(definition)); const r = await createContentType(db, ctx(), def); await mcpAudit("contenttype.create", null, null, { name: def.name, kind: def.kind }); return r; });
 tool(
   "update_content_type", "contenttype.manage",
-  "Replace a content type's definition (add/remove/rename fields, change options). name and kind are immutable. Send the FULL definition — read it with list_content_types {name}, edit, send back; a field you leave out is removed from the schema. Existing content is not migrated: its stored values for removed fields are simply no longer shown or delivered. Instance-wide (all sites), so it needs contenttype.manage and a token for every site. Returns the new definition. To add a type instead, create_content_type.",
+  "Replace a content type's definition (add/remove/rename fields, change options). name and kind are immutable. Send the FULL definition — read it with list_content_types {name}, edit, send back; a field you leave out is removed from the schema. Existing content is not migrated: its stored values for removed fields are simply no longer shown or delivered. siteId binds the type to one site (null = shared, omitted = unchanged); binding is refused while another site holds content of it. Needs contenttype.manage and a token for every site. Returns the new definition. To add a type instead, create_content_type.",
   { name: z.string().describe("The existing type's name, e.g. 'BlogPost'."), definition: z.record(z.string(), z.unknown()).describe("The full updated ContentTypeDef (same shape list_content_types {name} returns; its valueFormat/valueExample annotations are ignored).") },
   async ({ name, definition }) => { requireCrossSiteToken("Content-type design"); const r = await updateContentType(db, ctx(), name, ContentTypeDef.parse(withoutFieldFormats(definition))); await mcpAudit("contenttype.update", null, null, { name }); return r.next; });
 
