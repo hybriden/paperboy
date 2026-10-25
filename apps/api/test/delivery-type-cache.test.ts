@@ -34,6 +34,9 @@ describe("delivery's content type cache sees a write from another connection on 
     const def = row!.definition as { fields: Array<{ name: string; delivery?: string }> };
     for (const f of def.fields) if (f.name === "siteName") f.delivery = "private";
     await other`update content_type set definition = ${JSON.stringify(def)}::jsonb where name = 'SiteSettings'`;
+    // The other process's write path announces it (the response cache's signal,
+    // delivery-response-cache.test.ts); what this test pins is the TYPE cache.
+    await other`select nextval('delivery_epoch')`;
 
     const after = await siteSettings();
     expect(after.fieldTypes).not.toHaveProperty("siteName");
