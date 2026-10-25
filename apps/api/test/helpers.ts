@@ -1,4 +1,4 @@
-import { type SeedResult, seed } from "@paperboy/db";
+import { type Database, type SeedResult, seed } from "@paperboy/db";
 import type { FastifyInstance } from "fastify";
 import { buildApp } from "../src/app.js";
 import { loadEnv } from "../src/env.js";
@@ -17,7 +17,7 @@ export interface Suite {
 }
 
 /** Fresh migrate+seed + a ready Fastify app. Call in beforeAll. */
-export async function setupApi(envOverrides: Record<string, string> = {}): Promise<Suite> {
+export async function setupApi(envOverrides: Record<string, string> = {}, db?: Database): Promise<Suite> {
   process.env.DATABASE_URL = TEST_DB;
   process.env.SEED_ADMIN_EMAIL = "admin@paperboy.test";
   process.env.SEED_ADMIN_PASSWORD = "Admin!Passw0rd";
@@ -33,7 +33,7 @@ export async function setupApi(envOverrides: Record<string, string> = {}): Promi
     UPLOADS_DIR: `${process.env.TMPDIR ?? "/tmp"}/paperboy-uploads-test`,
     ...envOverrides,
   });
-  const app = await buildApp({ env });
+  const app = await buildApp({ env, db });
   await app.ready();
   return { app, ids };
 }

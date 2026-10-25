@@ -750,15 +750,31 @@ export async function verifyDeliveryKey(
   db: Database,
   key: string,
 ): Promise<{ type: "public" | "preview"; siteId: string } | null> {
+  const resolved = await verifyDeliveryKeyWithEpoch(db, key);
+  return resolved && { type: resolved.type, siteId: resolved.siteId };
+}
+
+/** verifyDeliveryKey plus the delivery epoch (webhooks.ts) in the SAME round
+ *  trip: the delivery response cache needs both on every request, and a hit
+ *  then costs one query. */
+export async function verifyDeliveryKeyWithEpoch(
+  db: Database,
+  key: string,
+): Promise<{ type: "public" | "preview"; siteId: string; epoch: string } | null> {
   if (!key) return null;
   const rows = await db
-    .select()
+    .select({
+      type: deliveryKey.type,
+      siteId: deliveryKey.siteId,
+      revokedAt: deliveryKey.revokedAt,
+      epoch: sql<string>`(SELECT last_value FROM delivery_epoch)::text`,
+    })
     .from(deliveryKey)
     .where(eq(deliveryKey.keyHash, sha256(key)))
     .limit(1);
   const row = rows[0];
   if (!row || row.revokedAt) return null;
-  return { type: row.type as "public" | "preview", siteId: row.siteId };
+  return { type: row.type as "public" | "preview", siteId: row.siteId, epoch: row.epoch };
 }
 
 /**

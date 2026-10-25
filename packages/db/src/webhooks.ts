@@ -113,12 +113,6 @@ export function markDeliveryChanged(db: Database): void {
   void db.execute(sql`SELECT nextval('delivery_epoch')`).catch((err: unknown) => console.error("[paperboy] delivery_epoch bump failed:", err));
 }
 
-/** The current delivery epoch: it moves whenever any process announces a change. */
-export async function deliveryEpoch(db: Database): Promise<string> {
-  const rows = (await db.execute(sql`SELECT last_value FROM delivery_epoch`)) as unknown as { last_value: string | number }[];
-  return String(rows[0]?.last_value);
-}
-
 const WEBHOOK_TIMEOUT_MS = 5000;
 
 /** Events whose payload contains visitor personal data. These are never

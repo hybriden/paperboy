@@ -78,4 +78,20 @@ describe("delivery response cache", () => {
     expect((await get(keyB)).statusCode).toBe(404); // the new site has no SiteSettings
     expect((await get(PUBLIC_KEY)).statusCode).toBe(200);
   });
+
+  it("a hit costs ONE round trip: the key check reads the epoch with it", async () => {
+    let queries = 0;
+    const counting = createDb(TEST_DB, { logger: { logQuery: () => void queries++ } });
+    const counted = await setupApi({}, counting.db);
+    try {
+      const read = () => counted.app.inject({ url, headers: { authorization: `Bearer ${PUBLIC_KEY}` } });
+      expect((await read()).statusCode).toBe(200);
+      queries = 0;
+      expect((await read()).statusCode).toBe(200);
+      expect(queries).toBe(1);
+    } finally {
+      await counted.app.close();
+      await counting.sql.end();
+    }
+  });
 });
