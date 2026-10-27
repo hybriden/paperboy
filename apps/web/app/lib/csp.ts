@@ -63,3 +63,10 @@ export function frameAncestorsFor(input: {
     .filter(Boolean)
     .join(" ");
 }
+
+/** ADMIN_ORIGINS as a list: frame-ancestors (proxy.ts) and the preview bridge's
+ *  parentOrigin read the SAME admins, so every admin allowed to frame the preview
+ *  may also drive it. */
+export function adminOriginsFromEnv(): string[] {
+  return (process.env.ADMIN_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+}

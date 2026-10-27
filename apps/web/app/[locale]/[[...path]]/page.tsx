@@ -7,6 +7,7 @@ import { PreviewBridge } from "../../components/PreviewBridge";
 import { Renderer } from "../../components/Renderer";
 import { experimentView, visitorKey } from "../../lib/ab";
 import { fetchByPath, fetchList, fetchStart, reportExposures } from "../../lib/delivery";
+import { adminOriginsFromEnv } from "../../lib/csp";
 import { isPreviewRequest } from "../../lib/preview";
 
 // Dynamic rendering also makes Next send `Cache-Control: private, no-cache,
@@ -163,8 +164,8 @@ export default async function ContentPage({
       </div>
       <Renderer content={content} posts={posts} locale={locale} basePath={urlPath} preview={preview} experiments={ab?.exposures} />
       {/* ADMIN_ORIGINS is the same env var that drives the CSP frame-ancestors; its
-          first entry is the admin that embeds this preview. */}
-      {preview && <PreviewBridge parentOrigin={process.env.ADMIN_ORIGINS?.split(",")[0]?.trim() || undefined} />}
+          admins may frame this preview, and only they may drive the bridge. */}
+      {preview && <PreviewBridge parentOrigins={adminOriginsFromEnv()} />}
     </>
   );
 }

@@ -47,6 +47,9 @@ function expectEntryPoint(res: { statusCode: number; headers: Record<string, unk
   expect(res.body).toBe(INDEX);
   expect(res.headers["content-security-policy"]).toBe(ADMIN_CSP);
   expect(res.headers["x-frame-options"]).toBe("DENY");
+  // A page that window.open()s the admin gets no handle to postMessage into
+  // (the editor's message handlers check the sender; this removes the channel).
+  expect(res.headers["cross-origin-opener-policy"]).toBe("same-origin");
   // A cached index.html references hashed chunks the next deploy deleted.
   expect(res.headers["cache-control"]).toBe("no-cache, no-store, must-revalidate");
 }

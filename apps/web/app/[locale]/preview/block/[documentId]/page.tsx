@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { PreviewBridge } from "../../../../components/PreviewBridge";
 import { StandaloneBlock } from "../../../../components/Renderer";
 import { fetchById } from "../../../../lib/delivery";
+import { adminOriginsFromEnv } from "../../../../lib/csp";
 import { isPreviewRequest } from "../../../../lib/preview";
 
 export const dynamic = "force-dynamic";
@@ -40,7 +41,7 @@ export default async function BlockPreviewPage({
     <>
       <div className="draft-ribbon">Standalone preview — this block renders here without a page</div>
       <StandaloneBlock content={content} locale={locale} preview />
-      <PreviewBridge parentOrigin={process.env.ADMIN_ORIGINS?.split(",")[0]?.trim() || undefined} />
+      <PreviewBridge parentOrigins={adminOriginsFromEnv()} />
     </>
   );
 }

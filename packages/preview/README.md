@@ -29,7 +29,7 @@ if (inPreviewMode) {
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `parentOrigin` | — | Origin of the embedding admin. Recommended — see below |
+| `parentOrigin` | — | Origin of the embedding admin, or a list of them (0.9+). Recommended — see below |
 | `target` | `window.parent` | Window to post messages to |
 | `doc` | `document` | Document to bind to (tests, a different frame) |
 | `accent` | `#0077BC` | Outline/highlight colour |
@@ -44,10 +44,19 @@ source — or none at all — is ignored. This matters because framing rules don
 it: any page can `window.open(previewUrl)` and postMessage into the handle it gets
 back without ever embedding you.
 
-`parentOrigin` is optional and additive. Setting it:
-- requires inbound messages to come from that exact origin, and
+`parentOrigin` is optional and additive, but without it any page that frames the
+preview can drive it, so the bridge logs a console warning (0.9+). Setting it:
+- requires inbound messages to come from that exact origin (or one in the list), and
 - addresses outbound messages to it instead of `"*"`, so field text and caret
   snippets can't be delivered to some other origin.
+
+More than one admin previews this frontend? Pass them all:
+`parentOrigin: ["https://cms.example.com", "https://staging-cms.example.com"]`.
+Outbound messages then go to the parent's own origin where the browser reports it
+(`location.ancestorOrigins`), otherwise to each listed origin.
+
+Pair it with a `frame-ancestors` CSP that lists the same admin origins, so no other
+site can frame the preview at all.
 
 **Mount the bridge in preview mode only.** On a published page it would be a live
 `innerHTML` sink for the lifetime of every visitor's session.
