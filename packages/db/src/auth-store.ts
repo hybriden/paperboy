@@ -313,13 +313,15 @@ export async function adminUpdateUser(
     for (const sectionId of input.sections) scopeSites.set(sectionId, await sectionSiteId(db, sectionId));
   }
   await db.transaction(async (tx) => {
+    // The lock before any row lock (the users update below), or it can deadlock
+    // against a user delete, which takes the lock and then that row.
+    const guard = input.roles ? await guardLastAdmin(tx, "Cannot remove the last administrator") : null;
     if (input.name !== undefined) await tx.update(users).set({ name: input.name }).where(eq(users.id, userId));
     if (emailChanged) await tx.update(users).set({ email }).where(eq(users.id, userId));
     if (input.roles) {
-      const guard = await guardLastAdmin(tx, "Cannot remove the last administrator");
       await tx.delete(userRole).where(and(eq(userRole.userId, userId), isNull(userRole.siteId)));
       for (const role of input.roles) await tx.insert(userRole).values({ userId, role }).onConflictDoNothing();
-      await guard.check();
+      await guard!.check();
     }
     if (input.siteRoles) {
       await tx.delete(userRole).where(and(eq(userRole.userId, userId), isNotNull(userRole.siteId)));

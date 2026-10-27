@@ -162,7 +162,7 @@ export async function registerOAuthRoutes(appBase: FastifyInstance, opts: { conf
       const body = stringFields(raw);
       try {
         for (const key of ["client_name", "token_endpoint_auth_method"]) {
-          if (raw[key] !== undefined && body[key] === undefined) throw new OAuthError("invalid_client_metadata", `${key} must be a string`);
+          if (raw[key] != null && body[key] === undefined) throw new OAuthError("invalid_client_metadata", `${key} must be a string`);
         }
         const c = await registerOAuthClient(app.db, {
           clientName: body.client_name,

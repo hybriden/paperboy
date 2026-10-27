@@ -29,7 +29,10 @@ export const ADMIN_CSP =
 // A page that window.open()s the admin gets a closed handle, so it can't post
 // messages into the editor or navigate it. The preview iframe is unaffected (COOP
 // governs top-level windows) and the admin opens its own popups with noopener.
+// Not on the OAuth consent page: a web MCP client opens it in a popup and needs
+// window.opener / popup.closed to finish connecting (it signs in in place there).
 const ADMIN_COOP = "same-origin";
+const withoutCoop = (path: string): boolean => path === "/oauth" || path.startsWith("/oauth/");
 
 // The entry point must never be cached, or a browser keeps an old index.html
 // that references hashed chunks the next deploy deleted ("Failed to fetch
@@ -71,14 +74,11 @@ export async function registerAdminSpa(app: FastifyInstance, distDir: string): P
   }
   // Read once: a new admin only ever arrives with a new deploy (a restart).
   const indexHtml = readFileSync(indexPath, "utf8");
-  const sendIndex = (reply: FastifyReply) =>
-    reply
-      .code(200)
-      .type("text/html; charset=utf-8")
-      .header("Cache-Control", NO_CACHE)
-      .header("Content-Security-Policy", ADMIN_CSP)
-      .header("Cross-Origin-Opener-Policy", ADMIN_COOP)
-      .send(indexHtml);
+  const sendIndex = (reply: FastifyReply, path = "/") => {
+    reply.code(200).type("text/html; charset=utf-8").header("Cache-Control", NO_CACHE).header("Content-Security-Policy", ADMIN_CSP);
+    if (!withoutCoop(path)) reply.header("Cross-Origin-Opener-Policy", ADMIN_COOP);
+    return reply.send(indexHtml);
+  };
 
   // The admin is a private tool. (The robots.txt a SITE serves comes from
   // delivery, under /api/v1/delivery/robots.txt, and is proxied by the frontend.)
@@ -112,7 +112,7 @@ export async function registerAdminSpa(app: FastifyInstance, distDir: string): P
     // GET/HEAD of an admin page → the SPA. A missing /assets/ file stays a 404:
     // HTML under a .js URL is the dynamic-import failure, only harder to see.
     if ((req.method === "GET" || req.method === "HEAD") && isAdminSpaPath(path) && !path.startsWith("/assets/")) {
-      return sendIndex(reply);
+      return sendIndex(reply, path);
     }
     // Fastify's own 404 body, so API clients see exactly what they did before.
     return reply.code(404).send({ message: `Route ${req.method}:${req.url} not found`, error: "Not Found", statusCode: 404 });

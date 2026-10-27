@@ -372,11 +372,13 @@ export async function revokeOAuthGrant(db: Database, ctx: AccessContext, id: num
 
 /**
  * Delete clients that registered (anyone may: RFC 7591 is open) and never got
- * a grant, once even their codes are gone. Without it oauth_client only grows.
+ * a grant in 30 days, once even their codes are gone. Without it oauth_client
+ * only grows. Not sooner: a client keeps its client_id, and a user who comes
+ * back days later to finish connecting must still find it known.
  * Swept hourly with the other retention jobs.
  */
 export async function runOAuthClientRetention(db: Database, now: Date = new Date()): Promise<{ deleted: number }> {
-  const cutoff = new Date(now.getTime() - 24 * 60 * 60_000);
+  const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60_000);
   const res = await db
     .delete(oauthClient)
     .where(

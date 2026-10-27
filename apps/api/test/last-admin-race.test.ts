@@ -53,4 +53,19 @@ describe("the last-Admin guard holds under concurrent requests", () => {
     expect(res.statusCode, res.body).toBe(409);
     expect(res.json().message).toMatch(/last administrator/);
   });
+
+  it("an edit that renames AND re-roles takes the Admin lock before any row lock (no deadlock)", async () => {
+    // The lock came after the users-row update, so a concurrent writer holding
+    // the lock and then touching that row (a user delete does) deadlocked: 500.
+    await raw.sql`INSERT INTO user_role (user_id, role) VALUES (${aId}, 'Admin'), (${bId}, 'Admin') ON CONFLICT DO NOTHING`;
+    const { pending } = await raw.sql.begin(async (tx) => {
+      await tx`SELECT pg_advisory_xact_lock(hashtext('paperboy:every-site-admins'))`;
+      const pending = s.app.inject({ method: "PUT", url: `/api/v1/manage/users/${bId}`, headers: authHeaders(a), payload: { name: "Renamed Admin", roles: ["Admin"] } });
+      await new Promise((r) => setTimeout(r, 300)); // let the request reach the lock
+      await tx`UPDATE users SET name = 'Touched' WHERE id = ${bId}`;
+      return { pending };
+    });
+    const res = await pending;
+    expect(res.statusCode, res.body).toBe(200);
+  });
 });

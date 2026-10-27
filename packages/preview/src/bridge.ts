@@ -49,6 +49,29 @@ export interface PreviewBridgeOptions {
 
 const EDITABLE = `[${ATTR.field}],[${ATTR.blockIndex}]`;
 
+/**
+ * The admin origins as postMessage can use them, or null when none are usable
+ * (treated like no parentOrigin). An entry that isn't an origin (CSP sources such
+ * as `cms.example.com` or `https://cms.example.com:*` are legal in frame-ancestors)
+ * would make postMessage throw, so it is dropped with a warning; `https://x/`
+ * becomes `https://x`.
+ */
+function parentOrigins(input: string | string[] | undefined): string[] | null {
+  if (input === undefined) return null;
+  const out: string[] = [];
+  for (const entry of [input].flat()) {
+    let origin = "null";
+    try {
+      origin = new URL(entry).origin;
+    } catch {
+      // not a URL
+    }
+    if (origin === "null") console.warn(`[paperboy/preview] Ignoring parentOrigin "${entry}": not an origin like "https://cms.example.com".`);
+    else if (!out.includes(origin)) out.push(origin);
+  }
+  return out.length ? out : null;
+}
+
 /** One live bridge per document. A second init returns the first one's teardown
  *  instead of stacking styles, chrome and listeners (every click would post
  *  paperboy:edit twice). The style node is the liveness check: once it is gone
@@ -68,7 +91,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   const target = options.target ?? win.parent;
   const accent = options.accent ?? "#0077BC";
   const showBadge = options.badge ?? true;
-  const allowed = options.parentOrigin === undefined ? null : [options.parentOrigin].flat();
+  const allowed = parentOrigins(options.parentOrigin);
   if (!allowed) console.warn("[paperboy/preview] No parentOrigin given: any page that frames this preview can patch its HTML. Pass initPreviewBridge({ parentOrigin: \"https://<your admin>\" }).");
   // Where outbound messages are addressed: "*" only without parentOrigin. With a
   // list, the parent's own origin when the browser reports it (not Firefox),

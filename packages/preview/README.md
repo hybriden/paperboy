@@ -53,7 +53,9 @@ preview can drive it, so the bridge logs a console warning (0.9+). Setting it:
 More than one admin previews this frontend? Pass them all:
 `parentOrigin: ["https://cms.example.com", "https://staging-cms.example.com"]`.
 Outbound messages then go to the parent's own origin where the browser reports it
-(`location.ancestorOrigins`), otherwise to each listed origin.
+(`location.ancestorOrigins`), otherwise to each listed origin. An entry that isn't
+an origin (`cms.example.com`, `https://cms.example.com:*`) is ignored with a
+console warning (0.9.1+), and an empty list counts as no `parentOrigin` at all.
 
 Pair it with a `frame-ancestors` CSP that lists the same admin origins, so no other
 site can frame the preview at all.
