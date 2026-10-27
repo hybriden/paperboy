@@ -106,10 +106,11 @@ function TopBar({
         <button
           onClick={onOpenPalette}
           className="flex h-9 shrink-0 items-center gap-2 rounded-(--radius) px-2.5 text-sm text-muted transition-colors hover:bg-line/60 hover:text-fg"
-          aria-label="Open command palette"
+          aria-keyshortcuts={IS_MAC ? "Meta+K" : "Control+K"}
         >
           <Icon.Search width={15} height={15} className="shrink-0" />
-          <span className="hidden leading-none md:inline">Search…</span>
+          {/* The visible word IS the name (WCAG 2.5.3): a voice user says "click Search". */}
+          <span className="sr-only leading-none md:not-sr-only">Search…</span>
           <kbd className="hidden font-sans text-xs leading-none text-muted md:inline">
             {IS_MAC ? "⌘K" : "Ctrl K"}
           </kbd>
@@ -166,7 +167,7 @@ function UserMenu() {
   const initials = user.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   return (
     <Menu>
-      <MenuTrigger className="ml-1 flex shrink-0 items-center gap-2 rounded-(--radius) py-1 pl-1 pr-2 hover:bg-line/60" aria-label="Account menu">
+      <MenuTrigger className="ml-1 flex shrink-0 items-center gap-2 rounded-(--radius) py-1 pl-1 pr-2 hover:bg-line/60" aria-label={`${initials}, account menu`}>
         <span className="grid h-7 w-7 place-items-center rounded-full bg-line text-xs font-semibold text-fg">{initials}</span>
         <Icon.ChevronDown width={14} height={14} className="text-muted" />
       </MenuTrigger>

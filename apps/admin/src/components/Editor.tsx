@@ -1807,7 +1807,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         {isPage ? (
           <Popover>
             <PopoverTrigger className="btn-subtle min-w-0 max-w-[45%] gap-1.5 px-2.5 py-1 text-xs"
-              aria-label="URL settings" title={form.urlPath ?? undefined}>
+              aria-label={`URL settings: ${form.urlPath ?? "—"}`} title={form.urlPath ?? undefined}>
               <span className="truncate">{form.urlPath ?? "—"}</span>
               <Icon.ChevronDown width={13} height={13} className="shrink-0 text-muted" />
             </PopoverTrigger>

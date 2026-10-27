@@ -188,7 +188,8 @@ function Btn({
     <button
       type="button"
       title={title}
-      aria-label={title}
+      // The visible text must be in the name (WCAG 2.5.3): "Numbered list, 1. List".
+      aria-label={label === title ? title : `${title}, ${label}`}
       disabled={disabled}
       // Keep the textarea selection (don't blur) when clicking a toolbar button.
       onMouseDown={(e) => e.preventDefault()}

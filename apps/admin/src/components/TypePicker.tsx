@@ -51,7 +51,7 @@ export function TypePicker({
   return (
     <Menu open={open} onOpenChange={setOpen}>
       <MenuTrigger asChild>
-        <button id={id} type="button" className="field-input mb-3 flex w-full items-center gap-2 text-left" aria-label={label}>
+        <button id={id} type="button" className="field-input mb-3 flex w-full items-center gap-2 text-left" aria-label={`${label}: ${selected?.displayName ?? "Choose a type"}`}>
           <TypeIcon
             name={selected?.icon}
             fallback={fallbackFor(selected?.kind)}
