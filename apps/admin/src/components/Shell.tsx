@@ -168,7 +168,7 @@ function UserMenu() {
   return (
     <Menu>
       <MenuTrigger className="ml-1 flex shrink-0 items-center gap-2 rounded-(--radius) py-1 pl-1 pr-2 hover:bg-line/60" aria-label="Account menu">
-        <span className="grid h-7 w-7 place-items-center rounded-full bg-line text-xs font-semibold text-fg">{initials}</span>
+        <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-full bg-line text-xs font-semibold text-fg">{initials}</span>
         <Icon.ChevronDown width={14} height={14} className="text-muted" />
       </MenuTrigger>
       <MenuContent>

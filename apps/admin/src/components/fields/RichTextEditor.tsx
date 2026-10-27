@@ -368,8 +368,8 @@ export default function RichTextEditor({
         <Btn label="Bold" active={active?.bold} on={() => editor.chain().focus().toggleBold().run()}><Icon.Bold width={14} height={14} /></Btn>
         <Btn label="Italic" active={active?.italic} on={() => editor.chain().focus().toggleItalic().run()}><Icon.Italic width={14} height={14} /></Btn>
         <span className="mx-1 h-4 w-px bg-line" />
-        <Btn label="Heading 2" active={active?.h2} on={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><span className="text-xs font-bold">H2</span></Btn>
-        <Btn label="Heading 3" active={active?.h3} on={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><span className="text-xs font-bold">H3</span></Btn>
+        <Btn label="Heading 2 (H2)" active={active?.h2} on={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}><span className="text-xs font-bold">H2</span></Btn>
+        <Btn label="Heading 3 (H3)" active={active?.h3} on={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}><span className="text-xs font-bold">H3</span></Btn>
         <span className="mx-1 h-4 w-px bg-line" />
         <Btn label="Bullet list" active={active?.bullet} on={() => editor.chain().focus().toggleBulletList().run()}><Icon.ListBullet width={14} height={14} /></Btn>
         <Btn label="Quote" active={active?.quote} on={() => editor.chain().focus().toggleBlockquote().run()}><Icon.Quote width={14} height={14} /></Btn>
