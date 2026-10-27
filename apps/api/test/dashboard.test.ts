@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type Suite, authHeaders, login, setupApi } from "./helpers.js";
+import { createDb } from "@paperboy/db";
+import { type Suite, TEST_DB, authHeaders, login, setupApi } from "./helpers.js";
 
 /**
  * GET /manage/dashboard — the editor's "what needs my attention" aggregate:
@@ -236,5 +237,22 @@ describe("dashboard aggregate", () => {
     expect(body.scheduled).toEqual([]);
     expect(body.housekeeping.trash).toBe(0);
     expect(body.housekeeping.unusedBlocks).toBe(0);
+  });
+
+  it("counts failing webhooks of the active site only", async () => {
+    // Every other dashboard section is per site; this one counted every site's
+    // hooks, so a one-site Admin saw failures they can't find in their Settings.
+    const raw = createDb(TEST_DB, { max: 1 });
+    try {
+      const site = await s.app.inject({ method: "POST", url: "/api/v1/manage/sites", headers: authHeaders(admin), payload: { slug: "hooks-b", name: "Hooks B", defaultLocale: "en" } });
+      const bId = site.json().id as string;
+      await raw.sql`INSERT INTO webhook (site_id, name, url, secret, last_status, last_at) VALUES (${bId}, 'B hook', 'https://b.example/hook', 'x', 500, now())`;
+      const failing = async (siteId: string) =>
+        ((await dash({ ...authHeaders(admin), "x-paperboy-site": siteId })).json().housekeeping as { failingWebhooks: number | null }).failingWebhooks;
+      expect(await failing("site_default")).toBe(0);
+      expect(await failing(bId)).toBe(1);
+    } finally {
+      await raw.sql.end();
+    }
   });
 });

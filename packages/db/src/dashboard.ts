@@ -272,7 +272,7 @@ export async function getDashboard(db: Database, ctx: AccessContext): Promise<Da
       const hooks = await db
         .select({ n: sql<number>`count(*)::int` })
         .from(webhook)
-        .where(and(eq(webhook.active, true), isNotNull(webhook.lastAt), sql`(${webhook.lastStatus} IS NULL OR ${webhook.lastStatus} < 200 OR ${webhook.lastStatus} >= 300)`));
+        .where(and(eq(webhook.siteId, ctx.siteId), eq(webhook.active, true), isNotNull(webhook.lastAt), sql`(${webhook.lastStatus} IS NULL OR ${webhook.lastStatus} < 200 OR ${webhook.lastStatus} >= 300)`));
       failingWebhooks = hooks[0]?.n ?? 0;
     }
       return { failingWebhooks };

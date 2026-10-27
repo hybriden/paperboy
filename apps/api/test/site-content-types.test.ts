@@ -148,6 +148,15 @@ describe("site-bound content types", () => {
     }
   });
 
+  it("type usage lists only the types the active site can see", async () => {
+    // Usage counts are instance-wide for shared types, but another site's own
+    // type names (and how much content they hold) stay in that site.
+    expect((await createPage("MovieReview", bId)).statusCode).toBe(200);
+    const usage = async (site: string) => (await s.app.inject({ url: "/api/v1/manage/content-types-usage", headers: as(site) })).json() as Record<string, unknown>;
+    expect(Object.keys(await usage("site_default"))).not.toContain("MovieReview");
+    expect(Object.keys(await usage(bId))).toContain("MovieReview");
+  });
+
   it("deleting a site deletes its own types", async () => {
     const del = await s.app.inject({ method: "DELETE", url: `/api/v1/manage/sites/${bId}?confirm=movies`, headers: as() });
     expect(del.statusCode, del.body).toBe(200);

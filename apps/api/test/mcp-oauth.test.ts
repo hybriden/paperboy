@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createDb, runOAuthClientRetention, verifyOAuthAccessToken } from "@paperboy/db";
+import { createDb, currentCode, runOAuthClientRetention, verifyOAuthAccessToken } from "@paperboy/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TEST_DB, type Suite, authHeaders, login, setupApi } from "./helpers.js";
 
@@ -257,5 +257,41 @@ describe("MCP OAuth (authorization server)", () => {
     expect(deleted).toBeGreaterThanOrEqual(1);
     const left = (await raw.sql`SELECT client_id FROM oauth_client WHERE client_id IN (${stale}, ${fresh}, ${clientId})`).map((r) => r.client_id as string);
     expect(left.sort()).toEqual([fresh, clientId].sort());
+  });
+
+  it("a password change or a 2FA change ends the user's OAuth connections", async () => {
+    // A briefly stolen session could consent to an attacker's client; the refresh
+    // token never expires, so only a posture change by the owner can end it.
+    const PW = "Grantee!Passw0rd";
+    const made = await s.app.inject({ method: "POST", url: "/api/v1/manage/users", headers: authHeaders(admin), payload: { email: "grantee@paperboy.test", name: "Grantee", password: PW, roles: ["Editor"] } });
+    expect(made.statusCode, made.body).toBe(200);
+    const grantee = await login(s.app, "grantee@paperboy.test", PW);
+    const connect = async (who: typeof grantee) => {
+      const { verifier, challenge } = pkce();
+      const t = (await exchange(await consent(who, defaultSiteId, challenge), verifier)).json();
+      expect(await verifyOAuthAccessToken(s.app.db, t.access_token as string, MCP_URL)).not.toBeNull();
+      return t as { access_token: string; refresh_token: string };
+    };
+    const expectDead = async (t: { access_token: string; refresh_token: string }, after: string) => {
+      expect(await verifyOAuthAccessToken(s.app.db, t.access_token, MCP_URL), after).toBeNull();
+      expect((await token({ grant_type: "refresh_token", refresh_token: t.refresh_token, client_id: clientId })).statusCode, after).toBe(400);
+    };
+
+    let t = await connect(grantee);
+    const changed = await s.app.inject({ method: "POST", url: "/api/v1/auth/change-password", headers: authHeaders(grantee), payload: { oldPassword: PW, newPassword: `${PW}2` } });
+    expect(changed.statusCode, changed.body).toBe(200);
+    await expectDead(t, "after a password change");
+
+    const again = await login(s.app, "grantee@paperboy.test", `${PW}2`);
+    t = await connect(again);
+    const setup = (await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/setup", headers: authHeaders(again) })).json() as { secret: string };
+    const enabled = await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/enable", headers: authHeaders(again), payload: { code: currentCode(setup.secret), password: `${PW}2` } });
+    expect(enabled.statusCode, enabled.body).toBe(200);
+    await expectDead(t, "after enabling 2FA");
+
+    t = await connect(again);
+    const disabled = await s.app.inject({ method: "POST", url: "/api/v1/auth/2fa/disable", headers: authHeaders(again), payload: { password: `${PW}2` } });
+    expect(disabled.statusCode, disabled.body).toBe(200);
+    await expectDead(t, "after disabling 2FA");
   });
 });

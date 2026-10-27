@@ -1,4 +1,4 @@
-import { createDb } from "@paperboy/db";
+import { createDb, verifyMcpToken } from "@paperboy/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Suite, TEST_DB, authHeaders, login, setupApi } from "./helpers.js";
 
@@ -123,6 +123,12 @@ describe("multisite phase 3 — site routes + active-site header", () => {
     const hookId = hook.json().id as number;
     await raw.sql`INSERT INTO webhook_delivery (webhook_id, event) VALUES (${hookId}, 'content.published')`;
     await raw.sql`INSERT INTO form_submission (submission_id, site_id, form_id, locale, values) VALUES ('sub_site_del', ${created.id}, 'form_del', 'en', '{}'::jsonb)`;
+    // An MCP token scoped to this site: without a cascade it outlived the site and
+    // acted with the user's every-site roles in a site that no longer exists.
+    const minted = await s.app.inject({ method: "POST", url: "/api/v1/manage/mcp-tokens", headers: siteHeaders, payload: { name: "site-del-token" } });
+    expect(minted.statusCode, minted.body).toBe(200);
+    const siteToken = minted.json().token as string;
+    expect(await verifyMcpToken(s.app.db, siteToken)).toMatchObject({ siteId: created.id });
 
     // Editor (no user.manage) is forbidden.
     const forbidden = await s.app.inject({ method: "DELETE", url: `/api/v1/manage/sites/${created.id}?confirm=brand-del`, headers: authHeaders(ed) });
@@ -151,6 +157,7 @@ describe("multisite phase 3 — site routes + active-site header", () => {
     expect(((await raw.sql`SELECT 1 FROM webhook WHERE site_id = ${created.id}`) as unknown[]).length).toBe(0);
     expect(((await raw.sql`SELECT 1 FROM webhook_delivery WHERE webhook_id = ${hookId}`) as unknown[]).length).toBe(0);
     expect(((await raw.sql`SELECT 1 FROM form_submission WHERE site_id = ${created.id}`) as unknown[]).length).toBe(0);
+    expect(await verifyMcpToken(s.app.db, siteToken)).toBeNull();
     const auditRows = (await raw.sql`SELECT detail FROM audit_log WHERE action = 'site.delete'`) as Array<{ detail: { id: string } }>;
     expect(auditRows.some((a) => a.detail.id === created.id)).toBe(true);
   });
