@@ -11,7 +11,7 @@
     "lint": "echo 'lint: mcp (typecheck covers it)'"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@paperboy/db": "workspace:*",
     "@paperboy/shared": "workspace:*",
     "zod": "^4.6.7"
