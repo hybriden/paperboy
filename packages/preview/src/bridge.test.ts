@@ -823,6 +823,36 @@ describe("initPreviewBridge — only the embedding parent may drive the bridge",
     teardown();
   });
 
+  // ADMIN_ORIGINS also feeds CSP frame-ancestors, where `cms.example.com` and
+  // `https://cms.example.com:*` are legal; as a postMessage targetOrigin they
+  // throw a SyntaxError and on-page editing died at init.
+  it("drops parentOrigin entries that aren't origins (with a warning) and normalises the rest", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const target = makeTarget();
+      const teardown = initPreviewBridge({ target, badge: false, parentOrigin: ["https://a.example/", "cms.example.com", "https://b.example:*"] });
+      const readies = target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:preview-ready").map((c) => c[1]);
+      expect(readies).toEqual(["https://a.example"]);
+      expect(String(warn.mock.calls[0]?.[0])).toMatch(/cms\.example\.com/);
+      teardown();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("an empty parentOrigin list is treated as missing: a warning, not a silent dead bridge", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const target = makeTarget();
+      const teardown = initPreviewBridge({ target, badge: false, parentOrigin: [] });
+      expect(warn).toHaveBeenCalled();
+      expect(target.postMessage.mock.calls.some((c) => c[0]?.type === "paperboy:preview-ready" && c[1] === "*")).toBe(true);
+      teardown();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("warns once when parentOrigin is missing (any framing page could drive it)", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

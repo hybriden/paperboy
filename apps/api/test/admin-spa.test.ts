@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { type AddressInfo, connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
@@ -64,9 +65,20 @@ describe("admin SPA served by the API", () => {
   });
 
   it("falls back to the entry point for client-side routes", async () => {
-    for (const url of ["/content/abc", "/settings/site", "/oauth/authorize?client_id=x&state=y"]) {
+    for (const url of ["/content/abc", "/settings/site"]) {
       expectEntryPoint(await suite.app.inject({ method: "GET", url }));
     }
+  });
+
+  it("serves the OAuth consent page without COOP, so a popup-based client keeps its opener", async () => {
+    // A web MCP client opens /oauth/authorize in a popup and waits on
+    // window.opener / popup.closed; COOP same-origin severed that link and the
+    // connect flow read as cancelled. Everything else about the entry point holds.
+    const res = await suite.app.inject({ method: "GET", url: "/oauth/authorize?client_id=x&state=y" });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe(INDEX);
+    expect(res.headers["content-security-policy"]).toBe(ADMIN_CSP);
+    expect(res.headers["cross-origin-opener-policy"]).toBeUndefined();
   });
 
   it("serves hashed assets pre-compressed and immutable", async () => {
@@ -172,6 +184,34 @@ describe("admin SPA configuration", () => {
         // Either the limit applies, or the URL isn't the login route at all.
         expect(codes.includes(429) || codes.every((c) => c === 404 || c === 200), `${url}: ${codes.join(",")}`).toBe(true);
       }
+    } finally {
+      await limited.app.close();
+    }
+  });
+
+  it("does not exempt an API route sent as an absolute-form request target", async () => {
+    // `POST http://host/api/v1/auth/login HTTP/1.1` straight to the api port:
+    // req.url is the whole URL, the router still picks the login route, and the
+    // string check called it an admin page (exempt from every limit). inject()
+    // can't send absolute form, so this goes over a real socket.
+    const limited = await setupApi({ NODE_ENV: "development", LOGIN_RATE_MAX: "2", ADMIN_DIST_DIR: makeDist() });
+    try {
+      await limited.app.listen({ port: 0, host: "127.0.0.1" });
+      const { port } = limited.app.server.address() as AddressInfo;
+      const body = JSON.stringify({ email: "nobody@example.com", password: "wrong-password" });
+      const send = () =>
+        new Promise<string>((resolve, reject) => {
+          const sock = connect(port, "127.0.0.1", () =>
+            sock.write(`POST http://victim.example/api/v1/auth/login HTTP/1.1\r\nHost: victim.example\r\nContent-Type: application/json\r\nContent-Length: ${body.length}\r\nConnection: close\r\n\r\n${body}`),
+          );
+          let res = "";
+          sock.on("data", (d) => (res += String(d)));
+          sock.on("end", () => resolve(res.split(" ")[1] ?? ""));
+          sock.on("error", reject);
+        });
+      const codes: string[] = [];
+      for (let i = 0; i < 3; i++) codes.push(await send());
+      expect(codes, codes.join(",")).toContain("429");
     } finally {
       await limited.app.close();
     }

@@ -246,17 +246,29 @@ describe("MCP OAuth (authorization server)", () => {
     }
   });
 
-  it("the retention sweep deletes old clients that never connected, and keeps the rest (FST-003)", async () => {
+  it("registration treats JSON null metadata as absent, like before", async () => {
+    // Serializers without omitempty send `null` for unset optional fields; those
+    // clients registered with the defaults and must keep doing so.
+    const res = await s.app.inject({ method: "POST", url: "/api/v1/oauth/register", payload: { redirect_uris: [REDIRECT], client_name: null, token_endpoint_auth_method: null } });
+    expect(res.statusCode, res.body).toBe(201);
+    expect(res.json()).toMatchObject({ client_name: "MCP client", token_endpoint_auth_method: "none" });
+  });
+
+  it("the retention sweep deletes clients unused for 30 days, and keeps the rest (FST-003)", async () => {
+    // Clients register once and keep their client_id; one whose user comes back
+    // to finish connecting after a day or two must still be known.
     const reg = async (name: string) =>
       (await s.app.inject({ method: "POST", url: "/api/v1/oauth/register", payload: { client_name: name, redirect_uris: [REDIRECT] } })).json().client_id as string;
     const stale = await reg("Abandoned");
+    const deferred = await reg("Came back later");
     const fresh = await reg("Just registered");
     // `clientId` has grants from the tests above.
-    await raw.sql`UPDATE oauth_client SET created_at = now() - interval '2 days' WHERE client_id IN (${stale}, ${clientId})`;
+    await raw.sql`UPDATE oauth_client SET created_at = now() - interval '31 days' WHERE client_id IN (${stale}, ${clientId})`;
+    await raw.sql`UPDATE oauth_client SET created_at = now() - interval '2 days' WHERE client_id = ${deferred}`;
     const { deleted } = await runOAuthClientRetention(s.app.db);
     expect(deleted).toBeGreaterThanOrEqual(1);
-    const left = (await raw.sql`SELECT client_id FROM oauth_client WHERE client_id IN (${stale}, ${fresh}, ${clientId})`).map((r) => r.client_id as string);
-    expect(left.sort()).toEqual([fresh, clientId].sort());
+    const left = (await raw.sql`SELECT client_id FROM oauth_client WHERE client_id IN (${stale}, ${deferred}, ${fresh}, ${clientId})`).map((r) => r.client_id as string);
+    expect(left.sort()).toEqual([deferred, fresh, clientId].sort());
   });
 
   it("a password change or a 2FA change ends the user's OAuth connections", async () => {

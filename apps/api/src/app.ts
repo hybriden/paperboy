@@ -26,7 +26,7 @@ import {
   runSubmissionRetention,
   runWebhookDeliveryRetention,
 } from "@paperboy/db";
-import Fastify, { type FastifyInstance, type FastifyServerOptions } from "fastify";
+import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from "fastify";
 import {
   type ZodTypeProvider,
   jsonSchemaTransform,
@@ -165,7 +165,10 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     // Delivery/preview keys and login have their own tighter limits per route.
     // The admin's pages and assets are exempt: a cold load fetches dozens of
     // chunks, and an office behind one IP must not lock itself out of the editor.
-    ...(env.ADMIN_DIST_DIR ? { allowList: (req: { url: string }) => isAdminSpaPath(req.url) } : {}),
+    // Decided on the ROUTE the router matched, not the URL string: every spelling
+    // it normalises (percent-encoding, an absolute-form `POST http://host/api/…`)
+    // lands on the same route. No route = the SPA fallback, judged by its path.
+    ...(env.ADMIN_DIST_DIR ? { allowList: (req: FastifyRequest) => isAdminSpaPath(req.routeOptions.url ?? req.url) } : {}),
   });
 
   await app.register(swagger, {
