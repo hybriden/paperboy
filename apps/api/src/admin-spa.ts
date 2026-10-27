@@ -39,7 +39,14 @@ const API_PATHS = ["/api", "/health", "/.well-known", "/mcp"];
 
 /** True for a request path the admin SPA owns (its pages and static files). */
 export function isAdminSpaPath(url: string): boolean {
-  const path = url.split("?")[0]!;
+  let path = url.split("?")[0]!;
+  // Decoded as the router decodes it, or /%61pi/v1/auth/login is the login route
+  // to the router but an admin page here, exempt from every rate limit.
+  try {
+    path = decodeURI(path);
+  } catch {
+    return false;
+  }
   return !API_PATHS.some((p) => path === p || path.startsWith(`${p}/`));
 }
 

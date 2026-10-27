@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { createDb, verifyOAuthAccessToken } from "@paperboy/db";
+import { createDb, runOAuthClientRetention, verifyOAuthAccessToken } from "@paperboy/db";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TEST_DB, type Suite, authHeaders, login, setupApi } from "./helpers.js";
 
@@ -227,5 +227,35 @@ describe("MCP OAuth (authorization server)", () => {
     // An admin sees every user's connections.
     const all = (await s.app.inject({ method: "GET", url: "/api/v1/manage/oauth-grants", headers: authHeaders(admin) })).json() as Array<{ email: string }>;
     expect(all.some((g) => g.email === "editor@paperboy.test")).toBe(true);
+  });
+
+  it("malformed token, revoke and register requests are OAuth errors, not 500s (FST-002)", async () => {
+    const post = (url: string, payload: unknown, headers: Record<string, string> = {}) => s.app.inject({ method: "POST", url, payload: payload as object, headers });
+    const cases = [
+      await post("/api/v1/oauth/token", { grant_type: "refresh_token", refresh_token: [] }),
+      await post("/api/v1/oauth/token", { grant_type: "authorization_code", code: {}, code_verifier: "v", client_id: clientId }),
+      await post("/api/v1/oauth/token", { grant_type: ["refresh_token"], refresh_token: "x" }),
+      await post("/api/v1/oauth/token", { grant_type: "refresh_token", refresh_token: "x" }, { authorization: `Basic ${Buffer.from("%:%").toString("base64")}` }),
+      await post("/api/v1/oauth/revoke", { token: { a: 1 } }),
+      await post("/api/v1/oauth/register", { client_name: 42, redirect_uris: [REDIRECT] }),
+    ];
+    for (const res of cases) {
+      expect(res.statusCode, res.body).toBeGreaterThanOrEqual(400);
+      expect(res.statusCode, res.body).toBeLessThan(500);
+      expect(res.json().error, res.body).toBeTypeOf("string");
+    }
+  });
+
+  it("the retention sweep deletes old clients that never connected, and keeps the rest (FST-003)", async () => {
+    const reg = async (name: string) =>
+      (await s.app.inject({ method: "POST", url: "/api/v1/oauth/register", payload: { client_name: name, redirect_uris: [REDIRECT] } })).json().client_id as string;
+    const stale = await reg("Abandoned");
+    const fresh = await reg("Just registered");
+    // `clientId` has grants from the tests above.
+    await raw.sql`UPDATE oauth_client SET created_at = now() - interval '2 days' WHERE client_id IN (${stale}, ${clientId})`;
+    const { deleted } = await runOAuthClientRetention(s.app.db);
+    expect(deleted).toBeGreaterThanOrEqual(1);
+    const left = (await raw.sql`SELECT client_id FROM oauth_client WHERE client_id IN (${stale}, ${fresh}, ${clientId})`).map((r) => r.client_id as string);
+    expect(left.sort()).toEqual([fresh, clientId].sort());
   });
 });

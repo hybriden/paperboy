@@ -155,6 +155,24 @@ describe("admin SPA configuration", () => {
       await limited.app.close();
     }
   });
+
+  it("does not exempt an API route spelled with percent-encoding", async () => {
+    // The router decodes the path, so /%61pi/v1/auth/login IS the login route;
+    // the exemption read the raw URL and let it past every limit (FST-001).
+    const limited = await setupApi({ NODE_ENV: "development", LOGIN_RATE_MAX: "2", ADMIN_DIST_DIR: makeDist() });
+    try {
+      for (const url of ["/%61pi/v1/auth/login", "/api%2Fv1/auth/login", "/%2561pi/v1/auth/login"]) {
+        const codes: number[] = [];
+        for (let i = 0; i < 3; i++) {
+          codes.push((await limited.app.inject({ method: "POST", url, payload: { email: "nobody@example.com", password: "wrong-password" } })).statusCode);
+        }
+        // Either the limit applies, or the URL isn't the login route at all.
+        expect(codes.includes(429) || codes.every((c) => c === 404 || c === 200), `${url}: ${codes.join(",")}`).toBe(true);
+      }
+    } finally {
+      await limited.app.close();
+    }
+  });
 });
 
 /**

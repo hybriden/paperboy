@@ -21,6 +21,7 @@ import {
   runScheduledPublish,
   runSessionRetention,
   runRedirectRetention,
+  runOAuthClientRetention,
   runExperimentTicker,
   runSubmissionRetention,
   runWebhookDeliveryRetention,
@@ -336,6 +337,8 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
         if (se.deleted > 0) app.log.info({ deleted: se.deleted }, "expired sessions pruned");
         const nf = await runRedirectRetention(db);
         if (nf.notFoundSwept > 0) app.log.info({ deleted: nf.notFoundSwept }, "404 log pruned");
+        const oc = await runOAuthClientRetention(db);
+        if (oc.deleted > 0) app.log.info({ deleted: oc.deleted }, "unused OAuth clients pruned");
       },
       3_600_000,
     );
