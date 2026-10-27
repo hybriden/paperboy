@@ -111,7 +111,7 @@ export function PreviewPane({
   /** Content kind — a PAGE with no urlPath has nothing to preview (see below). */
   kind?: string;
   refreshSignal?: number;
-  focusField?: { field: string; blockIndex?: number; path?: { field: string; blockIndex: number }[]; n: number } | null;
+  focusField?: { field: string; blockIndex?: number; n: number } | null;
   /** inspect = click focuses the sidebar field (classic); edit = on-page overlay. */
   mode?: PreviewMode;
   /** Anchored on-page editor: rect + click offset from the bridge, content from
@@ -150,7 +150,7 @@ export function PreviewPane({
   useEffect(() => { if (refreshSignal > 0) setNonce((n) => n + 1); }, [refreshSignal]);
   // Editor → preview: when a property is focused, scroll to + highlight its region.
   useEffect(() => {
-    if (focusField?.field || focusField?.path?.length) postToPreview(focusMessage(focusField.field, { blockIndex: focusField.blockIndex, path: focusField.path }));
+    if (focusField?.field) postToPreview(focusMessage(focusField.field, { blockIndex: focusField.blockIndex }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusField, targetOrigin]);
   // Dragging a shared block from the Assets pane: a CROSS-ORIGIN preview iframe
@@ -383,7 +383,7 @@ export function PreviewPane({
               onClick={() => setDevice(d)}>{d}</button>
           ))}
         </div>
-        <button className="btn-ghost px-2 py-1 text-sm" onClick={() => setNonce((n) => n + 1)}>Refresh</button>
+        <button type="button" className="btn-ghost p-1.5" aria-label="Refresh preview" title="Refresh preview" onClick={() => setNonce((n) => n + 1)}><Icon.Refresh width={15} height={15} /></button>
         {toolbarExtra}
         <span className="tnum hidden whitespace-nowrap text-xs text-muted min-[1500px]:inline">{target}px · {Math.round(scale * 100)}%</span>
         <span role="status" className={`ml-auto flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs ${mode === "edit" ? "text-muted" : "font-medium text-draft"}`}>

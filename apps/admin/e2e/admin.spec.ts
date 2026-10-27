@@ -946,7 +946,6 @@ test("visual editing: a field INSIDE a block opens the on-page overlay scoped to
   await expect(page.getByText("Edit on page")).toBeVisible({ timeout: 5000 });
   // The overlay edits the BLOCK's own field (HeroBlock.title); the form panel
   // stays unmounted — dropping to side-by-side would render its property tabs.
-  // (The outline lists the blocks, but leaves the clicked row closed: one editor per field.)
   await expect(page.getByRole("textbox", { name: "Title" })).toBeVisible();
   await expect(page.getByRole("tablist", { name: "Property groups" })).toHaveCount(0);
 });
@@ -1018,54 +1017,6 @@ test("the preview is framed once: a fresh preview token (mount, focus, interval)
   await minted;
   await page.waitForTimeout(1500);
   expect(frameLoads, "no reload for a new token").toBe(loaded);
-  await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
-});
-
-test("on-page outline: a block opened in the outline is pointed at on the page and edited in place (#151)", async ({ page }) => {
-  await login(page);
-  const me = await page.request.get("/api/v1/auth/me");
-  const headers = { "x-csrf-token": ((await me.json()) as { csrfToken: string }).csrfToken, origin: "http://localhost:8090" };
-  const created = await page.request.post("/api/v1/manage/content", { headers, data: { type: "LandingPage", parentId: null, locale: "en", name: `Outline ${Date.now().toString(36)}` } });
-  expect(created.ok(), await created.text()).toBe(true);
-  const { documentId } = (await created.json()) as { documentId: string };
-  const hero = { key: "oh1", blockType: "HeroBlock", display: "full", ref: null, inline: { title: "Outline hero" } };
-  expect((await page.request.put(`/api/v1/manage/content/${documentId}?locale=en`, { headers, data: { data: { heading: "Outline page", mainArea: [hero] } } })).ok()).toBe(true);
-
-  await page.goto(`/edit/${documentId}`);
-  await page.getByRole("button", { name: "On-page", exact: true }).click();
-  const outline = page.getByRole("complementary", { name: "Page outline" });
-  const toggle = page.getByRole("button", { name: "Outline", exact: true });
-  // Off by default: the editor opens it.
-  await expect(toggle).toHaveAttribute("aria-pressed", "false", { timeout: 20_000 });
-  await expect(outline).toHaveCount(0);
-  await toggle.click();
-  await expect(outline).toBeVisible();
-  await expect(toggle).toHaveAttribute("aria-pressed", "true");
-
-  // Opening the hero's row points the preview at that exact block (focus by path).
-  const frame = await waitPreviewFrame(page);
-  await expect.poll(() => frame.locator('[data-pb-field="title"]').count(), { timeout: 20_000 }).toBeGreaterThan(0);
-  await outline.getByRole("button", { name: /Hero/ }).first().click();
-  await expect(frame.locator(".pb-focus")).toHaveCount(1, { timeout: 5000 });
-
-  // Its fields are edited right in the outline, and the page follows.
-  await outline.getByRole("textbox", { name: "Title", exact: true }).fill("Edited from the outline");
-  await expect
-    .poll(async () => ((await (await page.request.get(`/api/v1/manage/content/${documentId}?locale=en`)).json()) as { data: { mainArea: Array<{ inline: { title?: string } }> } }).data.mainArea[0]!.inline.title, { timeout: 10_000 })
-    .toBe("Edited from the outline");
-  await expect(frame.getByText("Edited from the outline").first()).toBeVisible({ timeout: 15_000 });
-  // The admin's own chrome; the framed page is the frontend's (its colours aren't ours to check here).
-  const scan = await new AxeBuilder({ page }).exclude('iframe[title="Content preview"]').analyze();
-  expect(scan.violations.filter((v) => v.impact === "serious" || v.impact === "critical").map((v) => v.id), "on-page outline").toEqual([]);
-
-  // Opening it is remembered, and it folds away by keyboard.
-  await page.reload();
-  await page.getByRole("button", { name: "On-page", exact: true }).click();
-  await expect(toggle).toHaveAttribute("aria-pressed", "true", { timeout: 20_000 });
-  await expect(outline).toBeVisible();
-  await toggle.focus();
-  await page.keyboard.press("Enter");
-  await expect(outline).toHaveCount(0);
   await page.request.delete(`/api/v1/manage/content/${documentId}`, { headers });
 });
 

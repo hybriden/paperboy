@@ -91,6 +91,7 @@ export const Icon = {
     <svg {...base(p)}><path d="M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1" /><path d="M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1" /></svg>
   ),
   Undo: (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><path d="M3 7v6h6" /><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" /></svg>),
+  Refresh: (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><path d="M21 12a9 9 0 1 1-2.6-6.4L21 8" /><path d="M21 3v5h-5" /></svg>),
   Redo: (p: SVGProps<SVGSVGElement>) => (<svg {...base(p)}><path d="M21 7v6h-6" /><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13" /></svg>),
   Template: (p: SVGProps<SVGSVGElement>) => (
     <svg {...base(p)}><rect x="3" y="3" width="12" height="12" rx="2" /><path d="M21 6v12a3 3 0 0 1-3 3H8" /></svg>
