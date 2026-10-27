@@ -18,7 +18,7 @@ import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError, type AiTask } from "../lib/api.js";
 import { fieldWidthClass } from "../lib/field-width.js";
-import { blockAtPath, indexPathOf, resolveBlockPath, updateBlockAtPath, type BlockPath } from "../lib/block-path.js";
+import { blockAtPath, resolveBlockPath, updateBlockAtPath, type BlockPath } from "../lib/block-path.js";
 import { clearUnsaved, readUnsaved, stashUnsaved, type UnsavedEdits } from "../lib/unsaved-stash.js";
 import { filterFields } from "../lib/field-filter.js";
 import { opeAction } from "../lib/ope-target.js";
@@ -317,25 +317,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const [previewRefresh, setPreviewRefresh] = useState(0);
   // Editor → preview sync: focusing/clicking a property highlights its region in
   // the preview. The counter re-triggers even when the same field is re-focused.
-  const [propFocus, setPropFocus] = useState<{ field: string; blockIndex?: number; path?: { field: string; blockIndex: number }[]; n: number } | null>(null);
-  // The page outline beside the on-page preview (#151): its areas and blocks,
-  // edited with the same ContentArea as the form. Off until the editor opens it
-  // (the Outline button); remembered per browser.
-  const [outlineOpen, setOutlineOpenState] = useState(() => {
-    try {
-      return localStorage.getItem("pb-outline") === "1";
-    } catch {
-      return false;
-    }
-  });
-  const setOutlineOpen = (open: boolean) => {
-    setOutlineOpenState(open);
-    try {
-      localStorage.setItem("pb-outline", open ? "1" : "0");
-    } catch {
-      /* private mode: the toggle still works for this session */
-    }
-  };
+  const [propFocus, setPropFocus] = useState<{ field: string; blockIndex?: number; n: number } | null>(null);
   const propCounter = useRef(0);
 
   // ---- On-page edit (Optimizely-style OPE) ----------------------------------
@@ -1075,8 +1057,6 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         };
         if (action.target === "name") setOpe({ field: "name", ...anchor });
         else if (action.target === "block" && blockField && d.blockIndex != null) {
-          // The overlay owns a field click; the outline row stays as it was,
-          // or the same field would have two editors at once.
           setOpe({ field: blockField.name, block: { area: blockField.area, index: d.blockIndex }, path: blockField.path, ...anchor });
         } else if (def) setOpe({ field: def.name, ...anchor });
         return;
@@ -1931,20 +1911,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 ) : (
                   <span className="text-xs text-muted">Standalone</span>
                 )
-              ) : (effectiveView === "onpage" && isPage) || pageExperiments.length > 0 ? (
+              ) : pageExperiments.length > 0 ? (
                 <>
-                  {effectiveView === "onpage" && isPage && (
-                    <button
-                      type="button"
-                      className="btn-ghost px-2 py-1 text-sm"
-                      aria-pressed={outlineOpen}
-                      aria-controls="pb-outline"
-                      onClick={() => setOutlineOpen(!outlineOpen)}
-                    >
-                      Outline
-                    </button>
-                  )}
-                  {pageExperiments.length > 0 && (
                   <select
                     className="field-input-dense max-w-[200px]"
                     aria-label="Preview version"
@@ -1964,7 +1932,6 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                       )),
                     )}
                   </select>
-                  )}
                   {forcedArm && <span className="text-xs text-muted">On-page editing is off: edit version {forcedArm.arm.toUpperCase()} in the experiment panel.</span>}
                 </>
               ) : undefined
@@ -2159,43 +2126,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
         if (mobile) return <div className="min-h-0 flex-1">{formSection}</div>;
         if (effectiveView === "onpage" && previewPaneEl) {
-          const areas = (type?.fields ?? []).filter((f) => f.type === "contentArea");
-          return (
-            <div className="flex min-h-0 flex-1">
-              {outlineOpen && isPage && (
-                // The page's map: its content areas and their blocks, in the same
-                // editor the form uses (open a row to edit its fields here, add and
-                // reorder by the same rules). Opening a row points the preview at
-                // that exact block; clicking a block on the page opens its row.
-                <aside id="pb-outline" aria-label="Page outline" className="w-80 shrink-0 space-y-5 overflow-auto border-l border-line bg-panel p-3">
-                  {areas.length ? (
-                    areas.map((f) => (
-                      <div key={f.name} data-pb-prop={f.name}>
-                        <Field
-                          field={f}
-                          value={form.data[f.name]}
-                          disabled={!canEdit}
-                          types={types}
-                          sharedBlocks={sharedBlocks.data ?? []}
-                          onChange={(v) => setField(f.name, v)}
-                          error={fieldErrors[f.name]}
-                          openPath={blockPath}
-                          onOpenPath={(next) => {
-                            setBlockPath(next);
-                            const path = next.length ? indexPathOf(formRef.current?.data ?? form.data, next) : null;
-                            if (path?.length) setPropFocus({ field: "", path, n: ++propCounter.current });
-                          }}
-                        />
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted">This page has no content areas. Click text on the page to edit it.</p>
-                  )}
-                </aside>
-              )}
-              <div className="min-h-0 flex-1 border-l border-line bg-panel">{previewPaneEl}</div>
-            </div>
-          );
+          return <div className="min-h-0 flex-1 border-l border-line bg-panel">{previewPaneEl}</div>;
         }
         return (
           // TWO wrappers on purpose. The outer one is measured and never capped;

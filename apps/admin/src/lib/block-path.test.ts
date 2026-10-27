@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { BlockInstance, ContentTypeDef, FieldDef } from "@paperboy/shared";
 import { allowedBlockTypesFor } from "./area-add.js";
 import { blockInstanceFromDrop } from "./block-drop.js";
-import { blockAtPath, indexPathOf, resolveBlockPath, updateBlockAtPath } from "./block-path.js";
+import { blockAtPath, resolveBlockPath, updateBlockAtPath } from "./block-path.js";
 
 const makeBlock = (key: string, blockType: string, inline: Record<string, unknown> = {}): BlockInstance => ({
   key,
@@ -248,26 +248,5 @@ describe("nested content area drop and add-block integration", () => {
     ];
     const offered = allowedBlockTypesFor(columnsAreaDef, types);
     expect(offered.map((t) => t.name)).toEqual(["CardBlock"]);
-  });
-});
-
-describe("indexPathOf", () => {
-  const data = {
-    main: [
-      { key: "a", blockType: "Hero", display: "automatic", inline: {}, ref: null },
-      { key: "b", blockType: "Faq", display: "automatic", ref: null, inline: { items: [
-        { key: "q1", blockType: "Q", display: "automatic", inline: {}, ref: null },
-        { key: "q2", blockType: "Q", display: "automatic", inline: {}, ref: null },
-      ] } },
-    ],
-  };
-  it("turns a key path into the positions the preview counts, and back", () => {
-    const path = [{ field: "main", key: "b" }, { field: "items", key: "q2" }];
-    const indexes = indexPathOf(data, path);
-    expect(indexes).toEqual([{ field: "main", blockIndex: 1 }, { field: "items", blockIndex: 1 }]);
-    expect(resolveBlockPath(data, indexes!)).toEqual(path);
-  });
-  it("is null for a stale path", () => {
-    expect(indexPathOf(data, [{ field: "main", key: "gone" }])).toBeNull();
   });
 });
