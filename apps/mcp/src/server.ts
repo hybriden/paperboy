@@ -1128,7 +1128,7 @@ tool(
     ...delv,
     limit: z.number().int().min(1).max(500).optional().describe("Page size, 1-500."),
     offset: z.number().int().min(0).optional().describe("Items to skip, for paging."),
-    sort: z.string().optional().describe("name | createdAt | data.<field>; prefix - for descending"),
+    sort: z.string().optional().describe("name | createdAt (made in the CMS) | publishedAt (first published, or the type's datePublished field) | modifiedAt (last published change) | data.<field>; prefix - for descending, e.g. -publishedAt for newest first"),
     filter: z.record(z.string(), z.string()).optional().describe("Equality filters on data fields, e.g. {\"author\": \"Jane\"}"),
   },
   async ({ type, locale, populate, preview, limit, offset, sort, filter }) => { needDelivery(preview); return deliveryList(db, persp(preview), ctx().siteId, type, (await deliveryLocale(locale)), populate, undefined, { limit, offset, sort, filter }); });

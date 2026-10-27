@@ -352,7 +352,9 @@ export interface ListOptions extends GetOptions {
   /** Page size (omit = all items). */
   limit?: number;
   offset?: number;
-  /** "name" | "createdAt" | "data.<field>" — prefix "-" for descending. */
+  /** "name" | "createdAt" (made in the CMS) | "publishedAt" (first published,
+   *  or the type's datePublished field) | "modifiedAt" (last published change)
+   *  | "data.<field>" — prefix "-" for descending. */
   sort?: string;
   /** Equality filters on data fields, e.g. { author: "Jane" }. */
   filter?: Record<string, string>;
