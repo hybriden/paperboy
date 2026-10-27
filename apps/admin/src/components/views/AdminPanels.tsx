@@ -897,12 +897,12 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
               <input ref={nameRef} aria-label="Site name" className="field-input" placeholder="Brand B" value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && canNext) setStep(2); }} />
             </label>
             <label className="text-sm">
-              <span className="field-label">URL slug</span>
-              <input aria-label="URL slug" className="field-input" value={slug} onChange={(e) => setSlugEdited(e.target.value.toLowerCase())} />
+              <span className="field-label">Short name</span>
+              <input aria-label="Short name" className="field-input" value={slug} onChange={(e) => setSlugEdited(e.target.value.toLowerCase())} />
               {slug.length > 0 && !slugValid ? (
                 <span className="mt-1 block text-xs text-danger">Lowercase letters, numbers and single hyphens only (e.g. “brand-b”).</span>
               ) : (
-                <span className="mt-1 block text-xs text-muted">Identifies the site internally — not part of public URLs.</span>
+                <span className="mt-1 block text-xs text-muted">Picks this site from MCP and agents (<code>site: "{slug || "brand-b"}"</code>). Not part of any URL.</span>
               )}
             </label>
             <div className="mt-2 flex justify-end gap-2">
@@ -988,8 +988,8 @@ function SiteIdentityRow({ site, active }: { site: SiteRow; active: boolean }) {
           <input aria-label="Site name" className="field-input" value={name} onChange={(e) => setName(e.target.value)} />
         </label>
         <label className="text-sm" style={{ minWidth: 140 }}>
-          <span className="field-label">Slug</span>
-          <input aria-label="Site slug" className="field-input" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
+          <span className="field-label">Short name</span>
+          <input aria-label="Site short name" title="Picks this site from MCP and agents. Not part of any URL." className="field-input" value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} />
         </label>
         {active ? (
           <Badge tone="primary">active</Badge>
@@ -1006,7 +1006,7 @@ function SiteIdentityRow({ site, active }: { site: SiteRow; active: boolean }) {
       {/* Below the row, not inside the slug column — an in-column error makes
           that column taller and shoves the whole items-end row out of line. */}
       {slug.trim() !== "" && !slugValid && (
-        <p className="text-xs text-danger">Slug: lowercase letters, numbers and single hyphens only.</p>
+        <p className="text-xs text-danger">Short name: lowercase letters, numbers and single hyphens only.</p>
       )}
       {deleting && <DeleteSiteDialog site={site} active={active} onClose={() => setDeleting(false)} />}
     </form>
