@@ -192,7 +192,8 @@ if (!MCP_TOKEN && !MCP_LOGIN && !OAUTH) {
 const MCP_HTTP_PATH = process.env.MCP_HTTP_PATH ?? "/mcp";
 
 function bearerOf(req: IncomingMessage): string | null {
-  const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "");
+  // \S+ can't overlap \s+, so a near-miss stays linear (CodeQL js/polynomial-redos).
+  const m = /^Bearer\s+(\S+)\s*$/i.exec(req.headers.authorization ?? "");
   return m?.[1] ?? null;
 }
 
