@@ -12,7 +12,7 @@ import { type Locator, type Page, expect, test } from "@playwright/test";
  * the page, and by data-type because the readable name is the displayName.
  */
 async function pickType(dlg: Locator, typeName: string): Promise<void> {
-  await dlg.getByLabel(/^(Content|Block) type$/).click();
+  await dlg.getByLabel(/^(Content|Block) type\b/).click();
   await dlg.page().locator(`[role="menuitem"]:has([data-type="${typeName}"])`).click();
 }
 

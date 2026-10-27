@@ -14,7 +14,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * the page, and by data-type because the readable name is the displayName.
  */
 export async function pickType(dlg: Locator, typeName: string): Promise<void> {
-  await dlg.getByLabel(/^(Content|Block) type$/).click();
+  await dlg.getByLabel(/^(Content|Block) type\b/).click();
   await dlg.page().locator(`[role="menuitem"]:has([data-type="${typeName}"])`).click();
 }
 
