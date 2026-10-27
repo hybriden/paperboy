@@ -23,5 +23,12 @@
     "oxlint": "1.88.0",
     "oxlint-tsgolint": "7.0.2004",
     "typescript": "^5.9.3"
+  },
+  "pnpm": {
+    "overrides": {
+      "fast-uri@>=3.0.0 <3.1.9": "^3.1.9",
+      "body-parser@>=2.0.0 <2.4.0": "^2.4.0",
+      "zod@<4.6.6": "^4.6.7"
+    }
   }
 }
