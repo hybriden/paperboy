@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { frameAncestorsFor } from "./csp";
+import { adminOriginsFromEnv, frameAncestorsFor } from "./csp";
 import { proxy } from "../../proxy";
 
 afterEach(() => {
@@ -132,5 +132,19 @@ describe("proxy wires the decision to the real request", () => {
       headers: { host: "www.neoteric.no", "sec-fetch-dest": "iframe" },
     });
     expect(proxy(req).headers.get("x-frame-options")).toBeNull();
+  });
+});
+
+describe("the preview bridge and frame-ancestors read the same ADMIN_ORIGINS list", () => {
+  it("every listed admin, trimmed, not only the first", () => {
+    // The bridge got only the first entry while frame-ancestors allowed all, so a
+    // second admin could frame the preview but its on-page edits were dropped.
+    vi.stubEnv("ADMIN_ORIGINS", " https://cms.example , https://staging-cms.example,");
+    expect(adminOriginsFromEnv()).toEqual(["https://cms.example", "https://staging-cms.example"]);
+  });
+
+  it("unset is an empty list", () => {
+    vi.stubEnv("ADMIN_ORIGINS", "");
+    expect(adminOriginsFromEnv()).toEqual([]);
   });
 });

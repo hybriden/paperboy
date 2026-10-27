@@ -799,6 +799,44 @@ describe("initPreviewBridge — only the embedding parent may drive the bridge",
     teardown();
   });
 
+  // A frontend previewed by more than one admin (ADMIN_ORIGINS lists several):
+  // each may drive the bridge, nobody else may.
+  it("a list of parentOrigins accepts each listed origin and rejects the rest", () => {
+    const target = makeTarget();
+    document.body.innerHTML = `<div data-pb-field="body">old</div>`;
+    const teardown = initPreviewBridge({ target, badge: false, parentOrigin: ["https://a.example", "https://b.example"] });
+    const patch = (origin: string, html: string) =>
+      window.dispatchEvent(new MessageEvent("message", { data: { type: "paperboy:patch", field: "body", html }, source: target, origin }));
+    patch("https://evil.example", "<p>evil</p>");
+    expect(document.querySelector("[data-pb-field='body']")!.innerHTML).toBe("old");
+    patch("https://b.example", "<p>from b</p>");
+    expect(document.querySelector("[data-pb-field='body']")!.innerHTML).toBe("<p>from b</p>");
+    teardown();
+  });
+
+  it("with a list of parentOrigins, outbound posts are addressed to each, never '*'", () => {
+    const target = makeTarget();
+    const teardown = initPreviewBridge({ target, badge: false, parentOrigin: ["https://a.example", "https://b.example"] });
+    const readies = target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:preview-ready").map((c) => c[1]);
+    // jsdom reports no ancestorOrigins, so preview-ready goes to every listed origin.
+    expect(new Set(readies)).toEqual(new Set(["https://a.example", "https://b.example"]));
+    teardown();
+  });
+
+  it("warns once when parentOrigin is missing (any framing page could drive it)", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      initPreviewBridge({ target: makeTarget(), badge: false })();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toMatch(/parentOrigin/);
+      warn.mockClear();
+      initPreviewBridge({ target: makeTarget(), badge: false, parentOrigin: "https://admin.example" })();
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("without parentOrigin, outbound posts stay '*' (back-compat)", () => {
     const target = makeTarget();
     document.body.innerHTML = `<div data-pb-field="body">x</div>`;

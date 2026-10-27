@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 import { VISITOR_COOKIE, VISITOR_COOKIE_MAX_AGE, visitorCookieAction } from "./app/lib/ab";
-import { buildContentSecurityPolicy, frameAncestorsFor } from "./app/lib/csp";
+import { adminOriginsFromEnv, buildContentSecurityPolicy, frameAncestorsFor } from "./app/lib/csp";
 
 /** Next.js Draft Mode's bypass cookie — set once /api/draft has been entered, and
  *  carried by every later navigation inside the preview iframe. */
@@ -43,7 +43,7 @@ export function proxy(req: NextRequest) {
       req.nextUrl.searchParams.has("pb") ||
       req.cookies.has(DRAFT_COOKIE),
     hostname,
-    adminOrigins: (process.env.ADMIN_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+    adminOrigins: adminOriginsFromEnv(),
     isProduction: process.env.NODE_ENV === "production",
   });
   res.headers.set("Content-Security-Policy", buildContentSecurityPolicy(ancestors));

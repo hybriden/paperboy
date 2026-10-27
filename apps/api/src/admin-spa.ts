@@ -26,6 +26,11 @@ export const ADMIN_CSP =
   "img-src 'self' data: blob: https://images.unsplash.com https://plus.unsplash.com; font-src 'self' data:; " +
   "connect-src 'self'; frame-src http: https:; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
 
+// A page that window.open()s the admin gets a closed handle, so it can't post
+// messages into the editor or navigate it. The preview iframe is unaffected (COOP
+// governs top-level windows) and the admin opens its own popups with noopener.
+const ADMIN_COOP = "same-origin";
+
 // The entry point must never be cached, or a browser keeps an old index.html
 // that references hashed chunks the next deploy deleted ("Failed to fetch
 // dynamically imported module"). Hashed /assets/ are immutable instead.
@@ -72,6 +77,7 @@ export async function registerAdminSpa(app: FastifyInstance, distDir: string): P
       .type("text/html; charset=utf-8")
       .header("Cache-Control", NO_CACHE)
       .header("Content-Security-Policy", ADMIN_CSP)
+      .header("Cross-Origin-Opener-Policy", ADMIN_COOP)
       .send(indexHtml);
 
   // The admin is a private tool. (The robots.txt a SITE serves comes from
@@ -94,6 +100,7 @@ export async function registerAdminSpa(app: FastifyInstance, distDir: string): P
       if (/\.html(\.gz|\.br)?$/.test(rel)) {
         res.header("Cache-Control", NO_CACHE);
         res.header("Content-Security-Policy", ADMIN_CSP);
+        res.header("Cross-Origin-Opener-Policy", ADMIN_COOP);
       } else {
         res.header("Cache-Control", rel.startsWith("assets/") ? IMMUTABLE : ONE_DAY);
       }

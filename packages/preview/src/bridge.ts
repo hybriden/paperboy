@@ -34,16 +34,17 @@ export interface PreviewBridgeOptions {
    */
   badge?: boolean;
   /**
-   * Origin of the embedding admin, e.g. "https://cms.example.com". Optional and
-   * additive (omit it and nothing changes for already-deployed frontends), but
-   * RECOMMENDED: when set, inbound messages must come from this origin, and
+   * Origin of the embedding admin, e.g. "https://cms.example.com", or a list when
+   * more than one admin previews this frontend. Optional (omit it and nothing
+   * changes for already-deployed frontends, apart from a console warning), but
+   * RECOMMENDED: when set, inbound messages must come from a listed origin, and
    * outbound messages are addressed to it instead of "*" — so field text and
    * caret snippets can't leak to whatever origin happens to be the parent.
    *
    * Regardless of this option, the bridge only ever accepts messages whose
    * `event.source` IS the target window (see `fromParent`).
    */
-  parentOrigin?: string;
+  parentOrigin?: string | string[];
 }
 
 const EDITABLE = `[${ATTR.field}],[${ATTR.blockIndex}]`;
@@ -67,8 +68,16 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
   const target = options.target ?? win.parent;
   const accent = options.accent ?? "#0077BC";
   const showBadge = options.badge ?? true;
-  /** Where outbound messages are addressed. "*" only when no parentOrigin is given. */
-  const postOrigin = options.parentOrigin ?? "*";
+  const allowed = options.parentOrigin === undefined ? null : [options.parentOrigin].flat();
+  if (!allowed) console.warn("[paperboy/preview] No parentOrigin given: any page that frames this preview can patch its HTML. Pass initPreviewBridge({ parentOrigin: \"https://<your admin>\" }).");
+  // Where outbound messages are addressed: "*" only without parentOrigin. With a
+  // list, the parent's own origin when the browser reports it (not Firefox),
+  // else every listed origin; postMessage drops a mismatch.
+  const ancestor = options.target ? undefined : win.location?.ancestorOrigins?.[0];
+  const postOrigins = !allowed ? ["*"] : ancestor && allowed.includes(ancestor) ? [ancestor] : allowed;
+  const post = (message: unknown): void => {
+    for (const origin of postOrigins) target?.postMessage(message, origin);
+  };
 
   /**
    * Is this message really from the admin that embedded us?
@@ -82,7 +91,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
    */
   const fromParent = (e: MessageEvent): boolean => {
     if (e.source !== target) return false;
-    if (options.parentOrigin !== undefined && e.origin !== options.parentOrigin) return false;
+    if (allowed && !allowed.includes(e.origin)) return false;
     return true;
   };
 
@@ -240,7 +249,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     e.preventDefault();
     e.stopPropagation();
     tracked = el;
-    target?.postMessage({ type: "paperboy:edit", ...describe(el), click: { x: e.clientX, y: e.clientY }, caret: caretAt(e, el) }, postOrigin);
+    post({ type: "paperboy:edit", ...describe(el), click: { x: e.clientX, y: e.clientY }, caret: caretAt(e, el) });
   };
 
   // ---- preview → admin: drag a shared block / page onto a content area ----
@@ -377,16 +386,13 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     hideDropIndicator();
     if (!zone || payload == null) return;
     e.preventDefault();
-    target?.postMessage(
-      {
-        type: "paperboy:drop",
-        field: checkAreaValue(zone),
-        payload,
-        ...(index != null ? { index } : {}),
-        ...(path ? { path } : {}),
-      },
-      postOrigin,
-    );
+    post({
+      type: "paperboy:drop",
+      field: checkAreaValue(zone),
+      payload,
+      ...(index != null ? { index } : {}),
+      ...(path ? { path } : {}),
+    });
   };
 
   // ---- area chrome: name tag + "add block" chip for the hovered area ----
@@ -480,16 +486,13 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     const chipY = chipRect.top + chipRect.height / 2;
     const anchorHeight = Math.max(0, Math.min(r.height, chipY - r.top));
     const path = hoveredArea ? blockPathFor(hoveredArea, true) : undefined;
-    target?.postMessage(
-      {
-        type: "paperboy:add-block",
-        field: checkAreaValue(hoveredArea),
-        rect: { x: r.x, y: r.y, w: r.width, h: anchorHeight } as Rect,
-        ...(addBlockIndex != null ? { index: addBlockIndex } : {}),
-        ...(path ? { path } : {}),
-      },
-      postOrigin,
-    );
+    post({
+      type: "paperboy:add-block",
+      field: checkAreaValue(hoveredArea),
+      rect: { x: r.x, y: r.y, w: r.width, h: anchorHeight } as Rect,
+      ...(addBlockIndex != null ? { index: addBlockIndex } : {}),
+      ...(path ? { path } : {}),
+    });
   };
   areaAdd.addEventListener("click", onAddClick);
 
@@ -505,7 +508,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
             tracked = null;
           } else {
             const { field, blockIndex, rect } = describe(tracked);
-            target?.postMessage({ type: "paperboy:rect", field, blockIndex, rect }, postOrigin);
+            post({ type: "paperboy:rect", field, blockIndex, rect });
           }
         }
         positionAreaChrome(); // keep the hovered area's tag + chip glued to it
@@ -524,7 +527,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       // Liveness probe: answer with the same announcement sent at init, so the
       // admin can confirm the bridge is alive at ANY time instead of having to
       // catch that one-shot message (see PingMessage in ./protocol).
-      target?.postMessage({ type: "paperboy:preview-ready", version: PROTOCOL_VERSION }, postOrigin);
+      post({ type: "paperboy:preview-ready", version: PROTOCOL_VERSION });
       return;
     }
     if (msg.type === "paperboy:patch") {
@@ -609,16 +612,13 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
       hideDropIndicator();
       if (zone) {
         const path = blockPathFor(zone, true);
-        target?.postMessage(
-          {
-            type: "paperboy:drop",
-            field: checkAreaValue(zone),
-            payload: msg.payload,
-            ...(index != null ? { index } : {}),
-            ...(path ? { path } : {}),
-          },
-          postOrigin,
-        );
+        post({
+          type: "paperboy:drop",
+          field: checkAreaValue(zone),
+          payload: msg.payload,
+          ...(index != null ? { index } : {}),
+          ...(path ? { path } : {}),
+        });
       }
     }
   };
@@ -640,7 +640,7 @@ export function initPreviewBridge(options: PreviewBridgeOptions = {}): () => voi
     if (saved) win.scrollTo(0, Number(saved));
   } catch { /* ignore */ }
 
-  target?.postMessage({ type: "paperboy:preview-ready", version: PROTOCOL_VERSION }, postOrigin);
+  post({ type: "paperboy:preview-ready", version: PROTOCOL_VERSION });
 
   const teardown = () => {
     active.delete(doc);
