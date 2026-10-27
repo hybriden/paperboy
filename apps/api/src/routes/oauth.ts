@@ -79,8 +79,9 @@ function stringFields(body: unknown): Record<string, string | undefined> {
 }
 
 /** client_secret_basic (RFC 6749 §2.3.1): form-encoded id and secret, split at the FIRST colon. */
-function basicCredentials(header: string | undefined): { clientId: string; clientSecret: string } | null {
-  const basic = /^Basic\s+(.+)$/i.exec(header ?? "");
+export function basicCredentials(header: string | undefined): { clientId: string; clientSecret: string } | null {
+  // \S+ (base64 has no whitespace) can't overlap \s+, so a near-miss stays linear.
+  const basic = /^Basic\s+(\S+)\s*$/i.exec(header ?? "");
   if (!basic) return null;
   const pair = Buffer.from(basic[1]!, "base64").toString("utf8");
   const at = pair.indexOf(":");
