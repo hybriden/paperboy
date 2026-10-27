@@ -106,10 +106,11 @@ function TopBar({
         <button
           onClick={onOpenPalette}
           className="flex h-9 shrink-0 items-center gap-2 rounded-(--radius) px-2.5 text-sm text-muted transition-colors hover:bg-line/60 hover:text-fg"
-          aria-label="Open command palette"
+          aria-keyshortcuts={IS_MAC ? "Meta+K" : "Control+K"}
         >
           <Icon.Search width={15} height={15} className="shrink-0" />
-          <span className="hidden leading-none md:inline">Search…</span>
+          {/* The visible word IS the name (WCAG 2.5.3): a voice user says "click Search". */}
+          <span className="sr-only leading-none md:not-sr-only">Search…</span>
           <kbd className="hidden font-sans text-xs leading-none text-muted md:inline">
             {IS_MAC ? "⌘K" : "Ctrl K"}
           </kbd>
