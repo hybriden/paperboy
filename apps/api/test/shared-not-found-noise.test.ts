@@ -106,3 +106,14 @@ describe("isNoise404", () => {
     expect(isNoise404(normalizePath(path))).toBe(false);
   });
 });
+
+describe("isNoise404 on hostile input", () => {
+  // The path comes from an anonymous request (CodeQL js/polynomial-redos on
+  // the extension test); every pattern must stay linear in its length.
+  it("answers in linear time", () => {
+    const path = `/${".php.".repeat(20_000)}x`;
+    const start = performance.now();
+    expect(isNoise404(path)).toBe(true);
+    expect(performance.now() - start).toBeLessThan(50);
+  });
+});
