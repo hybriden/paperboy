@@ -740,13 +740,15 @@ function MoveDialog({ node, onClose }: { node: { documentId: string; name: strin
   );
 }
 
-/** Preset child-ordering rules; anything else is a custom data.<field> rule. */
-const SORT_PRESETS: Array<{ value: string; label: string }> = [
+/** What a container can order its children by (pageDates in @paperboy/shared
+ *  defines the three dates); "__field__" is a custom data.<field> rule. */
+const SORT_KEYS: Array<{ value: string; label: string; hint?: string }> = [
   { value: "manual", label: "Manual (drag & drop)" },
-  { value: "name", label: "Name A–Z" },
-  { value: "-name", label: "Name Z–A" },
-  { value: "-createdAt", label: "Newest first (created)" },
-  { value: "createdAt", label: "Oldest first (created)" },
+  { value: "name", label: "Name" },
+  { value: "publishedAt", label: "Published", hint: "The type’s publish date field when it has one (an imported article’s own date), otherwise when the page first went live. Republishing doesn’t move it." },
+  { value: "modifiedAt", label: "Modified", hint: "When the page last went live with a change. Unpublished drafts don’t count." },
+  { value: "createdAt", label: "Created in the CMS", hint: "When the page was made here, which for imported content is the import." },
+  { value: "__field__", label: "A content field…" },
 ];
 
 /** "Sort children…" — declare how a container orders its children. The rule is
@@ -754,12 +756,20 @@ const SORT_PRESETS: Array<{ value: string; label: string }> = [
 function SortChildrenDialog({ node, onClose }: { node: { documentId: string; name: string; childSort: string }; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const isPreset = SORT_PRESETS.some((p) => p.value === node.childSort);
-  const [preset, setPreset] = useState<string>(isPreset ? node.childSort : "__field__");
-  const [field, setField] = useState<string>(isPreset ? "" : node.childSort.replace(/^-?data\./, ""));
-  const [descending, setDescending] = useState<boolean>(isPreset ? true : node.childSort.startsWith("-"));
-  const rule = preset === "__field__" ? `${descending ? "-" : ""}data.${field.trim()}` : preset;
-  const fieldValid = preset !== "__field__" || /^[A-Za-z][A-Za-z0-9_]*$/.test(field.trim());
+  const types = useQuery({ queryKey: ["content-types"], queryFn: ({ signal }) => api.contentTypes(signal) });
+  const bare = node.childSort.replace(/^-/, "");
+  const isKey = SORT_KEYS.some((k) => k.value === bare && k.value !== "__field__");
+  const [key, setKey] = useState<string>(isKey ? bare : "__field__");
+  const [field, setField] = useState<string>(isKey ? "" : bare.replace(/^data\./, ""));
+  // A rule saved without "-" is ascending; a fresh pick of a date defaults to newest first.
+  const [descending, setDescending] = useState<boolean>(node.childSort === "manual" ? true : node.childSort.startsWith("-"));
+  const rule = key === "manual" ? "manual" : `${descending ? "-" : ""}${key === "__field__" ? `data.${field.trim()}` : key}`;
+  const fieldValid = key !== "__field__" || /^[A-Za-z][A-Za-z0-9_]*$/.test(field.trim());
+  const hint = SORT_KEYS.find((k) => k.value === key)?.hint;
+  // Date fields of the page types, offered as suggestions (any field name still works).
+  const dateFields = [...new Set((types.data ?? []).filter((t) => t.kind === "page").flatMap((t) => t.fields.filter((f) => f.type === "datetime").map((f) => f.name)))].sort();
+  const directions =
+    key === "name" ? ["Z–A", "A–Z"] : key === "__field__" ? ["Descending (newest / highest first)", "Ascending (oldest / lowest first)"] : ["Newest first", "Oldest first"];
 
   const save = useMutation({
     mutationFn: () => api.setChildSort(node.documentId, rule),
@@ -779,13 +789,21 @@ function SortChildrenDialog({ node, onClose }: { node: { documentId: string; nam
         size="md"
       >
         <label className="field-label" htmlFor="cs-rule">Order children by</label>
-        <select id="cs-rule" className="field-input mb-3" value={preset} onChange={(e) => setPreset(e.target.value)}>
-          {SORT_PRESETS.map((p) => (
-            <option key={p.value} value={p.value}>{p.label}</option>
+        <select
+          id="cs-rule"
+          className="field-input mb-3"
+          value={key}
+          onChange={(e) => {
+            setKey(e.target.value);
+            setDescending(e.target.value !== "name"); // names read A–Z, dates newest first
+          }}
+        >
+          {SORT_KEYS.map((k) => (
+            <option key={k.value} value={k.value}>{k.label}</option>
           ))}
-          <option value="__field__">A content field…</option>
         </select>
-        {preset === "__field__" && (
+        {hint && <p className="-mt-2 mb-3 text-xs text-muted">{hint}</p>}
+        {key === "__field__" && (
           <>
             <label className="field-label" htmlFor="cs-field">Field name</label>
             <input
@@ -793,17 +811,27 @@ function SortChildrenDialog({ node, onClose }: { node: { documentId: string; nam
               className="field-input mb-3"
               value={field}
               onChange={(e) => setField(e.target.value)}
-              placeholder="e.g. publishDate"
+              placeholder={dateFields[0] ? `e.g. ${dateFields[0]}` : "e.g. publishDate"}
+              list="cs-field-options"
               aria-label="Field name"
             />
-            <label className="field-label" htmlFor="cs-dir">Direction</label>
-            <select id="cs-dir" className="field-input mb-3" value={descending ? "desc" : "asc"} onChange={(e) => setDescending(e.target.value === "desc")}>
-              <option value="desc">Descending (newest / highest first)</option>
-              <option value="asc">Ascending (oldest / lowest first)</option>
-            </select>
-            <p className="mb-3 text-xs text-muted">
+            <datalist id="cs-field-options">
+              {dateFields.map((f) => (
+                <option key={f} value={f}>{f}</option>
+              ))}
+            </datalist>
+            <p className="-mt-2 mb-3 text-xs text-muted">
               Only fields delivered as public can order the public list; children missing the field sort last.
             </p>
+          </>
+        )}
+        {key !== "manual" && (
+          <>
+            <label className="field-label" htmlFor="cs-dir">Direction</label>
+            <select id="cs-dir" className="field-input mb-3" value={descending ? "desc" : "asc"} onChange={(e) => setDescending(e.target.value === "desc")}>
+              <option value="desc">{directions[0]}</option>
+              <option value="asc">{directions[1]}</option>
+            </select>
           </>
         )}
         <div className="flex justify-end gap-2">

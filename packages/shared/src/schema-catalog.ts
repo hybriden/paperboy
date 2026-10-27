@@ -87,6 +87,51 @@ export const SEO_CONVENTION: Record<string, string[]> = {
   keywords: ["tags", "keywords", "topics"],
 };
 
+/**
+ * A page's three dates, ONE definition for child order (the admin tree and
+ * delivery lists), JSON-LD and sitemap.xml:
+ *   createdAt    when the document was made in the CMS.
+ *   publishedAt  when it was published: the type's datePublished field (seoRole,
+ *                else a conventional name) when it holds a date, since an
+ *                article imported from elsewhere was published before the CMS
+ *                knew it; else when this language variant FIRST went live.
+ *   modifiedAt   when it last changed for readers: the dateModified field, else
+ *                when the live version went live.
+ * Draft edits move neither publishedAt nor modifiedAt (readers don't see them);
+ * a variant that was never published has neither.
+ */
+export function pageDates(
+  fields: FieldDef[],
+  data: Record<string, unknown>,
+  sys: { createdAt: Date; firstPublishedAt: Date | null; publishedAt: Date | null },
+): { createdAt: string; publishedAt: string | null; modifiedAt: string | null } {
+  return {
+    createdAt: sys.createdAt.toISOString(),
+    publishedAt: declaredDate(fields, "datePublished", data) ?? sys.firstPublishedAt?.toISOString() ?? null,
+    modifiedAt: declaredDate(fields, "dateModified", data) ?? sys.publishedAt?.toISOString() ?? null,
+  };
+}
+
+/** The date a field declares for `role`: the tagged field, else a conventionally
+ *  named one (as JSON-LD reads them), when it holds a parseable date. */
+function declaredDate(fields: FieldDef[], role: "datePublished" | "dateModified", data: Record<string, unknown>): string | null {
+  const names = SEO_CONVENTION[role] ?? [];
+  const tagged = fields.filter((f) => f.seoRole === role);
+  for (const f of [...tagged, ...fields.filter((x) => names.includes(x.name.toLowerCase()))]) {
+    const v = data[f.name];
+    if (typeof v === "string" && v.trim() && !Number.isNaN(Date.parse(v))) return v;
+  }
+  return null;
+}
+
+/** An ISO date as a sort key (epoch ms), so a date-only field value and a full
+ *  timestamp order correctly against each other; null when absent. */
+export function dateSortKey(iso: string | null): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : t;
+}
+
 export type SeoRole = NonNullable<FieldDef["seoRole"]>;
 
 /** Field types that can sensibly fill each SEO role (keeps pickers + coverage focused). */

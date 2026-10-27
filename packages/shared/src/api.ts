@@ -19,14 +19,15 @@ export type Locale = z.infer<typeof Locale>;
 
 /**
  * A container page's child ordering rule. "manual" = editor-controlled tree
- * order (drag & drop / move_content). The computed rules — "name", "createdAt"
- * or "data.<field>", each optionally "-"-prefixed for descending — order the
- * children in the admin tree AND as delivery's default list order, so editors
- * and readers see the same sequence.
+ * order (drag & drop / move_content). The computed rules — "name",
+ * "createdAt", "publishedAt", "modifiedAt" (see pageDates) or "data.<field>",
+ * each optionally "-"-prefixed for descending — order the children in the
+ * admin tree AND as delivery's default list order, so editors and readers see
+ * the same sequence.
  */
-export const ChildSort = z.string().regex(/^(manual|-?(name|createdAt|data\.[A-Za-z][A-Za-z0-9_]*))$/, {
+export const ChildSort = z.string().regex(/^(manual|-?(name|createdAt|publishedAt|modifiedAt|data\.[A-Za-z][A-Za-z0-9_]*))$/, {
   message:
-    'childSort must be "manual", "name", "createdAt" or "data.<field>" — prefix "-" for descending, e.g. "-data.publishDate" (newest first)',
+    'childSort must be "manual", "name", "createdAt" (made in the CMS), "publishedAt" (first published), "modifiedAt" (last published change) or "data.<field>" — prefix "-" for descending, e.g. "-publishedAt" (newest first) or "-data.publishDate" (by that field)',
 });
 export type ChildSort = z.infer<typeof ChildSort>;
 

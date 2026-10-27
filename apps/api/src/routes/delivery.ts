@@ -133,10 +133,13 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
           /** Page size (pagination is opt-in; omitted = all items). */
           limit: z.coerce.number().int().min(1).max(500).optional(),
           offset: z.coerce.number().int().min(0).optional(),
-          /** Sort key: name | createdAt | data.<field>; prefix "-" for descending. */
+          /** Sort key: name | createdAt | publishedAt | modifiedAt | data.<field>; prefix "-" for descending. */
           sort: z
             .string()
-            .regex(/^-?(name|createdAt|data\.[A-Za-z0-9_]+)$/, "sort must be name, createdAt or data.<field>, optionally prefixed with -")
+            .regex(
+              /^-?(name|createdAt|publishedAt|modifiedAt|data\.[A-Za-z0-9_]+)$/,
+              "sort must be name, createdAt (made in the CMS), publishedAt (first published), modifiedAt (last published change) or data.<field>, optionally prefixed with -",
+            )
             .optional(),
           // Equality filters arrive as extra `data.<field>=value` params (catchall below).
         }).catchall(z.string()),

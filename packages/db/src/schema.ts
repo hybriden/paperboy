@@ -142,6 +142,10 @@ export const contentVersion = pgTable(
     cv: bigint("cv", { mode: "number" }).notNull().default(0),
     createdBy: text("created_by"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // When this version went live, and when its variant first did (migration 0037;
+    // set on promotion, NULL on drafts). See dateKeysOf in @paperboy/shared.
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    firstPublishedAt: timestamp("first_published_at", { withTimezone: true }),
     comment: text("comment"),
     // Scheduled publish: timed go-live (publish_at, on a draft) + expiry (expire_at).
     publishAt: timestamp("publish_at", { withTimezone: true }),

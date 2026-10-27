@@ -1,5 +1,5 @@
 import { type SQLWrapper, and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
-import { type ContentTypeDef, type DeliveryContent, type ExperimentArmKey, type ExperimentStatus, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
+import { type ContentTypeDef, type DeliveryContent, type ExperimentArmKey, type ExperimentStatus, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, pageDates, dateSortKey, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
 import type { Database } from "./client.js";
@@ -930,8 +930,8 @@ async function computeSeo(
   urlPath: string | null,
   data: Record<string, unknown>,
   loc: string,
-  /** When the delivered version was made — what sitemap.xml gives as lastmod. */
-  versionDate: Date,
+  /** The delivered version's dates (pageDates reads them with the fields). */
+  version: { createdAt: Date; firstPublishedAt: Date | null; publishedAt: Date | null },
 ): Promise<DeliveryContent["seo"]> {
   const title = asText(data.metaTitle) ?? asText(roleOrConvention(def, "title", data, isStr)) ?? name;
   const description = asText(data.metaDescription) ?? asText(roleOrConvention(def, "description", data, isStr));
@@ -956,11 +956,13 @@ async function computeSeo(
     perspective === "preview" ? "noindex, nofollow" : data.noIndex ? "noindex, follow" : "index, follow";
 
   const siteName = await ctx.siteName(perspective, loc);
-  const datePublished = asText(roleOrConvention(def, "datePublished", data, isStr));
-  // A field tagged dateModified wins (rarely a distinct field); otherwise the
-  // delivered version's date, the same lastmod sitemap.xml gives. Freshness is
-  // something search engines and AI assistants weigh, and it was always absent.
-  const dateModified = asText(roleValue(def, "dateModified", data)) ?? versionDate.toISOString();
+  // The same dates the lists sort by (pageDates): a datePublished field, else
+  // when the page first went live; a dateModified field, else when the live
+  // version went live (the lastmod sitemap.xml gives). A draft in preview has
+  // never gone live, so it falls back to when the draft was started.
+  const dates = pageDates(def.fields, data, version);
+  const datePublished = dates.publishedAt;
+  const dateModified = dates.modifiedAt ?? version.createdAt.toISOString();
   const author = asText(roleOrConvention(def, "author", data, isStr));
   const keywords = asText(roleOrConvention(def, "keywords", data, isStr));
 
@@ -1064,7 +1066,7 @@ export async function resolveContent(
   // SEO/schema.org contract — pages only, computed from SANITIZED (public) data.
   let seo: DeliveryContent["seo"] = null;
   if (item.kind === "page" && def) {
-    seo = await computeSeo(ctx, perspective, documentId, def, found.row.name, urlPath, sanitized, found.usedLocale, found.row.createdAt);
+    seo = await computeSeo(ctx, perspective, documentId, def, found.row.name, urlPath, sanitized, found.usedLocale, found.row);
   }
   // A global whose type declares a schemaType carries its own node — the
   // SiteSettings identity (Organization, LocalBusiness…) set in the CMS.
@@ -1273,7 +1275,8 @@ export interface DeliveryListOptions {
   limit?: number;
   offset?: number;
   /**
-   * Sort key: `name`, `createdAt`, or `data.<field>`; prefix `-` for
+   * Sort key: `name`, `createdAt`, `publishedAt`, `modifiedAt` (see pageDates),
+   * or `data.<field>`; prefix `-` for
    * descending. Omitted = tree order (sortIndex). Sorting reads the SAME
    * perspective-selected version row the chokepoint would deliver.
    */
@@ -1317,7 +1320,7 @@ export async function deliveryList(
   if (typeName) conds.push(eq(contentItem.type, typeName));
   if (parentId) conds.push(eq(contentItem.parentId, parentId));
   const items = await db
-    .select({ documentId: contentItem.documentId, type: contentItem.type })
+    .select({ documentId: contentItem.documentId, type: contentItem.type, createdAt: contentItem.createdAt })
     .from(contentItem)
     .where(and(...conds))
     .orderBy(asc(contentItem.sortIndex), asc(contentItem.id));
@@ -1326,10 +1329,10 @@ export async function deliveryList(
   // Visibility, filtering and sorting all read the CHOKEPOINT's own version
   // selection (variantRow: perspective + publish window + locale fallback) —
   // never a parallel query path — so a draft can't influence public ordering.
-  const candidates: { documentId: string; type: string; row: typeof contentVersion.$inferSelect }[] = [];
+  const candidates: { documentId: string; type: string; createdAt: Date; row: typeof contentVersion.$inferSelect }[] = [];
   for (const it of items) {
     const variant = await variantRow(ctx, perspective, it.documentId, loc);
-    if (variant) candidates.push({ documentId: it.documentId, type: it.type, row: variant.row });
+    if (variant) candidates.push({ documentId: it.documentId, type: it.type, createdAt: it.createdAt, row: variant.row });
   }
 
   // Field-visibility gate: filter/sort may only reference PUBLIC fields (plus the
@@ -1341,9 +1344,12 @@ export async function deliveryList(
   // on one type contributes no key/constraint for that item even if it is public
   // on a sibling's type. (H1 + M1.)
   const publicFieldsByType = new Map<string, Set<string>>();
+  const publicDefsByType = new Map<string, FieldDef[]>();
   for (const t of new Set(candidates.map((c) => c.type))) {
     const def = await ctx.type(t);
-    publicFieldsByType.set(t, new Set(def ? def.fields.filter((f) => f.delivery === "public").map((f) => f.name) : []));
+    const pub = def ? def.fields.filter((f) => f.delivery === "public") : [];
+    publicDefsByType.set(t, pub);
+    publicFieldsByType.set(t, new Set(pub.map((f) => f.name)));
   }
   const fieldAllowed = (field: string, type: string) =>
     field === "name" || field === "slug" || (publicFieldsByType.get(type)?.has(field) ?? false);
@@ -1381,9 +1387,14 @@ export async function deliveryList(
     // Missing/gated keys stay last regardless of direction; equal keys keep tree
     // order — so an all-private or unknown sort key degrades to the tree order,
     // exactly as if the key had been ignored.
-    filtered = sortByRule(filtered, effectiveSort, ({ row, type }, key) => {
+    filtered = sortByRule(filtered, effectiveSort, ({ row, type, createdAt }, key) => {
       if (key === "name") return row.name;
-      if (key === "createdAt") return row.createdAt.toISOString();
+      // The document's creation, as the admin tree orders it (not the version's).
+      if (key === "createdAt") return createdAt.getTime();
+      if (key === "publishedAt" || key === "modifiedAt") {
+        // Only public fields may stand in for the system date (no oracle).
+        return dateSortKey(pageDates(publicDefsByType.get(type) ?? [], row.data as Record<string, unknown>, { createdAt, firstPublishedAt: row.firstPublishedAt, publishedAt: row.publishedAt })[key]);
+      }
       if (key.startsWith("data.")) {
         const field = key.slice(5);
         return publicFieldsByType.get(type)?.has(field) ? (row.data as Record<string, unknown>)[field] : null;
@@ -1530,7 +1541,7 @@ export async function deliveryPages(
         name: variant.row.name,
         locale: code,
         urlPath,
-        lastmod: variant.row.createdAt.toISOString(),
+        lastmod: (variant.row.publishedAt ?? variant.row.createdAt).toISOString(),
         noIndex: data.noIndex === true,
         ...(description ? { description } : {}),
       });

@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, ilike, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
-import { ChildSort, coerceData, dataSchemaFor, detectContentLanguage, duplicateFieldKeys, expectedLanguageForLocale, fieldFormatHint, generalBlockTypes, isFormType, MAX_INLINE_DEPTH, parseStoredContentTypeDef, sortByRule, toStoredDefinition, tiptapToPlainText, type BlockSummary, type BlockTypeResolver, type ContentDetail, type ContentTypeDef, type CreateContentRequest, type PageSummary, type TreeNode, type UpdateContentRequest, withSeoGroup } from "@paperboy/shared";
+import { ChildSort, coerceData, dataSchemaFor, detectContentLanguage, duplicateFieldKeys, expectedLanguageForLocale, fieldFormatHint, generalBlockTypes, isFormType, MAX_INLINE_DEPTH, pageDates, dateSortKey, parseStoredContentTypeDef, sortByRule, toStoredDefinition, tiptapToPlainText, type BlockSummary, type BlockTypeResolver, type ContentDetail, type ContentTypeDef, type CreateContentRequest, type PageSummary, type TreeNode, type UpdateContentRequest, withSeoGroup } from "@paperboy/shared";
 import type { Database, Queryable, Transaction } from "./client.js";
 import { Errors, PG_UNIQUE_VIOLATION, pgErrorCode } from "./errors.js";
 import {
@@ -461,6 +461,10 @@ interface VariantState {
   name: string;
   /** Working data (draft-preferred, like the name) — feeds data.<field> child sorting. Only loaded on request. */
   data?: Record<string, unknown>;
+  /** The LIVE version's dates and data — feed the date child sorts, which must
+   *  match delivery's public order exactly. Only loaded on request; null when the
+   *  variant isn't published. */
+  live?: { publishedAt: Date | null; firstPublishedAt: Date | null; data: Record<string, unknown> } | null;
 }
 
 /** ORDER BY terms that put a (document, locale)'s WORKING version first: the
@@ -476,9 +480,11 @@ async function variantStatesBatch(
   db: Database,
   documentIds: string[],
   withData = false,
+  withLive = false,
 ): Promise<Map<string, Record<string, VariantState>>> {
   const out = new Map<string, Record<string, VariantState>>();
   if (!documentIds.length) return out;
+  const variant = sql`partition by ${contentVersion.documentId}, ${contentVersion.locale}`;
   const rows = await db
     .selectDistinctOn([contentVersion.documentId, contentVersion.locale], {
       documentId: contentVersion.documentId,
@@ -486,8 +492,14 @@ async function variantStatesBatch(
       name: contentVersion.name,
       status: contentVersion.status,
       // The chosen row is the draft when one exists, which hides whether a published row also does.
-      hasPublished: sql<boolean>`bool_or(${contentVersion.isCurrentPublished}) over (partition by ${contentVersion.documentId}, ${contentVersion.locale})`,
+      hasPublished: sql<boolean>`bool_or(${contentVersion.isCurrentPublished}) over (${variant})`,
       data: withData ? contentVersion.data : sql<null>`null`,
+      // The live row's columns, read beside the working row in the same pass.
+      livePublishedAt: withLive ? sql<string | null>`max(${contentVersion.publishedAt}) filter (where ${contentVersion.isCurrentPublished}) over (${variant})` : sql<null>`null`,
+      liveFirstPublishedAt: withLive ? sql<string | null>`max(${contentVersion.firstPublishedAt}) filter (where ${contentVersion.isCurrentPublished}) over (${variant})` : sql<null>`null`,
+      liveData: withLive
+        ? sql<Record<string, unknown> | null>`first_value(case when ${contentVersion.isCurrentPublished} then ${contentVersion.data} end) over (${variant} order by ${contentVersion.isCurrentPublished} desc)`
+        : sql<null>`null`,
     })
     .from(contentVersion)
     .where(inArray(contentVersion.documentId, documentIds))
@@ -503,10 +515,20 @@ async function variantStatesBatch(
       hasUnpublishedChanges: r.status === "draft",
       name: r.name,
       ...(withData ? { data: r.data as Record<string, unknown> } : {}),
+      ...(withLive
+        ? {
+            live: r.hasPublished
+              ? { publishedAt: asDate(r.livePublishedAt), firstPublishedAt: asDate(r.liveFirstPublishedAt), data: (r.liveData ?? {}) as Record<string, unknown> }
+              : null,
+          }
+        : {}),
     };
   }
   return out;
 }
+
+/** A timestamp from a raw sql`` select (a string from the driver), as a Date. */
+const asDate = (v: string | Date | null): Date | null => (v == null ? null : new Date(v));
 
 
 /* --------------------------------- tree ----------------------------------- */
@@ -545,15 +567,18 @@ export async function getTree(
   );
   const bareRule = rule.startsWith("-") ? rule.slice(1) : rule;
   const dataField = bareRule.startsWith("data.") ? bareRule.slice(5) : null;
+  // publishedAt/modifiedAt read the LIVE version (dates and any datePublished
+  // field), exactly as delivery orders the public list.
+  const dateRule = bareRule === "publishedAt" || bareRule === "modifiedAt";
 
   // Batched reads instead of 2 per node, all at once: every variant state, one
   // grouped count of which nodes have page children, and (for a data.<field>
-  // rule) the site's default locale, whose working version the value is read
+  // or date rule) the site's default locale, whose version the value is read
   // from — the same variant whose name the tree displays.
   const visibleIds = visible.map((i) => i.documentId);
-  const [defaultLocale, statesById, childCounts] = await Promise.all([
-    dataField ? resolveDefaultLocale(db, ctx.siteId) : Promise.resolve(null),
-    variantStatesBatch(db, visibleIds, dataField !== null),
+  const [defaultLocale, statesById, childCounts, types] = await Promise.all([
+    dataField || dateRule ? resolveDefaultLocale(db, ctx.siteId) : Promise.resolve(null),
+    variantStatesBatch(db, visibleIds, dataField !== null, dateRule),
     visibleIds.length
       ? db
           .select({ parentId: contentItem.parentId, c: sql<number>`count(*)::int` })
@@ -561,10 +586,12 @@ export async function getTree(
           .where(and(inArray(contentItem.parentId, visibleIds), eq(contentItem.kind, "page"), isNull(contentItem.deletedAt)))
           .groupBy(contentItem.parentId)
       : Promise.resolve([]),
+    dateRule ? currentContentTypes(db) : Promise.resolve([]),
   ]);
   const childCountBy = new Map(childCounts.map((r) => [r.parentId, r.c]));
+  const fieldsOf = new Map(types.map((t) => [t.name, t.def.fields]));
 
-  const rows: { node: TreeNode; createdAt: string; dataValue: unknown }[] = [];
+  const rows: { node: TreeNode; createdAt: number; dates: { publishedAt: number | null; modifiedAt: number | null } | null; dataValue: unknown }[] = [];
   for (const item of visible) {
     const states = statesById.get(item.documentId) ?? {};
     const localesSummary: TreeNode["locales"] = {};
@@ -572,7 +599,11 @@ export async function getTree(
       localesSummary[code] = { status: s.status, hasUnpublishedChanges: s.hasUnpublishedChanges };
     }
     const anyName = Object.values(states)[0]?.name ?? item.documentId;
-    const dataState = dataField ? ((defaultLocale && states[defaultLocale]) || Object.values(states)[0]) : undefined;
+    const sortState = dataField || dateRule ? (defaultLocale && states[defaultLocale]) || Object.values(states)[0] : undefined;
+    const live = dateRule ? sortState?.live : null;
+    const dates = live
+      ? pageDates(fieldsOf.get(item.type) ?? [], live.data, { createdAt: item.createdAt, firstPublishedAt: live.firstPublishedAt, publishedAt: live.publishedAt })
+      : null;
     rows.push({
       node: {
         documentId: item.documentId,
@@ -585,16 +616,20 @@ export async function getTree(
         locales: localesSummary,
         hasChildren: (childCountBy.get(item.documentId) ?? 0) > 0,
       },
-      createdAt: item.createdAt.toISOString(),
-      dataValue: dataField ? dataState?.data?.[dataField] : undefined,
+      createdAt: item.createdAt.getTime(),
+      dates: dates && { publishedAt: dateSortKey(dates.publishedAt), modifiedAt: dateSortKey(dates.modifiedAt) },
+      dataValue: dataField ? sortState?.data?.[dataField] : undefined,
     });
   }
   const ordered =
     rule === "manual"
       ? rows
-      : sortByRule(rows, rule, (r, field) =>
-          field === "name" ? r.node.name : field === "createdAt" ? r.createdAt : field.startsWith("data.") ? r.dataValue : null,
-        );
+      : sortByRule(rows, rule, (r, field) => {
+          if (field === "name") return r.node.name;
+          if (field === "createdAt") return r.createdAt;
+          if (field === "publishedAt" || field === "modifiedAt") return r.dates?.[field] ?? null;
+          return field.startsWith("data.") ? r.dataValue : null;
+        });
   return ordered.map((r) => r.node);
 }
 
@@ -2069,6 +2104,15 @@ async function promoteDraft(
       // Allocate the cache-version atomically with the promotion.
       const cvRow = await tx.execute(sql`SELECT nextval('cv_seq') AS v`);
       const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
+      // When the variant first went live is carried forward from any earlier
+      // published version (unpublished since or not); the first publish sets it.
+      const now = new Date();
+      const [earlier] = await tx
+        .select({ at: contentVersion.firstPublishedAt })
+        .from(contentVersion)
+        .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc), isNotNull(contentVersion.firstPublishedAt)))
+        .orderBy(asc(contentVersion.firstPublishedAt))
+        .limit(1);
       // Demote previous published row for this variant.
       await tx
         .update(contentVersion)
@@ -2083,7 +2127,7 @@ async function promoteDraft(
       // Promote the draft to the live published version for this variant.
       const promoted = await tx
         .update(contentVersion)
-        .set({ status: "published", isCurrentPublished: true, cv, createdBy: actorUserId, publishAt: null })
+        .set({ status: "published", isCurrentPublished: true, cv, createdBy: actorUserId, publishAt: null, publishedAt: now, firstPublishedAt: earlier?.at ?? now })
         .where(
           and(
             eq(contentVersion.id, draftId),
