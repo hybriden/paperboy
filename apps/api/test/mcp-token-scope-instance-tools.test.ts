@@ -42,6 +42,8 @@ describe("a site-scoped MCP token cannot use instance-wide tools", () => {
     ["create_content_type", { definition: typeDef }],
     ["create_type_template", { definition: { ...typeDef, name: "ScopeProbeTemplate" } }],
     ["list_audit", {}],
+    // A read, but of every site's accounts (emails, roles, sections).
+    ["list_users", {}],
   ])("%s is refused for a site-scoped token, with a self-teaching error", async (tool, args) => {
     const res = await scoped.call(tool, args);
     expect(res.isError, res.text).toBe(true);

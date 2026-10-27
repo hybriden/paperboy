@@ -1287,7 +1287,10 @@ tool(
 );
 
 /* ---------------------------- platform admin --------------------------- */
-tool("list_users", "user.manage", "List every CMS user account (admin editors, not website visitors), oldest first, all in one call (no paging): id, email, name, roles, section scopes, locked flag and createdAt. Users are shared by every site. Requires user.manage (Admin). Use an id from here with update_user or delete_user; to add someone, create_user.", {}, () => listUsers(db, ctx()));
+tool("list_users", "user.manage", "List every CMS user account (admin editors, not website visitors), oldest first, all in one call (no paging): id, email, name, roles, section scopes, locked flag and createdAt. Users are shared by every site. Requires user.manage (Admin). Use an id from here with update_user or delete_user; to add someone, create_user.", {}, () => {
+  requireCrossSiteToken("Listing users");
+  return listUsers(db, ctx());
+});
 const ROLES_ARG = z.array(RoleName).describe("Admin = everything; Editor = all content + publish + form submissions; Author = write content within its sections; Viewer = read-only.");
 const SECTIONS_ARG = z.array(z.string()).optional().describe("documentIds of top-level pages this user is limited to (its subtree). Omit or [] for the whole site.");
 tool("create_user", "user.manage", "Create a CMS user account (an editor of the admin, not a website visitor) that signs in with this email and password. Users and roles are instance-wide, so they apply in every site; sections narrow what they can edit. Admin only, with a token not limited to one site. Returns {id}; fails if the email is taken. Give the password to the person out of band — they can change it and enable 2FA themselves. To change an existing account use update_user.", { email: z.string().email().describe("Sign-in email address; must be unique."), name: z.string().describe("Display name, e.g. 'Kari Nordmann'."), password: z.string().min(10).describe("Initial password, at least 10 characters."), roles: ROLES_ARG.min(1), sections: SECTIONS_ARG },

@@ -13,7 +13,7 @@ import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { getSiteById } from "./sites.js";
-import { DEFAULT_SITE_ID, auditLog, contentItem, deliveryKey, session, site, userRole, userScope, users } from "./schema.js";
+import { DEFAULT_SITE_ID, auditLog, contentItem, deliveryKey, oauthGrant, session, site, userRole, userScope, users } from "./schema.js";
 import {
   decryptSecret,
   encryptSecret,
@@ -185,8 +185,24 @@ function userAdminReach(ctx: AccessContext): "instance" | "site" {
   return "site";
 }
 
-const everySiteAdmins = (db: Database) =>
-  db.select().from(userRole).where(and(eq(userRole.role, "Admin"), isNull(userRole.siteId)));
+type Tx = Parameters<Parameters<Database["transaction"]>[0]>[0];
+
+/**
+ * Last-Admin guard (never leave the instance without an every-site Admin: a
+ * one-site Admin can't manage users, sites or keys). Call it FIRST in the
+ * write's transaction and run `check` after the write: the lock serialises
+ * these writes, so two Admins demoting each other at once can't both pass a
+ * count taken before either committed.
+ */
+async function guardLastAdmin(tx: Tx, message: string): Promise<{ check: () => Promise<void> }> {
+  await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('paperboy:every-site-admins'))`);
+  return {
+    check: async () => {
+      const left = await tx.select({ userId: userRole.userId }).from(userRole).where(and(eq(userRole.role, "Admin"), isNull(userRole.siteId))).limit(1);
+      if (!left[0]) throw Errors.conflict(message);
+    },
+  };
+}
 
 async function assertSitesExist(db: Database, siteIds: string[]): Promise<void> {
   for (const id of new Set(siteIds)) {
@@ -290,14 +306,6 @@ export async function adminUpdateUser(
     if (taken[0]) throw Errors.conflict("That email is already in use");
   }
 
-  // Guard: never strip the last every-site Admin (avoid locking everyone out
-  // of the instance — a one-site Admin can't manage users, sites or keys).
-  if (input.roles && !input.roles.includes("Admin")) {
-    const admins = await everySiteAdmins(db);
-    if (admins.length === 1 && admins[0]!.userId === userId) {
-      throw Errors.conflict("Cannot remove the last administrator");
-    }
-  }
   // Resolve each section's own site BEFORE the tx (the content_item rows are
   // already committed) so the scope rows are filed under the correct site.
   const scopeSites = new Map<string, string>();
@@ -308,8 +316,10 @@ export async function adminUpdateUser(
     if (input.name !== undefined) await tx.update(users).set({ name: input.name }).where(eq(users.id, userId));
     if (emailChanged) await tx.update(users).set({ email }).where(eq(users.id, userId));
     if (input.roles) {
+      const guard = await guardLastAdmin(tx, "Cannot remove the last administrator");
       await tx.delete(userRole).where(and(eq(userRole.userId, userId), isNull(userRole.siteId)));
       for (const role of input.roles) await tx.insert(userRole).values({ userId, role }).onConflictDoNothing();
+      await guard.check();
     }
     if (input.siteRoles) {
       await tx.delete(userRole).where(and(eq(userRole.userId, userId), isNotNull(userRole.siteId)));
@@ -358,12 +368,10 @@ async function updateSiteMember(
 export async function adminDeleteUser(db: Database, ctx: AccessContext, userId: string): Promise<void> {
   requirePermission(ctx, "user.manage");
   if (userId === ctx.userId) throw Errors.conflict("You cannot delete your own account");
-  const admins = await everySiteAdmins(db);
-  if (admins.length === 1 && admins[0]!.userId === userId) {
-    throw Errors.conflict("Cannot delete the last administrator");
-  }
   await db.transaction(async (tx) => {
+    const guard = await guardLastAdmin(tx, "Cannot delete the last administrator");
     await tx.delete(userRole).where(eq(userRole.userId, userId));
+    await guard.check();
     await tx.delete(userScope).where(eq(userScope.userId, userId));
     await tx.delete(session).where(eq(session.userId, userId));
     await tx.delete(users).where(eq(users.id, userId));
@@ -402,8 +410,8 @@ export async function changePassword(
   await verifyReauth(db, userId, oldPassword);
   const passwordHash = await argon2.hash(newPassword, ARGON2_OPTS);
   await db.update(users).set({ passwordHash }).where(eq(users.id, userId));
-  // Invalidate all OTHER sessions (keep none — force re-login everywhere).
-  await db.delete(session).where(eq(session.userId, userId));
+  // Invalidate every session (keep none — force re-login everywhere) and OAuth connection.
+  await evictOtherSessions(db, userId);
 }
 
 /**
@@ -560,13 +568,17 @@ export async function beginTotpSetup(db: Database, userId: string): Promise<{ se
 
 /** Evict the user's sessions on a security-posture change. Keeps the current
  *  request's session (keepToken) so the actor isn't logged out mid-action; all
- *  OTHER sessions are dropped so a held/hijacked session can't outlive the change. */
+ *  OTHER sessions are dropped so a held/hijacked session can't outlive the change.
+ *  OAuth connections go too: one consented from a held session would otherwise
+ *  keep its never-expiring refresh token. Minted MCP tokens stay (deliberate
+ *  credentials, listed and revoked under Agent access). */
 async function evictOtherSessions(db: Database, userId: string, keepToken?: string | null): Promise<void> {
   if (keepToken) {
     await db.delete(session).where(and(eq(session.userId, userId), ne(session.id, sha256(keepToken))));
   } else {
     await db.delete(session).where(eq(session.userId, userId));
   }
+  await db.update(oauthGrant).set({ revokedAt: new Date() }).where(and(eq(oauthGrant.userId, userId), isNull(oauthGrant.revokedAt)));
 }
 
 /**

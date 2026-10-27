@@ -170,7 +170,12 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
         response: { 200: z.record(z.string(), z.object({ items: z.number(), inlineIn: z.number() })) },
       },
     },
-    async () => contentTypeUsage(app.db),
+    async (req) => {
+      // Counts span every site (types are shared), but only for the types this
+      // site can see: another site's own type names stay in that site (#159).
+      const [usage, visible] = await Promise.all([contentTypeUsage(app.db), listContentTypes(app.db, req.accessCtx!.siteId)]);
+      return Object.fromEntries(visible.filter((t) => usage[t.name]).map((t) => [t.name, usage[t.name]!]));
+    },
   );
   app.post(
     "/content-types",
