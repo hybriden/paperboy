@@ -1,3 +1,4 @@
+import { runRedirectRetention, schemaTables } from "@paperboy/db";
 import { matchRedirect } from "@paperboy/shared";
 import { createClient, matchRedirect as clientMatch } from "@paperboycms/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -185,6 +186,20 @@ describe("redirects", () => {
     expect((await s.app.inject({ method: "POST", url: "/api/v1/delivery/traffic", headers: { authorization: `Bearer ${PREVIEW_KEY}` }, payload: { notFound: ["/x"] } })).statusCode).toBe(403);
     // A session cookie is not a credential here.
     expect((await s.app.inject({ method: "POST", url: "/api/v1/delivery/traffic", headers: { cookie: admin.cookie }, payload: { notFound: ["/x"] } })).statusCode).toBe(401);
+  });
+
+  it("the hourly sweep drops 404 entries logged before the noise filter knew them", async () => {
+    await s.app.db.insert(schemaTables.notFoundPath).values([
+      { siteId: "site_default", path: "/wp-json/wp/v2/users/me", hits: 272 },
+      { siteId: "site_default", path: "/.aws/credentials", hits: 28 },
+      { siteId: "site_default", path: "/karriere", hits: 3 },
+    ]);
+    const { notFoundSwept } = await runRedirectRetention(s.app.db);
+    expect(notFoundSwept).toBe(2);
+    const nf = (await s.app.inject({ method: "GET", url: "/api/v1/manage/redirects/not-found", headers: { cookie: admin.cookie } })).json() as { path: string }[];
+    expect(nf.map((r) => r.path)).toContain("/karriere");
+    expect(nf.map((r) => r.path)).not.toContain("/wp-json/wp/v2/users/me");
+    expect(nf.map((r) => r.path)).not.toContain("/.aws/credentials");
   });
 
   it("imports CSV with a dry-run preview and per-row errors, and exports what it imported", async () => {

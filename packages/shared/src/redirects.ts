@@ -174,14 +174,29 @@ export function matchRedirect(manifest: RedirectManifest, requestPath: string): 
 
 /**
  * Paths not worth logging as 404s: vulnerability scanners probing for other
- * platforms. Their volume would bury the real broken links. Old-site media
- * (/wp-content/uploads/...) is NOT noise — it is often linked from elsewhere.
+ * platforms. Their volume would bury the real broken links (one site's log was
+ * ~1 300 probes around ~30 real entries; shared-not-found-noise.test.ts).
+ * Old-site media (/wp-content/uploads/<year>/...) is NOT noise — it is often
+ * linked from elsewhere — nor are page-like paths, .html or images.
  */
 export function isNoise404(path: string): boolean {
   return (
-    /\.(php\d?|aspx?|jsp|cgi|env|ini|sql|bak|old|swp|log|git)$/i.test(path) ||
-    /^\/(wp-admin|wp-login|wp-includes|xmlrpc|\.git|\.env|\.well-known\/(?!security\.txt)|cgi-bin|phpmyadmin|vendor|admin\.php)/i.test(path) ||
-    path.length > 400
+    path.length > 400 ||
+    // config, secret, source, build and backup files (and editor copies: x.php~, x.php.save)
+    /\.php[~.]/i.test(path) ||
+    /\.(php\d?|aspx?|axd|jsp|do|action|cgi|env|ini|sql|bak|old|orig|save|swp|log|git|json|ya?ml|toml|xml|config|properties|conf|cfg|pem|key|crt|tfstate|tfvars|hcl|map|db|sqlite\d?|gz|tgz|zip|tar|rar|7z|py|rb|sh|md|js|mjs|css)$/i.test(path) ||
+    // a dot segment anywhere (.git, .aws, .ssh, .vscode…), except security.txt
+    /\/\.(?!well-known\/security\.txt$)/i.test(path) ||
+    // WordPress internals under any folder; under wp-content only dated uploads are real
+    /(^|\/)(wp-admin|wp-login|wp-includes|wp-json|wp-config|xmlrpc|wlwmanifest)/i.test(path) ||
+    /\/wp-content(?!\/uploads\/\d{4}\/)/i.test(path) ||
+    // platform consoles, framework build output and OS paths
+    /(^|\/)(actuator|phpinfo|server-status|server-info|_profiler|web-inf|meta-inf|_vti_bin|_layouts|autodiscover|proc\/self|cgi-bin|phpmyadmin|vendor\/|admin\.php)/i.test(path) ||
+    /^\/(_next|_nuxt|@vite|_app\/immutable|~)(\/|$)/i.test(path) ||
+    // a port probe, a tel:/mailto: href read as a path, a route template or shell
+    /^\/:\d+$/.test(path) ||
+    /^\/(tel|mailto|javascript|data):/i.test(path) ||
+    /[[\]{}*$]/.test(path)
   );
 }
 

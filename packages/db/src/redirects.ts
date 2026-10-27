@@ -619,17 +619,23 @@ export async function deleteNotFound(db: Database, ctx: AccessContext, paths: st
   return gone.length;
 }
 
-/** Hourly: drop 404 paths unseen for NOT_FOUND_RETENTION_DAYS, and keep each site under NOT_FOUND_CAP. */
+/**
+ * Hourly: drop 404 paths unseen for NOT_FOUND_RETENTION_DAYS, paths the noise
+ * filter now rejects (logged before it knew them), and keep each site under NOT_FOUND_CAP.
+ */
 export async function runRedirectRetention(db: Database, now: Date = new Date()): Promise<{ notFoundSwept: number }> {
   const cutoff = new Date(now.getTime() - NOT_FOUND_RETENTION_DAYS * 24 * 3600 * 1000);
   const old = await db.delete(notFoundPath).where(lt(notFoundPath.lastSeen, cutoff)).returning({ path: notFoundPath.path });
+  // The table is capped per site, so reading every path is bounded.
+  const noisy = [...new Set((await db.select({ path: notFoundPath.path }).from(notFoundPath)).map((r) => r.path).filter(isNoise404))];
+  const noise = noisy.length ? await db.delete(notFoundPath).where(inArray(notFoundPath.path, noisy)).returning({ path: notFoundPath.path }) : [];
   const over = await db.execute<{ site_id: string; path: string }>(sql`
     DELETE FROM not_found_path n USING (
       SELECT site_id, path FROM (
         SELECT site_id, path, row_number() OVER (PARTITION BY site_id ORDER BY last_seen DESC) AS rn FROM not_found_path
       ) ranked WHERE rn > ${NOT_FOUND_CAP}
     ) x WHERE n.site_id = x.site_id AND n.path = x.path RETURNING n.path`);
-  return { notFoundSwept: old.length + [...over].length };
+  return { notFoundSwept: old.length + noise.length + [...over].length };
 }
 
 /* ------------------------------ CSV import / export ------------------------------ */
