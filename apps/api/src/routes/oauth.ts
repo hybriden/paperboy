@@ -73,6 +73,24 @@ function sendOAuthError(reply: FastifyReply, err: unknown): FastifyReply {
   throw err;
 }
 
+/** A body's string fields only: a JSON body may send anything, and a non-string value is as good as absent. */
+function stringFields(body: unknown): Record<string, string | undefined> {
+  return Object.fromEntries(Object.entries(body && typeof body === "object" ? body : {}).filter(([, v]) => typeof v === "string"));
+}
+
+/** client_secret_basic (RFC 6749 §2.3.1): form-encoded id and secret, split at the FIRST colon. */
+function basicCredentials(header: string | undefined): { clientId: string; clientSecret: string } | null {
+  const basic = /^Basic\s+(.+)$/i.exec(header ?? "");
+  if (!basic) return null;
+  const pair = Buffer.from(basic[1]!, "base64").toString("utf8");
+  const at = pair.indexOf(":");
+  try {
+    return { clientId: decodeURIComponent(at < 0 ? pair : pair.slice(0, at)), clientSecret: decodeURIComponent(at < 0 ? "" : pair.slice(at + 1)) };
+  } catch {
+    throw new OAuthError("invalid_client", "Malformed Basic credentials: the client id and secret must be form-encoded", 401);
+  }
+}
+
 /** The redirect back to the client, carrying `state` untouched. */
 function clientRedirect(redirectUri: string, params: Record<string, string | undefined>): string {
   const url = new URL(redirectUri);
@@ -139,11 +157,15 @@ export async function registerOAuthRoutes(appBase: FastifyInstance, opts: { conf
     { schema: { hide: true }, config: { ...open, rateLimit: { max: 20, timeWindow: "1 minute" } } },
     async (req, reply) => {
       openCors(reply);
-      const body = (req.body ?? {}) as { client_name?: string; redirect_uris?: unknown; token_endpoint_auth_method?: string };
+      const raw = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
+      const body = stringFields(raw);
       try {
+        for (const key of ["client_name", "token_endpoint_auth_method"]) {
+          if (raw[key] !== undefined && body[key] === undefined) throw new OAuthError("invalid_client_metadata", `${key} must be a string`);
+        }
         const c = await registerOAuthClient(app.db, {
           clientName: body.client_name,
-          redirectUris: body.redirect_uris,
+          redirectUris: raw.redirect_uris,
           tokenEndpointAuthMethod: body.token_endpoint_auth_method,
         });
         return reply.code(201).send({
@@ -168,17 +190,12 @@ export async function registerOAuthRoutes(appBase: FastifyInstance, opts: { conf
     async (req, reply) => {
       openCors(reply);
       reply.header("Cache-Control", "no-store");
-      const body = (req.body ?? {}) as Record<string, string | undefined>;
-      // client_secret_basic: the client authenticates in the Authorization header.
-      let clientId = body.client_id;
-      let clientSecret = body.client_secret;
-      const basic = /^Basic\s+(.+)$/i.exec(req.headers.authorization ?? "");
-      if (basic) {
-        const [id, pw] = Buffer.from(basic[1]!, "base64").toString("utf8").split(":");
-        clientId = decodeURIComponent(id ?? "");
-        clientSecret = decodeURIComponent(pw ?? "");
-      }
+      const body = stringFields(req.body);
       try {
+        // client_secret_basic: the client authenticates in the Authorization header.
+        const basic = basicCredentials(req.headers.authorization);
+        const clientId = basic ? basic.clientId : body.client_id;
+        const clientSecret = basic ? basic.clientSecret : body.client_secret;
         if (body.grant_type === "authorization_code") {
           return await exchangeAuthorizationCode(
             app.db,
@@ -198,8 +215,10 @@ export async function registerOAuthRoutes(appBase: FastifyInstance, opts: { conf
 
   app.post("/api/v1/oauth/revoke", { schema: { hide: true }, config: { ...open, rateLimit: { max: 60, timeWindow: "1 minute" } } }, async (req, reply) => {
     openCors(reply);
-    const token = ((req.body ?? {}) as { token?: string }).token;
-    if (token) await revokeOAuthToken(app.db, token);
+    const token = stringFields(req.body).token;
+    // RFC 7009 §2.2.1: a missing token is invalid_request; an unknown one is still 200.
+    if (!token) return reply.code(400).send({ error: "invalid_request", error_description: "token is required" });
+    await revokeOAuthToken(app.db, token);
     return reply.code(200).send({});
   });
 

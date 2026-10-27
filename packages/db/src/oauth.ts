@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, lte, notExists, or, sql } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import type { AccessContext } from "./scope.js";
@@ -368,4 +368,24 @@ export async function revokeOAuthGrant(db: Database, ctx: AccessContext, id: num
     .where(and(eq(oauthGrant.id, id), everyone ? undefined : eq(oauthGrant.userId, ctx.userId)))
     .returning({ id: oauthGrant.id });
   if (!updated[0]) throw Errors.notFound("Connection");
+}
+
+/**
+ * Delete clients that registered (anyone may: RFC 7591 is open) and never got
+ * a grant, once even their codes are gone. Without it oauth_client only grows.
+ * Swept hourly with the other retention jobs.
+ */
+export async function runOAuthClientRetention(db: Database, now: Date = new Date()): Promise<{ deleted: number }> {
+  const cutoff = new Date(now.getTime() - 24 * 60 * 60_000);
+  const res = await db
+    .delete(oauthClient)
+    .where(
+      and(
+        lte(oauthClient.createdAt, cutoff),
+        notExists(db.select({ one: sql`1` }).from(oauthGrant).where(eq(oauthGrant.clientId, oauthClient.clientId))),
+        notExists(db.select({ one: sql`1` }).from(oauthCode).where(and(eq(oauthCode.clientId, oauthClient.clientId), gt(oauthCode.expiresAt, now)))),
+      ),
+    )
+    .returning({ clientId: oauthClient.clientId });
+  return { deleted: res.length };
 }
