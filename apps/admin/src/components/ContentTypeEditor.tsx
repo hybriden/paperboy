@@ -103,7 +103,7 @@ function IconPicker({ id, value, onChange }: { id?: string; value: string; onCha
   const shown = matches.slice(0, PICKER_CAP);
   return (
     <Popover open={open} onOpenChange={(o) => { setOpen(o); if (!o) setQ(""); }}>
-      <PopoverTrigger id={id} className="field-input flex items-center gap-2 text-left" aria-label="Choose icon">
+      <PopoverTrigger id={id} className="field-input flex items-center gap-2 text-left" aria-label={`Choose icon: ${selected}`}>
         <TypeIcon name={value} width={16} height={16} className="shrink-0 text-muted" />
         <span className="truncate">{selected}</span>
         <Icon.ChevronDown width={14} height={14} className="ml-auto shrink-0 text-muted" />

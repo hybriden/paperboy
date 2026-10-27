@@ -167,8 +167,8 @@ function UserMenu() {
   const initials = user.name.split(" ").map((p) => p[0]).slice(0, 2).join("").toUpperCase();
   return (
     <Menu>
-      <MenuTrigger className="ml-1 flex shrink-0 items-center gap-2 rounded-(--radius) py-1 pl-1 pr-2 hover:bg-line/60" aria-label="Account menu">
-        <span aria-hidden="true" className="grid h-7 w-7 place-items-center rounded-full bg-line text-xs font-semibold text-fg">{initials}</span>
+      <MenuTrigger className="ml-1 flex shrink-0 items-center gap-2 rounded-(--radius) py-1 pl-1 pr-2 hover:bg-line/60" aria-label={`${initials}, account menu`}>
+        <span className="grid h-7 w-7 place-items-center rounded-full bg-line text-xs font-semibold text-fg">{initials}</span>
         <Icon.ChevronDown width={14} height={14} className="text-muted" />
       </MenuTrigger>
       <MenuContent>
