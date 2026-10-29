@@ -71,11 +71,11 @@ describe("structured data set up in the CMS", () => {
       data: {
         siteName: "Paperboy",
         legalName: "Paperboy Regnskap AS",
-        orgNumber: "918097902",
+        orgNumber: "123456789",
         profiles: "https://www.linkedin.com/company/paperboy/\nhttps://www.facebook.com/paperboy",
         offices: [
-          { key: "k1", blockType: "OfficeBlock", inline: { name: "Paperboy Tønsberg", street: "Kilengaten 2", city: "Tønsberg", lat: 59.2743, lng: 10.4312 } },
-          { key: "k2", blockType: "OfficeBlock", inline: { name: "Paperboy Larvik", street: "Borgejordet 80", city: "Larvik" } },
+          { key: "k1", blockType: "OfficeBlock", inline: { name: "Paperboy Nord", street: "Storgata 1", city: "Nordby", lat: 60.1, lng: 10.2 } },
+          { key: "k2", blockType: "OfficeBlock", inline: { name: "Paperboy Sør", street: "Strandveien 2", city: "Sørby" } },
         ],
         bankNote: "PRIVATE: never in JSON-LD",
       },
@@ -94,16 +94,16 @@ describe("structured data set up in the CMS", () => {
       "@context": "https://schema.org",
       "@type": "AccountingService",
       legalName: "Paperboy Regnskap AS",
-      taxID: "918097902",
+      taxID: "123456789",
       sameAs: ["https://www.linkedin.com/company/paperboy/", "https://www.facebook.com/paperboy"],
       department: [
         {
           "@type": "AccountingService",
-          name: "Paperboy Tønsberg",
-          address: { "@type": "PostalAddress", streetAddress: "Kilengaten 2", addressLocality: "Tønsberg" },
-          geo: { "@type": "GeoCoordinates", latitude: 59.2743, longitude: 10.4312 },
+          name: "Paperboy Nord",
+          address: { "@type": "PostalAddress", streetAddress: "Storgata 1", addressLocality: "Nordby" },
+          geo: { "@type": "GeoCoordinates", latitude: 60.1, longitude: 10.2 },
         },
-        { "@type": "AccountingService", name: "Paperboy Larvik", address: { "@type": "PostalAddress", streetAddress: "Borgejordet 80", addressLocality: "Larvik" } },
+        { "@type": "AccountingService", name: "Paperboy Sør", address: { "@type": "PostalAddress", streetAddress: "Strandveien 2", addressLocality: "Sørby" } },
       ],
     });
     expect(JSON.stringify(g)).not.toContain("PRIVATE");
