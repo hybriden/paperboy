@@ -13,10 +13,6 @@ export interface ShellOutlet {
   setCrumb: (text: string | null) => void;
 }
 
-/** Show the native modifier in the shortcut hint (⌘ on macOS, Ctrl elsewhere). */
-const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform ?? navigator.platform;
-const IS_MAC = /mac|iP(hone|ad|od)/i.test(platform);
-
 const RAIL = [
   { to: "/dashboard", icon: Icon.Dashboard, label: "Dashboard" },
   { to: "/edit", icon: Icon.Edit, label: "Content" },
@@ -103,18 +99,16 @@ function TopBar({
           truncate without losing its function. Without this the header held
           its width and pushed the whole page 8px past a 390px viewport. */}
       <div className="ml-auto flex min-w-0 items-center gap-1.5">
-        <button
-          onClick={onOpenPalette}
-          className="flex h-9 shrink-0 items-center gap-2 rounded-(--radius) px-2.5 text-sm text-muted transition-colors hover:bg-line/60 hover:text-fg"
-          aria-keyshortcuts={IS_MAC ? "Meta+K" : "Control+K"}
-        >
-          <Icon.Search width={15} height={15} className="shrink-0" />
-          {/* The visible word IS the name (WCAG 2.5.3): a voice user says "click Search". */}
-          <span className="sr-only leading-none md:not-sr-only">Search…</span>
-          <kbd className="hidden font-sans text-xs leading-none text-muted md:inline">
-            {IS_MAC ? "⌘K" : "Ctrl K"}
-          </kbd>
-        </button>
+        {/* Desktop opens search with Ctrl/⌘ K only; a phone has no keyboard, so it keeps the button. */}
+        {compact && (
+          <button
+            onClick={onOpenPalette}
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-(--radius) text-muted transition-colors hover:bg-line/60 hover:text-fg"
+          >
+            <Icon.Search width={15} height={15} />
+            <span className="sr-only">Search…</span>
+          </button>
+        )}
         <SiteSwitcher />
         <ThemeToggle />
         {!compact && (
