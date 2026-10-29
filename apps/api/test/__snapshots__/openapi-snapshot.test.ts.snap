@@ -303,6 +303,15 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "delivery",
     ],
   },
+  "GET /api/v1/delivery/indexnow.txt": {
+    "requestBodyRequired": [],
+    "requiredParams": [],
+    "response200Props": [],
+    "summary": null,
+    "tags": [
+      "delivery",
+    ],
+  },
   "GET /api/v1/delivery/llms.txt": {
     "requestBodyRequired": [],
     "requiredParams": [],

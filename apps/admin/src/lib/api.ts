@@ -335,7 +335,7 @@ export const api = {
   previewToken: (signal?: AbortSignal) => request<{ token: string; expiresAt: number }>("GET", "/manage/preview-token", undefined, signal),
   setStartPage: (documentId: string | null, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }, undefined, siteOverride),
-  setPublicFiles: (body: Partial<Record<"canonicalBaseUrl" | keyof SeoFilesConfig, string | null>> & { localePrefix?: "always" | "except-default" }, siteOverride?: string) =>
+  setPublicFiles: (body: Partial<Record<"canonicalBaseUrl" | EditableSeoFile, string | null>> & { localePrefix?: "always" | "except-default"; indexNow?: boolean }, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/public-files", body, undefined, siteOverride),
   setPreviewUrl: (url: string, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/preview-url", { url }, undefined, siteOverride),
@@ -692,7 +692,10 @@ export interface SeoFilesConfig {
   securityContact?: string;
   securityPolicyUrl?: string;
   securityLanguages?: string;
+  /** Minted by the server when IndexNow is switched on; never typed in. */
+  indexNowKey?: string;
 }
+export type EditableSeoFile = Exclude<keyof SeoFilesConfig, "indexNowKey">;
 
 export interface SiteRow {
   id: string;

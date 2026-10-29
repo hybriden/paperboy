@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { type AiConfig, type AiProvider, type AiReasoningEffort, AI_REASONING_EFFORTS, DEFAULT_AI_MODELS, DEFAULT_OPENAI_BASE_URL, LocalePrefix, SeoFilesConfig, parseSeoFilesConfig } from "@paperboy/shared";
 import type { Database } from "./client.js";
@@ -75,7 +76,7 @@ export async function setPreviewBaseUrl(db: Database, ctx: AccessContext, url: s
 export async function setSiteFilesConfig(
   db: Database,
   ctx: AccessContext,
-  input: { canonicalBaseUrl?: string | null; localePrefix?: LocalePrefix } & { [K in keyof SeoFilesConfig]?: string | null },
+  input: { canonicalBaseUrl?: string | null; localePrefix?: LocalePrefix; indexNow?: boolean } & { [K in Exclude<keyof SeoFilesConfig, "indexNowKey">]?: string | null },
 ): Promise<void> {
   requirePermission(ctx, "site.manage");
   const rows = await db.select().from(site).where(eq(site.id, ctx.siteId)).limit(1);
@@ -91,8 +92,11 @@ export async function setSiteFilesConfig(
   // How the frontend spells locales in URLs — sitemap/llms URLs and redirect paths follow it.
   if (input.localePrefix !== undefined) patch.localePrefix = LocalePrefix.parse(input.localePrefix);
   const fileKeys = ["robotsExtra", "llmsSummary", "llmsOverride", "securityContact", "securityPolicyUrl", "securityLanguages"] as const;
-  if (fileKeys.some((k) => input[k] !== undefined)) {
+  if (fileKeys.some((k) => input[k] !== undefined) || input.indexNow !== undefined) {
     const files: Record<string, string> = { ...parseSeoFilesConfig(rows[0].seoFiles) };
+    // The key is ours to mint: switching on keeps an existing one, so the hosted file stays valid.
+    if (input.indexNow === true) files.indexNowKey ??= randomBytes(16).toString("hex");
+    if (input.indexNow === false) delete files.indexNowKey;
     for (const k of fileKeys) {
       const v = input[k];
       if (v === undefined) continue;

@@ -23,7 +23,7 @@ import { type DeliveryCache, createDeliveryCache } from "../delivery-cache.js";
 
 /** Routes that answer text (or a body-hashed manifest) rather than an object
  *  the cache can keep; they keep their own conditional GET. */
-const UNCACHED = new Set(["redirects", "robots.txt", "sitemap.xml", "llms.txt", "security.txt"]);
+const UNCACHED = new Set(["redirects", "robots.txt", "sitemap.xml", "llms.txt", "security.txt", "indexnow.txt"]);
 
 /** Extract the bearer/x-api-key credential and resolve its perspective + site. */
 async function resolveCredential(
@@ -448,6 +448,20 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
       }
       textFileHeaders(reply, req.perspective!, "text/plain; charset=utf-8");
       return body;
+    },
+  );
+  // IndexNow key file: the frontend serves it as /indexnow.txt, the keyLocation
+  // every ping names (packages/db/src/indexnow.ts). The key is public by design.
+  app.get(
+    "/indexnow.txt",
+    { config: { rateLimit: { max: 120, timeWindow: "1 minute" } }, schema: { tags: ["delivery"] } },
+    async (req, reply) => {
+      const { cfg } = await siteFiles(req);
+      if (!cfg.indexNowKey) {
+        throw new AppError(404, "not_configured", "IndexNow is off for this site. Switch it on in Settings → General → Public files.");
+      }
+      textFileHeaders(reply, req.perspective!, "text/plain; charset=utf-8");
+      return cfg.indexNowKey;
     },
   );
 }

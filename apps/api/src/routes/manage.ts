@@ -1002,6 +1002,8 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
           securityContact: z.string().max(300).nullable().optional(),
           securityPolicyUrl: z.string().max(300).nullable().optional(),
           securityLanguages: z.string().max(100).nullable().optional(),
+          // true mints the site's IndexNow key (kept if one exists), false removes it.
+          indexNow: z.boolean().optional(),
         }),
         response: { 200: z.object({ ok: z.boolean() }) },
       },
