@@ -32,6 +32,8 @@ export const SeoFilesConfig = z.object({
   securityPolicyUrl: z.string().max(300).optional(),
   /** RFC 9116 Preferred-Languages, comma-separated (optional, e.g. "en, no"). */
   securityLanguages: z.string().max(100).optional(),
+  /** IndexNow key (generated when switched on): served as /indexnow.txt, sent with every ping. */
+  indexNowKey: z.string().regex(/^[a-zA-Z0-9-]{8,128}$/).optional(),
 });
 export type SeoFilesConfig = z.infer<typeof SeoFilesConfig>;
 

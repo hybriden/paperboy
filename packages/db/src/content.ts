@@ -2669,18 +2669,20 @@ export async function unpublishContent(
   // ponytail: the fresh cv only versions the withdrawn ROW; the LIST ETag (max cv
   // over returned items) stays byte-identical, so a CDN keeps serving the
   // withdrawn item — open, pinned by withdrawal-invalidates-cache.test.ts.
-  const cvRow = await db.execute(sql`SELECT nextval('cv_seq') AS v`);
-  const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
-  await db
-    .update(contentVersion)
-    .set({ isCurrentPublished: false, cv })
-    .where(
-      and(
-        eq(contentVersion.documentId, documentId),
-        eq(contentVersion.locale, loc),
-        eq(contentVersion.isCurrentPublished, true),
-      ),
-    );
+  await withUrlTracking(db, item, async () => {
+    const cvRow = await db.execute(sql`SELECT nextval('cv_seq') AS v`);
+    const cv = Number((cvRow as unknown as Array<{ v: string }>)[0]?.v ?? 0);
+    await db
+      .update(contentVersion)
+      .set({ isCurrentPublished: false, cv })
+      .where(
+        and(
+          eq(contentVersion.documentId, documentId),
+          eq(contentVersion.locale, loc),
+          eq(contentVersion.isCurrentPublished, true),
+        ),
+      );
+  });
   if (live) announceContent(db, "content.unpublished", item, loc, live.name, urlPath);
   return getContent(db, ctx, documentId, loc);
 }
@@ -3355,7 +3357,7 @@ export async function softDelete(
   const item = await loadAuthorized(db, ctx, documentId);
 
   const now = new Date();
-  const result = await db.transaction(async (tx) => {
+  const result = await withUrlTracking(db, item, () => db.transaction(async (tx) => {
     // Collect the subtree (guarded downward BFS) in the same transaction that trashes it.
     const ids = [documentId];
     const visited = new Set<string>([documentId]);
@@ -3380,7 +3382,7 @@ export async function softDelete(
       .set({ isCurrentPublished: false, cv })
       .where(and(inArray(contentVersion.documentId, ids), eq(contentVersion.isCurrentPublished, true)));
     return { trashed: ids.length };
-  });
+  }));
   announceDeliveryChange(db, item.siteId, "trashed", documentId);
   return result;
 }

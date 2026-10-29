@@ -21,6 +21,7 @@ import {
 import type { Database } from "./client.js";
 import { publishedPagePaths } from "./delivery.js";
 import { Errors } from "./errors.js";
+import { queueIndexNow } from "./indexnow.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { contentItem, contentVersion, locale, notFoundPath, redirect, site } from "./schema.js";
 import { announceDeliveryChange } from "./webhooks.js";
@@ -503,9 +504,11 @@ async function subtreeOf(db: Database, documentId: string): Promise<string[]> {
 
 /**
  * Run a change that may move published URLs (publish, move, scheduled
- * publish) and give every page in the subtree whose public URL changed a 301
- * from its old URL. Bookkeeping must never fail the change itself, so its
- * errors are logged, not thrown.
+ * publish, unpublish, trash) and give every page in the subtree whose public
+ * URL changed a 301 from its old URL. Every URL that appeared, moved or went
+ * away, plus the changed page's own, is queued for IndexNow (indexnow.ts).
+ * Bookkeeping must never fail the change itself, so its errors are logged,
+ * not thrown.
  */
 export async function trackUrlChanges<T>(db: Database, siteId: string, documentId: string, change: () => Promise<T>): Promise<T> {
   let before: SiteUrls | null = null;
@@ -520,6 +523,10 @@ export async function trackUrlChanges<T>(db: Database, siteId: string, documentI
   if (!before) return result;
   try {
     const after = await siteUrls(db, siteId, docs);
+    const touched = new Set<string>();
+    for (const [key, path] of after.byDoc) if (key.startsWith(`${documentId}|`) || before.byDoc.get(key) !== path) touched.add(path);
+    for (const [key, path] of before.byDoc) if (after.byDoc.get(key) !== path) touched.add(path);
+    queueIndexNow(db, siteId, touched);
     for (const [key, oldPath] of before.byDoc) {
       const newPath = after.byDoc.get(key);
       if (!newPath || normalizePath(newPath) === normalizePath(oldPath)) continue;

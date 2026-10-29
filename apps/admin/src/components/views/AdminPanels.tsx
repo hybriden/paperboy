@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName, slugifyValue } from "@paperboy/shared";
-import { ACTIVE_SITE_KEY, type AiProviderName, type AiReasoningEffortName, api, ApiError, type FormRow, type ManagedUser, type SeoFilesConfig, type SiteRow } from "../../lib/api.js";
+import { ACTIVE_SITE_KEY, type AiProviderName, type AiReasoningEffortName, api, ApiError, type FormRow, type ManagedUser, type EditableSeoFile, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
@@ -940,7 +940,7 @@ function CreateSiteWizard({ defaultLocale, onClose }: { defaultLocale: string; o
 }
 
 /** The per-site public-files draft (robots/llms/security.txt config), "" = unset. */
-const filesOf = (s: SiteRow): Record<keyof SeoFilesConfig, string> => ({
+const filesOf = (s: SiteRow): Record<EditableSeoFile, string> => ({
   robotsExtra: s.seoFiles.robotsExtra ?? "",
   llmsSummary: s.seoFiles.llmsSummary ?? "",
   llmsOverride: s.seoFiles.llmsOverride ?? "",
@@ -1027,6 +1027,7 @@ function SiteSettingsForm({ site }: { site: SiteRow }) {
   const [canonicalUrl, setCanonicalUrl] = useState(site.canonicalBaseUrl ?? "");
   const [localePrefix, setLocalePrefix] = useState(site.localePrefix);
   const [files, setFiles] = useState(() => filesOf(site));
+  const [indexNow, setIndexNow] = useState(Boolean(site.seoFiles.indexNowKey));
   const [lastSaved, setLastSaved] = useState(saved);
   if (lastSaved !== saved) {
     // The site changed under us (after a save elsewhere) — resync the draft.
@@ -1036,6 +1037,7 @@ function SiteSettingsForm({ site }: { site: SiteRow }) {
     setCanonicalUrl(site.canonicalBaseUrl ?? "");
     setLocalePrefix(site.localePrefix);
     setFiles(filesOf(site));
+    setIndexNow(Boolean(site.seoFiles.indexNowKey));
   }
 
   const pages = useQuery({ queryKey: ["pages", site.id], queryFn: ({ signal }) => api.pages(signal, site.id) });
@@ -1045,19 +1047,21 @@ function SiteSettingsForm({ site }: { site: SiteRow }) {
   const savedFiles = filesOf(site);
   const canonicalChanged = canonicalUrl.trim() !== (site.canonicalBaseUrl ?? "");
   const prefixChanged = localePrefix !== site.localePrefix;
-  const filesChanged = (Object.keys(files) as Array<keyof SeoFilesConfig>).filter((k) => files[k].trim() !== savedFiles[k]);
-  const dirty = previewChanged || startChanged || canonicalChanged || prefixChanged || filesChanged.length > 0;
-  const setFile = (k: keyof SeoFilesConfig, v: string) => setFiles((p) => ({ ...p, [k]: v }));
+  const filesChanged = (Object.keys(files) as EditableSeoFile[]).filter((k) => files[k].trim() !== savedFiles[k]);
+  const indexNowChanged = indexNow !== Boolean(site.seoFiles.indexNowKey);
+  const dirty = previewChanged || startChanged || canonicalChanged || prefixChanged || filesChanged.length > 0 || indexNowChanged;
+  const setFile = (k: EditableSeoFile, v: string) => setFiles((p) => ({ ...p, [k]: v }));
 
   const save = useMutation({
     mutationFn: async () => {
       // Persist only what changed, in one user action.
       if (previewChanged) await api.setPreviewUrl(previewUrl.trim(), site.id);
       if (startChanged) await api.setStartPage(startPageId || null, site.id);
-      if (canonicalChanged || prefixChanged || filesChanged.length) {
+      if (canonicalChanged || prefixChanged || filesChanged.length || indexNowChanged) {
         const patch: Parameters<typeof api.setPublicFiles>[0] = {};
         if (canonicalChanged) patch.canonicalBaseUrl = canonicalUrl.trim() || null;
         if (prefixChanged) patch.localePrefix = localePrefix;
+        if (indexNowChanged) patch.indexNow = indexNow;
         for (const k of filesChanged) patch[k] = (files[k] ?? "").trim() || null;
         await api.setPublicFiles(patch, site.id);
       }
@@ -1146,6 +1150,18 @@ function SiteSettingsForm({ site }: { site: SiteRow }) {
             security.txt (RFC 9116) is served only when a contact is set; Expires is kept fresh automatically (rolling
             180 days) since the file is generated on request.
           </p>
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" aria-label="IndexNow" className="mt-0.5" checked={indexNow} onChange={(e) => setIndexNow(e.target.checked)} />
+            <span>
+              <span className="field-label">IndexNow</span>
+              <span className="block text-xs text-muted">
+                Tells Bing, Yandex, Seznam, Naver and Yep within seconds when a page is published, moved, unpublished or
+                trashed (not Google, which doesn’t take part). Needs the canonical base URL, and your frontend must serve
+                <code> /indexnow.txt</code> from <code>/api/v1/delivery/indexnow.txt</code>.
+                {site.seoFiles.indexNowKey && <> Key: <code>{site.seoFiles.indexNowKey}</code></>}
+              </span>
+            </span>
+          </label>
         </div>
       </details>
 
