@@ -47,7 +47,13 @@ describe("structured data set up in the CMS", () => {
     // them up in Settings → Content types.
     await call("POST", "/content-types", {
       name: "OfficeBlock", displayName: "Office", kind: "block", schemaType: "AccountingService",
-      fields: [field("name", "text"), field("street", "text", { schemaProp: "address.streetAddress" }), field("city", "text", { schemaProp: "address.addressLocality" })],
+      fields: [
+        field("name", "text"),
+        field("street", "text", { schemaProp: "address.streetAddress" }),
+        field("city", "text", { schemaProp: "address.addressLocality" }),
+        field("lat", "number", { schemaProp: "geo.latitude" }),
+        field("lng", "number", { schemaProp: "geo.longitude" }),
+      ],
     });
     const settings = await call("GET", "/content-types/SiteSettings");
     settings.schemaType = "AccountingService";
@@ -68,7 +74,7 @@ describe("structured data set up in the CMS", () => {
         orgNumber: "918097902",
         profiles: "https://www.linkedin.com/company/paperboy/\nhttps://www.facebook.com/paperboy",
         offices: [
-          { key: "k1", blockType: "OfficeBlock", inline: { name: "Paperboy Tønsberg", street: "Kilengaten 2", city: "Tønsberg" } },
+          { key: "k1", blockType: "OfficeBlock", inline: { name: "Paperboy Tønsberg", street: "Kilengaten 2", city: "Tønsberg", lat: 59.2743, lng: 10.4312 } },
           { key: "k2", blockType: "OfficeBlock", inline: { name: "Paperboy Larvik", street: "Borgejordet 80", city: "Larvik" } },
         ],
         bankNote: "PRIVATE: never in JSON-LD",
@@ -91,7 +97,12 @@ describe("structured data set up in the CMS", () => {
       taxID: "918097902",
       sameAs: ["https://www.linkedin.com/company/paperboy/", "https://www.facebook.com/paperboy"],
       department: [
-        { "@type": "AccountingService", name: "Paperboy Tønsberg", address: { "@type": "PostalAddress", streetAddress: "Kilengaten 2", addressLocality: "Tønsberg" } },
+        {
+          "@type": "AccountingService",
+          name: "Paperboy Tønsberg",
+          address: { "@type": "PostalAddress", streetAddress: "Kilengaten 2", addressLocality: "Tønsberg" },
+          geo: { "@type": "GeoCoordinates", latitude: 59.2743, longitude: 10.4312 },
+        },
         { "@type": "AccountingService", name: "Paperboy Larvik", address: { "@type": "PostalAddress", streetAddress: "Borgejordet 80", addressLocality: "Larvik" } },
       ],
     });
