@@ -56,6 +56,7 @@ export const SCHEMA_WRAPPER_TYPES: Record<string, string> = {
   brand: "Brand",
   location: "Place",
   address: "PostalAddress",
+  geo: "GeoCoordinates",
   organizer: "Organization",
   performer: "Person",
   hiringOrganization: "Organization",
