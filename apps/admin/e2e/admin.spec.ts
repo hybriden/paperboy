@@ -256,7 +256,8 @@ test("translate offer is directionless: content authored only in nb offers trans
   // Norwegian (Bokmål) as the source.
   await page.getByLabel("Language").selectOption("en");
   await expect(page.getByText("Not translated to", { exact: false })).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByRole("button", { name: /Translate from .*Bokmål/i })).toBeVisible({ timeout: 10_000 });
+  // "Copy from" without an AI provider, "Translate from" with one.
+  await expect(page.getByRole("button", { name: /(Translate|Copy) from .*Bokmål/i })).toBeVisible({ timeout: 10_000 });
 });
 
 test("tree reorder persists via the move endpoint", async ({ page }) => {
@@ -1717,16 +1718,12 @@ test("editor has a dedicated SEO tab with meta + OpenGraph fields", async ({ pag
   await expect(page.getByText("Social share image")).toBeVisible();
 });
 
-test("writing assistant can generate SEO meta from the page content", async ({ page }) => {
+test("with no AI provider the editor shows no AI entry points", async ({ page }) => {
   await login(page);
   await page.getByRole("treeitem", { name: /Home/ }).click();
   await expect(editorName(page)).toHaveValue("Home");
-  // exact: the richtext toolbar has its own "Writing assistant (selection)" button.
-  await page.getByRole("button", { name: "Writing assistant", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Generate SEO description" }).click();
-  // The SEO tab's meta description is filled (offline fallback derives it from the page text).
-  await page.getByRole("tab", { name: "SEO" }).click();
-  await expect(page.getByLabel("Meta description")).not.toHaveValue("", { timeout: 10_000 });
+  await expect(page.getByRole("button", { name: "Content actions" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Writing assistant/ })).toHaveCount(0);
 });
 
 test("a nested child renders its OWN name (not its parent's) and a unique row", async ({ page }) => {

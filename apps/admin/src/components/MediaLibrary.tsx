@@ -4,7 +4,7 @@ import type { Asset, StockSearchResult } from "@paperboy/shared";
 import { DRAG_MIME } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
-import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
+import { useAiEnabled } from "../lib/useAiStatus.js";
 import { FolderNav } from "./FolderNav.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
 import { useToast } from "./ui/toast.js";
@@ -178,15 +178,17 @@ export function MediaTab() {
             })()}
             <div className="flex items-center justify-between">
               <label className="field-label" htmlFor="alt">Alt text (accessibility)</label>
-              <button
-                type="button"
-                className="btn-subtle px-1.5 py-0.5 text-[11px]"
-                disabled={suggestAlt.isPending || !aiEnabled}
-                title={aiEnabled ? "Describe the image with AI" : AI_OFF_HINT}
-                onClick={() => suggestAlt.mutate(editing)}
-              >
-                {suggestAlt.isPending ? "Looking…" : "Describe image"}
-              </button>
+              {aiEnabled && (
+                <button
+                  type="button"
+                  className="btn-subtle px-1.5 py-0.5 text-[11px]"
+                  disabled={suggestAlt.isPending}
+                  title="Describe the image with AI"
+                  onClick={() => suggestAlt.mutate(editing)}
+                >
+                  {suggestAlt.isPending ? "Looking…" : "Describe image"}
+                </button>
+              )}
             </div>
             <input id="alt" aria-label="Alt text" className="field-input mb-4" value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="Describe the image" />
             <div className="flex items-center justify-between gap-2">
