@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { type MailConfig, createDb, resolveMailConfig, resolveMailRuntimeConfig, sendDueMail, sendMail } from "@paperboy/db";
-import { ContentTypeDef, MIN_FILL_MS, headerSafe, mailAddress, parseRecipients, renderSubmissionMail } from "@paperboy/shared";
+import { ContentTypeDef, MIN_FILL_MS, headerSafe, mailAddress, parseMailbox, parseRecipients, renderSubmissionMail, submissionsUrl } from "@paperboy/shared";
 import { SMTPServer } from "smtp-server";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { PUBLIC_KEY, type Suite, TEST_DB, authHeaders, login, setupApi } from "./helpers.js";
@@ -13,6 +13,7 @@ import { PUBLIC_KEY, type Suite, TEST_DB, authHeaders, login, setupApi } from ".
 interface Received { from: string; to: string[]; raw: string }
 const inbox: Received[] = [];
 let reject: string | null = null; // set → the server refuses every recipient
+let delayMs = 0; // set → the server takes this long to accept a message (a slow provider)
 const server = new SMTPServer({
   authOptional: true,
   disabledCommands: ["STARTTLS", "AUTH"],
@@ -25,7 +26,7 @@ const server = new SMTPServer({
     stream.on("data", (c: Buffer) => (raw += c.toString("utf8")));
     stream.on("end", () => {
       inbox.push({ from: session.envelope.mailFrom ? session.envelope.mailFrom.address : "", to: session.envelope.rcptTo.map((r) => r.address), raw });
-      cb();
+      setTimeout(() => cb(), delayMs);
     });
   },
 });
@@ -94,6 +95,7 @@ beforeAll(async () => {
 });
 afterEach(() => {
   reject = null;
+  delayMs = 0;
   inbox.length = 0;
 });
 afterAll(async () => {
@@ -193,6 +195,22 @@ describe("delivery guarantees", () => {
     expect((await sendDueMail(s.app.db, cfg)).sent).toBe(1);
   });
 
+  it("a slow provider can't make a batch outlive its lease: each row is claimed just before it is sent (review #187)", async () => {
+    const { id } = await createForm("Slow", { notifyEmail: "staff@example.com" });
+    reject = "down";
+    for (let i = 0; i < 2; i++) await submit(id, { fullName: `A${i}`, email: "a@example.org" });
+    await settle();
+    reject = null;
+    await makeDue(id);
+    delayMs = 600; // each send outlasts the 500 ms lease below
+    const a = sendDueMail(s.app.db, cfg, { leaseMs: 500 });
+    await new Promise((r) => setTimeout(r, 550)); // A is still sending its first row
+    const b = sendDueMail(s.app.db, cfg, { leaseMs: 500 });
+    await Promise.all([a, b]);
+    expect(inbox).toHaveLength(2); // one email per submission, not three
+    expect((await rows(id)).map((r) => r.status)).toEqual(["sent", "sent"]);
+  });
+
   it("all recipients invalid: failed at once, with the reason, no retries", async () => {
     const { id } = await createForm("Bad list", { notifyEmail: "nobody, also nobody" });
     await submit(id, { fullName: "A", email: "a@example.org" });
@@ -255,6 +273,15 @@ describe("header safety", () => {
     expect(mailAddress("Ada <a@b.no>")).toBeNull();
     expect(mailAddress(" a@b.no ")).toBe("a@b.no");
     expect(parseRecipients("a@b.no, A@B.no; x\nc@d.no")).toEqual({ valid: ["a@b.no", "c@d.no"], invalid: ["x"] });
+    expect(parseMailbox('  "Paper Boy" <noreply@x.no> ')).toEqual({ name: "Paper Boy", address: "noreply@x.no" });
+    expect(parseMailbox("noreply@x.no")).toEqual({ address: "noreply@x.no" });
+    expect(parseMailbox("Name <a@x.no> trailing")).toBeNull();
+    expect(parseMailbox("Name <a@x.no>>")).toBeNull();
+    // The shape CodeQL flagged: a long run of spaces must answer at once.
+    const t0 = Date.now();
+    expect(parseMailbox(`;${" ".repeat(50_000)}x`)).toBeNull();
+    expect(submissionsUrl(`https://cms.example.com${"/".repeat(50_000)}`)).toBe("https://cms.example.com/submissions");
+    expect(Date.now() - t0).toBeLessThan(200);
     const m = renderSubmissionMail({ formName: "Form\r\nBcc: x@y.no", siteName: "Site", at: new Date(0), fields: [{ name: "q", label: "Q", kind: "text" }], values: { q: "<script>" }, adminUrl: "https://cms/submissions" });
     expect(m.subject).not.toMatch(/[\r\n]/);
     expect(m.html).toContain("&lt;script&gt;");
@@ -281,8 +308,10 @@ describe("configuration and dialects", () => {
   it("resend: posts the message to the HTTP API and surfaces its error", async () => {
     const spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response('{"id":"re_123"}', { status: 200 }));
     const msg = { from: { name: "CMS", address: "a@b.no" }, replyTo: { address: "v@x.no" }, to: [{ address: "s@x.no" }], subject: "S", text: "T", html: "<p>T</p>" };
-    expect(await sendMail({ kind: "resend", apiKey: "re_key" }, msg)).toEqual({ id: "re_123" });
+    expect(await sendMail({ kind: "resend", apiKey: "re_key" }, msg, 30_000, "mail_row1")).toEqual({ id: "re_123" });
     const [url, init] = spy.mock.calls[0]!;
+    // A retry of the same row is deduplicated by Resend.
+    expect((init!.headers as Record<string, string>)["idempotency-key"]).toBe("mail_row1");
     expect(url).toBe("https://api.resend.com/emails");
     expect((init!.headers as Record<string, string>).authorization).toBe("Bearer re_key");
     expect(JSON.parse(init!.body as string)).toMatchObject({ from: '"CMS" <a@b.no>', to: ["s@x.no"], reply_to: "v@x.no", subject: "S" });
@@ -322,6 +351,16 @@ describe("Settings → Email (part B)", () => {
   const resolved = async () => resolveMailRuntimeConfig(s.app.db, s.app.mailEnv);
   afterEach(async () => {
     await mail("POST", "", { provider: null, allowedDomains: [] }); // back to the env config
+  });
+
+  it("with env-only mail, saving just the allowed domains succeeds; a refused save writes nothing (review #187)", async () => {
+    const ok = await mail("POST", "", { allowedDomains: ["example.com"] });
+    expect(ok.statusCode, ok.body).toBe(200);
+    expect(ok.json()).toMatchObject({ source: "env", provider: null, allowedDomains: ["example.com"] });
+    // A provider without From is refused, and the domains sent with it are not half-saved.
+    const bad = await mail("POST", "", { provider: "smtp", smtpHost: "smtp.example.com", allowedDomains: ["other.org"] });
+    expect(bad.statusCode).toBe(400);
+    expect((await mail("GET", "")).json().allowedDomains).toEqual(["example.com"]);
   });
 
   it("is for every-site admins only", async () => {

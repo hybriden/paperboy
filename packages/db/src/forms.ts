@@ -266,8 +266,11 @@ export interface SubmitInput {
    * the form's own setting, then the stored instance setting, then this.
    */
   defaultRetentionDays?: number;
-  /** Set when the instance has a mail provider: queue the form's notification email. */
-  mail?: { maxPerFormPerHour: number };
+  /**
+   * The instance's mail settings, asked for only when this form would send
+   * email (it reads and decrypts settings); null = no provider, queue nothing.
+   */
+  mail?: () => Promise<{ maxPerFormPerHour: number } | null>;
 }
 
 /**
@@ -312,7 +315,9 @@ export async function submitForm(db: Database, input: SubmitInput): Promise<Subm
   // when the editor explicitly asked for it on this form.
   const meta = form.settings.captureMetadata ? (input.meta ?? {}) : {};
 
-  const mailQueued = !!input.mail && form.settings.notifyByEmail && form.settings.notifyEmail.trim() !== "";
+  const wantsMail = form.settings.notifyByEmail && form.settings.notifyEmail.trim() !== "";
+  const mail = wantsMail && input.mail ? await input.mail() : null;
+  const mailQueued = !!mail;
   try {
     // The notification is queued in the submission's own transaction: a crash
     // after the commit still leaves the row for the sender to pick up.
@@ -333,7 +338,7 @@ export async function submitForm(db: Database, input: SubmitInput): Promise<Subm
         await queueFormMail(
           tx,
           { submissionId, siteId: input.siteId, formId: input.formId, formName: form.name, recipients: form.settings.notifyEmail },
-          input.mail!.maxPerFormPerHour,
+          mail!.maxPerFormPerHour,
         );
       }
     });

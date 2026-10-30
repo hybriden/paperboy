@@ -7,6 +7,7 @@ import {
   parseRecipients,
   renderDigestMail,
   renderSubmissionMail,
+  submissionsUrl,
 } from "@paperboy/shared";
 import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { nanoid } from "nanoid";
@@ -63,7 +64,7 @@ export function resolveMailConfig(env: MailEnv, adminUrl: string): MailConfig | 
   if (!from) {
     throw new Error(`Refusing to start: MAIL_PROVIDER=${provider} needs MAIL_FROM, an address on a domain verified at the provider, e.g. MAIL_FROM="Paperboy <noreply@cms.example.com>".`);
   }
-  const base = { from, adminUrl: `${adminUrl.replace(/\/+$/, "")}/submissions`, maxPerFormPerHour: env.MAIL_MAX_PER_FORM_PER_HOUR ?? 20 };
+  const base = { from, adminUrl: submissionsUrl(adminUrl), maxPerFormPerHour: env.MAIL_MAX_PER_FORM_PER_HOUR ?? 20 };
   if (provider === "smtp") {
     const url = env.SMTP_URL && URL.canParse(env.SMTP_URL) ? new URL(env.SMTP_URL) : null;
     if (!url || (url.protocol !== "smtp:" && url.protocol !== "smtps:") || !url.hostname) {
@@ -80,7 +81,7 @@ export function resolveMailConfig(env: MailEnv, adminUrl: string): MailConfig | 
 
 /** One send may take this long; well under the claim lease, so a slow server can't outlive it. */
 export const MAIL_SEND_TIMEOUT_MS = 30_000;
-const LEASE = "2 minutes";
+const LEASE_MS = 120_000;
 /** Wait before attempt 2, 3, … after a failure; after the last, the row is failed. */
 export const MAIL_BACKOFF_MS = [60_000, 300_000, 1_800_000, 7_200_000, 21_600_000];
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
@@ -88,11 +89,11 @@ const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const isLoopback = (host: string): boolean => host === "localhost" || host === "::1" || host === "[::1]" || host.startsWith("127.");
 
 /** Hand one message to the provider. Throws with the provider's own words on failure. */
-export async function sendMail(transport: MailTransport, msg: MailMessage, timeoutMs = MAIL_SEND_TIMEOUT_MS): Promise<{ id?: string }> {
+export async function sendMail(transport: MailTransport, msg: MailMessage, timeoutMs = MAIL_SEND_TIMEOUT_MS, idempotencyKey?: string): Promise<{ id?: string }> {
   if (transport.kind === "resend") {
     const res = await fetch(RESEND_ENDPOINT, {
       method: "POST",
-      headers: { authorization: `Bearer ${transport.apiKey}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${transport.apiKey}`, "content-type": "application/json", ...(idempotencyKey ? { "idempotency-key": idempotencyKey } : {}) },
       body: JSON.stringify({
         from: formatMailbox(msg.from),
         to: msg.to.map(formatMailbox),
@@ -168,64 +169,82 @@ type Claimed = typeof mailDelivery.$inferSelect;
 
 /**
  * Send what is due: pending rows whose time has come, and sends whose lease ran
- * out (the process died mid-send). Each row is CLAIMED first, so two senders
- * (the submit route's immediate attempt, the ticker, a second API process)
- * never send the same row. `submissionId` narrows it to one submission's row.
+ * out (the process died mid-send). Rows are CLAIMED one at a time, right before
+ * each is sent, so a lease only ever covers one send (30 s at most, well under
+ * the lease) and two senders (the submit route's immediate attempt, the ticker,
+ * a second API process) never send the same row. The claim also bumps
+ * `attempts`, which fences the result: a sender whose lease ran out and was
+ * reclaimed can no longer write over the newer attempt. `submissionId` narrows
+ * it to one submission's row.
  */
 export async function sendDueMail(
   db: Database,
   cfg: MailConfig,
-  opts: { submissionId?: string; limit?: number } = {},
+  opts: { submissionId?: string; limit?: number; leaseMs?: number } = {},
 ): Promise<{ sent: number; failed: number; retrying: number }> {
-  const claimed = (await db.execute(sql`
-    UPDATE mail_delivery SET status = 'sending', lease_until = now() + ${LEASE}::interval, attempts = attempts + 1
-    WHERE id IN (
-      SELECT id FROM mail_delivery
-      WHERE ((status = 'pending' AND next_attempt_at <= now()) OR (status = 'sending' AND lease_until < now()))
-        ${opts.submissionId ? sql`AND submission_id = ${opts.submissionId}` : sql``}
-      ORDER BY next_attempt_at
-      LIMIT ${opts.limit ?? 50}
-      FOR UPDATE SKIP LOCKED
-    )
-    RETURNING id, kind, submission_id AS "submissionId", site_id AS "siteId", form_id AS "formId", form_name AS "formName",
-              recipients, attempts, digest_hour AS "digestHour"
-  `)) as unknown as Pick<Claimed, "id" | "kind" | "submissionId" | "siteId" | "formId" | "formName" | "recipients" | "attempts" | "digestHour">[];
-
   const out = { sent: 0, failed: 0, retrying: 0 };
-  for (const row of claimed) {
-    const done = (set: Partial<Claimed>) =>
-      db.update(mailDelivery).set({ leaseUntil: null, ...set }).where(and(eq(mailDelivery.id, row.id), eq(mailDelivery.status, "sending")));
-    const { valid, invalid } = recipientsFor(row.recipients, cfg.allowedDomains);
-    if (valid.length === 0) {
-      // Retrying cannot fix the address list; say exactly what was wrong.
-      await done({ status: "failed", lastError: `No valid recipient in notifyEmail: "${invalid.join(", ") || row.recipients}"` });
-      out.failed++;
-      continue;
-    }
-    try {
-      const msg = await composeMessage(db, cfg, row);
-      if (!msg) {
-        await done({ status: "suppressed", lastError: null }); // a digest with nothing left to report
-        continue;
-      }
-      const { id } = await sendMail(cfg.transport, { ...msg, to: valid.map((address) => ({ address })) });
-      const partial = invalid.length ? `Skipped invalid recipients: ${invalid.join(", ")}` : null;
-      await done({ status: "sent", sentAt: new Date(), providerId: id ?? null, lastError: partial });
-      out.sent++;
-    } catch (err) {
-      const error = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-      const wait = MAIL_BACKOFF_MS[row.attempts - 1];
-      if (wait === undefined) {
-        await done({ status: "failed", lastError: error });
-        out.failed++;
-      } else {
-        await done({ status: "pending", lastError: error, nextAttemptAt: new Date(Date.now() + wait) });
-        out.retrying++;
-      }
-      console.error(`[paperboy] form email ${row.id} (form ${row.formId}) failed, attempt ${row.attempts}: ${error}`);
-    }
+  for (let n = 0; n < (opts.limit ?? 50); n++) {
+    const row = (
+      (await db.execute(sql`
+        UPDATE mail_delivery SET status = 'sending', lease_until = now() + ${opts.leaseMs ?? LEASE_MS} * interval '1 millisecond', attempts = attempts + 1
+        WHERE id = (
+          SELECT id FROM mail_delivery
+          WHERE ((status = 'pending' AND next_attempt_at <= now()) OR (status = 'sending' AND lease_until < now()))
+            ${opts.submissionId ? sql`AND submission_id = ${opts.submissionId}` : sql``}
+          ORDER BY next_attempt_at
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        )
+        RETURNING id, kind, submission_id AS "submissionId", site_id AS "siteId", form_id AS "formId", form_name AS "formName",
+                  recipients, attempts, digest_hour AS "digestHour"
+      `)) as unknown as Pick<Claimed, "id" | "kind" | "submissionId" | "siteId" | "formId" | "formName" | "recipients" | "attempts" | "digestHour">[]
+    )[0];
+    if (!row) break;
+    const r = await sendClaimed(db, cfg, row);
+    out[r]++;
   }
   return out;
+}
+
+/** Send one claimed row and record the outcome, if this attempt still owns it. */
+async function sendClaimed(
+  db: Database,
+  cfg: MailConfig,
+  row: Pick<Claimed, "id" | "kind" | "submissionId" | "siteId" | "formId" | "formName" | "recipients" | "attempts" | "digestHour">,
+): Promise<"sent" | "failed" | "retrying"> {
+  const done = (set: Partial<Claimed>) =>
+    db
+      .update(mailDelivery)
+      .set({ leaseUntil: null, ...set })
+      .where(and(eq(mailDelivery.id, row.id), eq(mailDelivery.status, "sending"), eq(mailDelivery.attempts, row.attempts)));
+  const { valid, invalid } = recipientsFor(row.recipients, cfg.allowedDomains);
+  if (valid.length === 0) {
+    // Retrying cannot fix the address list; say exactly what was wrong.
+    await done({ status: "failed", lastError: `No valid recipient in notifyEmail: "${invalid.join(", ") || row.recipients}"` });
+    return "failed";
+  }
+  try {
+    const msg = await composeMessage(db, cfg, row);
+    if (!msg) {
+      await done({ status: "suppressed", lastError: null }); // a digest with nothing left to report
+      return "sent";
+    }
+    // The row id makes a provider-side retry after a timeout a no-op where the API supports it (Resend).
+    const { id } = await sendMail(cfg.transport, { ...msg, to: valid.map((address) => ({ address })) }, MAIL_SEND_TIMEOUT_MS, row.id);
+    const partial = invalid.length ? `Skipped invalid recipients: ${invalid.join(", ")}` : null;
+    await done({ status: "sent", sentAt: new Date(), providerId: id ?? null, lastError: partial });
+    return "sent";
+  } catch (err) {
+    const error = (err instanceof Error ? err.message : String(err)).slice(0, 500);
+    console.error(`[paperboy] form email ${row.id} (form ${row.formId}) failed, attempt ${row.attempts}: ${error}`);
+    const wait = MAIL_BACKOFF_MS[row.attempts - 1];
+    if (wait === undefined) {
+      await done({ status: "failed", lastError: error });
+      return "failed";
+    }
+    await done({ status: "pending", lastError: error, nextAttemptAt: new Date(Date.now() + wait) });
+    return "retrying";
+  }
 }
 
 /**

@@ -62,11 +62,17 @@ export function parseRecipients(list: string): { valid: string[]; invalid: strin
 
 /** `noreply@x.no` or `Name <noreply@x.no>` (MAIL_FROM), or null when it is neither. */
 export function parseMailbox(value: string): MailAddress | null {
-  const m = /^\s*(?:"?([^"<]*?)"?\s*<([^<>]+)>|([^<>]+))\s*$/.exec(value);
-  if (!m) return null;
-  const address = mailAddress(m[2] ?? m[3]);
+  // Split by hand, not by one regex: admin input, and the obvious pattern backtracks on long runs of spaces (CodeQL).
+  const v = value.trim();
+  const lt = v.lastIndexOf("<");
+  if (lt === -1) {
+    const address = mailAddress(v);
+    return address ? { address } : null;
+  }
+  if (!v.endsWith(">") || v.indexOf(">") !== v.length - 1) return null;
+  const address = mailAddress(v.slice(lt + 1, -1));
   if (!address) return null;
-  const name = headerSafe(m[1] ?? "").replace(/["\\]/g, "");
+  const name = headerSafe(v.slice(0, lt)).replace(/["\\]/g, "");
   return name ? { name, address } : { address };
 }
 
@@ -135,4 +141,11 @@ export function renderDigestMail(m: { formName: string; siteName: string; count:
     text: `${line}\n\nRead them in admin: ${m.adminUrl}`,
     html: `<p>${escapeHtml(line)}</p><p><a href="${escapeHtml(m.adminUrl)}">Read them in admin</a></p>`,
   };
+}
+
+/** `{base}/submissions`, whatever trailing slashes the configured base carries (a loop: `/\/+$/` backtracks). */
+export function submissionsUrl(base: string): string {
+  let end = base.length;
+  while (end > 0 && base[end - 1] === "/") end--;
+  return `${base.slice(0, end)}/submissions`;
 }

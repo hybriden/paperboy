@@ -1,4 +1,4 @@
-import { parseMailbox } from "@paperboy/shared";
+import { parseMailbox, submissionsUrl } from "@paperboy/shared";
 import { eq } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
@@ -80,44 +80,53 @@ export interface MailSettingsInput {
 const HOST_RE = /^[a-z0-9.-]+$/i;
 const DOMAIN_RE = /^(?=.{1,253}$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
 
-/** Set the CMS mail settings (every-site admins). Each field: undefined = unchanged. */
+/**
+ * Set the CMS mail settings (every-site admins). Each field: undefined =
+ * unchanged. Everything is validated BEFORE the first write, so a refused save
+ * leaves nothing half-saved.
+ */
 export async function setMailSettings(db: Database, ctx: AccessContext, input: MailSettingsInput): Promise<void> {
   requirePermission(ctx, "user.manage");
+  let domains: string[] | undefined;
   if (input.allowedDomains !== undefined) {
-    const domains = [...new Set(input.allowedDomains.map((d) => d.trim().toLowerCase().replace(/^@/, "")).filter(Boolean))];
+    domains = [...new Set(input.allowedDomains.map((d) => d.trim().toLowerCase().replace(/^@/, "")).filter(Boolean))];
     const bad = domains.filter((d) => !DOMAIN_RE.test(d));
     if (bad.length) throw Errors.badRequest(`Not a domain: ${bad.join(", ")}. Write domains like "example.com", one per entry.`);
+  }
+
+  const touched = ["provider", "from", "smtpHost", "smtpPort", "smtpSecurity", "smtpUser"].some((k) => input[k as keyof MailSettingsInput] !== undefined);
+  const prev = (await getStoredMailSettings(db)).config;
+  let next: StoredConfig | null = null;
+  if (input.provider !== null && (touched || input.secret !== undefined)) {
+    const provider = input.provider ?? prev?.provider;
+    if (!provider) throw Errors.badRequest('Choose a provider first: "smtp" or "resend".');
+    const from = input.from ?? prev?.from ?? "";
+    if (!parseMailbox(from)) {
+      throw Errors.badRequest('From must be an address on a domain verified at the provider, e.g. "Paperboy <noreply@cms.example.com>".');
+    }
+    next = { provider, from: from.trim() };
+    if (provider === "smtp") {
+      const host = (input.smtpHost ?? prev?.smtpHost ?? "").trim().toLowerCase();
+      if (!HOST_RE.test(host)) throw Errors.badRequest('SMTP host must be a host name, e.g. "smtp.example.com".');
+      const security = input.smtpSecurity ?? prev?.smtpSecurity ?? "starttls";
+      const port = input.smtpPort ?? prev?.smtpPort ?? (security === "tls" ? 465 : 587);
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw Errors.badRequest("SMTP port must be 1-65535 (465 for TLS, 587 for STARTTLS).");
+      Object.assign(next, { smtpHost: host, smtpPort: port, smtpSecurity: security, smtpUser: (input.smtpUser ?? prev?.smtpUser ?? "").trim() });
+    }
+  }
+
+  // Valid: write.
+  if (domains !== undefined) {
     if (domains.length) await putSetting(db, DOMAINS_KEY, { domains });
     else await deleteSetting(db, DOMAINS_KEY);
   }
-
   if (input.provider === null) {
     await deleteSetting(db, CONFIG_KEY);
     await deleteSetting(db, SECRET_KEY);
     return;
   }
-  const stored = await getStoredMailSettings(db);
-  const touched = ["provider", "from", "smtpHost", "smtpPort", "smtpSecurity", "smtpUser"].some((k) => input[k as keyof MailSettingsInput] !== undefined);
-  if (!touched && input.secret === undefined) return;
-
-  const prev = stored.config;
-  const provider = input.provider ?? prev?.provider;
-  if (!provider) throw Errors.badRequest('Choose a provider first: "smtp" or "resend".');
-  const from = input.from ?? prev?.from ?? "";
-  if (!parseMailbox(from)) {
-    throw Errors.badRequest('From must be an address on a domain verified at the provider, e.g. "Paperboy <noreply@cms.example.com>".');
-  }
-  const next: StoredConfig = { provider, from: from.trim() };
-  if (provider === "smtp") {
-    const host = (input.smtpHost ?? prev?.smtpHost ?? "").trim().toLowerCase();
-    if (!HOST_RE.test(host)) throw Errors.badRequest('SMTP host must be a host name, e.g. "smtp.example.com".');
-    const security = input.smtpSecurity ?? prev?.smtpSecurity ?? "starttls";
-    const port = input.smtpPort ?? prev?.smtpPort ?? (security === "tls" ? 465 : 587);
-    if (!Number.isInteger(port) || port < 1 || port > 65535) throw Errors.badRequest("SMTP port must be 1-65535 (465 for TLS, 587 for STARTTLS).");
-    Object.assign(next, { smtpHost: host, smtpPort: port, smtpSecurity: security, smtpUser: (input.smtpUser ?? prev?.smtpUser ?? "").trim() });
-  }
+  if (!next) return;
   await putSetting(db, CONFIG_KEY, next);
-
   // The secret follows its endpoint: a new one is saved bound to it; an old one
   // bound elsewhere is dropped instead of being carried to a new host.
   const secret = input.secret?.trim();
@@ -151,7 +160,7 @@ export interface ResolvedMailConfig {
 export async function resolveMailRuntimeConfig(db: Database, base: MailEnvConfig): Promise<ResolvedMailConfig> {
   const stored = await getStoredMailSettings(db);
   const allowedDomains = stored.allowedDomains.length ? stored.allowedDomains : undefined;
-  const adminUrl = `${base.adminUrl.replace(/\/+$/, "")}/submissions`;
+  const adminUrl = submissionsUrl(base.adminUrl);
   let problem: string | null = null;
   const c = stored.config;
   const from = c ? parseMailbox(c.from) : null;

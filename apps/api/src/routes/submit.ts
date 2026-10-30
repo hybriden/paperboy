@@ -7,6 +7,7 @@ import {
   resolveDefaultLocale,
   resolveMailRuntimeConfig,
   sendDueMail,
+  type MailConfig,
   submitForm,
   verifyDeliveryKey,
   audit,
@@ -241,7 +242,8 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
       const idempotencyKey =
         typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].slice(0, 120) : undefined;
 
-      const mail = (await resolveMailRuntimeConfig(app.db, app.mailEnv)).config;
+      // Resolved only if the form sends email (it reads and decrypts settings).
+      let mail: MailConfig | null = null;
       const result = await submitForm(app.db, {
         siteId: resolved.siteId,
         formId: documentId,
@@ -254,7 +256,7 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
         },
         idempotencyKey,
         defaultRetentionDays: app.formConfig.retentionDays,
-        mail: mail ? { maxPerFormPerHour: mail.maxPerFormPerHour } : undefined,
+        mail: async () => (mail = (await resolveMailRuntimeConfig(app.db, app.mailEnv)).config),
       });
 
       if (!result.ok) {

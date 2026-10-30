@@ -1522,10 +1522,13 @@ export function MailPanel() {
     setDomains(null);
   };
 
+  // Only a change to the sending setup itself names a provider: saving just the
+  // allowed domains on an env-configured instance must not create a CMS config.
+  const setupTouched = provider !== null || from !== null || host !== null || port !== null || security !== null || user !== null || secret.trim() !== "";
   const save = useMutation({
     mutationFn: () =>
       api.setMailConfig({
-        provider: provider ?? (status?.provider ? undefined : active),
+        provider: provider ?? (status?.provider || !setupTouched ? undefined : active),
         from: from ?? undefined,
         ...(active === "smtp"
           ? {
