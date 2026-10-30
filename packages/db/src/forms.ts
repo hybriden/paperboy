@@ -16,6 +16,7 @@ import { Errors } from "./errors.js";
 import { type AccessContext, requirePermission } from "./scope.js";
 import { resolveDefaultLocale } from "./content.js";
 import { publishWindowOpen } from "./delivery.js";
+import { queueFormMail } from "./mail.js";
 import { contentItem, contentVersion, formSubmission, locale as localeTable, siteSetting } from "./schema.js";
 
 /**
@@ -43,6 +44,8 @@ export interface FormSettings {
   captureMetadata: boolean;
   notifyWebhooks: boolean;
   notifyEmail: string;
+  /** "Send email from Paperboy": email notifyEmail on every submission (independent of notifyWebhooks). */
+  notifyByEmail: boolean;
 }
 
 export interface PublishedForm {
@@ -173,6 +176,7 @@ export async function loadPublishedForm(
       captureMetadata: firstDefined((v) => (typeof v.captureMetadata === "boolean" ? v.captureMetadata : null)) === true,
       notifyWebhooks: firstDefined((v) => (typeof v.notifyWebhooks === "boolean" ? v.notifyWebhooks : null)) === true,
       notifyEmail: firstDefined((v) => (typeof v.notifyEmail === "string" && v.notifyEmail ? v.notifyEmail : null)) ?? "",
+      notifyByEmail: firstDefined((v) => (typeof v.notifyByEmail === "boolean" ? v.notifyByEmail : null)) === true,
     },
   };
 }
@@ -262,6 +266,11 @@ export interface SubmitInput {
    * the form's own setting, then the stored instance setting, then this.
    */
   defaultRetentionDays?: number;
+  /**
+   * The instance's mail settings, asked for only when this form would send
+   * email (it reads and decrypts settings); null = no provider, queue nothing.
+   */
+  mail?: () => Promise<{ maxPerFormPerHour: number } | null>;
 }
 
 /**
@@ -270,7 +279,7 @@ export interface SubmitInput {
  * to (WCAG 3.3.1 identifies errors per field). A flat error string can't carry that.
  */
 export type SubmitResult =
-  | { ok: true; submissionId: string; form: PublishedForm; replayed: boolean; values: Record<string, unknown> }
+  | { ok: true; submissionId: string; form: PublishedForm; replayed: boolean; values: Record<string, unknown>; mailQueued?: boolean }
   | { ok: false; fields: Record<string, string> };
 
 /**
@@ -306,18 +315,32 @@ export async function submitForm(db: Database, input: SubmitInput): Promise<Subm
   // when the editor explicitly asked for it on this form.
   const meta = form.settings.captureMetadata ? (input.meta ?? {}) : {};
 
+  const wantsMail = form.settings.notifyByEmail && form.settings.notifyEmail.trim() !== "";
+  const mail = wantsMail && input.mail ? await input.mail() : null;
+  const mailQueued = !!mail;
   try {
-    await db.insert(formSubmission).values({
-      submissionId,
-      siteId: input.siteId,
-      formId: input.formId,
-      formCv: form.cv,
-      locale: form.locale,
-      values: parsed.data,
-      fieldSnapshot: fieldSnapshot(form.spec),
-      meta,
-      idempotencyKey: input.idempotencyKey ?? null,
-      expiresAt,
+    // The notification is queued in the submission's own transaction: a crash
+    // after the commit still leaves the row for the sender to pick up.
+    await db.transaction(async (tx) => {
+      await tx.insert(formSubmission).values({
+        submissionId,
+        siteId: input.siteId,
+        formId: input.formId,
+        formCv: form.cv,
+        locale: form.locale,
+        values: parsed.data,
+        fieldSnapshot: fieldSnapshot(form.spec),
+        meta,
+        idempotencyKey: input.idempotencyKey ?? null,
+        expiresAt,
+      });
+      if (mailQueued) {
+        await queueFormMail(
+          tx,
+          { submissionId, siteId: input.siteId, formId: input.formId, formName: form.name, recipients: form.settings.notifyEmail },
+          mail!.maxPerFormPerHour,
+        );
+      }
     });
   } catch (err) {
     // Concurrent duplicate of the same key: the unique index won the race, so
@@ -332,7 +355,7 @@ export async function submitForm(db: Database, input: SubmitInput): Promise<Subm
     }
     throw err;
   }
-  return { ok: true, submissionId, form, replayed: false, values: parsed.data };
+  return { ok: true, submissionId, form, replayed: false, values: parsed.data, mailQueued };
 }
 
 /* --------------------------- management reads ----------------------------- */
@@ -360,11 +383,29 @@ const toRow = (r: typeof formSubmission.$inferSelect): SubmissionRow => ({
   expiresAt: r.expiresAt ? r.expiresAt.toISOString() : null,
 });
 
-/** Forms in the active site that have a published or draft version, with counts. */
-export async function listForms(
-  db: Database,
-  ctx: AccessContext,
-): Promise<{ formId: string; name: string; submissions: number; lastAt: string | null }[]> {
+/**
+ * Who hears about a form's submissions. `email`: "on" (will send), "off" (the
+ * switch), "no-recipients", or "no-provider" (the instance has no mail
+ * configured; only reported when the caller knows, i.e. passes mailConfigured).
+ */
+export interface FormNotifyStatus {
+  published: boolean;
+  email: "on" | "off" | "no-recipients" | "no-provider";
+  recipients: string;
+  webhooks: boolean;
+  lastEmail: { status: string; at: string; error: string | null; nextAttemptAt: string | null } | null;
+}
+
+export interface FormListRow {
+  formId: string;
+  name: string;
+  submissions: number;
+  lastAt: string | null;
+  notify: FormNotifyStatus;
+}
+
+/** Forms in the active site that have a published or draft version, with counts and notification status. */
+export async function listForms(db: Database, ctx: AccessContext, opts: { mailConfigured?: boolean } = {}): Promise<FormListRow[]> {
   requirePermission(ctx, "submission.read");
   const items = await db
     .select({ documentId: contentItem.documentId, type: contentItem.type })
@@ -386,14 +427,36 @@ export async function listForms(
     .from(formSubmission)
     .where(and(eq(formSubmission.siteId, ctx.siteId), inArray(formSubmission.formId, live)))
     .groupBy(formSubmission.formId);
+  // Each form's latest email, sent or not (a suppressed row says nothing new).
+  const lastMail = (await db.execute(sql`
+    SELECT DISTINCT ON (form_id) form_id AS "formId", status, coalesce(sent_at, created_at) AS at, last_error AS error,
+           CASE WHEN status = 'pending' THEN next_attempt_at END AS "nextAttemptAt"
+    FROM mail_delivery
+    WHERE site_id = ${ctx.siteId} AND form_id IN (${sql.join(live.map((id) => sql`${id}`), sql`, `)}) AND status <> 'suppressed'
+    ORDER BY form_id, created_at DESC
+  `)) as unknown as { formId: string; status: string; at: string; error: string | null; nextAttemptAt: string | null }[];
+  // What a submission would do now: the PUBLISHED form's settings.
+  const published = new Map(await Promise.all(live.map(async (id) => [id, await loadPublishedForm(db, ctx.siteId, id, "")] as const)));
 
   return live.map((formId) => {
     const c = counts.find((x) => x.formId === formId);
+    const settings = published.get(formId)?.settings;
+    const recipients = settings?.notifyEmail.trim() ?? "";
+    const m = lastMail.find((x) => x.formId === formId);
     return {
       formId,
       name: names.find((n) => n.documentId === formId)?.name ?? formId,
       submissions: Number(c?.n ?? 0),
       lastAt: c?.lastAt ? new Date(c.lastAt).toISOString() : null,
+      notify: {
+        published: !!settings,
+        email: !settings?.notifyByEmail ? "off" : !recipients ? "no-recipients" : opts.mailConfigured === false ? "no-provider" : "on",
+        recipients,
+        webhooks: settings?.notifyWebhooks ?? false,
+        lastEmail: m
+          ? { status: m.status, at: new Date(m.at).toISOString(), error: m.error, nextAttemptAt: m.nextAttemptAt ? new Date(m.nextAttemptAt).toISOString() : null }
+          : null,
+      },
     };
   });
 }

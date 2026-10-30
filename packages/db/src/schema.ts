@@ -514,6 +514,30 @@ export const formSubmission = pgTable(
   }),
 );
 
+/**
+ * Form notification emails, queued in the submission's own transaction
+ * (migration 0039, issue #186). No message body is stored: it is rendered from
+ * the submission on every attempt, and the row cascades away with it.
+ */
+export const mailDelivery = pgTable("mail_delivery", {
+  id: text("id").primaryKey(),
+  kind: text("kind").notNull(), // submission | digest
+  submissionId: text("submission_id"), // null for a digest
+  siteId: text("site_id").notNull(),
+  formId: text("form_id").notNull(),
+  formName: text("form_name").notNull(),
+  recipients: text("recipients").notNull(), // the form's notifyEmail when queued
+  status: text("status").notNull().default("pending"), // pending | sending | sent | failed | suppressed
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  digestHour: timestamp("digest_hour", { withTimezone: true }), // digest: the hour it summarises
+  lastError: text("last_error"),
+  providerId: text("provider_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+});
+
 /** Site-wide key/value settings (e.g. the start page served at "/"). */
 export const siteSetting = pgTable("site_setting", {
   key: text("key").primaryKey(),

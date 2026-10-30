@@ -11,3 +11,4 @@ export * from "./language.js";
 export * from "./redact.js";
 export * from "./redirects.js";
 export * from "./experiments.js";
+export * from "./mail.js";

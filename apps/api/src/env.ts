@@ -123,6 +123,17 @@ const EnvSchema = z.object({
   // How long submissions live when a form declares no retention of its own.
   // Storage limitation is a GDPR requirement, so the default is finite: one year.
   SUBMISSION_RETENTION_DAYS: z.coerce.number().int().positive().default(365),
+  // Form notification email (a form's "Send email from Paperboy" + notifyEmail).
+  // Unset MAIL_PROVIDER = no form email. smtp works with practically every
+  // provider (SMTP_URL=smtps://user:pass@host:465); resend uses its HTTP API.
+  // MAIL_FROM must be on a domain verified at the provider (SPF/DKIM/DMARC).
+  // A half-configured provider refuses to boot (resolveMailConfig in @paperboy/db).
+  MAIL_PROVIDER: z.preprocess(emptyToUndefined, z.string().optional()),
+  SMTP_URL: z.preprocess(emptyToUndefined, z.string().optional()),
+  RESEND_API_KEY: z.preprocess(emptyToUndefined, z.string().optional()),
+  MAIL_FROM: z.preprocess(emptyToUndefined, z.string().optional()),
+  // Submission emails per form per clock hour; past it, one summary per hour.
+  MAIL_MAX_PER_FORM_PER_HOUR: z.coerce.number().int().positive().default(20),
   // Prune the two append-only log tables so they can't grow without bound.
   // webhook_delivery is pure delivery noise with no compliance value → a safe
   // 90-day default. audit_log IS the compliance/forensics trail, so it defaults

@@ -1,8 +1,9 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
+import { useSearchParams } from "react-router-dom";
 import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName, slugifyValue } from "@paperboy/shared";
-import { ACTIVE_SITE_KEY, type AiProviderName, type AiReasoningEffortName, api, ApiError, type FormRow, type ManagedUser, type EditableSeoFile, type SiteRow } from "../../lib/api.js";
+import { ACTIVE_SITE_KEY, type AiProviderName, type AiReasoningEffortName, type MailProviderName, api, ApiError, type FormRow, type ManagedUser, type EditableSeoFile, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
 import { useUser } from "../../lib/user.js";
@@ -1489,6 +1490,185 @@ export function AgentReviewPanel() {
   );
 }
 
+/* ------------------------------- Form email ------------------------------- */
+/**
+ * Settings → Email: where form notification email goes out (#186). The saved
+ * settings replace the environment's as a whole; the password / API key is
+ * write-only and bound to the host and user it was entered for.
+ */
+export function MailPanel() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const cfg = useQuery({ queryKey: ["mail-config"], queryFn: ({ signal }) => api.mailConfig(signal) });
+  const status = cfg.data;
+  // null = untouched (shows the saved value).
+  const [provider, setProvider] = useState<MailProviderName | null>(null);
+  const [from, setFrom] = useState<string | null>(null);
+  const [host, setHost] = useState<string | null>(null);
+  const [port, setPort] = useState<string | null>(null);
+  const [security, setSecurity] = useState<"tls" | "starttls" | null>(null);
+  const [user, setUser] = useState<string | null>(null);
+  const [secret, setSecret] = useState("");
+  const [domains, setDomains] = useState<string | null>(null);
+  const active: MailProviderName = provider ?? status?.provider ?? "smtp";
+  const reset = () => {
+    setProvider(null);
+    setFrom(null);
+    setHost(null);
+    setPort(null);
+    setSecurity(null);
+    setUser(null);
+    setSecret("");
+    setDomains(null);
+  };
+
+  // Only a change to the sending setup itself names a provider: saving just the
+  // allowed domains on an env-configured instance must not create a CMS config.
+  const setupTouched = provider !== null || from !== null || host !== null || port !== null || security !== null || user !== null || secret.trim() !== "";
+  const save = useMutation({
+    mutationFn: () =>
+      api.setMailConfig({
+        provider: provider ?? (status?.provider || !setupTouched ? undefined : active),
+        from: from ?? undefined,
+        ...(active === "smtp"
+          ? {
+              smtpHost: host ?? undefined,
+              smtpPort: port !== null && port.trim() ? Number(port) : undefined,
+              smtpSecurity: security ?? undefined,
+              smtpUser: user ?? undefined,
+            }
+          : {}),
+        secret: secret.trim() ? secret.trim() : undefined, // blank = keep
+        allowedDomains: domains !== null ? domains.split(/[\s,;]+/).filter(Boolean) : undefined,
+      }),
+    onSuccess: (s) => {
+      qc.setQueryData(["mail-config"], s);
+      void qc.invalidateQueries({ queryKey: ["forms"] });
+      reset();
+      toast.success("Email settings saved", s.problem ?? (s.source === "db" ? "Send a test email to check them." : undefined));
+    },
+    onError: (e) => toast.error("Couldn’t save", (e as Error).message),
+  });
+  const remove = useMutation({
+    mutationFn: () => api.setMailConfig({ provider: null }),
+    onSuccess: (s) => {
+      qc.setQueryData(["mail-config"], s);
+      void qc.invalidateQueries({ queryKey: ["forms"] });
+      reset();
+      toast.success("Saved settings removed", s.source === "env" ? "Form email uses the environment settings." : "No email provider: forms send no email.");
+    },
+    onError: (e) => toast.error("Couldn’t remove", (e as Error).message),
+  });
+  const test = useMutation({
+    mutationFn: () => api.mailTest(),
+    onSuccess: (r) => (r.ok ? toast.success("Test email sent", `Check the inbox of ${r.to}.`) : toast.error("Test email failed", r.message ?? "Unknown error")),
+    onError: (e) => toast.error("Couldn’t send", (e as Error).message),
+  });
+
+  const statusText = !status
+    ? "…"
+    : status.source === "db"
+      ? `Sending with the settings saved here (${status.provider === "resend" ? "Resend" : `SMTP ${status.smtpHost ?? ""}`}, from ${status.from ?? ""}).`
+      : status.source === "env"
+        ? `Sending with the environment settings (${status.env.provider === "resend" ? "Resend" : `SMTP ${status.env.smtpHost ?? ""}`}, from ${status.env.from ?? ""}). Settings saved here replace them.`
+        : "No email provider: forms that should email their recipients send nothing.";
+  const secretSaved = status?.secretSet && provider === null;
+
+  return (
+    <PanelShell hint="Form notification email: a form with “Send email from Paperboy” on emails its recipients on every new submission. SMTP works with practically every provider (Resend, Postmark, SendGrid, Mailgun, Amazon SES, Brevo…); Resend can also be used over its API. The From address must be on a domain verified at the provider.">
+      <div className="space-y-4 p-4">
+        <div className="flex items-center gap-2 text-sm">
+          <span className={`h-2 w-2 rounded-full ${status && status.source !== "none" ? "bg-published" : "bg-draft"}`} />
+          <span className="text-muted">{statusText}</span>
+        </div>
+        {status?.problem && <Callout tone="caution" title="The saved settings aren’t in use">{status.problem}</Callout>}
+        <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-sm" style={{ minWidth: 170 }}>
+              <span className="field-label">Provider</span>
+              <select className="field-input" aria-label="Email provider" value={active} onChange={(e) => setProvider(e.target.value as MailProviderName)}>
+                <option value="smtp">SMTP</option>
+                <option value="resend">Resend (API)</option>
+              </select>
+            </label>
+            <label className="grow text-sm" style={{ minWidth: 280 }}>
+              <span className="field-label">From</span>
+              <input aria-label="From" className="field-input" placeholder="Paperboy <noreply@cms.example.com>" value={from ?? status?.from ?? ""} onChange={(e) => setFrom(e.target.value)} />
+            </label>
+          </div>
+          {active === "smtp" && (
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="grow text-sm" style={{ minWidth: 220 }}>
+                <span className="field-label">SMTP host</span>
+                <input aria-label="SMTP host" className="field-input" placeholder="smtp.example.com" value={host ?? status?.smtpHost ?? ""} onChange={(e) => setHost(e.target.value)} />
+              </label>
+              <label className="text-sm" style={{ minWidth: 170 }}>
+                <span className="field-label">Security</span>
+                <select aria-label="Security" className="field-input" value={security ?? status?.smtpSecurity ?? "starttls"} onChange={(e) => setSecurity(e.target.value as "tls" | "starttls")}>
+                  <option value="starttls">STARTTLS (587)</option>
+                  <option value="tls">TLS (465)</option>
+                </select>
+              </label>
+              <label className="text-sm" style={{ width: 100 }}>
+                <span className="field-label">Port</span>
+                <input
+                  aria-label="Port"
+                  className="field-input"
+                  inputMode="numeric"
+                  placeholder={(security ?? status?.smtpSecurity) === "tls" ? "465" : "587"}
+                  value={port ?? (status?.smtpPort ? String(status.smtpPort) : "")}
+                  onChange={(e) => setPort(e.target.value)}
+                />
+              </label>
+              <label className="grow text-sm" style={{ minWidth: 200 }}>
+                <span className="field-label">User</span>
+                <input aria-label="SMTP user" className="field-input" autoComplete="off" value={user ?? status?.smtpUser ?? ""} onChange={(e) => setUser(e.target.value)} />
+              </label>
+            </div>
+          )}
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="grow text-sm" style={{ minWidth: 280 }}>
+              <span className="field-label">{active === "smtp" ? "Password" : "API key"}</span>
+              <input
+                aria-label={active === "smtp" ? "SMTP password" : "Resend API key"}
+                className="field-input"
+                type="password"
+                autoComplete="off"
+                placeholder={secretSaved ? "•••••••• (leave blank to keep)" : active === "smtp" ? "" : "re_…"}
+                value={secret}
+                onChange={(e) => setSecret(e.target.value)}
+              />
+            </label>
+            <label className="grow text-sm" style={{ minWidth: 280 }}>
+              <span className="field-label">Allowed recipient domains</span>
+              <input
+                aria-label="Allowed recipient domains"
+                className="field-input"
+                placeholder="any (e.g. example.com, example.no)"
+                value={domains ?? status?.allowedDomains.join(", ") ?? ""}
+                onChange={(e) => setDomains(e.target.value)}
+              />
+            </label>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button className="btn-primary" disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</button>
+            <button type="button" className="btn-subtle" disabled={test.isPending || status?.source === "none"} onClick={() => test.mutate()}>
+              {test.isPending ? "Sending…" : "Send test email"}
+            </button>
+            {status?.provider && (
+              <button type="button" className="btn-subtle" disabled={remove.isPending} onClick={() => remove.mutate()}>Remove saved settings</button>
+            )}
+          </div>
+          <p className="text-xs text-muted">
+            The password or key is stored encrypted and never shown again. Changing the host, port, security or user clears it, so it is only ever sent where it was entered for.
+            {" "}Send test email goes to your own address through the active settings. At most {status?.maxPerFormPerHour ?? 20} emails per form per hour; the rest arrive as one summary.
+          </p>
+        </form>
+      </div>
+    </PanelShell>
+  );
+}
+
 /* ----------------------------- Stock images ------------------------------- */
 export function StockImagesPanel() {
   const toast = useToast();
@@ -2071,13 +2251,15 @@ export function WebhooksPanel() {
 export function FormSubmissionsPanel() {
   const { user } = useUser();
   const canManage = user.permissions.includes("submission.manage");
-  const [openForm, setOpenForm] = useState<FormRow | null>(null);
+  // The open form lives in the URL (?form=<id>), so a notification email can link straight to it.
+  const [params, setParams] = useSearchParams();
   const forms = useQuery({ queryKey: ["forms"], queryFn: ({ signal }) => api.forms(signal) });
+  const openForm = forms.data?.find((f) => f.formId === params.get("form")) ?? null;
 
   if (openForm) {
     return (
       <section className="mb-8">
-        <button className="btn-ghost mb-3 px-1 text-sm" onClick={() => setOpenForm(null)}>
+        <button className="btn-ghost mb-3 px-1 text-sm" onClick={() => setParams({})}>
           <Icon.Chevron width={14} height={14} className="rotate-180" /> All forms
         </button>
         <div className="mb-3">
@@ -2107,20 +2289,52 @@ export function FormSubmissionsPanel() {
         rows.map((f) => (
           <div key={f.formId} className="flex items-center gap-3 border-b border-line px-4 py-3 text-sm last:border-0">
             <Icon.Block width={15} height={15} className="shrink-0 text-muted" />
-            <span className="min-w-0 flex-1 truncate font-medium text-fg">{f.name}</span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate font-medium text-fg">{f.name}</div>
+              <FormNotifyLine notify={f.notify} />
+            </div>
+            {f.notify.published && f.notify.email !== "on" && !f.notify.webhooks && <Badge tone="caution">Nobody is notified</Badge>}
             <span className="shrink-0 text-[11px] text-muted">
               {f.lastAt ? `last ${new Date(f.lastAt).toLocaleString()}` : "nothing yet"}
             </span>
             <Badge tone={f.submissions > 0 ? "primary" : "default"}>
               <span className="tnum">{f.submissions}</span>
             </Badge>
-            <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setOpenForm(f)}>
+            <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setParams({ form: f.formId })}>
               Open
             </button>
           </div>
         ))
       )}
     </PanelShell>
+  );
+}
+
+/** Who hears about this form's submissions, and how the last email went. */
+function FormNotifyLine({ notify }: { notify: FormRow["notify"] }) {
+  const when = (iso: string) => new Date(iso).toLocaleString();
+  const last = notify.lastEmail;
+  const email =
+    notify.email === "off"
+      ? "Email off"
+      : notify.email === "no-recipients"
+        ? "Email on, but no recipients"
+        : notify.email === "no-provider"
+          ? "Email on, but no email provider is set up (Settings → Email)"
+          : `Email to ${notify.recipients}`;
+  const lastText = !last
+    ? null
+    : last.status === "sent"
+      ? `last sent ${when(last.at)}${last.error ? ` (${last.error})` : ""}`
+      : last.status === "failed"
+        ? `last email failed: ${last.error ?? "unknown error"}`
+        : last.nextAttemptAt && last.error
+          ? `last attempt failed (${last.error}), retrying ${when(last.nextAttemptAt)}`
+          : "sending…";
+  return (
+    <div className={`truncate text-[11px] ${last?.status === "failed" ? "text-danger" : "text-muted"}`} title={[email, lastText].filter(Boolean).join(" · ")}>
+      {!notify.published ? "Not published" : [email, notify.webhooks ? "integrations" : null, notify.email === "on" ? lastText : null].filter(Boolean).join(" · ")}
+    </div>
   );
 }
 

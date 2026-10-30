@@ -5,6 +5,9 @@ import {
   loadPublishedForm,
   recordFormConversions,
   resolveDefaultLocale,
+  resolveMailRuntimeConfig,
+  sendDueMail,
+  type MailConfig,
   submitForm,
   verifyDeliveryKey,
   audit,
@@ -239,6 +242,8 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
       const idempotencyKey =
         typeof req.headers["idempotency-key"] === "string" ? req.headers["idempotency-key"].slice(0, 120) : undefined;
 
+      // Resolved only if the form sends email (it reads and decrypts settings).
+      let mail: MailConfig | null = null;
       const result = await submitForm(app.db, {
         siteId: resolved.siteId,
         formId: documentId,
@@ -251,6 +256,7 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
         },
         idempotencyKey,
         defaultRetentionDays: app.formConfig.retentionDays,
+        mail: async () => (mail = (await resolveMailRuntimeConfig(app.db, app.mailEnv)).config),
       });
 
       if (!result.ok) {
@@ -269,8 +275,15 @@ export async function registerSubmitRoutes(appBase: FastifyInstance): Promise<vo
           // including in the audit trail a data-subject erasure cannot reach.
           ip: form.settings.captureMetadata ? req.ip : undefined,
         });
-        // Notification is an integration concern: Paperboy has no mail
-        // transport, so this rides the existing signed webhook pipe.
+        // The notification email is already queued (in the submission's own
+        // transaction); try it now, and leave anything that fails to the ticker.
+        // Never awaited: a mail error must not fail or delay the visitor's 202.
+        if (result.mailQueued && mail) {
+          void sendDueMail(app.db, mail, { submissionId: result.submissionId }).catch((err) =>
+            app.log.error({ err }, "form email attempt failed"),
+          );
+        }
+        // Integrations ride the signed webhook pipe, independently of the email.
         if (form.settings.notifyWebhooks) {
           void dispatchWebhooks(app.db, {
             event: "form.submitted",

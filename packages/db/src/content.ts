@@ -1087,7 +1087,11 @@ export async function createContent(
   // Initial field values take the same verdict an update would (one chokepoint),
   // BEFORE anything is inserted — a 422 leaves no shell behind. Validation reads
   // must not run inside the transaction below (see Queryable).
-  const data = req.data ? await prepareDraftData(db, ctx, type, reg, effectiveSiteId, req.locale, req.data, req.allowLanguageMismatch) : {};
+  // A boolean's defaultValue seeds a NEW item, once; what the caller sent wins.
+  // Existing items never get it (a field added to a type in use stays unset).
+  const defaults = Object.fromEntries(type.fields.filter((f) => f.type === "boolean" && f.defaultValue !== undefined).map((f) => [f.name, f.defaultValue]));
+  const initial = { ...defaults, ...req.data };
+  const data = Object.keys(initial).length ? await prepareDraftData(db, ctx, type, reg, effectiveSiteId, req.locale, initial, req.allowLanguageMismatch) : {};
 
   // Atomic create under the sibling-slug lock (S2-M9 TOCTOU). autoSlug runs inside
   // the tx and sees this row's own uncommitted item (so knownSiteId is passed) plus

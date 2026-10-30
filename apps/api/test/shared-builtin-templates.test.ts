@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 /** The Form's operational settings: instructions to the server, never content.
  *  Delivering them would publish the site's notification recipients. */
-const FORM_SERVER_ONLY_FIELDS = new Set(["notifyWebhooks", "retentionDays", "captureMetadata", "notifyEmail"]);
+const FORM_SERVER_ONLY_FIELDS = new Set(["notifyWebhooks", "retentionDays", "captureMetadata", "notifyEmail", "notifyByEmail"]);
 
 import {
   BUILTIN_TYPE_TEMPLATES,
@@ -104,9 +104,9 @@ describe("Built-in type-template library", () => {
     expect(byGroup("Content")).toEqual(["fields", "intro", "submitLabel", "title"]);
     expect(byGroup("After submitting")).toEqual(["confirmation", "confirmationText", "redirectTo"]);
     expect(byGroup("Protection & privacy")).toEqual(
-      ["captureMetadata", "notifyEmail", "notifyWebhooks", "retentionDays", "spamProtection"],
+      ["captureMetadata", "notifyByEmail", "notifyEmail", "notifyWebhooks", "retentionDays", "spamProtection"],
     );
-    expect(form.fields).toHaveLength(12);
+    expect(form.fields).toHaveLength(13);
   });
 
   it("the teaser/promote pattern is consistent across listed page types", () => {

@@ -73,6 +73,14 @@ export interface FormRow {
   name: string;
   submissions: number;
   lastAt: string | null;
+  /** Who hears about a submission: email ("no-provider" = the instance has none) and webhooks. */
+  notify: {
+    published: boolean;
+    email: "on" | "off" | "no-recipients" | "no-provider";
+    recipients: string;
+    webhooks: boolean;
+    lastEmail: { status: string; at: string; error: string | null; nextAttemptAt: string | null } | null;
+  };
 }
 /** One form submission — visitor PERSONAL DATA. `fieldSnapshot` is the form's
  *  fields as they were AT THE TIME OF ANSWERING, so a row stays readable (and a
@@ -112,6 +120,23 @@ export interface AiConfigStatus {
   model: string | null;
   baseUrl: string | null;
   reasoningEffort: AiReasoningEffortName | null;
+}
+export type MailProviderName = "smtp" | "resend";
+/** Form email settings (Settings → Email). The password / API key is never returned. */
+export interface MailStatus {
+  source: "db" | "env" | "none";
+  /** Why the saved CMS config isn't in use, if it isn't. */
+  problem: string | null;
+  provider: MailProviderName | null;
+  from: string | null;
+  smtpHost: string | null;
+  smtpPort: number | null;
+  smtpSecurity: "tls" | "starttls" | null;
+  smtpUser: string | null;
+  secretSet: boolean;
+  allowedDomains: string[];
+  env: { provider: MailProviderName | null; from: string | null; smtpHost: string | null };
+  maxPerFormPerHour: number;
 }
 /** Write-only stock image provider config status (the key itself is never returned). */
 export interface StockConfigStatus {
@@ -343,6 +368,18 @@ export const api = {
     request<AiConfigStatus>("GET", "/manage/site/ai", undefined, signal),
   setAiConfig: (body: { provider?: AiProviderName; apiKey?: string | null; model?: string | null; baseUrl?: string | null; reasoningEffort?: AiReasoningEffortName | null }) =>
     request<AiConfigStatus>("POST", "/manage/site/ai", body),
+  mailConfig: (signal?: AbortSignal) => request<MailStatus>("GET", "/manage/site/mail", undefined, signal),
+  setMailConfig: (body: {
+    provider?: MailProviderName | null;
+    from?: string;
+    smtpHost?: string;
+    smtpPort?: number;
+    smtpSecurity?: "tls" | "starttls";
+    smtpUser?: string;
+    secret?: string | null;
+    allowedDomains?: string[];
+  }) => request<MailStatus>("POST", "/manage/site/mail", body),
+  mailTest: () => request<{ ok: boolean; to: string; source: "db" | "env" | "none"; message: string | null }>("POST", "/manage/site/mail/test", {}),
   aiTest: () =>
     request<{ ok: boolean; provider: AiProviderName; model: string; message: string | null }>("POST", "/manage/site/ai/test", {}),
   aiModels: () =>

@@ -1,4 +1,4 @@
-import type { AccessContext, AiEnv, Database, Perspective } from "@paperboy/db";
+import type { AccessContext, AiEnv, Database, MailEnvConfig, Perspective } from "@paperboy/db";
 import type { SessionUser } from "@paperboy/shared";
 
 declare module "fastify" {
@@ -16,6 +16,8 @@ declare module "fastify" {
     /** Public form submissions: the anti-spam secret, the per-form rate ceiling,
      *  and the retention fallback for forms that declare none. */
     formConfig: { turnstileSecret?: string; submitRateMax: number; retentionDays: number };
+    /** Form notification email: the env side; resolve with resolveMailRuntimeConfig. */
+    mailEnv: MailEnvConfig;
   }
   interface FastifyRequest {
     user: SessionUser | null;
