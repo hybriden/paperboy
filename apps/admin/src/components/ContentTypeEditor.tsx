@@ -3,7 +3,7 @@ import { useMemo, useState } from "react";
 import { ContentTypeDef, SEO_FIELD_NAMES, type ContentKind, type FieldOption, FieldType, type FieldValidation, type SchemaFieldGap, type SchemaFieldSuggestion, resolveSchemaSuggestions, schemaFieldGaps, seoRoleEligible } from "@paperboy/shared";
 import { api, ApiError } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
-import { AI_OFF_HINT, useAiEnabled } from "../lib/useAiStatus.js";
+import { useAiEnabled } from "../lib/useAiStatus.js";
 import { TypeIcon, resolveIconBase, usePhosphorIconNames } from "../lib/typeIcons.js";
 import { Badge } from "./ui/badge.js";
 import { Dialog, DialogContent } from "./ui/dialog.js";
@@ -573,16 +573,12 @@ export function ContentTypeEditor({ mode, initial, allTypes, usage, open, onOpen
                 </label>
               )}
             </div>
-            {unknownType && !aiSuggestions && (
+            {unknownType && aiEnabled && !aiSuggestions && (
               <div className="mb-3 flex items-center gap-2 rounded-(--radius) border border-line bg-panel/60 px-2.5 py-2 text-xs text-muted">
                 <span className="min-w-0 flex-1">“{schemaType.trim()}” isn’t in the built-in catalog — AI can propose the fields its rich result needs.</span>
-                {aiEnabled ? (
-                  <button type="button" className="btn-subtle px-2 py-1 text-xs" disabled={suggest.isPending} onClick={() => suggest.mutate()}>
-                    {suggest.isPending ? "Asking…" : "Suggest fields with AI"}
-                  </button>
-                ) : (
-                  <span title={AI_OFF_HINT}>{AI_OFF_HINT}</span>
-                )}
+                <button type="button" className="btn-subtle px-2 py-1 text-xs" disabled={suggest.isPending} onClick={() => suggest.mutate()}>
+                  {suggest.isPending ? "Asking…" : "Suggest fields with AI"}
+                </button>
               </div>
             )}
             {gaps && (

@@ -739,7 +739,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
 
   // Seed this locale from the default-locale version, AI-translating the text
   // fields (text/markdown) + name; other fields (richtext, blocks, references…)
-  // are copied as a starting point. Falls back to copying when AI is offline.
+  // are copied as a starting point. With no AI provider it only copies.
   const translate = useMutation({
     mutationFn: async () => {
       const src = sourceData;
@@ -769,7 +769,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           }
         }
       }
-      const { results, provider } = texts.length
+      const { results, provider } = texts.length && aiEnabled
         ? await api.aiTranslate(texts, locale)
         : { results: [] as string[], provider: "fallback" as const };
       // Start from a verbatim copy (untranslatable fields: contentArea, refs,
@@ -803,7 +803,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       toast.success(
         res.usedFallback ? "Draft seeded from source" : "Translated draft created",
         res.usedFallback
-          ? `${AI_OFF_HINT} Text was copied for manual translation.`
+          ? "Translate the copied text, then publish."
           : "Review the AI translation, then publish.",
       );
     },
@@ -1486,7 +1486,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
         </label>
 
         <div className="ml-auto flex items-center gap-2">
-          {(showAi || canCreate) && !mobile && (
+          {(showAi || canCreate) && aiEnabled && !mobile && (
             <Menu>
               {/* The writing assistant polishes copy, writes headlines and
                   standfirsts, and drafts on a brief. */}
@@ -1503,7 +1503,6 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
                 )}
                 {hasField("metaTitle") && <MenuItem onSelect={() => ai.mutate({ task: "meta_title", field: "metaTitle" })}>Generate SEO title</MenuItem>}
                 {hasField("metaDescription") && <MenuItem onSelect={() => ai.mutate({ task: "meta_description", field: "metaDescription" })}>Generate SEO description</MenuItem>}
-                {(showAi || canCreate) && !aiEnabled && <MenuItem disabled>{AI_OFF_HINT}</MenuItem>}
               </MenuContent>
             </Menu>
           )}
@@ -1768,8 +1767,8 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             {canEdit && (
               <button className="btn-primary px-3 py-1 text-xs" disabled={translate.isPending} onClick={() => translate.mutate()}>
                 {translate.isPending
-                  ? "Translating…"
-                  : `Translate from ${locales.find((l) => l.code === sourceLocale)?.displayName ?? sourceLocale}`}
+                  ? aiEnabled ? "Translating…" : "Copying…"
+                  : `${aiEnabled ? "Translate" : "Copy"} from ${locales.find((l) => l.code === sourceLocale)?.displayName ?? sourceLocale}`}
               </button>
             )}
             <button className="btn-subtle px-3 py-1 text-xs" onClick={() => setHideTranslateOffer(true)}>
@@ -2662,8 +2661,7 @@ function OverlayAi({
   // The value the field held before the last AI apply — one-click Undo, since
   // plain text/markdown fields (unlike TipTap) have no editor history.
   const [prev, setPrev] = useState<string | null>(null);
-  // Improve/variants/rewrite all need a real model — with no key the whole
-  // strip is replaced by an honest hint instead of buttons that 409.
+  // Improve/variants/rewrite all need a real model: with no provider the strip is hidden.
   const aiEnabled = useAiEnabled();
 
   function apply(v: string) {
@@ -2712,13 +2710,7 @@ function OverlayAi({
     }
   }
 
-  if (!aiEnabled) {
-    return (
-      <div className="mt-3 border-t border-line pt-2.5">
-        <p className="text-xs text-muted">{AI_OFF_HINT}</p>
-      </div>
-    );
-  }
+  if (!aiEnabled) return null;
 
   return (
     <div className="mt-3 border-t border-line pt-2.5">

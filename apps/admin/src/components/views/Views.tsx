@@ -5,7 +5,7 @@ import { type DashboardData, api } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { relativeTime } from "../../lib/relative-time.js";
 import { useIsMobile } from "../../lib/useMediaQuery.js";
-import { AI_OFF_HINT, useAiEnabled } from "../../lib/useAiStatus.js";
+import { useAiEnabled } from "../../lib/useAiStatus.js";
 import { useUser } from "../../lib/user.js";
 import type { ShellOutlet } from "../Shell.js";
 import { Dialog, DialogContent } from "../ui/dialog.js";
@@ -101,15 +101,17 @@ function AltTextGaps({ images, total }: { images: DashboardData["imagesMissingAl
             <img src={editing.url} alt="" className="mb-3 max-h-48 w-full rounded border border-line object-contain" />
             <div className="flex items-center justify-between">
               <label className="field-label" htmlFor="dash-alt">Alt text (accessibility)</label>
-              <button
-                type="button"
-                className="btn-subtle px-1.5 py-0.5 text-[11px]"
-                disabled={describe.isPending || !aiEnabled}
-                title={aiEnabled ? "Describe the image with AI" : AI_OFF_HINT}
-                onClick={() => describe.mutate(editing.documentId)}
-              >
-                {describe.isPending ? "Looking…" : "Describe image"}
-              </button>
+              {aiEnabled && (
+                <button
+                  type="button"
+                  className="btn-subtle px-1.5 py-0.5 text-[11px]"
+                  disabled={describe.isPending}
+                  title="Describe the image with AI"
+                  onClick={() => describe.mutate(editing.documentId)}
+                >
+                  {describe.isPending ? "Looking…" : "Describe image"}
+                </button>
+              )}
             </div>
             <input id="dash-alt" ref={altRef} aria-label="Alt text" className="field-input mb-4" value={alt} onChange={(e) => setAlt(e.target.value)} placeholder="Describe the image" />
             <div className="flex justify-end gap-2">

@@ -141,8 +141,7 @@ function Btn({
 function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolean }) {
   const toast = useToast();
   const [pending, setPending] = useState(false);
-  // No key → the menu is off with an honest hint, instead of a "result" that
-  // would just be the selection with a capital letter.
+  // No AI provider → no menu (the fallback "result" would be the selection with a capital letter).
   const aiEnabled = useAiEnabled();
 
   async function run(task: AiTask, label: string) {
@@ -174,13 +173,14 @@ function AiMenu({ editor, hasSelection }: { editor: Editor; hasSelection: boolea
     }
   }
 
+  if (!aiEnabled) return null;
   return (
     <Menu>
       <MenuTrigger
         className={`flex h-7 items-center gap-1 rounded px-1.5 text-xs ${pending ? "text-accent-700" : "text-muted hover:bg-line/60 hover:text-fg"} disabled:opacity-50`}
         aria-label="Writing assistant (selection)"
-        disabled={pending || !hasSelection || !aiEnabled}
-        title={!aiEnabled ? AI_OFF_HINT : hasSelection ? "Writing assistant — works on the selection" : "Select some text first"}
+        disabled={pending || !hasSelection}
+        title={hasSelection ? "Writing assistant — works on the selection" : "Select some text first"}
         onMouseDown={(e: React.MouseEvent) => e.preventDefault()}
       >
         {pending ? "Working…" : "Writing assistant"}
