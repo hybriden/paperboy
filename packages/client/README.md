@@ -29,7 +29,8 @@ const { items, total } = await cms.list<BlogPost>("BlogPost", {
   filter: { author: "Jane" },
 });
 
-// Full-text search (same no-leak chokepoint as everything else)
+// Site search (same no-leak chokepoint as everything else): pages only unless
+// `type` is given, words stemmed per locale, the last word matched as a prefix
 const hits = await cms.search("local ai", { type: "BlogPost", limit: 5 });
 
 // Hierarchical URLs, the start page, globals, one document by id

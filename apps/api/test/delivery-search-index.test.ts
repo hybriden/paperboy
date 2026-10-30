@@ -91,9 +91,13 @@ describe("delivery search index is usable by the query", () => {
       return (await tx`
         EXPLAIN (FORMAT JSON)
         SELECT document_id FROM content_version
-        WHERE fts @@ websearch_to_tsquery('simple', 'salmon')
+        WHERE fts @@ ((websearch_to_tsquery(pb_search_config('nb'), 'laks')
+                        && (to_tsquery(pb_search_config('nb'), 'røk:*') || to_tsquery('simple', 'røk:*')))
+                      || websearch_to_tsquery(pb_search_config('en'), 'salmon'))
       `) as unknown as { "QUERY PLAN": unknown }[];
     });
+    // The index predicate deliverySearch sends (0038): the stemmed query of every
+    // locale in the fallback chain OR-ed into one tsquery, the last word as a prefix.
     expect(JSON.stringify(plan)).toContain("content_version_fts_v2_idx");
   });
 
@@ -113,7 +117,7 @@ describe("delivery search index is usable by the query", () => {
       .split("\n")
       .filter((line) => !line.trim().startsWith("//") && !line.trim().startsWith("*") && !line.trim().startsWith("/*"))
       .join("\n");
-    expect(body, "the search query should match on v.fts").toContain("v.fts @@ websearch_to_tsquery");
+    expect(body, "the search query should match on v.fts").toContain("v.fts @@ (${sql.join(matches.map");
     expect(body, "ranking should read the stored column too").toContain("ts_rank(v.fts");
     expect(body, "an inlined to_tsvector cannot use the index").not.toContain("to_tsvector(");
   });
