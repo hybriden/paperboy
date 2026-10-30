@@ -520,7 +520,7 @@ export function createClient(options: PaperboyClientOptions) {
       return r.body ?? { items: [], total: 0, cv: 0 };
     },
 
-    /** Full-text search over delivered content (name + field text). */
+    /** Site search over delivered content (name + public field text): pages only unless `type` is given, words stemmed per locale, the last word matched as a prefix. */
     async search<TData = Record<string, unknown>>(query: string, opts: SearchOptions = {}): Promise<{ items: Delivered<TData>[]; total: number }> {
       const r = await request<{ items: Delivered<TData>[]; total: number }>("/search", { q: query, type: opts.type, locale: opts.locale, limit: opts.limit });
       return r.body ?? { items: [], total: 0 };

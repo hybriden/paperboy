@@ -1,4 +1,4 @@
-import { type SQLWrapper, and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
+import { type SQL, type SQLWrapper, and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { type ContentTypeDef, type DeliveryContent, type ExperimentArmKey, type ExperimentStatus, type FieldDef, type PublicPageEntry, SCHEMA_LIST_PROPS, SCHEMA_WRAPPER_TYPES, SEO_CONVENTION, type SharedBlockResolver, formSpecFrom, isCreativeWorkType, isFormType, isSafeUrl, pageDates, dateSortKey, scalarToString, sortByRule, tiptapToPlainText } from "@paperboy/shared";
 import { absoluteAssetUrl, getAssetRow } from "./assets.js";
 import { localeChainFrom } from "./content.js";
@@ -1285,11 +1285,17 @@ export interface DeliveryListOptions {
   filter?: Record<string, string>;
 }
 
-/** Word tokens under Postgres' 'simple' text-search config: lowercase, split on
- *  non-alphanumeric. No stemming or stop-words (that's what 'simple' does), so a
- *  whole-token membership check faithfully reproduces an AND-of-terms match. */
-function tokenizeSimple(s: string): string[] {
-  return s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+/**
+ * A search query as tsquery SQL for the language `localeExpr` names (migration
+ * 0038's pb_search_config): `words` in websearch syntax, stemmed, AND the
+ * typed-so-far `prefix` matched as the start of a stemmed or plain word.
+ */
+function searchQuerySql(localeExpr: SQL, words: string, prefix: string | null): SQL {
+  const cfg = sql`pb_search_config(${localeExpr})`;
+  const ws = sql`websearch_to_tsquery(${cfg}, ${words})`;
+  if (!prefix) return ws;
+  const p = `${prefix}:*`;
+  return sql`(${ws} && (to_tsquery(${cfg}, ${p}) || to_tsquery('simple', ${p})))`;
 }
 
 /** Flatten every string/number/boolean leaf of a (public) value into acc. */
@@ -1569,23 +1575,25 @@ export async function deliverySearch(
   const q = query.trim();
   if (!q) return { items: [], total: 0 };
 
-  // NEGATION IS A PUBLIC-TEXT OPERATION and must never reach the SQL tsquery:
+  // The last word also matches as a prefix (search as you type) when it is a
+  // plain word: not negated, not inside a quoted phrase, not an `or`.
+  const words = q.split(/\s+/).filter(Boolean);
+  const last = words.at(-1)!;
+  const plain = /^[\p{L}\p{N}]+$/u.test(last) && last.toLowerCase() !== "or";
+  const prefix = plain && (q.match(/"/g) ?? []).length % 2 === 0 && words.at(-2)?.toLowerCase() !== "or" ? last : null;
+  const head = prefix ? words.slice(0, -1) : words;
+
+  // NEGATION IS A PUBLIC-TEXT OPERATION and must never reach the SQL prefilter:
   // `v.fts` indexes the whole `data` JSONB, private fields included, and a
   // `-term` the SQL honours turns the public key into a word-membership oracle
   // over private text (`?q=Kiwifruit -bluewhale → []` ⇒ "bluewhale" is in the
-  // private field). Negated words are applied to the SANITIZED PUBLIC text
-  // (`negated` below), so a private match can neither include nor exclude a document.
-  const words = q.split(/\s+/).filter(Boolean);
-  const positiveQuery = words.filter((w) => !w.startsWith("-")).join(" ");
+  // private field). The whole query, negations included, is decided on the
+  // SANITIZED PUBLIC text below, so a private match can neither include nor
+  // exclude a document.
+  const positive = head.filter((w) => !w.startsWith("-")).join(" ");
   // A query of only negations has nothing to match on; refusing it beats letting
   // the bare exclusion run against private text.
-  if (!positiveQuery) return { items: [], total: 0 };
-  const negated = tokenizeSimple(
-    words
-      .filter((w) => w.startsWith("-"))
-      .map((w) => w.slice(1))
-      .join(" "),
-  );
+  if (!positive && !prefix) return { items: [], total: 0 };
   const ctx = new DeliveryCtx(db, siteId).warm(perspective);
   const chain = await ctx.localeChain(loc, perspective);
   const max = Math.min(Math.max(limit, 1), 100);
@@ -1594,21 +1602,22 @@ export async function deliverySearch(
   // the window and then re-check each candidate against its SANITIZED PUBLIC text
   // below, dropping any hit that matched ONLY on a private field — otherwise the
   // hit/no-hit signal is a content-presence oracle over private data (M2).
-  // Matches against the STORED generated tsvector column + its GIN index
-  // (0017_delivery_search_tsvector.sql). Ranking reads the same column, so a
-  // candidate row's `data` JSONB is never re-tokenized at query time — that
-  // recomputation, not a missing index, was the cost here (295.9ms → 17.6ms on
-  // 40k versions). The column's expression is the migration's single source of
-  // truth; don't inline to_tsvector(...) again or the index stops being used.
+  // Matches against the STORED tsvector column + its GIN index (0018; stemmed per
+  // locale since 0038). Each locale in the chain is queried in its own language,
+  // as its rows were indexed; the first predicate ORs them into one tsquery the
+  // index can answer, the second pairs each with its locale. Don't inline
+  // to_tsvector(...) here or the index stops being used. Without a type only pages come back: a shared block or a
+  // global has no URL to link a result to.
+  const matches = chain.map((c) => [c, searchQuerySql(sql`${c}`, positive, prefix)] as const);
   const rows = (await db.execute(sql`
-    SELECT DISTINCT v.document_id AS id,
-           MAX(ts_rank(v.fts, websearch_to_tsquery('simple', ${positiveQuery}))) AS rank
+    SELECT v.document_id AS id,
+           MAX(ts_rank(v.fts, CASE v.locale ${sql.join(matches.map(([c, tsq]) => sql`WHEN ${c} THEN ${tsq}`), sql` `)} END)) AS rank
     FROM content_version v
     JOIN content_item i ON i.document_id = v.document_id AND i.deleted_at IS NULL AND i.site_id = ${siteId}
-    WHERE v.fts @@ websearch_to_tsquery('simple', ${positiveQuery})
-      AND v.locale IN (${sql.join(chain.map((c) => sql`${c}`), sql`, `)})
+    WHERE v.fts @@ (${sql.join(matches.map(([, tsq]) => tsq), sql` || `)})
+      AND (${sql.join(matches.map(([c, tsq]) => sql`(v.locale = ${c} AND v.fts @@ ${tsq})`), sql` OR `)})
       AND ${perspective === "published" ? sql`v.is_current_published` : sql`(v.status = 'draft' OR v.is_current_published)`}
-      ${typeName ? sql`AND i.type = ${typeName}` : sql``}
+      ${typeName ? sql`AND i.type = ${typeName}` : sql`AND i.kind = 'page'`}
     GROUP BY v.document_id
     ORDER BY rank DESC
     LIMIT ${max * 5}
@@ -1627,30 +1636,40 @@ export async function deliverySearch(
     }
   }
   await primeReferences(ctx, perspective, roots, 0);
-  // Query terms under the 'simple' config (lowercase, word-token split, no
-  // stemming/stop-words). A candidate is kept only if every positive term appears
-  // in its public text and no negated term does — both directions decided on
-  // public text alone, so private content can neither surface nor filter.
-  const terms = tokenizeSimple(positiveQuery);
   const out: DeliveryContent[] = [];
-  for (const r of rows) {
-    if (out.length >= max) break;
+  for (let i = 0; i < rows.length && out.length < max; i += max) {
     // Chokepoint re-validates (publish window, perspective, locale fallback) and
     // returns PUBLIC fields only.
-    const resolved = await resolveContent(ctx, perspective, r.id, loc, 0);
-    if (!resolved) continue;
-    if (terms.length || negated.length) {
-      const parts: string[] = [];
-      collectStrings(resolved.name, parts);
-      collectStrings(resolved.data, parts);
-      if (resolved.seo) collectStrings(resolved.seo, parts);
-      const hay = new Set(tokenizeSimple(parts.join(" ")));
-      if (!terms.every((t) => hay.has(t))) continue; // matched only on private text
-      if (negated.some((t) => hay.has(t))) continue; // excluded on PUBLIC text only
+    const batch: DeliveryContent[] = [];
+    for (const r of rows.slice(i, i + max)) {
+      const resolved = await resolveContent(ctx, perspective, r.id, loc, 0);
+      if (resolved) batch.push(resolved);
     }
-    out.push(resolved);
+    const keep = await matchPublicText(db, batch, head.join(" "), prefix);
+    for (const [j, item] of batch.entries()) if (keep.has(j) && out.length < max) out.push(item);
   }
   return { items: out, total: out.length };
+}
+
+/**
+ * Which items the query matches on their PUBLIC text alone (name, delivered
+ * data, seo), through the same pb_search_vector the index is built with, in the
+ * language of the variant each was delivered in. One round trip per batch.
+ */
+async function matchPublicText(db: Database, items: DeliveryContent[], words: string, prefix: string | null): Promise<Set<number>> {
+  if (!items.length) return new Set();
+  const texts = items.map((it, i) => {
+    const parts: string[] = [];
+    collectStrings(it.data, parts);
+    if (it.seo) collectStrings(it.seo, parts);
+    return { i, l: it.locale, n: it.name, t: parts.join(" ") };
+  });
+  const hits = (await db.execute(sql`
+    SELECT (e->>'i')::int AS i
+    FROM jsonb_array_elements(${JSON.stringify(texts)}::jsonb) e
+    WHERE pb_search_vector(e->>'l', e->>'n', e->>'t') @@ ${searchQuerySql(sql`e->>'l'`, words, prefix)}
+  `)) as unknown as { i: number }[];
+  return new Set(hits.map((h) => h.i));
 }
 
 /**
