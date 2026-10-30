@@ -187,6 +187,12 @@ const FieldDefShape = z.object({
   group: z.string().min(1).max(60).default("Content"),
   helpText: z.string().max(300).optional(),
   /**
+   * For boolean: the value a NEW item starts with. Applied once, when the item
+   * is created (createContent), never to existing content — so adding a field
+   * with a default to a type in use changes nothing already written.
+   */
+  defaultValue: z.boolean().optional(),
+  /**
    * SEO meaning of this field, for the delivered `seo`/`jsonLd` contract. Lets
    * ANY field declare its role (decoupled from field names) — delivery reads
    * the value of the field tagged "title"/"description"/"image"/etc. Explicit
@@ -271,8 +277,12 @@ const ContentTypeDefShape = z
   });
 
 /** The cross-field rules every definition must satisfy, strict or stored. */
-const withTypeRules = <T extends z.ZodType<{ fields: Array<{ name: string; seoRole?: string }> }>>(schema: T): T =>
+const withTypeRules = <T extends z.ZodType<{ fields: Array<{ name: string; type: string; seoRole?: string; defaultValue?: boolean }> }>>(schema: T): T =>
   schema
+    .refine((t) => t.fields.every((f) => f.defaultValue === undefined || f.type === "boolean"), {
+      message: 'defaultValue is only supported on boolean fields, e.g. { "type": "boolean", "defaultValue": true }.',
+      path: ["fields"],
+    })
     // Field names must be unique within a type (else dataSchemaFor / delivery collide).
     .refine(
       (t) => new Set(t.fields.map((f) => f.name)).size === t.fields.length,

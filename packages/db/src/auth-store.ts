@@ -820,7 +820,7 @@ export async function runAuditRetention(db: Database, days: number, now: Date = 
  * one-site Admin's log never shows sign-ins, tokens or the shared model.
  * (user.* is filed by its route: under the site only when a site Admin acts.)
  */
-const INSTANCE_ACTIONS = /^(auth|contenttype|type_template|locale|mcptoken|mcp\.oauth)\.|^site\.(create|rename|delete|ai_config|stock_config|agent_review)$/;
+const INSTANCE_ACTIONS = /^(auth|contenttype|type_template|locale|mcptoken|mcp\.oauth)\.|^site\.(create|rename|delete|ai_config|stock_config|agent_review|mail_config)$/;
 
 export async function audit(
   db: Database,

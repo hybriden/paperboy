@@ -12,7 +12,7 @@ import { Secret, TOTP } from "otpauth";
 
 /** A ciphertext's purpose, mixed in as AES-GCM additional authenticated data so
  *  a value encrypted for one slot cannot be decrypted in another. */
-export type SecretPurpose = "totp" | "ai.key" | "stock.key";
+export type SecretPurpose = "totp" | "ai.key" | "stock.key" | "mail.secret";
 
 const ISSUER = "Paperboy";
 

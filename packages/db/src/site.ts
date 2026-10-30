@@ -21,12 +21,12 @@ const AI_PROVIDER_KEY = "aiProvider";
 const AI_BASE_URL_KEY = "aiBaseUrl";
 const AI_REASONING_KEY = "aiReasoningEffort";
 
-async function getSetting<T>(db: Database, key: string): Promise<T | null> {
+export async function getSetting<T>(db: Database, key: string): Promise<T | null> {
   const rows = await db.select().from(siteSetting).where(eq(siteSetting.key, key)).limit(1);
   return rows[0] ? (rows[0].value as T) : null;
 }
 
-async function putSetting(db: Database, key: string, value: unknown): Promise<void> {
+export async function putSetting(db: Database, key: string, value: unknown): Promise<void> {
   await db
     .insert(siteSetting)
     .values({ key, value: value as object, updatedAt: new Date() })

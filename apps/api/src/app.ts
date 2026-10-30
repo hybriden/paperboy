@@ -23,8 +23,12 @@ import {
   runRedirectRetention,
   runOAuthClientRetention,
   runExperimentTicker,
+  runMailDeliveryRetention,
   runSubmissionRetention,
   runWebhookDeliveryRetention,
+  resolveMailConfig,
+  resolveMailRuntimeConfig,
+  sendDueMail,
 } from "@paperboy/db";
 import Fastify, { type FastifyInstance, type FastifyRequest, type FastifyServerOptions } from "fastify";
 import {
@@ -132,6 +136,11 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
     submitRateMax: env.NODE_ENV === "test" ? 100_000 : env.FORM_SUBMIT_RATE_MAX,
     retentionDays: env.SUBMISSION_RETENTION_DAYS,
   });
+  // Form notification email. The env side is validated here (a half-configured
+  // provider refuses to boot); Settings → Email can override it as a unit, so
+  // every use resolves the two together (resolveMailRuntimeConfig).
+  const adminUrl = env.PUBLIC_URL ?? env.CORS_ORIGIN;
+  app.decorate("mailEnv", { env: resolveMailConfig(env, adminUrl), adminUrl, maxPerFormPerHour: env.MAIL_MAX_PER_FORM_PER_HOUR });
 
   await app.register(cookie, { secret: env.SESSION_SECRET });
   await app.register(cors, { origin: env.CORS_ORIGIN, credentials: true });
@@ -315,6 +324,20 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
       60_000,
     );
 
+    // Form notification email: sends what is queued and retries failures with
+    // backoff. Claims rows first, so it never doubles up with the submit
+    // route's immediate attempt (or another process).
+    ticker(
+      "form email",
+      async () => {
+        const { config } = await resolveMailRuntimeConfig(db, app.mailEnv);
+        if (!config) return;
+        const r = await sendDueMail(db, config);
+        if (r.sent || r.failed || r.retrying) app.log.info(r, "form email sent");
+      },
+      60_000,
+    );
+
     // Submission retention sweep. In-process and ON BY DEFAULT, deliberately:
     // Umbraco Forms ships the same per-form policy but it silently does nothing
     // until a separate scheduled task is enabled in configuration, so editors
@@ -333,6 +356,8 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
         // only when AUDIT_RETENTION_DAYS is set (compliance trail — kept by default).
         const wh = await runWebhookDeliveryRetention(db, env.WEBHOOK_DELIVERY_RETENTION_DAYS);
         if (wh.deleted > 0) app.log.info({ deleted: wh.deleted }, "webhook deliveries pruned by retention policy");
+        const ml = await runMailDeliveryRetention(db);
+        if (ml.deleted > 0) app.log.info({ deleted: ml.deleted }, "form email deliveries pruned");
         const au = await runAuditRetention(db, env.AUDIT_RETENTION_DAYS);
         if (au.deleted > 0) app.log.info({ deleted: au.deleted }, "audit rows pruned by retention policy");
         // Expired sessions are otherwise deleted only when their cookie is presented again.

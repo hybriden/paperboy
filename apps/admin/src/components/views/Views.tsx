@@ -13,7 +13,7 @@ import { Badge } from "../ui/badge.js";
 import { SkeletonRows } from "../ui/skeleton.js";
 import { Surface } from "../ui/surface.js";
 import { useToast } from "../ui/toast.js";
-import { AiPanel, AuditPanel, ContentTypesPanel, DeliveryKeysPanel, FormSubmissionsPanel, LanguagesPanel, McpConnectionsPanel,
+import { AiPanel, AuditPanel, MailPanel, ContentTypesPanel, DeliveryKeysPanel, FormSubmissionsPanel, LanguagesPanel, McpConnectionsPanel,
   AgentReviewPanel, McpTokensPanel, PasswordPanel, SiteGeneralPanel, SitesPanel, StockImagesPanel, TrashPanel, TypeTemplatesPanel, TwoFactorPanel, UsersPanel, WebhooksPanel } from "./AdminPanels.js";
 import { RedirectsPanel } from "./RedirectsPanel.js";
 import { ExperimentsPanel, experimentLink } from "./ExperimentsPanel.js";
@@ -420,6 +420,7 @@ export function SettingsView() {
       render: () => (<><McpTokensPanel /><McpConnectionsPanel everyone /><AgentReviewPanel /></>),
     },
     { key: "ai", label: "AI provider", group: "Instance", show: has("user.manage"), render: () => <AiPanel /> },
+    { key: "email", label: "Email", group: "Instance", show: has("user.manage"), render: () => <MailPanel /> },
     { key: "stock", label: "Stock images", group: "Instance", show: has("user.manage"), render: () => <StockImagesPanel /> },
     { key: "audit", label: "Audit log", group: adminScope, show: has("audit.read"), render: () => <AuditPanel /> },
     { key: "account", label: "Sign-in & security", group: "You", show: true, render: () => (<><TwoFactorPanel /><PasswordPanel /></>) },

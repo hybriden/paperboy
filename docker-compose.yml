@@ -109,6 +109,13 @@ services:
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       AI_PROVIDER: ${AI_PROVIDER:-}
       AI_MODEL: ${AI_MODEL:-}
+      # Form notification email (a form's "Send email from Paperboy"). Empty
+      # MAIL_PROVIDER = none. smtp | resend; MAIL_FROM on a verified domain.
+      MAIL_PROVIDER: ${MAIL_PROVIDER:-}
+      SMTP_URL: ${SMTP_URL:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_MAX_PER_FORM_PER_HOUR: ${MAIL_MAX_PER_FORM_PER_HOUR:-20}
       # Stock images: env fallback for the Unsplash key (a CMS-stored key wins).
       UNSPLASH_ACCESS_KEY: ${UNSPLASH_ACCESS_KEY:-}
       # Login brute-force limit per IP/min — raised by CI e2e runs only.

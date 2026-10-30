@@ -19,6 +19,12 @@ import {
   getAgentReviewRequired,
   getSiteConfig,
   resolveAiRuntimeConfig,
+  MAIL_PROVIDERS,
+  SMTP_SECURITIES,
+  getStoredMailSettings,
+  resolveMailRuntimeConfig,
+  sendTestMail,
+  setMailSettings,
   getStoredStockConfig,
   markReviewed,
   setAgentReviewRequired,
@@ -1158,6 +1164,117 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
+  /* ------------------------------ form email ----------------------------- */
+  // Settings → Email (#186 part B). Write-only like the AI key: the password /
+  // API key is never returned, only whether one is saved. The env side is shown
+  // without its secret (SMTP_URL carries the password, so only the host).
+  const MailStatus = z.object({
+    source: z.enum(["db", "env", "none"]),
+    problem: z.string().nullable(),
+    provider: z.enum(MAIL_PROVIDERS).nullable(),
+    from: z.string().nullable(),
+    smtpHost: z.string().nullable(),
+    smtpPort: z.number().nullable(),
+    smtpSecurity: z.enum(SMTP_SECURITIES).nullable(),
+    smtpUser: z.string().nullable(),
+    secretSet: z.boolean(),
+    allowedDomains: z.array(z.string()),
+    env: z.object({ provider: z.enum(MAIL_PROVIDERS).nullable(), from: z.string().nullable(), smtpHost: z.string().nullable() }),
+    maxPerFormPerHour: z.number(),
+  });
+  async function mailStatus(): Promise<z.infer<typeof MailStatus>> {
+    const [resolved, stored] = await Promise.all([resolveMailRuntimeConfig(app.db, app.mailEnv), getStoredMailSettings(app.db)]);
+    const c = stored.config;
+    const env = app.mailEnv.env;
+    const mailbox = (m: { name?: string; address: string }) => (m.name ? `${m.name} <${m.address}>` : m.address);
+    return {
+      source: resolved.source,
+      problem: resolved.problem,
+      provider: c?.provider ?? null,
+      from: c?.from ?? null,
+      smtpHost: c?.smtpHost ?? null,
+      smtpPort: c?.smtpPort ?? null,
+      smtpSecurity: c?.smtpSecurity ?? null,
+      smtpUser: c?.smtpUser || null,
+      secretSet: !!stored.secret,
+      allowedDomains: stored.allowedDomains,
+      env: {
+        provider: env?.transport.kind ?? null,
+        from: env ? mailbox(env.from) : null,
+        smtpHost: env?.transport.kind === "smtp" ? new URL(env.transport.url).hostname : null,
+      },
+      maxPerFormPerHour: app.mailEnv.maxPerFormPerHour,
+    };
+  }
+  app.get(
+    "/site/mail",
+    { preHandler: [requirePermission("user.manage")], schema: { tags: ["manage"], response: { 200: MailStatus } } },
+    async () => mailStatus(),
+  );
+  app.post(
+    "/site/mail",
+    {
+      preHandler: [requireCsrf, requirePermission("user.manage")],
+      schema: {
+        tags: ["manage"],
+        body: z.object({
+          provider: z.enum(MAIL_PROVIDERS).nullable().optional(),
+          from: z.string().max(300).optional(),
+          smtpHost: z.string().max(253).optional(),
+          smtpPort: z.number().int().optional(),
+          smtpSecurity: z.enum(SMTP_SECURITIES).optional(),
+          smtpUser: z.string().max(300).optional(),
+          secret: z.string().max(1000).nullable().optional(),
+          allowedDomains: z.array(z.string().max(253)).max(50).optional(),
+        }),
+        response: { 200: MailStatus },
+      },
+    },
+    async (req) => {
+      await setMailSettings(app.db, req.accessCtx!, req.body);
+      await audit(app.db, {
+        actorUserId: req.user!.id,
+        action: "site.mail_config",
+        ip: req.ip,
+        // Never the secret: only whether it was set or cleared.
+        detail: {
+          provider: req.body.provider,
+          from: req.body.from,
+          smtpHost: req.body.smtpHost,
+          smtpPort: req.body.smtpPort,
+          smtpSecurity: req.body.smtpSecurity,
+          smtpUser: req.body.smtpUser,
+          secretSet: typeof req.body.secret === "string" && req.body.secret.trim().length > 0,
+          secretCleared: req.body.secret === null || req.body.secret === "",
+          allowedDomains: req.body.allowedDomains,
+        },
+      });
+      return mailStatus();
+    },
+  );
+  // A REAL round trip through the resolved config, to the signed-in admin: the
+  // only way to catch a wrong password, an unverified From domain or a blocked
+  // port. The provider's own words come back on failure.
+  app.post(
+    "/site/mail/test",
+    {
+      preHandler: [requireCsrf, requirePermission("user.manage")],
+      config: { rateLimit: { max: 5, timeWindow: "1 minute" } },
+      schema: { tags: ["manage"], response: { 200: z.object({ ok: z.boolean(), to: z.string(), source: z.enum(["db", "env", "none"]), message: z.string().nullable() }) } },
+    },
+    async (req) => {
+      const { config, source, problem } = await resolveMailRuntimeConfig(app.db, app.mailEnv);
+      const to = req.user!.email;
+      if (!config) return { ok: false, to, source, message: problem ?? "No email provider is configured: save one here or set MAIL_PROVIDER in the environment." };
+      try {
+        await sendTestMail(config, to);
+        return { ok: true, to, source, message: null };
+      } catch (err) {
+        return { ok: false, to, source, message: (err as Error).message };
+      }
+    },
+  );
+
   /* ----------------------------- agent review --------------------------- */
   // Opt-in gate: agent (MCP) drafts must be human-approved before an AGENT may
   // publish them. Default off so existing agent pipelines keep working.
@@ -1298,6 +1415,21 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
+  // Who hears about a form's submissions (see FormNotifyStatus in @paperboy/db).
+  const FormListRowSchema = z.object({
+    formId: z.string(),
+    name: z.string(),
+    submissions: z.number(),
+    lastAt: z.string().nullable(),
+    notify: z.object({
+      published: z.boolean(),
+      email: z.enum(["on", "off", "no-recipients", "no-provider"]),
+      recipients: z.string(),
+      webhooks: z.boolean(),
+      lastEmail: z.object({ status: z.string(), at: z.string(), error: z.string().nullable(), nextAttemptAt: z.string().nullable() }).nullable(),
+    }),
+  });
+
   /* --------------------------- form submissions --------------------------
    * Visitor personal data, so: its own permission (never content.read), site
    * scoped like content, and every read of the CSV audit-logged — an export is
@@ -1316,8 +1448,8 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
 
   app.get(
     "/forms",
-    { preHandler: [requirePermission("submission.read")], schema: { tags: ["manage"], summary: "Forms in the active site, with submission counts", response: { 200: z.array(z.object({ formId: z.string(), name: z.string(), submissions: z.number(), lastAt: z.string().nullable() })) } } },
-    async (req) => listForms(app.db, req.accessCtx!),
+    { preHandler: [requirePermission("submission.read")], schema: { tags: ["manage"], summary: "Forms in the active site, with submission counts", response: { 200: z.array(FormListRowSchema) } } },
+    async (req) => listForms(app.db, req.accessCtx!, { mailConfigured: !!(await resolveMailRuntimeConfig(app.db, app.mailEnv)).config }),
   );
 
   app.get(

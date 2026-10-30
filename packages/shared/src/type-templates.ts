@@ -55,6 +55,9 @@ export type TypeTemplateExport = z.infer<typeof TypeTemplateExport>;
 export const FIELD_KEY_PATTERN = "^[a-zA-Z][a-zA-Z0-9_]*$";
 const FIELD_KEY_HELP =
   'The key this answer is stored under, e.g. "email" or "companyName". Letters, digits and underscores; must start with a letter. Not shown to visitors and not translated.';
+/** Also written into existing Form types by migration 0039; keep the two in step. */
+const FORM_NOTIFY_EMAIL_HELP =
+  "Comma-separated addresses. With \"Send email from Paperboy\" on, Paperboy emails them on every new submission; the form.submitted webhook also carries them.";
 
 const FIELD_BASE = [
   { name: "name", displayName: "Field key", type: "text", required: true, delivery: "public", validation: { pattern: FIELD_KEY_PATTERN, maxLength: 60 }, helpText: FIELD_KEY_HELP },
@@ -552,7 +555,14 @@ const RAW_TEMPLATES = [
         name: "captureMetadata", displayName: "Store IP address and browser", type: "boolean", delivery: "private", group: "Protection & privacy",
         helpText: "Off by default. An IP address is personal data — only turn this on if you need it to investigate abuse.",
       },
-      { name: "notifyEmail", displayName: "Notification recipients", type: "text", delivery: "private", group: "Protection & privacy", helpText: "Comma-separated addresses for integrations to notify. Paperboy does not send mail itself; the webhook carries this through." },
+      { name: "notifyEmail", displayName: "Notification recipients", type: "text", delivery: "private", group: "Protection & privacy", helpText: FORM_NOTIFY_EMAIL_HELP },
+      // On for new forms, so a new form is never silently unread. Forms that
+      // existed before it (migration 0039) have no value and stay off: they may
+      // already be emailed from the form.submitted webhook.
+      {
+        name: "notifyByEmail", displayName: "Send email from Paperboy", type: "boolean", delivery: "private", group: "Protection & privacy", defaultValue: true,
+        helpText: "Email the notification recipients on every new submission. Turn off if an integration already emails them from the webhook.",
+      },
     ],
   },
   {
