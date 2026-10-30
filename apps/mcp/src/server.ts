@@ -1134,8 +1134,8 @@ tool(
   async ({ type, locale, populate, preview, limit, offset, sort, filter }) => { needDelivery(preview); return deliveryList(db, persp(preview), ctx().siteId, type, (await deliveryLocale(locale)), populate, undefined, { limit, offset, sort, filter }); });
 tool(
   "delivery_search", "content.read",
-  "Full-text search over the website's content (item names + public field text) in one locale, as a site search box would: published only (unless preview), private fields never matched or returned. Best match first, 20 results by default (limit up to 100). Returns { items, total }. To list every item of a type use delivery_list; to find content for editing, list_content or list_tree are usually faster.",
-  { query: z.string().min(1).max(200).describe("Words to search for, e.g. 'pricing plans'."), type: z.string().optional().describe("Only return items of this content type."), locale: loc, limit: z.number().int().min(1).max(100).optional().describe("Max results, 1-100."), preview: PREVIEW_ARG },
+  "Full-text search over the website's pages (item names + public field text) in one locale, as a site search box would: words are stemmed in the locale's language and the last word also matches as a prefix; published only (unless preview), private fields never matched or returned. Pages only unless type is given. Best match first, 20 results by default (limit up to 100). Returns { items, total }. To list every item of a type use delivery_list; to find content for editing, list_content or list_tree are usually faster.",
+  { query: z.string().min(1).max(200).describe("Words to search for, e.g. 'pricing plans'."), type: z.string().optional().describe("Only return items of this content type (any kind, blocks included); omitted = pages only."), locale: loc, limit: z.number().int().min(1).max(100).optional().describe("Max results, 1-100."), preview: PREVIEW_ARG },
   async ({ query, type, locale, limit, preview }) => { needDelivery(preview); return deliverySearch(db, persp(preview), ctx().siteId, query, (await deliveryLocale(locale)), type, limit); });
 
 /* --------------------------------- site -------------------------------- */
