@@ -16,12 +16,12 @@
     "seed": "tsx src/seed.ts"
   },
   "dependencies": {
-    "@electric-sql/pglite": "0.5.11",
+    "@electric-sql/pglite": "0.5.14",
     "@paperboy/shared": "workspace:*",
     "argon2": "^0.45.1",
     "drizzle-orm": "^0.45.4",
     "nanoid": "^6.0.2",
-    "nodemailer": "10.1.4",
+    "nodemailer": "10.2.1",
     "otpauth": "^9.5.2",
     "postgres": "^3.4.5",
     "zod": "^4.6.7"
