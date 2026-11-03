@@ -1,4 +1,4 @@
-import "@fontsource-variable/hanken-grotesk";
+import "@fontsource-variable/inter";
 import "@fontsource-variable/newsreader";
 import "@fontsource-variable/jetbrains-mono";
 
