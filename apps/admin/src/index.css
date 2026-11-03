@@ -236,7 +236,7 @@
  * Dark theme flips the same variables, so components stay theme-agnostic.
  */
   :root {
-    --font-ui: 'Hanken Grotesk Variable', ui-sans-serif, system-ui, sans-serif;
+    --font-ui: 'Inter Variable', ui-sans-serif, system-ui, sans-serif;
     --font-display: 'Newsreader Variable', Georgia, 'Times New Roman', serif;
     --font-mono:
       'JetBrains Mono Variable', ui-monospace, 'SFMono-Regular', monospace;
