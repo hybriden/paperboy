@@ -337,7 +337,7 @@ export function PreviewPane({
   if (!framedTokenRef.current || !previewTokenUsable(framedTokenRef.current.expiresAt)) framedTokenRef.current = usableToken;
   const framedToken = framedTokenRef.current;
   const src = framedToken && targetOrigin
-    ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(framedToken.token)}&n=${nonce}${extraQuery}`
+    ? `${publicSiteUrl(site.data, locale, urlPath, documentId)}?pbt=${encodeURIComponent(framedToken.token)}${framedToken.site ? `&pbs=${encodeURIComponent(framedToken.site)}` : ""}&n=${nonce}${extraQuery}`
     : null;
   // Every navigation restarts the not-yet-loaded window postToPreview guards.
   useEffect(() => setFrameLoaded(false), [src]);

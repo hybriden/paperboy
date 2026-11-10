@@ -162,6 +162,9 @@ services:
       # x-real-ip). Forwarded with form posts so the CMS limits each visitor,
       # not this container. Empty = not forwarded.
       PAPERBOY_CLIENT_IP_HEADER: ${PAPERBOY_CLIENT_IP_HEADER:-}
+      # On a multi-site instance: this frontend's site id (Settings → Site), so a
+      # preview token minted for another site opens nothing here.
+      PAPERBOY_SITE_ID: ${PAPERBOY_SITE_ID:-}
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
       PAPERBOY_AB_MODE: ${PAPERBOY_AB_MODE:-}
       PAPERBOY_AB_CONSENT_COOKIE: ${PAPERBOY_AB_CONSENT_COOKIE:-}

@@ -357,7 +357,7 @@ export const api = {
   // site config (start page)
   site: (signal?: AbortSignal) => request<{ startPageId: string | null; previewBaseUrl: string }>("GET", "/manage/site", undefined, signal),
   /** Short-lived token for the preview iframe. */
-  previewToken: (signal?: AbortSignal) => request<{ token: string; expiresAt: number }>("GET", "/manage/preview-token", undefined, signal),
+  previewToken: (signal?: AbortSignal) => request<{ token: string; expiresAt: number; site?: string }>("GET", "/manage/preview-token", undefined, signal),
   setStartPage: (documentId: string | null, siteOverride?: string) =>
     request<{ ok: boolean }>("POST", "/manage/site/start-page", { documentId }, undefined, siteOverride),
   setPublicFiles: (body: Partial<Record<"canonicalBaseUrl" | EditableSeoFile, string | null>> & { localePrefix?: "always" | "except-default"; indexNow?: boolean }, siteOverride?: string) =>

@@ -1,4 +1,4 @@
-import { constantTimeEqual, verifyPreviewToken } from "@paperboycms/client/preview-token";
+import { constantTimeEqual, verifyPreviewToken, verifySitePreviewToken } from "@paperboycms/client/preview-token";
 
 /** The committed dev default — must never grant access in production (S2-M2). */
 const DEV_PREVIEW_SECRET = "dev-preview-secret-change-me";
@@ -30,17 +30,23 @@ export function matchesPreviewSecret(provided: string | null | undefined): boole
  * Same production guard as above — the committed dev default never verifies
  * anything in production.
  *
+ * PAPERBOY_SITE_ID (this frontend's site) also requires the `?pbs=` site proof:
+ * one secret serves every site of an instance, so on a multi-site instance the
+ * token alone would open this site's drafts to someone who may only preview
+ * another site.
+ *
  * The verification itself comes from `@paperboycms/client/preview-token`, the same
  * published package any frontend uses. Nothing here is vendored from the CMS
  * repo, so this file can be copied into your own app as-is — which is the point
  * of a reference frontend. Async because that package is WebCrypto (it also has
  * to run on Workers, which has no synchronous HMAC).
  */
-export async function matchesPreviewToken(provided: string | null | undefined): Promise<boolean> {
+export async function matchesPreviewToken(provided: string | null | undefined, siteProof?: string | null): Promise<boolean> {
   if (!provided) return false;
   const secret = process.env.PREVIEW_SECRET ?? DEV_PREVIEW_SECRET;
   if (process.env.NODE_ENV === "production" && secret === DEV_PREVIEW_SECRET) return false;
-  return await verifyPreviewToken(secret, provided);
+  const site = process.env.PAPERBOY_SITE_ID?.trim();
+  return site ? await verifySitePreviewToken(secret, provided, siteProof, site) : await verifyPreviewToken(secret, provided);
 }
 
 /**
@@ -56,7 +62,7 @@ export async function isPreviewRequest(
   sp: Record<string, string | string[] | undefined>,
 ): Promise<boolean> {
   if (draftModeEnabled) return true;
-  if (await matchesPreviewToken(typeof sp.pbt === "string" ? sp.pbt : undefined)) return true;
+  if (await matchesPreviewToken(typeof sp.pbt === "string" ? sp.pbt : undefined, typeof sp.pbs === "string" ? sp.pbs : undefined)) return true;
   return matchesPreviewSecret(typeof sp.pb === "string" ? sp.pb : undefined);
 }
 

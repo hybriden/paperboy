@@ -40,10 +40,20 @@ export function signPreviewToken(secret: string, expiresAtMs: number): string {
   return `${exp}.${hmac(secret, exp)}`;
 }
 
-/** Mint a token valid for PREVIEW_TOKEN_TTL_MS from `now`. */
-export function mintPreviewToken(secret: string, now: number = Date.now()): { token: string; expiresAt: number } {
+/**
+ * `<siteId>.<hmac>`: proof that a token with this expiry was minted in this
+ * site. One secret serves every site, so the token alone opens every site's
+ * drafts; a frontend that knows its site checks this too (`?pbs=`). Kept
+ * separate from the token so frontends that don't check it keep working.
+ */
+export function signSiteProof(secret: string, expiresAtMs: number, siteId: string): string {
+  return `${siteId}.${hmac(secret, `site.${Math.floor(expiresAtMs)}.${siteId}`)}`;
+}
+
+/** Mint a token valid for PREVIEW_TOKEN_TTL_MS from `now`, with the site proof when a site is given. */
+export function mintPreviewToken(secret: string, now: number = Date.now(), siteId?: string): { token: string; expiresAt: number; site?: string } {
   const expiresAt = now + PREVIEW_TOKEN_TTL_MS;
-  return { token: signPreviewToken(secret, expiresAt), expiresAt };
+  return { token: signPreviewToken(secret, expiresAt), expiresAt, ...(siteId ? { site: signSiteProof(secret, expiresAt, siteId) } : {}) };
 }
 
 /**

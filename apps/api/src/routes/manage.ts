@@ -915,7 +915,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
       preHandler: requirePermission("content.read"),
       schema: {
         tags: ["manage"],
-        response: { 200: z.object({ token: z.string(), expiresAt: z.number() }) },
+        response: { 200: z.object({ token: z.string(), expiresAt: z.number(), site: z.string().optional().describe("Proof of the active site for the same expiry; frontends on a multi-site instance check it as ?pbs= (verifySitePreviewToken).") }) },
       },
     },
     async (req) => {
@@ -935,7 +935,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
           "In-editor preview is not configured: set PREVIEW_SECRET (min 16 chars) on BOTH the api and the frontend — the api signs preview tokens with it and the frontend verifies them. scripts/setup.sh generates one.",
         );
       }
-      const minted = mintPreviewToken(secret);
+      const minted = mintPreviewToken(secret, Date.now(), req.accessCtx!.siteId);
       await audit(app.db, { siteId: req.accessCtx?.siteId, actorUserId: req.user!.id, action: "preview.token_minted", ip: req.ip });
       return minted;
     },

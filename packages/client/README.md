@@ -7,6 +7,8 @@ the same Zod schemas the server serializes with — no codegen step.
 that a browser reads as another site when a `/prefix/*` rule pointed at `/`;
 upgrade if your frontend applies redirects. `submitForm` takes `visitorIp`, so
 the CMS limits submissions per visitor rather than per frontend server.
+`verifySitePreviewToken` (in `/preview-token`) checks that a preview token was
+minted for your site; use it on a multi-site instance.
 
 **Changes in 0.7.0** — `formToolAttrs(spec)` makes a rendered form a
 [WebMCP](https://developer.chrome.com/docs/ai/webmcp) tool, and the honeypot from
@@ -328,6 +330,12 @@ const cms = createClient({
 
 `PREVIEW_SECRET` must be byte-identical to the API's. Notes:
 
+- **More than one site on the instance? Check the site too.** One secret signs
+  every site's tokens, so the token alone would let someone who may only preview
+  site A read site B's drafts on B's frontend. The admin also sends `?pbs=`, a
+  proof of the site tied to the same expiry:
+  `verifySitePreviewToken(secret, url.searchParams.get("pbt"), url.searchParams.get("pbs"), siteId)`,
+  with your site's id from Settings → Site.
 - **It's a separate subpath on purpose.** Its first argument is your secret, so it
   must never be reachable from a browser bundle — importing it from
   `@paperboycms/client` is deliberately impossible.

@@ -1083,6 +1083,7 @@ function SiteSettingsForm({ site }: { site: SiteRow }) {
         <input aria-label="Preview base URL" className="field-input" type="url" inputMode="url" placeholder="https://example.com" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} />
         <span className="mt-1 block text-xs text-muted">
           Preview opens <code>{(previewUrl || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pbt=…</code> (a short-lived preview token). Empty = no side-by-side preview.
+          With more than one site, give this site&apos;s frontend its id, <code>{site.id}</code> (<code>PAPERBOY_SITE_ID</code>), so it accepts only this site&apos;s previews.
         </span>
       </label>
 

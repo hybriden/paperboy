@@ -15,7 +15,8 @@
  * you verify. The browser only ever holds a credential that expires.
  *
  * Token format is `<expiryEpochMs>.<hmac-sha256-hex>`, the MAC taken over the
- * expiry string.
+ * expiry string. On a multi-site instance the admin also sends `?pbs=`, which
+ * `verifySitePreviewToken` checks: `<siteId>.<hmac>` over `site.<expiry>.<siteId>`.
  *
  * SERVER-SIDE ONLY. Deliberately NOT re-exported from the package index: it is
  * reached via `@paperboycms/client/preview-token`, so a browser bundle can never
@@ -94,4 +95,30 @@ export async function verifyPreviewToken(
 
   if (!constantTimeEqual(await hmacHex(secret, exp), sig)) return false;
   return Number(exp) > now;
+}
+
+/**
+ * `verifyPreviewToken`, AND the token was minted in `site` (your site's id;
+ * Settings → Site, or `GET /manage/sites`).
+ *
+ * One `PREVIEW_SECRET` serves every site of an instance, so a token on its own
+ * opens any site's drafts: someone who may only preview site A could read site
+ * B's. The admin therefore also sends `?pbs=`, a proof of the site tied to the
+ * same expiry. Use this on a multi-site instance.
+ *
+ * @param siteProof the raw `?pbs=` value
+ * @param site this frontend's site id; empty refuses everything
+ */
+export async function verifySitePreviewToken(
+  secret: string,
+  token: string | null | undefined,
+  siteProof: string | null | undefined,
+  site: string,
+  now: number = Date.now(),
+): Promise<boolean> {
+  if (!site || !siteProof || !(await verifyPreviewToken(secret, token, now))) return false;
+  const dot = siteProof.lastIndexOf(".");
+  if (dot <= 0 || siteProof.slice(0, dot) !== site) return false;
+  const exp = token!.slice(0, token!.indexOf("."));
+  return constantTimeEqual(await hmacHex(secret, `site.${exp}.${site}`), siteProof.slice(dot + 1));
 }
