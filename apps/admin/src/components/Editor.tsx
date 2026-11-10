@@ -17,6 +17,7 @@ import {
 import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError, type AiTask } from "../lib/api.js";
+import { editPath } from "../lib/edit-path.js";
 import { fieldWidthClass } from "../lib/field-width.js";
 import { blockAtPath, resolveBlockPath, updateBlockAtPath, type BlockPath } from "../lib/block-path.js";
 import { clearUnsaved, readUnsaved, stashUnsaved, type UnsavedEdits } from "../lib/unsaved-stash.js";
@@ -674,7 +675,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       void qc.invalidateQueries({ queryKey: ["tree"] });
       void qc.invalidateQueries({ queryKey: ["blocks"] });
       toast.success("Duplicated", `Created “${created.name}”.`);
-      void navigate(`/edit/${created.documentId}${locale !== "en" ? `?lang=${locale}` : ""}`);
+      void navigate(editPath(created.documentId, locale));
     },
     onError: (e) => toast.error("Couldn’t duplicate", (e as Error).message),
   });

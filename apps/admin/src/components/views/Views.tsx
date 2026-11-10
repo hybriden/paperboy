@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import { type DashboardData, api } from "../../lib/api.js";
+import { editPath } from "../../lib/edit-path.js";
 import { Icon } from "../../lib/icons.js";
 import { relativeTime } from "../../lib/relative-time.js";
 import { useIsMobile } from "../../lib/useMediaQuery.js";
@@ -197,7 +198,7 @@ export function DashboardView() {
             {d?.wip.map((w) => (
               <button
                 key={`${w.documentId}:${w.locale}`}
-                onClick={() => navigate(`/edit/${w.documentId}`)}
+                onClick={() => navigate(editPath(w.documentId, w.locale))}
                 className="flex w-full items-center gap-3 border-b border-line px-4 py-3 text-left text-sm transition-colors last:border-0 hover:bg-canvas"
               >
                 {w.kind === "block" ? <Icon.Block width={16} height={16} className="shrink-0 text-muted" /> : <Icon.File width={16} height={16} className="shrink-0 text-muted" />}
@@ -219,7 +220,7 @@ export function DashboardView() {
             {d?.scheduled.map((sch) => (
               <button
                 key={`${sch.documentId}:${sch.locale}:${sch.action}`}
-                onClick={() => navigate(`/edit/${sch.documentId}`)}
+                onClick={() => navigate(editPath(sch.documentId, sch.locale))}
                 className="flex w-full items-center gap-3 border-b border-line px-4 py-3 text-left text-sm transition-colors last:border-0 hover:bg-canvas"
               >
                 <Icon.File width={16} height={16} className="shrink-0 text-muted" />
@@ -248,7 +249,7 @@ export function DashboardView() {
                 {t.pages.map((p) => (
                   <button
                     key={p.documentId}
-                    onClick={() => navigate(`/edit/${p.documentId}?lang=${t.locale}`)}
+                    onClick={() => navigate(editPath(p.documentId, t.locale))}
                     className="flex w-full items-center gap-3 px-4 py-2 pl-9 text-left text-sm transition-colors hover:bg-canvas"
                   >
                     <Icon.File width={14} height={14} className="shrink-0 text-muted" />

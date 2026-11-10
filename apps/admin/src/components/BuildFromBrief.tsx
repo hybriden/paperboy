@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { type AgentEvent, api } from "../lib/api.js";
+import { editPath } from "../lib/edit-path.js";
 import { Icon } from "../lib/icons.js";
 import { TypeIcon } from "../lib/typeIcons.js";
 import { Badge } from "./ui/badge.js";
@@ -156,7 +157,7 @@ export function BuildFromBriefDialog({
                         className="flex w-full items-center gap-2 rounded-(--radius) border border-line px-2.5 py-1.5 text-left text-sm hover:bg-line/40"
                         onClick={() => {
                           onOpenChange(false);
-                          void navigate(`/edit/${c.documentId}${locale !== "en" ? `?lang=${locale}` : ""}`);
+                          void navigate(editPath(c.documentId, locale));
                         }}
                       >
                         <TypeIcon name={undefined} fallback="file" width={15} height={15} className="shrink-0 text-muted" />
@@ -180,7 +181,7 @@ export function BuildFromBriefDialog({
                         className="flex w-full items-center gap-2 rounded-(--radius) border border-line px-2.5 py-1.5 text-left text-sm hover:bg-line/40"
                         onClick={() => {
                           onOpenChange(false);
-                          void navigate(`/edit/${t.documentId}${t.locale !== "en" ? `?lang=${t.locale}` : ""}`);
+                          void navigate(editPath(t.documentId, t.locale));
                         }}
                       >
                         <TypeIcon name={undefined} fallback="file" width={15} height={15} className="shrink-0 text-muted" />

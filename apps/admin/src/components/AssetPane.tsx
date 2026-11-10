@@ -25,12 +25,15 @@ import { TypePicker } from "./TypePicker.js";
  */
 export function AssetPane({
   blockTypes,
+  locale,
   selectedId,
   onSelect,
   canCreate,
   headerActions,
 }: {
   blockTypes: ContentTypeDef[];
+  /** The language being edited: a new shared block starts in it. */
+  locale: string;
   selectedId: string | null;
   onSelect: (id: string) => void;
   canCreate: boolean;
@@ -209,18 +212,20 @@ export function AssetPane({
         {tab === "media" && <MediaTab />}
       </div>
 
-      {creating && <CreateBlockDialog blockTypes={blockTypes} folderId={folderId} onClose={() => setCreating(false)} onCreated={onSelect} />}
+      {creating && <CreateBlockDialog blockTypes={blockTypes} locale={locale} folderId={folderId} onClose={() => setCreating(false)} onCreated={onSelect} />}
     </aside>
   );
 }
 
 function CreateBlockDialog({
   blockTypes,
+  locale,
   folderId,
   onClose,
   onCreated,
 }: {
   blockTypes: ContentTypeDef[];
+  locale: string;
   /** File the new block into this folder (null = root). */
   folderId: string | null;
   onClose: () => void;
@@ -233,7 +238,7 @@ function CreateBlockDialog({
   useEffect(() => { nameRef.current?.focus(); }, []);
   const create = useMutation({
     mutationFn: async () => {
-      const created = await api.create({ type, parentId: null, locale: "en", name });
+      const created = await api.create({ type, parentId: null, locale, name });
       if (folderId) await api.setBlockFolder(created.documentId, folderId);
       return created;
     },

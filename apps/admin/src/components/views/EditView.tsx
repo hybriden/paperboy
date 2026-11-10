@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { Group, Panel, useDefaultLayout } from "react-resizable-panels";
 import { useNavigate, useOutletContext, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api.js";
+import { editPath } from "../../lib/edit-path.js";
 import { Icon } from "../../lib/icons.js";
 import { useIsMobile } from "../../lib/useMediaQuery.js";
 import { useUser } from "../../lib/user.js";
@@ -47,12 +48,12 @@ export function EditView() {
     const startId = site.data?.startPageId;
     if (!initialEntry.current || isMobile || !startId) return;
     initialEntry.current = false;
-    void navigate(`/edit/${startId}${locale !== "en" ? `?lang=${locale}` : ""}`, { replace: true });
+    void navigate(editPath(startId, locale), { replace: true });
   }, [documentId, isMobile, site.data?.startPageId, locale, navigate]);
 
   const setLocale = useCallback(
     (l: string) => {
-      if (documentId) void navigate(`/edit/${documentId}?lang=${l}`);
+      if (documentId) void navigate(editPath(documentId, l));
     },
     [documentId, navigate],
   );
@@ -70,7 +71,7 @@ export function EditView() {
   // Persisted workspace split, one layout per pin config (was PanelGroup autoSaveId pre-v4).
   const workspaceLayout = useDefaultLayout({ id: `paperboy-workspace-${treePinned ? "t" : "x"}${assetsPinned ? "a" : "x"}` });
 
-  const select = (id: string) => navigate(`/edit/${id}${locale !== "en" ? `?lang=${locale}` : ""}`);
+  const select = (id: string) => navigate(editPath(id, locale));
 
   const tree = (
     <Tree
@@ -86,6 +87,7 @@ export function EditView() {
   const assets = (
     <AssetPane
       blockTypes={(types.data ?? []).filter((t) => t.kind === "block")}
+      locale={locale}
       selectedId={documentId ?? null}
       onSelect={select}
       canCreate={canCreate}
