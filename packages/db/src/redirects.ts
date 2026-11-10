@@ -168,6 +168,17 @@ async function pageNames(db: Database, documentIds: string[]): Promise<Map<strin
   return out;
 }
 
+/**
+ * A prefix rule carries the rest of the path over, so a target at or under its
+ * own prefix never ends: /docs/* → /docs/latest sends /docs/x to
+ * /docs/latest/x, then /docs/latest/latest/x. Absolute URLs leave the site.
+ */
+function loopsInsideOwnPrefix(sourcePath: string, target: string | null | undefined): boolean {
+  if (!target || /^https?:\/\//i.test(target)) return false;
+  const path = normalizePath(target);
+  return sourcePath === "/" || path === sourcePath || path.startsWith(`${sourcePath}/`);
+}
+
 function viewOf(
   r: RedirectRow,
   urls: SiteUrls,
@@ -190,6 +201,10 @@ function viewOf(
     target = /^https?:\/\//i.test(r.targetPath) ? { kind: "url", url: r.targetPath } : { kind: "path", path: r.targetPath };
   } else target = { kind: "gone" };
 
+  const targetUrl = target.kind === "page" ? target.url : target.kind === "path" ? target.path : null;
+  if (r.matchType === "prefix" && loopsInsideOwnPrefix(r.sourcePath, targetUrl)) {
+    problems.push({ code: "loop", message: `The target is inside ${r.sourcePath}/, which this rule redirects, so it never ends. Point it outside ${r.sourcePath}/, or make it an exact rule.` });
+  }
   if (r.matchType === "exact" && urls.byPath.has(r.sourcePath)) {
     problems.push({ code: "shadowed", message: `A published page answers ${r.sourcePath}, so this rule never fires. Delete the rule, or unpublish that page.` });
   }
@@ -333,6 +348,18 @@ async function resolveRule(
     const served = urls.byDoc.get(`${target.targetDocumentId}|${target.targetLocale ?? urls.scheme.defaultLocale}`);
     if (served && normalizePath(served) === source.path && source.match === "exact") {
       throw Errors.validation(`The target page is published at ${served}, which is the source itself — a rule can't redirect to itself.`, ["target"]);
+    }
+  }
+  if (source.match === "prefix") {
+    const finalPath = target.targetDocumentId
+      ? urls.byDoc.get(`${target.targetDocumentId}|${target.targetLocale ?? urls.scheme.defaultLocale}`)
+      : target.targetPath;
+    if (loopsInsideOwnPrefix(source.path, finalPath)) {
+      throw Errors.validation(
+        `The target ${finalPath} is inside ${source.path}/, which this rule redirects, so ${source.path}/x would go to ${finalPath?.replace(/\/+$/, "")}/x and on forever. ` +
+          `Point it outside ${source.path}/ (e.g. "/new-docs"), or make the rule exact ("${source.path}") and add the pages you need one by one.`,
+        ["target"],
+      );
     }
   }
   return { ...base, ...target, collapsed };

@@ -99,6 +99,28 @@ describe("redirects", () => {
     expect(query.json().message).toContain("query");
   });
 
+  // "/docs/*" → "/docs/latest" carries the rest of the path over, so a missing
+  // /docs/x went to /docs/latest/x, then /docs/latest/latest/x, forever: the
+  // visitor got "too many redirects" and the list showed no problem.
+  it("refuses a prefix rule whose target is inside its own prefix", async () => {
+    for (const target of ["/docs/latest", "/DOCS/latest/", "/docs/a/b"]) {
+      const res = await create({ source: "/docs/*", target });
+      expect(res.statusCode, `${target}: ${res.body}`).toBe(422);
+      expect(res.json().message).toContain("/docs/");
+    }
+    // A page published under the prefix is the same loop.
+    const underBlog = await create({ source: "/en/blog/*", targetDocumentId: postId });
+    expect(underBlog.statusCode, underBlog.body).toBe(422);
+    // Outside the prefix, and an exact rule into its own subtree, stay fine.
+    expect((await create({ source: "/docs/*", target: "/documentation" })).statusCode).toBe(200);
+    expect((await create({ source: "/guide", target: "/guide/start" })).statusCode).toBe(200);
+
+    // A looping rule saved before this check is flagged in the list.
+    await s.app.db.insert(schemaTables.redirect).values({ siteId: "site_default", sourcePath: "/manual", matchType: "prefix", targetPath: "/manual/v2" });
+    const saved = (await rules()).find((r) => r.sourcePath === "/manual")!;
+    expect(saved.problems.map((p) => p.code)).toContain("loop");
+  });
+
   it("collapses a chain at write, and re-points rules that pointed at a new rule's source", async () => {
     // /via → /old-post, which is itself redirected to the post: stored as the post.
     const via = await create({ source: "/via", target: "/old-post" });
