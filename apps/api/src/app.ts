@@ -102,6 +102,7 @@ export async function buildApp(opts: BuildOptions): Promise<FastifyInstance> {
   app.decorate("sessionSecret", env.SESSION_SECRET);
   // Brute-force limit on login; relaxed under test so multi-login specs aren't flaky.
   app.decorate("loginRateMax", env.NODE_ENV === "test" ? 100_000 : env.LOGIN_RATE_MAX);
+  app.decorate("deliveryRateMax", env.DELIVERY_RATE_MAX);
 
   // Media uploads: ensure the dir exists and expose config to the db helper + routes.
   mkdirSync(env.UPLOADS_DIR, { recursive: true });

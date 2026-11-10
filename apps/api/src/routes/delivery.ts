@@ -93,6 +93,9 @@ function deliverItem<T extends { cv: number }>(
 
 export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<void> {
   const app = appBase.withTypeProvider<ZodTypeProvider>();
+  // One limit for the page reads: they come from a frontend's server, so one
+  // address is every visitor of the site (DELIVERY_RATE_MAX).
+  const reads = { max: app.deliveryRateMax, timeWindow: "1 minute" };
 
   // Attach perspective + site before any handler runs.
   //
@@ -122,7 +125,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   app.get(
     "/content",
     {
-      config: { rateLimit: { max: 600, timeWindow: "1 minute" } },
+      config: { rateLimit: reads },
       schema: {
         tags: ["delivery"],
         querystring: PopulateQuery.extend({
@@ -178,7 +181,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   app.get(
     "/search",
     {
-      config: { rateLimit: { max: 300, timeWindow: "1 minute" } },
+      config: { rateLimit: reads },
       schema: {
         tags: ["delivery"],
         querystring: z.object({
@@ -209,7 +212,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   app.get(
     "/start",
     {
-      config: { rateLimit: { max: 600, timeWindow: "1 minute" } },
+      config: { rateLimit: reads },
       schema: {
         tags: ["delivery"],
         querystring: PopulateQuery,
@@ -228,7 +231,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   app.get(
     "/content/by-slug",
     {
-      config: { rateLimit: { max: 600, timeWindow: "1 minute" } },
+      config: { rateLimit: reads },
       schema: {
         tags: ["delivery"],
         querystring: PopulateQuery.extend({ slug: z.string() }),
@@ -247,7 +250,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   app.get(
     "/content/by-path",
     {
-      config: { rateLimit: { max: 600, timeWindow: "1 minute" } },
+      config: { rateLimit: reads },
       schema: {
         tags: ["delivery"],
         querystring: PopulateQuery.extend({ path: z.string() }),
@@ -267,7 +270,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   app.get(
     "/content/:documentId",
     {
-      config: { rateLimit: { max: 600, timeWindow: "1 minute" } },
+      config: { rateLimit: reads },
       schema: {
         tags: ["delivery"],
         params: z.object({ documentId: z.string() }),
@@ -287,7 +290,7 @@ export async function registerDeliveryRoutes(appBase: FastifyInstance): Promise<
   app.get(
     "/globals/:type",
     {
-      config: { rateLimit: { max: 600, timeWindow: "1 minute" } },
+      config: { rateLimit: reads },
       schema: {
         tags: ["delivery"],
         params: z.object({ type: z.string() }),

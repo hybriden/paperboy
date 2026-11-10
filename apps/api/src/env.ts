@@ -111,6 +111,11 @@ const EnvSchema = z.object({
   // plus retries from ONE runner IP brush against 300, and the 429s surface as
   // flaky "treeitem not visible" failures; leave at 300 in production.
   RATE_LIMIT_MAX: z.coerce.number().int().positive().default(300),
+  // Delivery reads (pages, lists, globals, search) per route per minute from one
+  // address. A frontend fetches from its own SERVER, so this is the whole
+  // site's read rate, not one visitor's: published reads are answered from the
+  // in-memory delivery cache, so it is set high.
+  DELIVERY_RATE_MAX: z.coerce.number().int().positive().default(6000),
   // Form submissions per IP per form per minute. A real visitor sends one; the
   // headroom is for a corrected re-submit after a validation error. Counted per
   // (IP, form) so one scraped form can't exhaust the budget the others share.

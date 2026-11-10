@@ -57,6 +57,8 @@ export async function submitForm(input: {
   locale?: string;
   idempotencyKey?: string;
   experiments?: ExperimentExposure[];
+  /** So the CMS rate-limits (and, if the form asks, records) the visitor, not this server. */
+  visitorIp?: string;
 }): Promise<
   { ok: true; submissionId: string; confirmation: { type: "message" | "redirect"; text?: unknown } }
   | { ok: false; fields: Record<string, string> }
@@ -69,6 +71,7 @@ export async function submitForm(input: {
     locale: input.locale,
     idempotencyKey: input.idempotencyKey,
     experiments: input.experiments,
+    visitorIp: input.visitorIp,
   });
   return res.ok
     ? { ok: true, submissionId: res.submissionId, confirmation: res.confirmation as { type: "message" | "redirect"; text?: unknown } }

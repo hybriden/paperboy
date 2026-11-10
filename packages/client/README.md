@@ -3,9 +3,10 @@
 The typed Delivery API client. Thin, zero dependencies, end-to-end typed from
 the same Zod schemas the server serializes with — no codegen step.
 
-**Changes in 0.7.1** — security fix: `matchRedirect` could return a location
-that a browser reads as another site when a `/prefix/*` rule pointed at `/`.
-Upgrade if your frontend applies redirects.
+**Changes in 0.8.0** — security fix: `matchRedirect` could return a location
+that a browser reads as another site when a `/prefix/*` rule pointed at `/`;
+upgrade if your frontend applies redirects. `submitForm` takes `visitorIp`, so
+the CMS limits submissions per visitor rather than per frontend server.
 
 **Changes in 0.7.0** — `formToolAttrs(spec)` makes a rendered form a
 [WebMCP](https://developer.chrome.com/docs/ai/webmcp) tool, and the honeypot from
@@ -169,6 +170,7 @@ const res = await cms.submitForm(formId, {
   honeypot: String(formData.get(honeypot.name) ?? ""), // FormDataEntryValue | null
   turnstileToken,                      // only when spec.turnstile is true
   idempotencyKey,                      // the per-attempt key minted above
+  visitorIp,                           // server-side: the visitor's address (see below)
 });
 if (!res.ok) {
   // 422: one message per field name — the editor's own `errorMessage` when they
@@ -183,6 +185,12 @@ if (!res.ok) {
 - **A spam drop looks like a success.** The honeypot / fill-time checks answer
   202 `ok: true` exactly like a real submission, so a bot learns nothing; the
   reason goes to the CMS audit log. Don't try to tell the two apart in the UI.
+- **Submitting from a server? Pass `visitorIp`.** The CMS limits submissions
+  per address, and without it every visitor is your server: one bot then uses
+  up the whole site's limit. Take it from a header your edge sets and
+  overwrites (`cf-connecting-ip`, `x-real-ip`), never from the visitor's own
+  `X-Forwarded-For`. It is sent as `X-Forwarded-For` and honoured only if the
+  CMS's `TRUST_PROXY` covers your server's address.
 - `formId` is the Form's `documentId` — a Form must be placed as a **shared**
   block; an inline block has no id to post against.
 - `submitForm` throws `PaperboyError` only for transport/auth failures (401,

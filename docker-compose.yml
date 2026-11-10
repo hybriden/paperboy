@@ -122,6 +122,8 @@ services:
       LOGIN_RATE_MAX: ${LOGIN_RATE_MAX:-10}
       # Global per-IP request ceiling per minute — raised by CI e2e runs only.
       RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-300}
+      # Delivery reads per route per minute from one address (your frontend's server).
+      DELIVERY_RATE_MAX: ${DELIVERY_RATE_MAX:-6000}
     depends_on:
       db:
         condition: service_healthy
@@ -156,6 +158,10 @@ services:
       # Admin origins allowed to embed the preview iframe (CSP frame-ancestors). Comma-separated.
       ADMIN_ORIGINS: ${ADMIN_ORIGINS:-}
       SITE_ORIGIN: ${SITE_ORIGIN:-}
+      # The header your edge sets to the visitor's address (cf-connecting-ip,
+      # x-real-ip). Forwarded with form posts so the CMS limits each visitor,
+      # not this container. Empty = not forwarded.
+      PAPERBOY_CLIENT_IP_HEADER: ${PAPERBOY_CLIENT_IP_HEADER:-}
       NEXT_PUBLIC_TURNSTILE_SITE_KEY: ${NEXT_PUBLIC_TURNSTILE_SITE_KEY:-}
       PAPERBOY_AB_MODE: ${PAPERBOY_AB_MODE:-}
       PAPERBOY_AB_CONSENT_COOKIE: ${PAPERBOY_AB_CONSENT_COOKIE:-}

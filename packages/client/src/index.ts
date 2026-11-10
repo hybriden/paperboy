@@ -550,6 +550,14 @@ export function createClient(options: PaperboyClientOptions) {
         /** The A/B versions this page showed (`applyExperiments` exposures):
          *  a conversion for experiments whose goal is "form". */
         experiments?: ExperimentExposure[];
+        /**
+         * The visitor's IP address, when you submit from a server. Without it
+         * every visitor shares your server's address, so the CMS's per-IP
+         * submit limit becomes one limit for the whole site. Sent as
+         * X-Forwarded-For, which the CMS honours only from an address its
+         * TRUST_PROXY setting trusts. Anything that isn't one address is dropped.
+         */
+        visitorIp?: string;
       },
     ): Promise<FormSubmitResult> {
       const url = `${base}/api/v1/delivery/forms/${encodeURIComponent(formId)}/submissions`;
@@ -558,6 +566,7 @@ export function createClient(options: PaperboyClientOptions) {
         "content-type": "application/json",
       };
       if (input.idempotencyKey) headers["idempotency-key"] = input.idempotencyKey;
+      if (input.visitorIp && /^[0-9a-f.:]{2,45}$/i.test(input.visitorIp)) headers["x-forwarded-for"] = input.visitorIp;
       const res = await doFetch(url, {
         ...options.fetchInit,
         method: "POST",

@@ -1,7 +1,21 @@
 "use server";
 
 import type { ExperimentExposure } from "@paperboycms/client";
+import { headers } from "next/headers";
 import { submitForm } from "../lib/delivery";
+
+/**
+ * The visitor's address, from the header the operator's edge sets and
+ * overwrites (PAPERBOY_CLIENT_IP_HEADER: `cf-connecting-ip` behind Cloudflare,
+ * `x-real-ip` behind nginx). None configured = none sent: Next keeps a
+ * visitor's own X-Forwarded-For, so reading it would let a bot pick a fresh
+ * address for every request and walk past the CMS's per-IP limit.
+ */
+async function visitorIp(): Promise<string | undefined> {
+  const name = process.env.PAPERBOY_CLIENT_IP_HEADER?.trim();
+  if (!name) return undefined;
+  return (await headers()).get(name)?.split(",")[0]?.trim() || undefined;
+}
 
 /**
  * The server action the reference form posts to.
@@ -34,7 +48,7 @@ export async function submitFormAction(input: {
   { ok: true; confirmation: { type: string; text?: unknown } } | { ok: false; fields: Record<string, string> }
 > {
   try {
-    const res = await submitForm(input);
+    const res = await submitForm({ ...input, visitorIp: await visitorIp() });
     return res.ok ? { ok: true, confirmation: res.confirmation } : res;
   } catch {
     // Never leak transport detail to a visitor; tell them what to do instead.

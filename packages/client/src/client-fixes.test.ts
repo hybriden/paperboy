@@ -32,6 +32,23 @@ describe("client SDK fixes (S2-L4, S2-L3, S2-M5)", () => {
     expect(captured).toContain("data.status=");
   });
 
+  // A frontend posts forms from its SERVER, so every visitor arrived from one
+  // address: the per-IP submit limit was the whole site's limit, and a form
+  // set to store the IP stored the frontend's. The visitor's address rides in
+  // X-Forwarded-For, which the CMS honours from a peer TRUST_PROXY trusts.
+  it("submitForm forwards the visitor's address, and only an address", async () => {
+    const sent: Array<Record<string, string>> = [];
+    const fetch = (async (_url: string, init: { headers: Record<string, string> }) => {
+      sent.push(init.headers);
+      return { status: 202, ok: true, json: async () => ({ submissionId: "sub_1", confirmation: { type: "message" } }) };
+    }) as unknown as typeof globalThis.fetch;
+    const client = createClient({ baseUrl: "http://x", key: "pk_live_x", fetch });
+    for (const visitorIp of ["203.0.113.9", "2001:db8::7", "evil\r\nx-api-key: 1", "1.2.3.4, 5.6.7.8", undefined]) {
+      await client.submitForm("f1", { values: {}, visitorIp });
+    }
+    expect(sent.map((h) => h["x-forwarded-for"])).toEqual(["203.0.113.9", "2001:db8::7", undefined, undefined, undefined]);
+  });
+
   it("S2-M5: the etag cache is bounded — the oldest entry is evicted (LRU)", async () => {
     const seen: Array<{ ifNoneMatch: unknown }> = [];
     const fetch = (async (_url: string, init: { headers?: Record<string, string> }) => {

@@ -197,7 +197,8 @@ Container Apps, Cloud Run, Fly, Render, Railway) plus a managed Postgres.
 | `DATABASE_URL` | `postgresql://…@host:5432/paperboy?sslmode=require` |
 | Secrets | `SESSION_SECRET`, `CSRF_SECRET`, `MFA_SECRET` via `openssl rand -hex 32`; `PREVIEW_SECRET` too, set to the same value on your frontend, for draft preview |
 | `CORS_ORIGIN` | the admin's HTTPS origin, with `COOKIE_SECURE=true` |
-| `TRUST_PROXY` | the load-balancer range, so rate limits see real IPs |
+| `TRUST_PROXY` | the load-balancer range, so rate limits see real IPs; include your frontend's address if it forwards visitors' (`submitForm({ visitorIp })`) |
+| `DELIVERY_RATE_MAX` | delivery reads per route per minute from one address (default 6000); your frontend's server is one address |
 | Storage | a persistent volume at `/app/uploads` |
 | Remote MCP | `MCP_EMBEDDED=true` serves the MCP inside the same container at `{PUBLIC_URL}/mcp` |
 

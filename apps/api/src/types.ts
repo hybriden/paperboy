@@ -9,6 +9,8 @@ declare module "fastify" {
     corsOrigin: string;
     sessionSecret: string;
     loginRateMax: number;
+    /** Delivery reads per route per minute from one address (DELIVERY_RATE_MAX). */
+    deliveryRateMax: number;
     uploadsDir: string;
     previewSecret?: string;
     aiEnv: AiEnv;

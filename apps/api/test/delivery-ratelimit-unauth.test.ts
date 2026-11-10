@@ -21,7 +21,7 @@ describe("invalid delivery credentials are rate limited", () => {
   let s: Suite;
 
   beforeAll(async () => {
-    s = await setupApi();
+    s = await setupApi({ DELIVERY_RATE_MAX: "600" });
   });
   afterAll(async () => {
     await s.app.close();
