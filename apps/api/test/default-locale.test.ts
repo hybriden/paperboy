@@ -7,7 +7,7 @@ import { PUBLIC_KEY, type Suite, TEST_DB, authHeaders, login, setupApi } from ".
  *
  * Every route used to spell the fallback as `req.query.locale ?? "en"` (27 places
  * across manage.ts, delivery.ts and the MCP delivery tools), which made "en" an
- * unconfigurable pivot: `getDefaultLocale()` was dead code with zero callers, and
+ * unconfigurable pivot: a `getDefaultLocale()` helper existed with zero callers, and
  * `site.defaultLocale` was collected by the create-site wizard, validated, stored…
  * and read by nothing.
  *

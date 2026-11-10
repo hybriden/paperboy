@@ -335,12 +335,6 @@ export async function listLocales(db: Database) {
   return db.select().from(locale).where(eq(locale.enabled, true)).orderBy(asc(locale.sortIndex));
 }
 
-export async function getDefaultLocale(db: Database): Promise<string> {
-  const rows = await db.select().from(locale).where(eq(locale.isDefault, true)).limit(1);
-  if (!rows[0]) throw Errors.badRequest("No default locale configured");
-  return rows[0].code;
-}
-
 /**
  * The locale a request means when it doesn't say — for `siteId` if given.
  *

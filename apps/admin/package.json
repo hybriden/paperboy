@@ -10,7 +10,6 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test:e2e": "playwright test",
-    "test:e2e:debug": "playwright test --config playwright.debug.config.ts",
     "test:e2e:install": "playwright install chromium",
     "test": "vitest run"
   },

@@ -33,19 +33,6 @@ export function sitePath(urlPath: string, locale: string, scheme: SiteUrlScheme)
   return `/${locale}${path}`;
 }
 
-/** The inverse of sitePath: which (locale, urlPath) a requested path names, or
- *  null when it can't be a page path under this scheme. */
-export function splitSitePath(path: string, scheme: SiteUrlScheme, locales: string[]): { locale: string; urlPath: string } | null {
-  const first = path.split("/")[1] ?? "";
-  if (locales.includes(first)) {
-    const rest = path.slice(first.length + 1) || "/";
-    // Under 'except-default' the default locale is never prefixed: /nb/x is not a page path.
-    if (scheme.localePrefix === "except-default" && first === scheme.defaultLocale) return null;
-    return { locale: first, urlPath: rest };
-  }
-  return scheme.localePrefix === "except-default" ? { locale: scheme.defaultLocale, urlPath: path } : null;
-}
-
 /**
  * The canonical form every source path is stored and matched in: decoded,
  * lowercase, one leading slash, no trailing slash (except "/"), no duplicate
