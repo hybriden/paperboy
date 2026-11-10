@@ -131,6 +131,12 @@ describe("MCP toolsets", () => {
       expect(res.json).toEqual({ deleted: 0 });
     }, 60_000);
 
+    it("erase_form_submissions refuses a fragment that would match everyone", async () => {
+      const res = await c.call("erase_form_submissions", { email: "e" });
+      expect(res.isError, res.text).toBe(true);
+      expect(res.text).toContain("email address");
+    }, 60_000);
+
     it("erase_form_submissions wants exactly one of submissionId or email", async () => {
       const res = await c.call("erase_form_submissions", {});
       expect(res.isError).toBe(true);

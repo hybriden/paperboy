@@ -572,6 +572,51 @@ describe("management access", () => {
     expect(after.body).not.toContain("reach me at");
   });
 
+  // "Contains" meant a substring: erasing ann@ex.no also erased joann@ex.no and
+  // ann@ex.no.uk, other people's enquiries, gone for good. It must match the
+  // ADDRESS, wherever it appears, and nothing that merely contains it.
+  it("erases the address itself, never a longer address that contains it", async () => {
+    const mine = await submit(good({ fullName: "Ann", email: "ann@erase-scope.example", consent: true }));
+    const inText = await submit(
+      good({ fullName: "Ann again", email: "other@erase-scope.example", message: "Or write to Ann@Erase-Scope.example.", consent: true }),
+    );
+    const joann = await submit(good({ fullName: "Joann", email: "joann@erase-scope.example", consent: true }));
+    const dotted = await submit(good({ fullName: "Jo Ann", email: "jo.ann@erase-scope.example", consent: true }));
+    const longer = await submit(good({ fullName: "Ann UK", email: "ann@erase-scope.example.uk", consent: true }));
+    for (const r of [mine, inText, joann, dotted, longer]) expect(r.statusCode, r.body).toBe(202);
+
+    const res = await s.app.inject({
+      method: "POST",
+      url: "/api/v1/manage/forms/submissions/erase",
+      headers: authHeaders(admin),
+      payload: { email: "ann@erase-scope.example" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.json()).toEqual({ deleted: 2 });
+
+    const left = await s.app.inject({ method: "GET", url: `/api/v1/manage/forms/submissions?formId=${formId}&limit=200`, headers: { cookie: admin.cookie } });
+    for (const kept of ["joann@erase-scope.example", "jo.ann@erase-scope.example", "ann@erase-scope.example.uk"]) expect(left.body).toContain(kept);
+    expect(left.body).not.toContain('"ann@erase-scope.example"');
+    expect(left.body).not.toContain("Or write to Ann");
+  });
+
+  it("refuses to erase by something that is not one email address", async () => {
+    const kept = await submit(good({ fullName: "Bystander", email: "bystander@erase-scope.example", consent: true }));
+    expect(kept.statusCode, kept.body).toBe(202);
+    for (const email of ["example", "@erase-scope.example", "a@b", "ann@", "two@a.example three@b.example"]) {
+      const res = await s.app.inject({
+        method: "POST",
+        url: "/api/v1/manage/forms/submissions/erase",
+        headers: authHeaders(admin),
+        payload: { email },
+      });
+      expect(res.statusCode, `${email}: ${res.body}`).toBe(422);
+      expect(res.json().message).toContain("email address");
+    }
+    const left = await s.app.inject({ method: "GET", url: `/api/v1/manage/forms/submissions?formId=${formId}&limit=200`, headers: { cookie: admin.cookie } });
+    expect(left.body).toContain("bystander@erase-scope.example");
+  });
+
   it("lists the site's forms with counts", async () => {
     const res = await s.app.inject({
       method: "GET",

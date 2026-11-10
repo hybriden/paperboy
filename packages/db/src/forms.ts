@@ -6,6 +6,7 @@ import {
   formSpecFrom,
   isFormFieldType,
   isFormType,
+  mailAddress,
   submissionErrors,
   submissionSchemaFor,
 } from "@paperboy/shared";
@@ -514,9 +515,11 @@ export async function deleteSubmission(db: Database, ctx: AccessContext, submiss
  * — the data-subject-erasure path. One action, so a request can be answered
  * completely and provably instead of hunting per form.
  *
- * Matching is a case-insensitive CONTAINS across all answer VALUES rather than
- * an exact match on a named "email" field: the address may have been given in
- * any field the editor built, including in passing inside a message.
+ * Matching looks for the ADDRESS across all answer VALUES rather than an exact
+ * match on a named "email" field: it may have been given in any field the
+ * editor built, including in passing inside a message. It is the whole address,
+ * case-insensitive: a plain substring also erased joann@… and ann@….uk, other
+ * people's enquiries, and a fragment like "e" erased nearly everything.
  */
 export async function eraseSubmissionsByEmail(
   db: Database,
@@ -524,8 +527,14 @@ export async function eraseSubmissionsByEmail(
   email: string,
 ): Promise<{ deleted: number }> {
   requirePermission(ctx, "submission.manage");
-  const needle = email.trim().toLowerCase();
-  if (!needle) throw Errors.validation("An email address is required to erase submissions.", ["email"]);
+  const address = mailAddress(email.trim());
+  if (!address) {
+    throw Errors.validation(`"${email.trim().slice(0, 80)}" is not one email address. Erase by the full address the person gave, e.g. kari@example.com.`, ["email"]);
+  }
+  // Not preceded or followed by another address character (a sentence's full
+  // stop after it is fine), so ann@x.no never matches joann@x.no or ann@x.no.uk.
+  const escaped = address.replace(/[.*+?^${}()|[\]\\-]/g, "\\$&");
+  const pattern = `(?<![a-z0-9._%+-])${escaped}(?![a-z0-9_%+-]|\\.[a-z0-9])`;
   const res = await db
     .delete(formSubmission)
     .where(
@@ -533,7 +542,7 @@ export async function eraseSubmissionsByEmail(
         eq(formSubmission.siteId, ctx.siteId),
         sql`exists (
           select 1 from jsonb_each_text(${formSubmission.values}) kv
-          where position(${needle} in lower(kv.value)) > 0
+          where kv.value ~* ${pattern}
         )`,
       ),
     )
