@@ -2098,11 +2098,15 @@ async function promoteDraft(
   db: Database,
   item: Pick<typeof contentItem.$inferSelect, "documentId" | "kind" | "siteId" | "parentId">,
   loc: string,
-  draftId: number,
+  /** The row the caller CHECKED: promoted only if it is still that revision. A
+   *  save that lands between the checks and here would go live unchecked and,
+   *  with agent review on, unreviewed. */
+  checked: { id: number; revision: number },
   actorUserId: string | null,
   opts: { scheduledBy?: Date } = {},
 ): Promise<void> {
   const { documentId } = item;
+  const draftId = checked.id;
   try {
     await withSiblingSlugLock(db, item, loc, async (tx) => {
       if (item.kind === "page") {
@@ -2150,19 +2154,21 @@ async function promoteDraft(
         .where(
           and(
             eq(contentVersion.id, draftId),
+            eq(contentVersion.revision, checked.revision),
             opts.scheduledBy
               ? and(eq(contentVersion.status, "draft"), lte(contentVersion.publishAt, opts.scheduledBy))
               : undefined,
           ),
         )
         .returning({ id: contentVersion.id });
-      // Zero rows: the row is gone (discarded) or no longer a due scheduled draft.
-      // Throwing rolls the demote back, so the live version stays live.
+      // Zero rows: the row is gone (discarded), was saved again after the checks,
+      // or is no longer a due scheduled draft. Throwing rolls the demote back, so
+      // the live version stays live.
       if (promoted.length === 0) throw new PromotionSkipped();
     });
   } catch (err) {
     if (err instanceof PromotionSkipped) {
-      throw Errors.conflict("This draft changed while it was being published (discarded or unscheduled) — re-read it and retry.");
+      throw Errors.conflict("This draft changed while it was being published (saved again, discarded or unscheduled), so nothing was published — re-read it and publish again.");
     }
     // A concurrent publish promoted this variant first (content_version_one_published
     // held the single-published invariant). Self-teaching 409, not an opaque 500 (S2-L5).
@@ -2391,7 +2397,7 @@ export async function publishContent(
       throw Errors.conflict("Nothing to publish (no draft changes)");
     }
     await assertDraftPublishable(db, item, loc, latest);
-    await withUrlTracking(db, item, () => promoteDraft(db, item, loc, latest.id, ctx.userId));
+    await withUrlTracking(db, item, () => promoteDraft(db, item, loc, latest, ctx.userId));
     const published = await getContent(db, ctx, documentId, loc);
     announceContent(db, "content.published", item, loc, published.name, published.urlPath);
     return published;
@@ -2402,7 +2408,7 @@ export async function publishContent(
   if ((ctx.via === "mcp" || ctx.via === "agent") && !opts?.allowLanguageMismatch) {
     await assertLanguageMatchesBranch(db, item, loc, draft);
   }
-  await withUrlTracking(db, item, () => promoteDraft(db, item, loc, draft.id, ctx.userId));
+  await withUrlTracking(db, item, () => promoteDraft(db, item, loc, draft, ctx.userId));
   const published = await getContent(db, ctx, documentId, loc);
   announceContent(db, "content.published", item, loc, published.name, published.urlPath);
   return published;
@@ -2502,7 +2508,7 @@ export async function schedulePublish(
       .update(contentVersion)
       .set({ publishAt: null, expireAt: opts.expireAt ?? null })
       .where(eq(contentVersion.id, draft.id));
-    await promoteDraft(db, item, loc, draft.id, ctx.userId);
+    await promoteDraft(db, item, loc, draft, ctx.userId);
     announceContent(db, "content.published", item, loc, draft.name, item.kind === "page" ? await computePath(db, documentId, loc) : null);
     return getContent(db, ctx, documentId, loc);
   }
@@ -2600,7 +2606,7 @@ export async function runScheduledPublish(
       }
       // `due` is a snapshot: the schedule may have been cancelled (or the draft
       // discarded) since. Promote only if it is STILL a due scheduled draft.
-      await withUrlTracking(db, item, () => promoteDraft(db, item, d.locale, d.id, d.createdBy, { scheduledBy: now }));
+      await withUrlTracking(db, item, () => promoteDraft(db, item, d.locale, d, d.createdBy, { scheduledBy: now }));
       const urlPath = item.kind === "page" ? await computePath(db, d.documentId, d.locale) : null;
       await dispatchWebhooks(db, {
         event: "content.published",
