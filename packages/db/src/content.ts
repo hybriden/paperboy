@@ -2508,7 +2508,8 @@ export async function schedulePublish(
       .update(contentVersion)
       .set({ publishAt: null, expireAt: opts.expireAt ?? null })
       .where(eq(contentVersion.id, draft.id));
-    await promoteDraft(db, item, loc, draft, ctx.userId);
+    // Tracked like every publish: a slug the draft changed leaves its 301 and pings IndexNow.
+    await withUrlTracking(db, item, () => promoteDraft(db, item, loc, draft, ctx.userId));
     announceContent(db, "content.published", item, loc, draft.name, item.kind === "page" ? await computePath(db, documentId, loc) : null);
     return getContent(db, ctx, documentId, loc);
   }
