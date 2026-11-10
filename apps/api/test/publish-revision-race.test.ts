@@ -26,7 +26,10 @@ describe("publish promotes the draft it checked, not a later one", () => {
     await sql.end();
   });
 
-  it("refuses with 409 when the draft changed during publish, and the live version stays", async () => {
+  // PGlite (#124) is one Postgres session: the staged lock holds it, so publish
+  // and the save serialize and this race cannot happen there (and the test would
+  // wait on itself).
+  it.skipIf(process.env.TEST_PGLITE === "1")("refuses with 409 when the draft changed during publish, and the live version stays", async () => {
     const created = await s.app.inject({ method: "POST", url: "/api/v1/manage/content", headers: authHeaders(ed), payload: { type: "CardBlock", locale: "en", name: "Race card", data: { title: "Live title" } } });
     expect(created.statusCode, created.body).toBe(200);
     const id = created.json().documentId as string;
