@@ -3469,15 +3469,14 @@ export async function restoreContent(
 
 /** Refuse a restore that would put two live sibling pages on one URL segment. */
 async function assertRestoredSlugsFree(tx: Transaction, item: typeof contentItem.$inferSelect): Promise<void> {
+  // Each locale's WORKING row (draft, else live, else latest), as siblingSlugs
+  // reads the other pages. Trashing demotes the live row, so "draft or live"
+  // found nothing for a page that was published with no pending draft.
   const own = await tx
-    .select({ locale: contentVersion.locale, slug: contentVersion.slug })
+    .selectDistinctOn([contentVersion.locale], { locale: contentVersion.locale, slug: contentVersion.slug })
     .from(contentVersion)
-    .where(
-      and(
-        eq(contentVersion.documentId, item.documentId),
-        or(eq(contentVersion.status, "draft"), eq(contentVersion.isCurrentPublished, true)),
-      ),
-    );
+    .where(eq(contentVersion.documentId, item.documentId))
+    .orderBy(contentVersion.locale, ...workingVersionFirst);
   for (const loc of new Set(own.map((r) => r.locale))) {
     await lockSiblingSlugs(tx, item.siteId, item.parentId, loc);
     const taken = await siblingSlugs(tx, item.documentId, item.parentId, loc, item.siteId);
