@@ -55,6 +55,8 @@ import { Skeleton } from "./ui/skeleton.js";
 import { useToast } from "./ui/toast.js";
 
 type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+/** Edits the server doesn't have yet. A FAILED save counts: its edits are still only on screen. */
+const hasUnsaved = (s: SaveState): boolean => s === "dirty" || s === "saving" || s === "error";
 
 /** Stringify a scalar field value; objects/arrays/null become "" (never "[object Object]"). */
 function asText(v: unknown): string {
@@ -390,7 +392,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       if (timer.current) clearTimeout(timer.current);
       const p = pendingRef.current;
       const latest = formRef.current;
-      const unsaved = saveStateRef.current === "dirty" || saveStateRef.current === "saving";
+      const unsaved = hasUnsaved(saveStateRef.current);
       if (unsaved && latest) {
         stashUnsaved(user.id, documentId, locale, { name: latest.name, slug: latest.slug, displayInNav: latest.displayInNav, data: latest.data });
       }
@@ -436,6 +438,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       setStashed(readUnsaved(user.id, documentId, locale));
       setForm(detail.data);
       formRef.current = detail.data;
+      // The server's copy is the working copy now ("Reload their version" lands
+      // here): edits a failed save left pending must not be flushed over it.
+      pendingRef.current = null;
       setSaveState("idle");
       setHideTranslateOffer(false);
     }
@@ -554,7 +559,14 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       if (!latest) return;
       pendingRef.current = null; // a save is now in flight for these edits
       setSaveState("saving");
-      await save.mutateAsync(latest);
+      try {
+        await save.mutateAsync(latest);
+      } catch (err) {
+        // Not saved after all: pending again, so a retry (Ctrl+S, Publish,
+        // leaving the page) sends them. Newer typing already replaced them.
+        pendingRef.current ??= latest;
+        throw err;
+      }
     };
     const next = (saveChain.current ?? Promise.resolve()).catch(() => undefined).then(run);
     saveChain.current = next;
@@ -582,7 +594,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   // Warn on navigation with unsaved changes.
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => {
-      if (saveState === "dirty" || saveState === "saving") {
+      if (hasUnsaved(saveState)) {
         e.preventDefault();
         e.returnValue = "";
       }
@@ -594,9 +606,9 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
   const publish = useMutation({
     mutationFn: async () => {
       if (timer.current) clearTimeout(timer.current);
-      if ((saveState === "dirty" || saveState === "saving") && formRef.current) {
-        // A save that failed (409, validation) must not be followed by a publish
-        // of the older server draft.
+      if (hasUnsaved(saveState) && formRef.current) {
+        // A save that failed (409, validation, network) must not be followed by a
+        // publish of the older server draft: save first, publish only if it lands.
         if (!(await queueSave())) throw new Error("Your latest changes could not be saved, so nothing was published.");
       }
       return api.publish(documentId, locale);
@@ -1177,7 +1189,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") {
         e.preventDefault();
         if (timer.current) clearTimeout(timer.current);
-        if (formRef.current && (saveState === "dirty" || saveState === "saving")) void queueSave();
+        if (formRef.current && hasUnsaved(saveState)) void queueSave();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -2166,6 +2178,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           onRestored={(updated) => {
             setForm(updated);
             formRef.current = updated;
+            pendingRef.current = null;
             loadedKey.current = variantKey;
             setSaveState("idle");
             qc.setQueryData(["content", documentId, locale], updated);
@@ -2211,7 +2224,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
             // Like publish: the pending edits land first, so the winner merges
             // over them instead of the autosave being refused afterwards.
             if (timer.current) clearTimeout(timer.current);
-            return (saveState === "dirty" || saveState === "saving") && formRef.current ? queueSave() : true;
+            return hasUnsaved(saveState) && formRef.current ? queueSave() : true;
           }}
           onEnded={() => {
             // Ending with a winner may have rewritten the area's draft: re-seed the form.
@@ -2232,6 +2245,7 @@ export function Editor({ documentId, locale, setLocale, locales, types, user, on
           onDone={(updated) => {
             setForm(updated);
             formRef.current = updated;
+            pendingRef.current = null;
             setSaveState("idle");
             qc.setQueryData(["content", documentId, locale], updated);
             void qc.invalidateQueries({ queryKey: ["tree"] });
