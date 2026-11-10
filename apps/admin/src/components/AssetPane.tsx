@@ -232,7 +232,11 @@ function CreateBlockDialog({
   onCreated: (id: string) => void;
 }) {
   const qc = useQueryClient();
-  const [type, setType] = useState(generalBlockTypes(blockTypes)[0]?.name ?? blockTypes[0]?.name ?? "");
+  // The editor's pick, else the first block type. Derived, not initial state:
+  // opened before the types loaded, the dialog had no type and "Create block"
+  // stayed disabled.
+  const [chosen, setType] = useState("");
+  const type = chosen || (generalBlockTypes(blockTypes)[0]?.name ?? blockTypes[0]?.name ?? "");
   const [name, setName] = useState("");
   const nameRef = useRef<HTMLInputElement>(null);
   useEffect(() => { nameRef.current?.focus(); }, []);
