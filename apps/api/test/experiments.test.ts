@@ -156,6 +156,27 @@ describe("A/B experiments", () => {
     expect(got.estimate).toEqual({ perDay: 3, daysLeft: 1066 });
   });
 
+  // Nothing ties conversions to exposures (one visitor can send the form twice),
+  // and a rate above 1 made the interval NaN. The response schema rejects NaN,
+  // so the list and the detail answered 500 for the whole site.
+  it("more conversions than visitors on a version keeps the results readable", async () => {
+    const id = await page("Odd counts page");
+    const exp = (await create(editor, id)).json();
+    expect((await manage(editor, "POST", `/experiments/${exp.id}/start`)).statusCode).toBe(200);
+    const res = await traffic({
+      exposures: [{ experimentId: exp.id, arm: "a" }, { experimentId: exp.id, arm: "a" }, { experimentId: exp.id, arm: "b" }],
+      conversions: [{ experimentId: exp.id, arm: "a", goal: "form" }, { experimentId: exp.id, arm: "b", goal: "form" }, { experimentId: exp.id, arm: "b", goal: "form" }],
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    const one = await manage(viewer, "GET", `/experiments/${exp.id}`);
+    expect(one.statusCode, one.body).toBe(200);
+    for (const r of one.json().results as Array<{ comparison?: Record<string, number | null> | null }>) {
+      for (const v of Object.values(r.comparison ?? {})) if (v !== null) expect(Number.isFinite(v)).toBe(true);
+    }
+    expect((await manage(viewer, "GET", "/experiments")).statusCode).toBe(200);
+    await manage(editor, "POST", `/experiments/${exp.id}/end`, {});
+  });
+
   it("ending with a winner writes it as a draft, or publishes it; losers are kept", async () => {
     const id = await page("Winner page");
     const exp = (await create(editor, id)).json();

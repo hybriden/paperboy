@@ -49,6 +49,13 @@ describe("statistics", () => {
     expect(compareToControl({ exposures: 0, conversions: 0 }, { exposures: 10, conversions: 1 })).toBeNull();
   });
 
+  it("stays finite when a version has more conversions than visitors", () => {
+    for (const [a, b] of [[{ exposures: 100, conversions: 5 }, { exposures: 1, conversions: 2 }], [{ exposures: 1, conversions: 3 }, { exposures: 1, conversions: 3 }]] as const) {
+      const c = compareToControl(a, b)!;
+      for (const v of [c.diffLow, c.diffHigh, c.pValue]) expect(Number.isFinite(v), JSON.stringify(c)).toBe(true);
+    }
+  });
+
   it("sample ratio mismatch", () => {
     expect(sampleRatioPValue([5000, 5000], [50, 50])).toBeCloseTo(1, 5);
     expect(sampleRatioPValue([5000, 5500], [50, 50])).toBeLessThan(0.001);

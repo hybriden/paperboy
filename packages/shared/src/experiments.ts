@@ -101,9 +101,13 @@ export interface ArmComparison {
 /** Two-proportion z-test of a version against the control. */
 export function compareToControl(control: { exposures: number; conversions: number }, arm: { exposures: number; conversions: number }): ArmComparison | null {
   if (control.exposures <= 0 || arm.exposures <= 0) return null;
-  const pa = control.conversions / control.exposures;
-  const pb = arm.conversions / arm.exposures;
-  const pooled = (control.conversions + arm.conversions) / (control.exposures + arm.exposures);
+  // A rate can exceed 1: nothing ties conversions to exposures (one visitor can
+  // send a form twice). Unclamped, p(1-p) went negative, the interval NaN, and
+  // the response schema answered 500 for the whole experiments list.
+  const rate = (conversions: number, exposures: number) => Math.min(1, conversions / exposures);
+  const pa = rate(control.conversions, control.exposures);
+  const pb = rate(arm.conversions, arm.exposures);
+  const pooled = rate(control.conversions + arm.conversions, control.exposures + arm.exposures);
   const sePooled = Math.sqrt(pooled * (1 - pooled) * (1 / control.exposures + 1 / arm.exposures));
   const z = sePooled > 0 ? (pb - pa) / sePooled : 0;
   const se = Math.sqrt((pa * (1 - pa)) / control.exposures + (pb * (1 - pb)) / arm.exposures);
