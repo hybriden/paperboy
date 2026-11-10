@@ -50,6 +50,17 @@ describe("a stored AI key is bound to the base URL it was saved for", () => {
     }
   });
 
+  // The key was written BEFORE the base URL was checked: a new key sent with a
+  // mistyped URL (no https://) answered 400, but the key was already stored,
+  // bound to the OLD endpoint, and the next call sent it there.
+  it("a refused base URL stores nothing from the same request", async () => {
+    expect((await post({ provider: "openai", apiKey: "sk-or-first-3344", baseUrl: "https://openrouter.example/api/v1" })).statusCode).toBe(200);
+    const refused = await post({ apiKey: "sk-oai-new-5566", baseUrl: "api.openai.example/v1" });
+    expect(refused.statusCode).toBe(400);
+    const after = (await s.app.inject({ method: "GET", url: "/api/v1/manage/site/ai", headers: authHeaders(admin) })).json();
+    expect(after).toMatchObject({ last4: "3344", baseUrl: "https://openrouter.example/api/v1" });
+  });
+
   it("a new key sent together with the new base URL is kept (bound to that URL)", async () => {
     const both = await post({ apiKey: "sk-oai-second-1122", baseUrl: "https://other.example/v1" });
     expect(both.json()).toMatchObject({ configured: true, source: "db", last4: "1122", baseUrl: "https://other.example/v1" });

@@ -202,6 +202,17 @@ export async function setAiConfig(
   input: { provider?: AiProvider; apiKey?: string | null; model?: string | null; baseUrl?: string | null; reasoningEffort?: AiReasoningEffort | null },
 ): Promise<void> {
   requirePermission(ctx, "user.manage");
+  // Validate everything BEFORE the first write. The key used to be stored and
+  // the base URL refused afterwards: a 400, but the new key was already saved,
+  // bound to the OLD endpoint, and the next call sent it there.
+  const url = input.baseUrl?.trim().replace(/\/+$/, "");
+  if (url && !/^https?:\/\/[^\s]+$/i.test(url)) {
+    throw Errors.badRequest('AI base URL must be a full http(s):// URL, e.g. "https://api.openai.com/v1" or "http://localhost:11434/v1"');
+  }
+  const effort = input.reasoningEffort;
+  if (effort && !AI_REASONING_EFFORTS.includes(effort)) {
+    throw Errors.badRequest(`Reasoning effort must be one of: ${AI_REASONING_EFFORTS.join(", ")} (or null for the provider default)`);
+  }
   const stored = await getStoredAiConfig(db);
   const provider = input.provider ?? stored.provider ?? "anthropic";
   if (input.provider !== undefined) {
@@ -221,10 +232,6 @@ export async function setAiConfig(
     else await db.delete(siteSetting).where(eq(siteSetting.key, AI_MODEL_KEY));
   }
   if (input.baseUrl !== undefined) {
-    const url = input.baseUrl?.trim().replace(/\/+$/, "");
-    if (url && !/^https?:\/\/[^\s]+$/i.test(url)) {
-      throw Errors.badRequest('AI base URL must be a full http(s):// URL, e.g. "https://api.openai.com/v1" or "http://localhost:11434/v1"');
-    }
     // The key is bound to its ENDPOINT as well as its provider: moving the
     // base URL without re-entering the key clears it, or the next Test / model
     // list would send the stored key to whatever host was just typed in.
@@ -235,10 +242,6 @@ export async function setAiConfig(
     else await db.delete(siteSetting).where(eq(siteSetting.key, AI_BASE_URL_KEY));
   }
   if (input.reasoningEffort !== undefined) {
-    const effort = input.reasoningEffort;
-    if (effort && !AI_REASONING_EFFORTS.includes(effort)) {
-      throw Errors.badRequest(`Reasoning effort must be one of: ${AI_REASONING_EFFORTS.join(", ")} (or null for the provider default)`);
-    }
     if (effort) await putSetting(db, AI_REASONING_KEY, { effort });
     else await db.delete(siteSetting).where(eq(siteSetting.key, AI_REASONING_KEY));
   }
