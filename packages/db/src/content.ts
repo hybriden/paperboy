@@ -2088,8 +2088,8 @@ class PromotionSkipped extends Error {}
 /**
  * Core publish promotion (NO RBAC — callers authorize). Demotes the prior
  * current-published row and promotes `draftId` to live, allocating a fresh cv
- * atomically and clearing its scheduled publish_at. Any expire_at already on the
- * row is preserved (it becomes the live row's expiry). Shared by the manual
+ * atomically and clearing its scheduled publish_at. An expire_at still ahead is
+ * preserved (it becomes the live row's expiry); one already past is cleared. Shared by the manual
  * publish route AND the scheduled-publish ticker. A page's URL segment is
  * re-checked against its siblings under the slug lock, on the row as it is NOW
  * (a concurrent save may have changed it since the caller read it).
@@ -2132,10 +2132,21 @@ async function promoteDraft(
             eq(contentVersion.isCurrentPublished, true),
           ),
         );
-      // Promote the draft to the live published version for this variant.
+      // Promote the draft to the live published version for this variant. An
+      // expiry still ahead stays; one already past is cleared, or the row went
+      // live hidden (delivery skips it) and the next tick unpublished it again.
       const promoted = await tx
         .update(contentVersion)
-        .set({ status: "published", isCurrentPublished: true, cv, createdBy: actorUserId, publishAt: null, publishedAt: now, firstPublishedAt: earlier?.at ?? now })
+        .set({
+          status: "published",
+          isCurrentPublished: true,
+          cv,
+          createdBy: actorUserId,
+          publishAt: null,
+          expireAt: sql`case when ${contentVersion.expireAt} <= ${now.toISOString()}::timestamptz then null else ${contentVersion.expireAt} end`,
+          publishedAt: now,
+          firstPublishedAt: earlier?.at ?? now,
+        })
         .where(
           and(
             eq(contentVersion.id, draftId),

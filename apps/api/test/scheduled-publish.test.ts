@@ -87,6 +87,64 @@ describe("Scheduled publish (timed go-live + expiry)", () => {
     expect(res.expired).toBeGreaterThanOrEqual(1);
   });
 
+  // Nothing cleared an expiry once it had passed. Publish re-promoted the row
+  // WITH its old expire_at: "published" and a content.published webhook, a 404
+  // for visitors, and the next tick unpublished it again.
+  describe("publishing again after an expiry has passed", () => {
+    async function expiredPage(name: string): Promise<string> {
+      const id = await makeDraft(name);
+      await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(ed) });
+      return id;
+    }
+    async function expire(id: string): Promise<void> {
+      const sched = await s.app.inject({
+        method: "POST",
+        url: `/api/v1/manage/content/${id}/schedule?locale=en`,
+        headers: authHeaders(ed),
+        payload: { publishAt: null, expireAt: new Date(Date.now() - 60_000).toISOString() },
+      });
+      expect(sched.statusCode, sched.body).toBe(200);
+    }
+    async function expectLiveAndStaying(id: string): Promise<void> {
+      expect((await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${id}?locale=en`, headers: pub })).statusCode).toBe(200);
+      await runScheduledPublish(s.app.db, new Date());
+      expect((await s.app.inject({ method: "GET", url: `/api/v1/delivery/content/${id}?locale=en`, headers: pub })).statusCode).toBe(200);
+      const detail = await s.app.inject({ method: "GET", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(ed) });
+      expect(detail.json().status).toBe("published");
+    }
+
+    it("brings back an expired page with no draft", async () => {
+      const id = await expiredPage("Expired then republished");
+      await expire(id);
+      await runScheduledPublish(s.app.db, new Date());
+      const again = await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(ed) });
+      expect(again.statusCode, again.body).toBe(200);
+      await expectLiveAndStaying(id);
+    });
+
+    it("publishes a draft that was given the same, now past, expiry", async () => {
+      const id = await expiredPage("Expired draft published");
+      const edit = await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(ed), payload: { merge: true, data: { heading: "Back again" } } });
+      expect(edit.statusCode, edit.body).toBe(200);
+      await expire(id); // sets it on the draft AND the live row
+      await runScheduledPublish(s.app.db, new Date());
+      const again = await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(ed) });
+      expect(again.statusCode, again.body).toBe(200);
+      await expectLiveAndStaying(id);
+    });
+
+    it("keeps an expiry that is still ahead", async () => {
+      const id = await expiredPage("Future expiry kept");
+      const edit = await s.app.inject({ method: "PUT", url: `/api/v1/manage/content/${id}?locale=en`, headers: authHeaders(ed), payload: { merge: true, data: { heading: "Still expiring" } } });
+      expect(edit.statusCode, edit.body).toBe(200);
+      const future = new Date(Date.now() + 3_600_000).toISOString();
+      await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/schedule?locale=en`, headers: authHeaders(ed), payload: { publishAt: null, expireAt: future } });
+      const pubd = await s.app.inject({ method: "POST", url: `/api/v1/manage/content/${id}/publish?locale=en`, headers: authHeaders(ed) });
+      expect(pubd.statusCode, pubd.body).toBe(200);
+      expect(new Date(pubd.json().expireAt).toISOString()).toBe(future);
+    });
+  });
+
   it("re-validation failure at fire time leaves the item a draft (never publishes invalid content)", async () => {
     // ArticlePage requires `heading` at publish; this draft omits it.
     const id = await makeDraft("Invalid Scheduled", { intro: { type: "doc", content: [] } });
