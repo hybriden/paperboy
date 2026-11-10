@@ -302,6 +302,17 @@ export default function RichTextEditor({
     },
   });
 
+  // `content` above is read once, at mount. When the form is re-seeded from the
+  // server (Reload their version, Discard, Restore, Translate) the new value
+  // must reach the document, or the old text stays on screen and the next
+  // keystroke saves it over the version the editor just chose. Our own typing
+  // comes back here as the editor's JSON, so it compares equal and is left alone.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    const next = (value && typeof value === "object" && "type" in (value as object) ? value : EMPTY) as object;
+    if (JSON.stringify(next) !== JSON.stringify(editor.getJSON())) editor.commands.setContent(next, { emitUpdate: false });
+  }, [editor, value]);
+
   // Click-to-caret (on-page editing): the preview reported where inside this
   // field the click landed; find that snippet in the doc and put the caret
   // there. The snippet comes from a single rendered DOM text node, which maps
