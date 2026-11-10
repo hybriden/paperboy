@@ -131,6 +131,17 @@ describe("MCP toolsets", () => {
       expect(res.json).toEqual({ deleted: 0 });
     }, 60_000);
 
+    // The tool wrapper answered `result ?? { ok: true }`, so a lookup that found
+    // nothing said {"ok": true}: an agent checking a publish read success.
+    it("a lookup that finds nothing answers null, not ok", async () => {
+      const missing = await c.call("delivery_get", { path: "/this-page-was-never-published" });
+      expect(missing.isError, missing.text).toBe(false);
+      expect(missing.text.trim()).toBe("null");
+      const noSubmission = await c.call("list_form_submissions", { submissionId: "sub_does_not_exist" });
+      expect(noSubmission.isError, noSubmission.text).toBe(false);
+      expect(noSubmission.text.trim()).toBe("null");
+    }, 60_000);
+
     it("erase_form_submissions refuses a fragment that would match everyone", async () => {
       const res = await c.call("erase_form_submissions", { email: "e" });
       expect(res.isError, res.text).toBe(true);

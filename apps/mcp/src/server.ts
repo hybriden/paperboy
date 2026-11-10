@@ -497,7 +497,9 @@ function tool<S extends z.ZodRawShape>(
             return run(args as z.infer<z.ZodObject<S>>);
           },
         );
-        return { content: [{ type: "text" as const, text: JSON.stringify(result ?? { ok: true }, null, 2) }] };
+        // undefined (a write with nothing to report) is ok; null is an answer ("nothing
+        // matches") and must reach the agent as null, never as success (rule #1).
+        return { content: [{ type: "text" as const, text: JSON.stringify(result === undefined ? { ok: true } : result, null, 2) }] };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // The error travels back in-band, but agents (and their loop guards)
