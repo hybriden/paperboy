@@ -2731,7 +2731,7 @@ export async function discardDraft(
   loc: string,
 ): Promise<void> {
   requirePermission(ctx, "content.update");
-  await loadAuthorized(db, ctx, documentId);
+  const item = await loadAuthorized(db, ctx, documentId);
   const others = await db
     .select({ id: contentVersion.id })
     .from(contentVersion)
@@ -2748,15 +2748,25 @@ export async function discardDraft(
       "This page has never been published, so there is no version to fall back to — discarding its only draft would leave an empty page in the tree. Move the page to trash instead to remove it.",
     );
   }
-  await db
-    .delete(contentVersion)
-    .where(
-      and(
-        eq(contentVersion.documentId, documentId),
-        eq(contentVersion.locale, loc),
-        eq(contentVersion.status, "draft"),
-      ),
-    );
+  const reg = await loadTypeRegistry(db, item.siteId);
+  const type = reg.known.get(item.type)?.def;
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(contentVersion)
+      .where(
+        and(
+          eq(contentVersion.documentId, documentId),
+          eq(contentVersion.locale, loc),
+          eq(contentVersion.status, "draft"),
+        ),
+      );
+    // The reference index follows the WORKING version, and that is now the live
+    // one (or the latest). Left as the draft had it, "Used on" missed every
+    // block the draft had removed and called it safe to delete.
+    if (!type) return; // an uninstalled type has no fields to read references from
+    const remaining = (await currentPublished(tx, documentId, loc)) ?? (await latestVersion(tx, documentId, loc));
+    await rebuildReferences(tx, documentId, loc, type, (remaining?.data ?? {}) as Record<string, unknown>, reg.blockTypes);
+  });
 }
 
 /**
