@@ -1352,11 +1352,15 @@ async function workingData(
   const rows = await db
     .select()
     .from(contentVersion)
-    .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)));
+    .where(and(eq(contentVersion.documentId, documentId), eq(contentVersion.locale, loc)))
+    .orderBy(desc(contentVersion.versionNumber));
   const draft = rows.find((r) => r.status === "draft");
   const published = rows.find((r) => r.isCurrentPublished);
+  // Unpublished, expired or restored from trash: no draft and no live row, but
+  // the latest version is what the editor sees and what the new draft seeds
+  // from (name, slug). Merging onto {} kept only the patch.
   return {
-    data: ((draft ?? published)?.data as Record<string, unknown> | undefined) ?? {},
+    data: ((draft ?? published ?? rows[0])?.data as Record<string, unknown> | undefined) ?? {},
     draftRevision: draft?.revision ?? 0,
   };
 }
