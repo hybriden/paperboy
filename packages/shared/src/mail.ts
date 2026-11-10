@@ -6,6 +6,11 @@ import { scalarToString } from "./content-types.js";
  * server-only. Issue #186.
  */
 
+export const MAIL_PROVIDERS = ["smtp", "resend"] as const;
+export type MailProvider = (typeof MAIL_PROVIDERS)[number];
+export const SMTP_SECURITIES = ["tls", "starttls"] as const;
+export type SmtpSecurity = (typeof SMTP_SECURITIES)[number];
+
 export interface MailAddress {
   name?: string;
   address: string;

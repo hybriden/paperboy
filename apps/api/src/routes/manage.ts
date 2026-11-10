@@ -20,8 +20,6 @@ import {
   getAgentReviewRequired,
   getSiteConfig,
   resolveAiRuntimeConfig,
-  MAIL_PROVIDERS,
-  SMTP_SECURITIES,
   getStoredMailSettings,
   resolveMailRuntimeConfig,
   sendTestMail,
@@ -124,7 +122,6 @@ import {
   PageSummary,
   RoleName,
   STOCK_PROVIDERS,
-  SeoFilesConfig,
   LocalePrefix,
   SetFolderRequest,
   parseSeoFilesConfig,
@@ -135,6 +132,21 @@ import {
   TypeTemplateExport,
   UpdateContentRequest,
   UpdateFolderRequest,
+  // Response shapes shared with the admin (manage-api.ts), so the two can't drift.
+  AiConfigStatus,
+  DashboardOut,
+  DeliveryKeyRow,
+  FormListRow as FormListRowSchema,
+  MAIL_PROVIDERS,
+  MailStatus,
+  ManagedUserRow,
+  McpTokenRow,
+  RoleGrantInSite,
+  SMTP_SECURITIES,
+  SiteOut,
+  StockConfigStatus,
+  SubmissionRow as SubmissionRowSchema,
+  WebhookRow,
 } from "@paperboy/shared";
 import { mintPreviewToken } from "@paperboy/shared/preview-token";
 import type { FastifyInstance } from "fastify";
@@ -791,14 +803,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
-  const DeliveryKeyRow = z.object({
-    id: z.number(),
-    name: z.string(),
-    keyPrefix: z.string(),
-    type: z.enum(["public", "preview"]),
-    createdAt: z.string(),
-    revokedAt: z.string().nullable(),
-  });
   app.get(
     "/delivery-keys",
     { preHandler: [requirePermission("deliverykey.manage")], schema: { tags: ["manage"], response: { 200: z.array(DeliveryKeyRow) } } },
@@ -824,10 +828,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   );
 
   /* ------------------------------ MCP tokens ----------------------------- */
-  const McpTokenRow = z.object({
-    id: z.number(), name: z.string(), userId: z.string(), siteId: z.string().nullable(), email: z.string(),
-    createdAt: z.string(), lastUsedAt: z.string().nullable(), revokedAt: z.string().nullable(),
-  });
   app.get(
     "/mcp-tokens",
     { preHandler: [requirePermission("user.manage")], schema: { tags: ["manage"], response: { 200: z.array(McpTokenRow) } } },
@@ -1031,18 +1031,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   // Write-only AI provider config. The key is never returned — only whether one
   // is set, where it comes from (CMS DB vs env fallback), its last 4 chars,
   // plus the resolved provider/model/baseUrl. Admin-gated (user.manage).
-  const AiConfigStatus = z.object({
-    configured: z.boolean(),
-    // "undecryptable": a key IS stored but the current MFA_SECRET/SESSION_SECRET
-    // can't open it (rotated) — distinct from "none", or the admin re-enters a
-    // key that then silently overwrites one nobody knew was there.
-    source: z.enum(["db", "env", "none", "undecryptable"]),
-    provider: z.enum(AI_PROVIDERS),
-    last4: z.string().nullable(),
-    model: z.string().nullable(),
-    baseUrl: z.string().nullable(),
-    reasoningEffort: z.enum(AI_REASONING_EFFORTS).nullable(),
-  });
   async function aiStatus(): Promise<z.infer<typeof AiConfigStatus>> {
     const cfg = await resolveAiRuntimeConfig(app.db, app.aiEnv);
     return {
@@ -1169,20 +1157,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   // Settings → Email (#186 part B). Write-only like the AI key: the password /
   // API key is never returned, only whether one is saved. The env side is shown
   // without its secret (SMTP_URL carries the password, so only the host).
-  const MailStatus = z.object({
-    source: z.enum(["db", "env", "none"]),
-    problem: z.string().nullable(),
-    provider: z.enum(MAIL_PROVIDERS).nullable(),
-    from: z.string().nullable(),
-    smtpHost: z.string().nullable(),
-    smtpPort: z.number().nullable(),
-    smtpSecurity: z.enum(SMTP_SECURITIES).nullable(),
-    smtpUser: z.string().nullable(),
-    secretSet: z.boolean(),
-    allowedDomains: z.array(z.string()),
-    env: z.object({ provider: z.enum(MAIL_PROVIDERS).nullable(), from: z.string().nullable(), smtpHost: z.string().nullable() }),
-    maxPerFormPerHour: z.number(),
-  });
   async function mailStatus(): Promise<z.infer<typeof MailStatus>> {
     const [resolved, stored] = await Promise.all([resolveMailRuntimeConfig(app.db, app.mailEnv), getStoredMailSettings(app.db)]);
     const c = stored.config;
@@ -1297,12 +1271,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   /* ----------------------------- stock images --------------------------- */
   // Stock image provider (Unsplash first). Same write-only key handling as the
   // AI config: the key is never returned, only configured/source/last4.
-  const StockConfigStatus = z.object({
-    configured: z.boolean(),
-    provider: z.enum(STOCK_PROVIDERS),
-    source: z.enum(["db", "env", "none", "undecryptable"]),
-    last4: z.string().nullable(),
-  });
   async function stockStatus(): Promise<z.infer<typeof StockConfigStatus>> {
     const stored = await getStoredStockConfig(app.db);
     const key = stored?.apiKey ?? app.stockConfig.unsplashKey;
@@ -1382,16 +1350,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   );
 
   /* ------------------------------ webhooks ------------------------------ */
-  const WebhookRow = z.object({
-    id: z.number(),
-    name: z.string(),
-    url: z.string(),
-    events: z.array(z.string()),
-    active: z.boolean(),
-    lastStatus: z.number().nullable(),
-    lastAt: z.string().nullable(),
-    createdAt: z.string(),
-  });
   app.get(
     "/webhooks",
     { preHandler: [requirePermission("webhook.manage")], schema: { tags: ["manage"], response: { 200: z.array(WebhookRow) } } },
@@ -1416,36 +1374,11 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     },
   );
 
-  // Who hears about a form's submissions (see FormNotifyStatus in @paperboy/db).
-  const FormListRowSchema = z.object({
-    formId: z.string(),
-    name: z.string(),
-    submissions: z.number(),
-    lastAt: z.string().nullable(),
-    notify: z.object({
-      published: z.boolean(),
-      email: z.enum(["on", "off", "no-recipients", "no-provider"]),
-      recipients: z.string(),
-      webhooks: z.boolean(),
-      lastEmail: z.object({ status: z.string(), at: z.string(), error: z.string().nullable(), nextAttemptAt: z.string().nullable() }).nullable(),
-    }),
-  });
-
   /* --------------------------- form submissions --------------------------
    * Visitor personal data, so: its own permission (never content.read), site
    * scoped like content, and every read of the CSV audit-logged — an export is
    * a copy of personal data leaving the system.
    */
-  const SubmissionRowSchema = z.object({
-    submissionId: z.string(),
-    formId: z.string(),
-    locale: z.string(),
-    values: z.record(z.string(), z.unknown()),
-    fieldSnapshot: z.array(z.object({ name: z.string(), label: z.string(), kind: z.string() })),
-    meta: z.record(z.string(), z.unknown()),
-    createdAt: z.string(),
-    expiresAt: z.string().nullable(),
-  });
 
   app.get(
     "/forms",
@@ -1574,18 +1507,7 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   // Every-site Admins manage every user; a one-site Admin (siteuser.manage
   // without user.manage) only users' roles and sections in the active site —
   // the db layer draws that line. Their changes go in that site's audit log.
-  const RoleGrantInSite = z.object({ siteId: z.string(), role: RoleName });
   const userAuditSite = (ctx: AccessContext) => (ctx.permissions.includes("user.manage") ? null : ctx.siteId);
-  const ManagedUserRow = z.object({
-    id: z.string(),
-    email: z.string(),
-    name: z.string(),
-    roles: z.array(RoleName),
-    siteRoles: z.array(RoleGrantInSite),
-    sections: z.array(z.string()),
-    locked: z.boolean(),
-    createdAt: z.string(),
-  });
   app.get(
     "/users",
     { preHandler: [requirePermission("siteuser.manage")], schema: { tags: ["manage"], response: { 200: z.array(ManagedUserRow) } } },
@@ -1632,41 +1554,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   // "What needs my attention" in one round-trip: WIP drafts, the scheduled
   // publish queue, translation coverage and housekeeping counts. Same partition
   // and scoping as the tree; webhook health only for webhook.manage holders.
-  const DashboardOut = z.object({
-    wip: z.array(
-      z.object({
-        documentId: z.string(),
-        name: z.string(),
-        type: z.string(),
-        kind: z.string(),
-        locale: z.string(),
-        change: z.enum(["new", "updated"]),
-        at: z.string(),
-      }),
-    ),
-    wipTotal: z.number(),
-    scheduled: z.array(
-      z.object({ documentId: z.string(), name: z.string(), locale: z.string(), action: z.enum(["publish", "unpublish"]), at: z.string() }),
-    ),
-    translation: z.array(
-      z.object({
-        locale: z.string(),
-        displayName: z.string(),
-        missing: z.number(),
-        pages: z.array(z.object({ documentId: z.string(), name: z.string() })),
-      }),
-    ),
-    housekeeping: z.object({
-      trash: z.number(),
-      unusedBlocks: z.number(),
-      emptyTypes: z.number(),
-      missingAlt: z.number(),
-      failingWebhooks: z.number().nullable(),
-    }),
-    imagesMissingAlt: z.array(z.object({ documentId: z.string(), url: z.string(), filename: z.string() })),
-    unusedBlocksList: z.array(z.object({ documentId: z.string(), name: z.string(), type: z.string() })),
-    emptyTypesList: z.array(z.object({ name: z.string(), displayName: z.string(), kind: z.string() })),
-  });
   app.get(
     "/dashboard",
     { preHandler: [requirePermission("content.read")], schema: { tags: ["manage"], response: { 200: DashboardOut } } },
@@ -1674,19 +1561,6 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
   );
 
   /* --------------------------------- sites ---------------------------------- */
-  const SiteOut = z.object({
-    id: z.string(),
-    slug: z.string(),
-    name: z.string(),
-    defaultLocale: z.string(),
-    active: z.boolean(),
-    createdAt: z.string(),
-    previewBaseUrl: z.string().nullable(),
-    startPageId: z.string().nullable(),
-    canonicalBaseUrl: z.string().nullable(),
-    localePrefix: LocalePrefix,
-    seoFiles: SeoFilesConfig,
-  });
   type SiteRowDb = Awaited<ReturnType<typeof listSites>>[number];
   const siteOut = (s: SiteRowDb): z.infer<typeof SiteOut> => ({
     ...s,

@@ -1,4 +1,4 @@
-import { parseMailbox, submissionsUrl } from "@paperboy/shared";
+import { type MailProvider, type SmtpSecurity, parseMailbox, submissionsUrl } from "@paperboy/shared";
 import { eq } from "drizzle-orm";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
@@ -21,10 +21,7 @@ const CONFIG_KEY = "mailConfig";
 const SECRET_KEY = "mailSecret";
 const DOMAINS_KEY = "mailAllowedDomains";
 
-export const MAIL_PROVIDERS = ["smtp", "resend"] as const;
-export type MailProvider = (typeof MAIL_PROVIDERS)[number];
-export const SMTP_SECURITIES = ["tls", "starttls"] as const;
-export type SmtpSecurity = (typeof SMTP_SECURITIES)[number];
+export type { MailProvider, SmtpSecurity };
 
 interface StoredConfig {
   provider: MailProvider;

@@ -1236,6 +1236,11 @@ function DeleteSiteDialog({ site, active, onClose }: { site: SiteRow; active: bo
 }
 
 /* ----------------------------- AI assistant ------------------------------- */
+/** A key IS stored but the current MFA_SECRET / SESSION_SECRET can't open it.
+ *  Saying "no key" here invites an admin to overwrite one nobody knew was there. */
+const UNDECRYPTABLE_KEY =
+  "A key is saved but can't be read: MFA_SECRET (or SESSION_SECRET) changed since it was stored. Enter the key again, or restore the old secret.";
+
 export function AiPanel() {
   const toast = useToast();
   const qc = useQueryClient();
@@ -1325,7 +1330,9 @@ export function AiPanel() {
       ? `${PROVIDER_LABELS[status.provider]} key configured in the CMS (ending ••${status.last4}${endpointHost ? `, ${endpointHost}` : ""})`
       : status.source === "env"
         ? `Using the ${status.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} environment value (ending ••${status.last4}${endpointHost ? `, ${endpointHost}` : ""})`
-        : "No key configured — the writing assistant is offline (only basic SEO truncation works).";
+        : status.source === "undecryptable"
+          ? UNDECRYPTABLE_KEY
+          : "No key configured — the writing assistant is offline (only basic SEO truncation works).";
 
   return (
     <PanelShell hint="Connect Anthropic (Claude) or any OpenAI-compatible endpoint (OpenAI, OpenRouter, Groq, Mistral, a local Ollama/vLLM…) so the writing assistant (SEO text, copy improvement, translation, image descriptions) uses a real model. The key is stored encrypted and never shown again; it overrides the server environment value.">
@@ -1710,7 +1717,9 @@ export function StockImagesPanel() {
       ? `Key configured in the CMS (ending ••${status.last4})`
       : status?.source === "env"
         ? `Using the UNSPLASH_ACCESS_KEY environment value (ending ••${status.last4})`
-        : "No key configured — the Stock tab in the image picker is disabled.";
+        : status?.source === "undecryptable"
+          ? UNDECRYPTABLE_KEY
+          : "No key configured — the Stock tab in the image picker is disabled.";
 
   return (
     <PanelShell hint="Connect an Unsplash access key so editors (and agents) can search stock photos and import them straight into the media library — with alt text and photographer attribution. The key is stored encrypted and never shown again.">

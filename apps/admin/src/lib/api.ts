@@ -17,38 +17,30 @@ import type {
   SessionUser,
   StockSearchResult,
   TreeNode,
+  AiConfigStatus,
+  AiProvider,
+  AiReasoningEffort,
+  AiTask,
+  DashboardOut,
+  DeliveryKeyRow,
+  FormListRow,
+  MailProvider,
+  MailStatus,
+  ManagedUserRow,
+  McpTokenRow,
+  RedirectOut,
+  RedirectTargetOut,
+  RedirectStatus,
+  SeoFilesConfig,
+  SiteOut,
+  StockConfigStatus,
+  SubmissionRow,
+  WebhookRow,
 } from "@paperboy/shared";
 
-export interface ManagedUser {
-  id: string;
-  email: string;
-  name: string;
-  /** Roles in every site. */
-  roles: RoleName[];
-  /** Roles in one site each (#130). A site Admin sees only their site's. */
-  siteRoles: Array<{ siteId: string; role: RoleName }>;
-  sections: string[];
-  locked: boolean;
-  createdAt: string;
-}
-export interface DeliveryKeyRow {
-  id: number;
-  name: string;
-  keyPrefix: string;
-  type: "public" | "preview";
-  createdAt: string;
-  revokedAt: string | null;
-}
-export interface WebhookRow {
-  id: number;
-  name: string;
-  url: string;
-  events: string[];
-  active: boolean;
-  lastStatus: number | null;
-  lastAt: string | null;
-  createdAt: string;
-}
+/** Response shapes from the API's own schemas (@paperboy/shared manage-api.ts), so they can't drift. */
+export type ManagedUser = ManagedUserRow;
+export type { DeliveryKeyRow, WebhookRow };
 export interface AuditRow {
   id: number;
   ts: string;
@@ -67,35 +59,8 @@ export interface TrashRow {
   name: string;
   deletedAt: string;
 }
-/** A Form document in the active site, with how much it has collected. */
-export interface FormRow {
-  formId: string;
-  name: string;
-  submissions: number;
-  lastAt: string | null;
-  /** Who hears about a submission: email ("no-provider" = the instance has none) and webhooks. */
-  notify: {
-    published: boolean;
-    email: "on" | "off" | "no-recipients" | "no-provider";
-    recipients: string;
-    webhooks: boolean;
-    lastEmail: { status: string; at: string; error: string | null; nextAttemptAt: string | null } | null;
-  };
-}
-/** One form submission — visitor PERSONAL DATA. `fieldSnapshot` is the form's
- *  fields as they were AT THE TIME OF ANSWERING, so a row stays readable (and a
- *  consent stays evidence) after the form itself is edited. */
-export interface SubmissionRow {
-  submissionId: string;
-  formId: string;
-  locale: string;
-  values: Record<string, unknown>;
-  fieldSnapshot: { name: string; label: string; kind: string }[];
-  meta: Record<string, unknown>;
-  createdAt: string;
-  /** When the retention sweep deletes this row; null = kept until removed by hand. */
-  expiresAt: string | null;
-}
+export type FormRow = FormListRow;
+export type { SubmissionRow };
 /** Full payload of one version — for the compare/diff view. */
 export interface VersionDetail {
   id: number;
@@ -109,42 +74,10 @@ export interface VersionDetail {
   createdAt: string;
   createdBy: string | null;
 }
-/** Write-only AI provider config status (the key itself is never returned). */
-export type AiProviderName = "anthropic" | "openai";
-export type AiReasoningEffortName = "minimal" | "low" | "medium" | "high";
-export interface AiConfigStatus {
-  configured: boolean;
-  source: "db" | "env" | "none" | "undecryptable";
-  provider: AiProviderName;
-  last4: string | null;
-  model: string | null;
-  baseUrl: string | null;
-  reasoningEffort: AiReasoningEffortName | null;
-}
-export type MailProviderName = "smtp" | "resend";
-/** Form email settings (Settings → Email). The password / API key is never returned. */
-export interface MailStatus {
-  source: "db" | "env" | "none";
-  /** Why the saved CMS config isn't in use, if it isn't. */
-  problem: string | null;
-  provider: MailProviderName | null;
-  from: string | null;
-  smtpHost: string | null;
-  smtpPort: number | null;
-  smtpSecurity: "tls" | "starttls" | null;
-  smtpUser: string | null;
-  secretSet: boolean;
-  allowedDomains: string[];
-  env: { provider: MailProviderName | null; from: string | null; smtpHost: string | null };
-  maxPerFormPerHour: number;
-}
-/** Write-only stock image provider config status (the key itself is never returned). */
-export interface StockConfigStatus {
-  configured: boolean;
-  provider: string;
-  source: "db" | "env" | "none";
-  last4: string | null;
-}
+export type AiProviderName = AiProvider;
+export type AiReasoningEffortName = AiReasoningEffort;
+export type MailProviderName = MailProvider;
+export type { AiConfigStatus, MailStatus, StockConfigStatus };
 /** A content search hit (⌘K). */
 export interface SearchResult {
   documentId: string;
@@ -510,7 +443,7 @@ export const api = {
 
   // MCP tokens
   mcpTokens: (signal?: AbortSignal) =>
-    request<{ id: number; name: string; userId: string; siteId: string | null; email: string; createdAt: string; lastUsedAt: string | null; revokedAt: string | null }[]>("GET", "/manage/mcp-tokens", undefined, signal),
+    request<McpTokenRow[]>("GET", "/manage/mcp-tokens", undefined, signal),
   // No `userId`: the token acts as the signed-in user. (The route accepts one to
   // provision a token for a service account; the panel doesn't offer it.)
   // Scoped to the ACTIVE site unless allSites — same rule as delivery keys.
@@ -712,66 +645,13 @@ export interface ExperimentSettings {
   overdue: number[];
 }
 
-export interface DashboardData {
-  wip: { documentId: string; name: string; type: string; kind: string; locale: string; change: "new" | "updated"; at: string }[];
-  wipTotal: number;
-  scheduled: { documentId: string; name: string; locale: string; action: "publish" | "unpublish"; at: string }[];
-  translation: { locale: string; displayName: string; missing: number; pages: { documentId: string; name: string }[] }[];
-  housekeeping: { trash: number; unusedBlocks: number; emptyTypes: number; missingAlt: number; failingWebhooks: number | null };
-  imagesMissingAlt: { documentId: string; url: string; filename: string }[];
-  unusedBlocksList: { documentId: string; name: string; type: string }[];
-  emptyTypesList: { name: string; displayName: string; kind: string }[];
-}
-
-export interface SeoFilesConfig {
-  robotsExtra?: string;
-  llmsSummary?: string;
-  llmsOverride?: string;
-  securityContact?: string;
-  securityPolicyUrl?: string;
-  securityLanguages?: string;
-  /** Minted by the server when IndexNow is switched on; never typed in. */
-  indexNowKey?: string;
-}
+export type DashboardData = DashboardOut;
+export type { SeoFilesConfig };
 export type EditableSeoFile = Exclude<keyof SeoFilesConfig, "indexNowKey">;
-
-export interface SiteRow {
-  id: string;
-  slug: string;
-  name: string;
-  defaultLocale: string;
-  active: boolean;
-  createdAt: string;
-  previewBaseUrl: string | null;
-  startPageId: string | null;
-  canonicalBaseUrl: string | null;
-  /** How the frontend prefixes locales in URLs (redirect targets, sitemap). */
-  localePrefix: "always" | "except-default";
-  seoFiles: SeoFilesConfig;
-}
-
-export type RedirectStatus = 301 | 302 | 307 | 308 | 410;
-export type RedirectTarget =
-  | { kind: "page"; documentId: string; locale: string; name: string | null; url: string | null }
-  | { kind: "path"; path: string }
-  | { kind: "url"; url: string }
-  | { kind: "gone" };
-export interface RedirectRule {
-  id: number;
-  source: string;
-  sourcePath: string;
-  match: "exact" | "prefix";
-  target: RedirectTarget;
-  status: RedirectStatus;
-  keepQuery: boolean;
-  origin: "manual" | "auto" | "import";
-  note: string | null;
-  hits: number;
-  lastHitAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  problems: { code: "target-missing" | "target-unpublished" | "shadowed" | "chain" | "loop"; message: string }[];
-}
+export type SiteRow = SiteOut;
+export type { RedirectStatus };
+export type RedirectTarget = RedirectTargetOut;
+export type RedirectRule = RedirectOut;
 export interface RedirectInput {
   source: string;
   target?: string | null;
@@ -815,4 +695,4 @@ export interface AgentEvent {
   touched?: Array<{ documentId: string; name: string; locale: string }>;
 }
 
-export type AiTask = "meta_title" | "meta_description" | "summarize" | "improve" | "alt_text" | "translate" | "rewrite" | "variants" | "write" | "schema_fields";
+export type { AiTask };

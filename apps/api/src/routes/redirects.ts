@@ -10,6 +10,7 @@ import {
   testRedirect,
   updateRedirect,
 } from "@paperboy/db";
+import { RedirectOut } from "@paperboy/shared";
 import type { FastifyInstance } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -24,29 +25,6 @@ import { requireAuth, requireCsrf, requirePermission } from "../security.js";
 
 const Status = z.union([z.literal(301), z.literal(302), z.literal(307), z.literal(308), z.literal(410)]);
 
-const Problem = z.object({ code: z.enum(["target-missing", "target-unpublished", "shadowed", "chain", "loop"]), message: z.string() });
-const Target = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("page"), documentId: z.string(), locale: z.string(), name: z.string().nullable(), url: z.string().nullable() }),
-  z.object({ kind: z.literal("path"), path: z.string() }),
-  z.object({ kind: z.literal("url"), url: z.string() }),
-  z.object({ kind: z.literal("gone") }),
-]);
-const RedirectOut = z.object({
-  id: z.number(),
-  source: z.string(),
-  sourcePath: z.string(),
-  match: z.enum(["exact", "prefix"]),
-  target: Target,
-  status: Status,
-  keepQuery: z.boolean(),
-  origin: z.enum(["manual", "auto", "import"]),
-  note: z.string().nullable(),
-  hits: z.number(),
-  lastHitAt: z.string().nullable(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-  problems: z.array(Problem),
-});
 const WriteOut = z.object({ redirect: RedirectOut, collapsed: z.boolean(), repointed: z.number() });
 
 const RedirectBody = z.object({

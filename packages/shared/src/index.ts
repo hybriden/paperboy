@@ -12,3 +12,4 @@ export * from "./redact.js";
 export * from "./redirects.js";
 export * from "./experiments.js";
 export * from "./mail.js";
+export * from "./manage-api.js";
