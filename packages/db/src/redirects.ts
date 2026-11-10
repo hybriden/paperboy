@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import {
   LocalePrefix,
   REDIRECT_CSV_COLUMNS,
@@ -612,13 +612,29 @@ export async function recordTraffic(db: Database, siteId: string, input: { redir
     if (isNoise404(path)) continue;
     paths.set(path, (paths.get(path) ?? 0) + 1);
   }
+  // New paths only while the site is under its cap; known ones keep counting.
+  // The hourly sweep used to be the only cap, so a key holder could add 60 000
+  // rows a minute in between. shortcut: concurrent reports can overshoot by a
+  // batch each, which the sweep trims; count per insert if that ever matters.
+  const [stored] = paths.size ? await db.select({ n: count() }).from(notFoundPath).where(eq(notFoundPath.siteId, siteId)) : [{ n: 0 }];
+  let room = NOT_FOUND_CAP - Number(stored?.n ?? 0);
+  let recorded = 0;
   for (const [path, n] of paths) {
-    await db
-      .insert(notFoundPath)
-      .values({ siteId, path, hits: n })
-      .onConflictDoUpdate({ target: [notFoundPath.siteId, notFoundPath.path], set: { hits: sql`${notFoundPath.hits} + ${n}`, lastSeen: new Date() } });
+    const bump = { hits: sql`${notFoundPath.hits} + ${n}`, lastSeen: new Date() };
+    if (room > 0) {
+      const [row] = await db
+        .insert(notFoundPath)
+        .values({ siteId, path, hits: n })
+        .onConflictDoUpdate({ target: [notFoundPath.siteId, notFoundPath.path], set: bump })
+        .returning({ inserted: sql<boolean>`xmax = 0` });
+      if (row?.inserted) room--;
+      recorded += n;
+    } else {
+      const known = await db.update(notFoundPath).set(bump).where(and(eq(notFoundPath.siteId, siteId), eq(notFoundPath.path, path))).returning({ path: notFoundPath.path });
+      if (known.length) recorded += n;
+    }
   }
-  return { hits, notFound: [...paths.values()].reduce((a, b) => a + b, 0) };
+  return { hits, notFound: recorded };
 }
 
 export interface NotFoundView {
@@ -660,15 +676,16 @@ export async function deleteNotFound(db: Database, ctx: AccessContext, paths: st
 export async function runRedirectRetention(db: Database, now: Date = new Date()): Promise<{ notFoundSwept: number }> {
   const cutoff = new Date(now.getTime() - NOT_FOUND_RETENTION_DAYS * 24 * 3600 * 1000);
   const old = await db.delete(notFoundPath).where(lt(notFoundPath.lastSeen, cutoff)).returning({ path: notFoundPath.path });
-  // The table is capped per site, so reading every path is bounded.
-  const noisy = [...new Set((await db.select({ path: notFoundPath.path }).from(notFoundPath)).map((r) => r.path).filter(isNoise404))];
-  const noise = noisy.length ? await db.delete(notFoundPath).where(inArray(notFoundPath.path, noisy)).returning({ path: notFoundPath.path }) : [];
+  // The cap FIRST, in SQL: the noise scan below reads every path into memory,
+  // which is bounded only once each site is back under its cap.
   const over = await db.execute<{ site_id: string; path: string }>(sql`
     DELETE FROM not_found_path n USING (
       SELECT site_id, path FROM (
         SELECT site_id, path, row_number() OVER (PARTITION BY site_id ORDER BY last_seen DESC) AS rn FROM not_found_path
       ) ranked WHERE rn > ${NOT_FOUND_CAP}
     ) x WHERE n.site_id = x.site_id AND n.path = x.path RETURNING n.path`);
+  const noisy = [...new Set((await db.select({ path: notFoundPath.path }).from(notFoundPath)).map((r) => r.path).filter(isNoise404))];
+  const noise = noisy.length ? await db.delete(notFoundPath).where(inArray(notFoundPath.path, noisy)).returning({ path: notFoundPath.path }) : [];
   return { notFoundSwept: old.length + noise.length + [...over].length };
 }
 
