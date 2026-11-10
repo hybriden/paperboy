@@ -41,6 +41,7 @@ The compose `init` service runs migrate **+ seed**. `seed` TRUNCATEs and reseeds
 ## Auth model
 - Browser: argon2id + opaque server-side session cookie (`__Host-paperboy_sid` when `COOKIE_SECURE=true`) + CSRF (synchronizer token bound to the session row, echoed in `X-CSRF-Token`, PLUS a fail-closed Origin/Referer check; no CSRF cookie; `apps/api/src/security.ts`) + rate-limit/lockout.
 - **`COOKIE_SECURE=true` requires HTTPS.** http://localhost logins fail (cookie dropped).
+- **Lockout**: 5 wrong guesses (password or 2FA code) lock the account for 15 minutes; a lock that ran out starts a fresh count, and an every-site Admin can lift one (Settings → Users & roles → Unlock, `POST /manage/users/:id/unlock`). `lockout-renewal.test.ts`.
 - 2FA: **passwordless email + TOTP** (a 2FA account logs in with email → code). TOTP gates browser login only; service paths (`verifyLogin`) check the password.
 - **Enabling 2FA requires the password** (`verifyReauth`, same as disabling). Login is passwordless once 2FA is on, so a stolen session could otherwise enrol its own authenticator and lock the owner out.
 - **`MFA_SECRET` goes through the same placeholder guard as `SESSION_SECRET`/`CSRF_SECRET` (and `PREVIEW_SECRET`).** It is the AES-256-GCM KEK for `users.totp_secret` and the stored AI/stock keys; a shipped-constant value turns one leaked `users` row into a takeover (found live 2026-07-28, byte-for-byte the compose placeholder). Unset falls back to `SESSION_SECRET`.

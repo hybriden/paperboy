@@ -30,31 +30,28 @@ const MAX_FAILED = 5;
 const LOCK_MINUTES = 15;
 
 /**
- * Count one failed authentication attempt and lock the account if it crosses the
- * threshold — ATOMICALLY. `failed_attempts = failed_attempts + 1` is evaluated
- * by Postgres under the row lock, so N concurrent wrong guesses advance the
- * counter by N. The previous read-modify-write (`set(user.failedAttempts + 1)`)
- * advanced a concurrent burst by 1, letting it slip the lockout (a botnet, or a
- * single host once X-Forwarded-For was spoofable). The running counter is NOT
- * reset on lock, so each attempt past the threshold renews the 15-minute window
- * rather than handing back a fresh set of tries.
- */
-/**
  * Reserve one guess BEFORE checking it: count it and lock the account on the
  * MAX_FAILED-th, in one atomic UPDATE that only matches an unlocked row. A
  * gate that read `locked_until`, checked the guess and only then counted the
  * failure let every request already in flight be checked — a parallel burst
- * got far more than MAX_FAILED guesses. Returns false when the account is
- * locked (the guess must then be refused unchecked). A correct guess resets
- * the counter via clearFailedAuth.
+ * got far more than MAX_FAILED guesses. The count is evaluated by Postgres
+ * under the row lock, so N concurrent wrong guesses advance it by N. Returns
+ * false when the account is locked (the guess must then be refused unchecked).
+ * A correct guess resets the counter via clearFailedAuth.
+ *
+ * A lock that has run out starts a fresh count. It used to keep counting from
+ * the threshold, so ONE wrong guess after expiry locked the account again:
+ * anyone who knew an address could keep it locked with four requests an hour.
  */
 async function reserveAuthAttempt(db: Database, userId: string): Promise<boolean> {
+  const expired = sql`(${users.lockedUntil} is not null and ${users.lockedUntil} <= now())`;
+  const count = sql`(case when ${expired} then 1 else ${users.failedAttempts} + 1 end)`;
   const reserved = await db
     .update(users)
     .set({
-      failedAttempts: sql`${users.failedAttempts} + 1`,
-      lockedUntil: sql`case when ${users.failedAttempts} + 1 >= ${MAX_FAILED}
-        then now() + (${LOCK_MINUTES} * interval '1 minute') else ${users.lockedUntil} end`,
+      failedAttempts: count,
+      lockedUntil: sql`case when ${count} >= ${MAX_FAILED} then now() + (${LOCK_MINUTES} * interval '1 minute')
+        when ${expired} then null else ${users.lockedUntil} end`,
     })
     .where(and(eq(users.id, userId), or(isNull(users.lockedUntil), lte(users.lockedUntil, sql`now()`))))
     .returning({ id: users.id });
@@ -365,6 +362,13 @@ async function updateSiteMember(
       for (const sectionId of input.sections) await tx.insert(userScope).values({ userId, sectionId, siteId: ctx.siteId }).onConflictDoNothing();
     }
   });
+}
+
+/** Lift a login lockout now (every-site Admins: the lock is on the account). */
+export async function adminUnlockUser(db: Database, ctx: AccessContext, userId: string): Promise<void> {
+  requirePermission(ctx, "user.manage");
+  const done = await db.update(users).set({ failedAttempts: 0, lockedUntil: null }).where(eq(users.id, userId)).returning({ id: users.id });
+  if (!done[0]) throw Errors.notFound("User");
 }
 
 export async function adminDeleteUser(db: Database, ctx: AccessContext, userId: string): Promise<void> {

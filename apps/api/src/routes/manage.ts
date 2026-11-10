@@ -3,6 +3,7 @@ import {
   type AccessContext,
   adminCreateUser,
   adminDeleteUser,
+  adminUnlockUser,
   adminUpdateUser,
   audit,
   cloneContent,
@@ -1605,6 +1606,15 @@ export async function registerManageRoutes(appBase: FastifyInstance): Promise<vo
     async (req) => {
       await adminUpdateUser(app.db, req.accessCtx!, req.params.id, req.body);
       await audit(app.db, { siteId: userAuditSite(req.accessCtx!), actorUserId: req.user!.id, action: "user.update", ip: req.ip, detail: { id: req.params.id, roles: req.body.roles, siteRoles: req.body.siteRoles, email: req.body.email } });
+      return { ok: true };
+    },
+  );
+  app.post(
+    "/users/:id/unlock",
+    { preHandler: [requireCsrf, requirePermission("user.manage")], schema: { tags: ["manage"], summary: "Lift a login lockout now", params: z.object({ id: z.string() }), response: { 200: z.object({ ok: z.boolean() }) } } },
+    async (req) => {
+      await adminUnlockUser(app.db, req.accessCtx!, req.params.id);
+      await audit(app.db, { siteId: null, actorUserId: req.user!.id, action: "user.unlock", ip: req.ip, detail: { id: req.params.id } });
       return { ok: true };
     },
   );

@@ -500,6 +500,7 @@ export const api = {
   updateUser: (id: string, body: { name?: string; email?: string; roles?: RoleName[]; siteRoles?: ManagedUser["siteRoles"]; sections?: string[] }) =>
     request<{ ok: boolean }>("PUT", `/manage/users/${id}`, body),
   deleteUser: (id: string) => request<{ ok: boolean }>("DELETE", `/manage/users/${id}`),
+  unlockUser: (id: string) => request<{ ok: boolean }>("POST", `/manage/users/${id}/unlock`),
 
   deliveryKeys: (signal?: AbortSignal) => request<DeliveryKeyRow[]>("GET", "/manage/delivery-keys", undefined, signal),
   createDeliveryKey: (name: string, type: "public" | "preview") =>

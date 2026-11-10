@@ -1808,6 +1808,11 @@ export function UsersPanel() {
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ["users"] }); toast.success("User deleted"); },
     onError: (e) => toast.error("Couldn’t delete", (e as Error).message),
   });
+  const unlock = useMutation({
+    mutationFn: (id: string) => api.unlockUser(id),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ["users"] }); toast.success("Account unlocked", "They can sign in again."); },
+    onError: (e) => toast.error("Couldn’t unlock", (e as Error).message),
+  });
 
   return (
     <PanelShell
@@ -1827,6 +1832,9 @@ export function UsersPanel() {
           {u.sections.length > 0 && <span className="text-[11px] text-muted">· {u.sections.length} section(s)</span>}
           {u.locked && <Badge tone="caution">locked</Badge>}
           <div className="ml-auto flex gap-1">
+            {u.locked && everySite && (
+              <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" aria-label={`Unlock ${u.email}`} disabled={unlock.isPending} onClick={() => unlock.mutate(u.id)}>Unlock</button>
+            )}
             <button className="rounded px-2 py-0.5 text-xs text-accent-700 hover:bg-accent/10" onClick={() => setDialog({ mode: "edit", user: u })}>Edit</button>
             {everySite && (
               <button className="rounded px-2 py-0.5 text-xs text-danger hover:bg-danger/10" onClick={() => { if (confirm(`Delete ${u.email}?`)) del.mutate(u.id); }}>Delete</button>

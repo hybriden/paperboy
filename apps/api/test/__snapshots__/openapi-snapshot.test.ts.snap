@@ -2400,6 +2400,19 @@ exports[`OpenAPI surface — stable digest snapshot > digest of every path+metho
       "manage",
     ],
   },
+  "POST /api/v1/manage/users/{id}/unlock": {
+    "requestBodyRequired": [],
+    "requiredParams": [
+      "path:id",
+    ],
+    "response200Props": [
+      "ok",
+    ],
+    "summary": "Lift a login lockout now",
+    "tags": [
+      "manage",
+    ],
+  },
   "POST /api/v1/manage/webhooks": {
     "requestBodyRequired": [
       "name",
