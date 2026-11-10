@@ -3,6 +3,10 @@
 The typed Delivery API client. Thin, zero dependencies, end-to-end typed from
 the same Zod schemas the server serializes with — no codegen step.
 
+**Changes in 0.7.1** — security fix: `matchRedirect` could return a location
+that a browser reads as another site when a `/prefix/*` rule pointed at `/`.
+Upgrade if your frontend applies redirects.
+
 **Changes in 0.7.0** — `formToolAttrs(spec)` makes a rendered form a
 [WebMCP](https://developer.chrome.com/docs/ai/webmcp) tool, and the honeypot from
 `honeypotAttrs` is now `readOnly`, which keeps it out of that tool (see
@@ -235,6 +239,9 @@ waitUntil(cms.reportTraffic(hit ? { redirectHits: [hit.rule.id] } : { notFound: 
 - `matchRedirect` normalizes like the CMS does: case-insensitive, trailing
   slash ignored, exact rules before the longest `/prefix/*` rule, the rest of
   the path carried over, the query string kept unless the rule says not to.
+  A relative `location` always starts with exactly one `/`, so a crafted path
+  (`/old/%5Cevil.example`) can't turn a rule into a redirect to another site
+  (fixed in 0.7.1; upgrade if you apply redirects).
 - `reportTraffic` needs the **public** key and sends paths only; never call it
   from the browser.
 

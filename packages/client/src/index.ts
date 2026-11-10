@@ -697,6 +697,10 @@ export function matchRedirect(manifest: RedirectManifest, requestPath: string): 
   if (!hit) return null;
   if (hit.to === null) return { rule: hit, status: hit.status, location: null };
   let location = suffix && suffix !== "/" ? `${hit.to.replace(/\/+$/, "")}${suffix}` : hit.to;
+  // The suffix is decoded visitor input. Onto a root target it IS the location,
+  // and "/\evil.example" or "/<tab>/evil.example" resolve to another host in a
+  // browser. A relative location starts with exactly one slash.
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(location)) location = `/${location.replace(/^[/\\\s]+/, "")}`;
   if (hit.keepQuery && query) location += `${location.includes("?") ? "&" : "?"}${query}`;
   return { rule: hit, status: hit.status, location };
 }

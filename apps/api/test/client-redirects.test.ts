@@ -39,4 +39,34 @@ describe("redirect matcher parity (shared ↔ client)", () => {
     expect(clientMatch(manifest, "/blogger")).toBeNull();
     expect(clientMatch(manifest, "/%C3%B8rret")?.location).toBe("/fisk");
   });
+
+  // A prefix rule onto the site root carries the decoded suffix over as the
+  // WHOLE location. "/\evil.example" and "/<tab>/evil.example" are paths to us
+  // but a browser (and the documented `new URL(location, url)`) reads both as
+  // the host evil.example: an open redirect on the site's own domain.
+  describe("a carried-over suffix can never leave the site", () => {
+    const toRoot: RedirectManifest = {
+      version: 1,
+      rules: [
+        { id: 1, from: "/blog", match: "prefix", to: "/", status: 301, keepQuery: true },
+        { id: 2, from: "/docs", match: "prefix", to: "/help", status: 301, keepQuery: true },
+      ],
+    };
+    const hostile = ["/blog/%5Cevil.example", "/blog/%09/evil.example", "/blog/%5C%5Cevil.example/x", "/blog/%0A%5Cevil.example", "/docs/%5Cevil.example"];
+
+    it.each(hostile)("%s stays on the requesting origin", (path) => {
+      for (const match of [clientMatch, sharedMatch]) {
+        const location = match(toRoot, path)?.location;
+        expect(location).toBeTruthy();
+        expect(new URL(location!, "https://site.example/").origin).toBe("https://site.example");
+      }
+      expect(clientMatch(toRoot, path)).toEqual(sharedMatch(toRoot, path));
+    });
+
+    it("keeps ordinary carried-over paths as they were", () => {
+      expect(clientMatch(toRoot, "/blog/a/b?x=1")?.location).toBe("/a/b?x=1");
+      expect(clientMatch(toRoot, "/blog")?.location).toBe("/");
+      expect(clientMatch(toRoot, "/docs/a")?.location).toBe("/help/a");
+    });
+  });
 });
