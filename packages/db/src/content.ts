@@ -949,9 +949,9 @@ export function slugify(name: string): string | null {
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "") // strip diacritics (é → e)
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(/^-|-$/g, "") // [^a-z0-9]+ already collapsed every run to one "-"
     .slice(0, 80)
-    .replace(/-+$/g, "");
+    .replace(/-$/, "");
   return s || null;
 }
 

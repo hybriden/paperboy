@@ -307,7 +307,7 @@ export function honeypotAttrs(spec: FormSpec): {
 export function formToolAttrs(spec: FormSpec): { toolname: string; tooldescription: string } {
   const title = spec.title.trim() || "Form";
   // Tool names allow letters, digits, _ - . (max 128).
-  const toolname = title.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 128) || "form";
+  const toolname = title.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "").slice(0, 128) || "form";
   const intro = (typeof spec.intro === "string" ? spec.intro : rtPlainText(spec.intro)).trim();
   return { toolname, tooldescription: intro ? `${title}: ${intro}` : `Fill in the "${title}" form` };
 }
@@ -416,7 +416,7 @@ function mergeHeaders(extra: RequestInit["headers"], own: Record<string, string>
 }
 
 export function createClient(options: PaperboyClientOptions) {
-  const base = options.baseUrl.replace(/\/+$/, "");
+  const base = trimTrailingSlashes(options.baseUrl);
   const doFetch = options.fetch ?? globalThis.fetch;
   if (!doFetch) throw new Error("@paperboycms/client: no fetch available — pass options.fetch");
   const etags = options.etagCache ? new Map<string, { etag: string; body: unknown }>() : null;
@@ -672,7 +672,7 @@ export function normalizeRedirectPath(raw: string): string {
     /* a malformed escape is matched as written */
   }
   path = `/${path}`.replace(/\/{2,}/g, "/").toLowerCase();
-  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+  return path.length > 1 ? trimTrailingSlashes(path) : path;
 }
 
 /**
@@ -680,6 +680,13 @@ export function normalizeRedirectPath(raw: string): string {
  * then the longest prefix. Run it only after the CMS answered 404 for the
  * path, so a rule never hides a live page.
  */
+/** Linear, unlike `replace(/\/+$/, "")` (quadratic on a long inner slash run). Mirrors @paperboy/shared. */
+function trimTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s[end - 1] === "/") end--;
+  return s.slice(0, end);
+}
+
 export function matchRedirect(manifest: RedirectManifest, requestPath: string): RedirectMatch | null {
   const [rawPath = "", ...q] = requestPath.split("?");
   const query = q.join("?").split("#")[0] ?? "";
@@ -705,7 +712,7 @@ export function matchRedirect(manifest: RedirectManifest, requestPath: string): 
   }
   if (!hit) return null;
   if (hit.to === null) return { rule: hit, status: hit.status, location: null };
-  let location = suffix && suffix !== "/" ? `${hit.to.replace(/\/+$/, "")}${suffix}` : hit.to;
+  let location = suffix && suffix !== "/" ? `${trimTrailingSlashes(hit.to)}${suffix}` : hit.to;
   // The suffix is decoded visitor input. Onto a root target it IS the location,
   // and "/\evil.example" or "/<tab>/evil.example" resolve to another host in a
   // browser. A relative location starts with exactly one slash.

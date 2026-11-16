@@ -17,6 +17,7 @@ import {
   parseRedirectTarget,
   sitePath,
   toCsv,
+  trimTrailingSlashes,
 } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { publishedPagePaths } from "./delivery.js";
@@ -356,7 +357,7 @@ async function resolveRule(
       : target.targetPath;
     if (loopsInsideOwnPrefix(source.path, finalPath)) {
       throw Errors.validation(
-        `The target ${finalPath} is inside ${source.path}/, which this rule redirects, so ${source.path}/x would go to ${finalPath?.replace(/\/+$/, "")}/x and on forever. ` +
+        `The target ${finalPath} is inside ${source.path}/, which this rule redirects, so ${source.path}/x would go to ${trimTrailingSlashes(finalPath ?? "")}/x and on forever. ` +
           `Point it outside ${source.path}/ (e.g. "/new-docs"), or make the rule exact ("${source.path}") and add the pages you need one by one.`,
         ["target"],
       );

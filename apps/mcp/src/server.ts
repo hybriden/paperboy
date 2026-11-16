@@ -104,7 +104,7 @@ import {
   verifyOAuthAccessToken,
   schemaTables,
 } from "@paperboy/db";
-import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, ROLE_PERMISSIONS, RoleName, TYPE_TEMPLATE_EXPORT_FORMAT, TYPE_TEMPLATE_EXPORT_VERSION, aiAssist, fieldFormatHint, redactForLog } from "@paperboy/shared";
+import { AI_TASKS, ContentTypeDef, type FieldDef, type Permission, ROLE_PERMISSIONS, RoleName, TYPE_TEMPLATE_EXPORT_FORMAT, TYPE_TEMPLATE_EXPORT_VERSION, aiAssist, fieldFormatHint, redactForLog, trimTrailingSlashes } from "@paperboy/shared";
 import { z } from "zod";
 
 /**
@@ -171,7 +171,7 @@ function publicUrl(name: string, value: string | undefined): string | undefined 
   if (!value) return undefined;
   try {
     const url = new URL(value);
-    return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+    return trimTrailingSlashes(`${url.origin}${url.pathname}`);
   } catch {
     console.error(`[paperboy-mcp] ${name} must be a full URL such as https://cms.example.com (got "${value}")`);
     process.exit(1);

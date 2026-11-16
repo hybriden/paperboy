@@ -643,7 +643,7 @@ export function slugifyValue(raw: string): string {
     .normalize("NFKD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
+    .replace(/^-|-$/g, ""); // [^a-z0-9]+ already collapsed every run to one "-"
 }
 
 /* --------------------- tolerant input coercion (agents) ------------------- */

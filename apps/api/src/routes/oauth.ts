@@ -12,6 +12,7 @@ import {
   sitesForConsent,
   validateAuthorizeRequest,
 } from "@paperboy/db";
+import { trimTrailingSlashes } from "@paperboy/shared";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
@@ -49,7 +50,7 @@ export function oauthConfigFrom(env: { PUBLIC_URL?: string; MCP_PUBLIC_URL?: str
     } catch {
       throw new Error(`${name} must be a full URL such as https://cms.example.com (got "${v}")`);
     }
-    return `${url.origin}${url.pathname}`.replace(/\/+$/, "");
+    return trimTrailingSlashes(`${url.origin}${url.pathname}`);
   };
   const issuer = clean("PUBLIC_URL", env.PUBLIC_URL ?? env.CORS_ORIGIN);
   return { issuer, resource: clean("MCP_PUBLIC_URL", env.MCP_PUBLIC_URL ?? `${issuer}/mcp`) };

@@ -833,7 +833,7 @@ describe("initPreviewBridge — only the embedding parent may drive the bridge",
       const teardown = initPreviewBridge({ target, badge: false, parentOrigin: ["https://a.example/", "cms.example.com", "https://b.example:*"] });
       const readies = target.postMessage.mock.calls.filter((c) => c[0]?.type === "paperboy:preview-ready").map((c) => c[1]);
       expect(readies).toEqual(["https://a.example"]);
-      expect(String(warn.mock.calls[0]?.[0])).toMatch(/cms\.example\.com/);
+      expect(String(warn.mock.calls[0]?.[0])).toContain("cms.example.com");
       teardown();
     } finally {
       warn.mockRestore();

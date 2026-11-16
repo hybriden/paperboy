@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { trimTrailingSlashes } from "@paperboy/shared";
 import { DRAG_MIME, dragAtMessage, dragEndMessage, dragSourceMessage, dropAtMessage, focusMessage, patchMessage, pingMessage } from "@paperboycms/preview/protocol";
 import { api } from "../lib/api.js";
 import { Icon } from "../lib/icons.js";
@@ -39,7 +40,7 @@ export function publicSiteUrl(
   urlPath: string | null,
   documentId?: string,
 ): string {
-  const base = (site?.previewBaseUrl || fallbackWebUrl()).replace(/\/+$/, "");
+  const base = trimTrailingSlashes(site?.previewBaseUrl || fallbackWebUrl());
   // The start page is served at the front-end root ("/"), not at its slug path.
   const isStart = !!documentId && site?.startPageId === documentId;
   const path = isStart ? "" : urlPath && urlPath !== "/" ? urlPath : "";
