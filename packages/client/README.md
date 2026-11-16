@@ -3,6 +3,11 @@
 The typed Delivery API client. Thin, zero dependencies, end-to-end typed from
 the same Zod schemas the server serializes with — no codegen step.
 
+**Changes in 0.8.1** — `matchRedirect`, `normalizeRedirectPath` and
+`createClient` trim trailing slashes in linear time; the regex they used was
+quadratic on a long run of slashes, so a crafted redirect target could stall a
+frontend.
+
 **Changes in 0.8.0** — security fix: `matchRedirect` could return a location
 that a browser reads as another site when a `/prefix/*` rule pointed at `/`;
 upgrade if your frontend applies redirects. `submitForm` takes `visitorIp`, so

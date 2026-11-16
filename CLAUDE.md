@@ -144,7 +144,7 @@ Site-scoped, HMAC-SHA256 (`x-paperboy-signature: sha256=…`, event in `x-paperb
 
 ## Published npm packages
 `@paperboycms/client` and `@paperboycms/preview`, independently versioned.
-- **Publish with `pnpm publish` from the package dir**: `publishConfig` rewrites `src/` entry points to `dist/`; raw `npm publish` ships TypeScript (preview 0.1.1 exists because of it).
+- **Publish with `pnpm publish` from the package dir**: `publishConfig` rewrites `src/` entry points to `dist/`; raw `npm publish` ships TypeScript (preview 0.1.1 exists because of it), so `prepublishOnly` refuses any client but pnpm.
 - Bump the version in the same change that alters the public surface, and keep the README in sync.
 - Contract changes must stay consumable by deployed frontends: the client surface is pinned by `client-sdk.test.ts`; the preview protocol is consumed by the admin AND external frontends, so additions yes, breaking renames no.
 
