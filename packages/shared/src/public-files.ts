@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { type SiteUrlScheme, sitePath } from "./redirects.js";
+import { trimTrailingSlashes } from "./url.js";
 
 /**
  * Public-files support: robots.txt, sitemap.xml, llms.txt and security.txt.
@@ -58,7 +59,7 @@ export interface PublicPageEntry {
   description?: string;
 }
 
-const stripTrailingSlash = (u: string) => u.trim().replace(/\/+$/, "");
+const stripTrailingSlash = (u: string) => trimTrailingSlashes(u.trim());
 const xmlEscape = (s: string) =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 

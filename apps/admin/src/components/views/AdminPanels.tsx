@@ -2,7 +2,7 @@ import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tansta
 import { useEffect, useMemo, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { useSearchParams } from "react-router-dom";
-import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName, slugifyValue } from "@paperboy/shared";
+import { BUILTIN_TYPE_TEMPLATE_NAMES, type ContentTypeDef, type RoleName, slugifyValue, trimTrailingSlashes } from "@paperboy/shared";
 import { ACTIVE_SITE_KEY, type AiProviderName, type AiReasoningEffortName, type MailProviderName, api, ApiError, type FormRow, type ManagedUser, type EditableSeoFile, type SiteRow } from "../../lib/api.js";
 import { Icon } from "../../lib/icons.js";
 import { TypeIcon } from "../../lib/typeIcons.js";
@@ -1082,7 +1082,7 @@ function SiteSettingsForm({ site }: { site: SiteRow }) {
         <span className="field-label">Preview base URL</span>
         <input aria-label="Preview base URL" className="field-input" type="url" inputMode="url" placeholder="https://example.com" value={previewUrl} onChange={(e) => setPreviewUrl(e.target.value)} />
         <span className="mt-1 block text-xs text-muted">
-          Preview opens <code>{(previewUrl || "<origin>").replace(/\/+$/, "")}/&lt;locale&gt;&lt;path&gt;?pbt=…</code> (a short-lived preview token). Empty = no side-by-side preview.
+          Preview opens <code>{trimTrailingSlashes(previewUrl || "<origin>")}/&lt;locale&gt;&lt;path&gt;?pbt=…</code> (a short-lived preview token). Empty = no side-by-side preview.
           With more than one site, give this site&apos;s frontend its id, <code>{site.id}</code> (<code>PAPERBOY_SITE_ID</code>), so it accepts only this site&apos;s previews.
         </span>
       </label>
@@ -1257,7 +1257,7 @@ export function AiPanel() {
   const baseUrlValue = baseUrl ?? (providerChanged ? "" : (status?.baseUrl ?? ""));
   // A stored key is bound to its base URL server-side: moving the URL without
   // re-entering the key clears it (it must never reach a host it wasn't saved for).
-  const baseUrlChanged = baseUrl !== null && (baseUrl.trim().replace(/\/+$/, "") || null) !== (status?.baseUrl ?? null);
+  const baseUrlChanged = baseUrl !== null && (trimTrailingSlashes(baseUrl.trim()) || null) !== (status?.baseUrl ?? null);
   const PROVIDER_LABELS: Record<AiProviderName, string> = { anthropic: "Anthropic (Claude)", openai: "OpenAI-compatible" };
 
   const save = useMutation({

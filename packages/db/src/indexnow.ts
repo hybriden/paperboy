@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { LocalePrefix, normalizePath, parseSeoFilesConfig, sitePath } from "@paperboy/shared";
+import { LocalePrefix, normalizePath, parseSeoFilesConfig, sitePath, trimTrailingSlashes } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { deliveryPages } from "./delivery.js";
 import { site } from "./schema.js";
@@ -56,7 +56,7 @@ async function submitSite(db: Database, siteId: string, paths: Set<string>): Pro
   const scheme = { localePrefix: LocalePrefix.catch("always").parse(row.localePrefix), defaultLocale: row.defaultLocale };
   const { pages } = await deliveryPages(db, "published", siteId);
   const noIndex = new Set(pages.filter((p) => p.noIndex).map((p) => normalizePath(sitePath(p.urlPath, p.locale, scheme))));
-  const base = row.canonicalBaseUrl.replace(/\/+$/, "");
+  const base = trimTrailingSlashes(row.canonicalBaseUrl);
   const urls = [...paths].filter((p) => !noIndex.has(normalizePath(p))).map((p) => new URL(`${base}${p}`).href); // percent-encoded, as RFC 3986 asks
   const host = new URL(base).host;
   for (let i = 0; i < urls.length; i += MAX_URLS_PER_REQUEST) {

@@ -1,4 +1,5 @@
 import { AiSchemaFieldSuggestions } from "./schema-catalog.js";
+import { trimTrailingSlashes } from "./url.js";
 
 /**
  * AI editorial assistant. Real editorial use-cases the editor needs help with:
@@ -190,7 +191,7 @@ export async function postOpenAiChat(
   timeoutMs: number,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const base = (cfg.baseUrl?.trim() || DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, "");
+  const base = trimTrailingSlashes(cfg.baseUrl?.trim() || DEFAULT_OPENAI_BASE_URL);
   const url = `${base}/chat/completions`;
   const key = requireKey(cfg);
   const attempt = async (body: Record<string, unknown>): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; status: number; text: string }> => {
@@ -267,7 +268,7 @@ export async function listAiModels(cfg: AiConfig, timeoutMs = 10_000): Promise<s
   try {
     const openai = providerOf(cfg) === "openai";
     const url = openai
-      ? `${(cfg.baseUrl?.trim() || DEFAULT_OPENAI_BASE_URL).replace(/\/+$/, "")}/models`
+      ? `${trimTrailingSlashes(cfg.baseUrl?.trim() || DEFAULT_OPENAI_BASE_URL)}/models`
       : "https://api.anthropic.com/v1/models?limit=1000";
     const headers: Record<string, string> = openai
       ? { authorization: `Bearer ${requireKey(cfg)}` }

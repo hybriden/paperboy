@@ -1,3 +1,4 @@
+import { trimTrailingSlashes } from "./url.js";
 import { z } from "zod";
 
 /**
@@ -46,7 +47,7 @@ export function normalizePath(raw: string): string {
     /* a malformed escape is matched as written */
   }
   path = `/${path}`.replace(/\/{2,}/g, "/").toLowerCase();
-  return path.length > 1 ? path.replace(/\/+$/, "") : path;
+  return path.length > 1 ? trimTrailingSlashes(path) : path;
 }
 
 /**
@@ -154,7 +155,7 @@ export function matchRedirect(manifest: RedirectManifest, requestPath: string): 
   }
   if (!hit) return null;
   if (hit.to === null) return { rule: hit, status: hit.status, location: null };
-  let location = suffix && suffix !== "/" ? `${hit.to.replace(/\/+$/, "")}${suffix}` : hit.to;
+  let location = suffix && suffix !== "/" ? `${trimTrailingSlashes(hit.to)}${suffix}` : hit.to;
   // The suffix is decoded visitor input. Onto a root target it IS the location,
   // and "/\evil.example" or "/<tab>/evil.example" resolve to another host in a
   // browser. A relative location starts with exactly one slash.

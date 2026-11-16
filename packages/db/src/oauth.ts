@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { and, desc, eq, gt, isNull, lte, notExists, or, sql } from "drizzle-orm";
+import { trimTrailingSlashes } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import type { AccessContext } from "./scope.js";
@@ -23,7 +24,7 @@ const CODE_TTL_MS = 10 * 60_000;
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 const secret = (prefix: string) => `${prefix}${randomBytes(32).toString("base64url")}`; // 256-bit
 /** Resource identifiers compare without a trailing slash (".../mcp" === ".../mcp/"). */
-const sameResource = (a: string, b: string) => a.replace(/\/+$/, "") === b.replace(/\/+$/, "");
+const sameResource = (a: string, b: string) => trimTrailingSlashes(a) === trimTrailingSlashes(b);
 
 /** An error in the RFC 6749 wire format (`error` + `error_description`). */
 export class OAuthError extends Error {

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { type AiConfig, type AiProvider, type AiReasoningEffort, AI_REASONING_EFFORTS, DEFAULT_AI_MODELS, DEFAULT_OPENAI_BASE_URL, LocalePrefix, SeoFilesConfig, parseSeoFilesConfig } from "@paperboy/shared";
+import { type AiConfig, type AiProvider, type AiReasoningEffort, AI_REASONING_EFFORTS, DEFAULT_AI_MODELS, DEFAULT_OPENAI_BASE_URL, LocalePrefix, SeoFilesConfig, parseSeoFilesConfig, trimTrailingSlashes } from "@paperboy/shared";
 import type { Database } from "./client.js";
 import { Errors } from "./errors.js";
 import { type AccessContext, loadAuthorized, requirePermission } from "./scope.js";
@@ -59,7 +59,7 @@ export async function getPreviewBaseUrl(db: Database, siteId: string): Promise<s
 /** Set (or clear, with "") the ACTIVE site's preview base URL. */
 export async function setPreviewBaseUrl(db: Database, ctx: AccessContext, url: string): Promise<void> {
   requirePermission(ctx, "site.manage");
-  const trimmed = url.trim().replace(/\/+$/, ""); // drop trailing slash
+  const trimmed = trimTrailingSlashes(url.trim()); // drop trailing slash
   if (trimmed && !/^https?:\/\/[^\s]+$/i.test(trimmed)) {
     throw Errors.badRequest("Preview URL must be a full http(s):// URL");
   }
@@ -83,7 +83,7 @@ export async function setSiteFilesConfig(
   if (!rows[0]) throw Errors.notFound("Site");
   const patch: Partial<typeof site.$inferInsert> = {};
   if (input.canonicalBaseUrl !== undefined) {
-    const url = input.canonicalBaseUrl?.trim().replace(/\/+$/, "") ?? "";
+    const url = trimTrailingSlashes(input.canonicalBaseUrl?.trim() ?? "");
     if (url && !/^https?:\/\/[^\s]+$/i.test(url)) {
       throw Errors.badRequest('Canonical base URL must be a full http(s):// URL, e.g. "https://www.example.com"');
     }
@@ -205,7 +205,7 @@ export async function setAiConfig(
   // Validate everything BEFORE the first write. The key used to be stored and
   // the base URL refused afterwards: a 400, but the new key was already saved,
   // bound to the OLD endpoint, and the next call sent it there.
-  const url = input.baseUrl?.trim().replace(/\/+$/, "");
+  const url = trimTrailingSlashes(input.baseUrl?.trim() ?? "");
   if (url && !/^https?:\/\/[^\s]+$/i.test(url)) {
     throw Errors.badRequest('AI base URL must be a full http(s):// URL, e.g. "https://api.openai.com/v1" or "http://localhost:11434/v1"');
   }
@@ -301,7 +301,7 @@ export async function resolveAiRuntimeConfig(db: Database, env: AiEnv): Promise<
   return {
     provider,
     apiKey: envKey || undefined,
-    baseUrl: provider === "openai" ? (env.OPENAI_BASE_URL?.trim().replace(/\/+$/, "") || DEFAULT_OPENAI_BASE_URL) : undefined,
+    baseUrl: provider === "openai" ? (trimTrailingSlashes(env.OPENAI_BASE_URL?.trim() ?? "") || DEFAULT_OPENAI_BASE_URL) : undefined,
     model: stored.model || env.AI_MODEL?.trim() || DEFAULT_AI_MODELS[provider],
     reasoningEffort: stored.reasoningEffort ?? undefined,
     source: envKey ? "env" : stored.undecryptable ? "undecryptable" : "none",
