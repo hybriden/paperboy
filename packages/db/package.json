@@ -23,7 +23,7 @@
     "nanoid": "^6.0.2",
     "nodemailer": "10.4.0",
     "otpauth": "^9.6.0",
-    "postgres": "^3.4.5"
+    "postgres": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^24",
